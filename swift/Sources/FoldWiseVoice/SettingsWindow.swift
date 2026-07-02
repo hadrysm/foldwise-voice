@@ -278,7 +278,7 @@ struct SettingsView: View {
             .padding(.bottom, 10)
         }
         .padding(.horizontal, 10)
-        .padding(.top, 52)  // clear the traffic lights
+        .padding(.top, 34)  // clear the traffic lights
         .frame(width: 192)
         .background(VisualEffect(material: .sidebar))
     }
