@@ -18,6 +18,7 @@ final class HotkeyListener {
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var monitors: [Any] = []
+    private var retryTimer: Timer?
 
     init(
         pttKey: String, toggleKey: String?,
@@ -33,6 +34,42 @@ final class HotkeyListener {
     }
 
     func start() {
+        if createTap() { return }
+
+        // No Input Monitoring / Accessibility permission for the event tap
+        // yet. Fall back to NSEvent monitors so the hotkey at least works
+        // while the app is frontmost (the global monitor is equally gated,
+        // so background keystrokes stay invisible), and keep retrying the
+        // tap: TCC grants made in System Settings never revive an
+        // already-failed tap, so without the retry a relaunch would be the
+        // only way to get the hotkey working globally.
+        NSLog("CGEventTap unavailable — falling back to NSEvent monitors, will retry")
+        installMonitors()
+        retryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) {
+            [weak self] _ in
+            guard let self, self.createTap() else { return }
+            NSLog("CGEventTap acquired — hotkey now works in the background")
+            self.removeMonitors()
+            self.retryTimer?.invalidate()
+            self.retryTimer = nil
+        }
+    }
+
+    func stop() {
+        retryTimer?.invalidate()
+        retryTimer = nil
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            if let runLoopSource {
+                CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+            }
+        }
+        tap = nil
+        runLoopSource = nil
+        removeMonitors()
+    }
+
+    private func createTap() -> Bool {
         let mask =
             (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.keyUp.rawValue)
@@ -44,44 +81,37 @@ final class HotkeyListener {
             return Unmanaged.passUnretained(event)
         }
 
-        tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .listenOnly,
-            eventsOfInterest: CGEventMask(mask),
-            callback: callback,
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        )
+        guard
+            let tap = CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: .headInsertEventTap,
+                options: .listenOnly,
+                eventsOfInterest: CGEventMask(mask),
+                callback: callback,
+                userInfo: Unmanaged.passUnretained(self).toOpaque()
+            )
+        else { return false }
 
-        if let tap {
-            runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-            CGEvent.tapEnable(tap: tap, enable: true)
-        } else {
-            // No Input Monitoring permission for the event tap — fall back to
-            // NSEvent global monitors (they need Accessibility instead).
-            NSLog("CGEventTap unavailable — falling back to NSEvent monitors")
-            let handler: (NSEvent) -> Void = { [weak self] event in self?.handle(nsEvent: event) }
-            monitors.append(
-                NSEvent.addGlobalMonitorForEvents(
-                    matching: [.keyDown, .keyUp, .flagsChanged], handler: handler) as Any)
-            monitors.append(
-                NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) {
-                    handler($0)
-                    return $0
-                } as Any)
-        }
+        self.tap = tap
+        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        return true
     }
 
-    func stop() {
-        if let tap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            if let runLoopSource {
-                CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-            }
-        }
-        tap = nil
-        runLoopSource = nil
+    private func installMonitors() {
+        let handler: (NSEvent) -> Void = { [weak self] event in self?.handle(nsEvent: event) }
+        monitors.append(
+            NSEvent.addGlobalMonitorForEvents(
+                matching: [.keyDown, .keyUp, .flagsChanged], handler: handler) as Any)
+        monitors.append(
+            NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) {
+                handler($0)
+                return $0
+            } as Any)
+    }
+
+    private func removeMonitors() {
         for m in monitors { NSEvent.removeMonitor(m) }
         monitors = []
     }
