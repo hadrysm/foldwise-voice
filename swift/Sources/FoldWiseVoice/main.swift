@@ -60,6 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // Only visible while the settings window has promoted the app to
+        // .regular, but needed then so Edit shortcuts work in text fields.
+        NSApp.mainMenu = buildMainMenu()
+
         let url = Config.resolvePath(cliPath: configPath)
         config = Config.loadOrCreate(at: url)
         if let modeOverride { config.setActiveMode(modeOverride) }
@@ -149,11 +153,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func quit() {
+    @objc private func quit() {
         listener?.stop()
         pipeline.shutdown()
         hud.hide()
         NSApp.terminate(nil)
+    }
+
+    private func buildMainMenu() -> NSMenu {
+        let main = NSMenu()
+
+        let appMenu = NSMenu()
+        appMenu.addItem(
+            withTitle: "About FoldWise Voice",
+            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+            keyEquivalent: "")
+        appMenu.addItem(.separator())
+        let quitItem = NSMenuItem(
+            title: "Quit FoldWise Voice", action: #selector(quit), keyEquivalent: "q")
+        quitItem.target = self
+        appMenu.addItem(quitItem)
+        let appItem = NSMenuItem()
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redo)
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(
+            withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(
+            withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let editItem = NSMenuItem()
+        editItem.submenu = editMenu
+        main.addItem(editItem)
+
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(
+            withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(
+            withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)),
+            keyEquivalent: "m")
+        let windowItem = NSMenuItem()
+        windowItem.submenu = windowMenu
+        main.addItem(windowItem)
+
+        return main
     }
 }
 

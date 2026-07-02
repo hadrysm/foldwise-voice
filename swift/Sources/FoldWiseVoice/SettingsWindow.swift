@@ -726,6 +726,7 @@ final class SettingsController {
     private var window: NSWindow?
     private var keyMonitor: Any?
     private var statusClearTask: Task<Void, Never>?
+    private var closeObserver: NSObjectProtocol?
 
     init(config: Config, onSaved: @escaping () -> Void) {
         self.config = config
@@ -736,6 +737,10 @@ final class SettingsController {
     func show() {
         if window == nil { build() }
         populate()
+        // Accessory apps never own the menu bar; become a regular app while
+        // settings is open so the menu bar shows FoldWise Voice, not whatever
+        // app was frontmost before.
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
@@ -762,6 +767,12 @@ final class SettingsController {
         win.isMovableByWindowBackground = true
         win.isReleasedWhenClosed = false
         win.center()
+        closeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: win, queue: .main
+        ) { _ in
+            // Back to menu-bar-only once settings closes.
+            Task { @MainActor in NSApp.setActivationPolicy(.accessory) }
+        }
         window = win
     }
 
