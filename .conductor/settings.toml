@@ -5,7 +5,7 @@
 setup = '''
 set -e
 if command -v swift >/dev/null 2>&1; then
-  swift package resolve --package-path swift
+  swift package resolve
 fi
 '''
 # Remove the entire workspace directory. Also guarantees untracked
@@ -16,10 +16,10 @@ archive = 'if [ -n "$CONDUCTOR_WORKSPACE_PATH" ]; then rm -rf "$CONDUCTOR_WORKSP
 run_mode = "nonconcurrent"
 
 [scripts.run.swift-app]
-command = "cd swift && swift run -c release"
+command = "swift run -c release"
 default = true
 icon = "mic"
 
 [scripts.run.swift-build]
-command = "swift build --package-path swift"
+command = "swift build"
 icon = "hammer"

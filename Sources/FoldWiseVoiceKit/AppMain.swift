@@ -254,41 +254,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 // MARK: - entry point
 
-var cliConfig: String?
-var cliMode: String?
-var printConfig = false
-var argIterator = CommandLine.arguments.dropFirst().makeIterator()
-while let arg = argIterator.next() {
-    switch arg {
-    case "--config": cliConfig = argIterator.next()
-    case "--mode": cliMode = argIterator.next()
-    case "--print-config": printConfig = true
-    default: break
+public enum FoldWiseVoiceApp {
+    public static func main() {
+        var cliConfig: String?
+        var cliMode: String?
+        var printConfig = false
+        var argIterator = CommandLine.arguments.dropFirst().makeIterator()
+        while let arg = argIterator.next() {
+            switch arg {
+            case "--config": cliConfig = argIterator.next()
+            case "--mode": cliMode = argIterator.next()
+            case "--print-config": printConfig = true
+            default: break
+            }
+        }
+
+        if printConfig {
+            // Diagnostic: load the resolved config and echo it re-serialized, to
+            // verify modes.json round-trips losslessly. Exits without starting the UI.
+            let url = Config.resolvePath(cliPath: cliConfig)
+            let config = Config.loadOrCreate(at: url)
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("foldwise-config-check.json")
+            let echo = Config(
+                activeMode: config.activeMode, hotkey: config.hotkey,
+                toggleHotkey: config.toggleHotkey, pauseAudio: config.pauseAudio,
+                hudPosition: config.hudPosition, hudStyle: config.hudStyle,
+                modeOrder: config.modeOrder, modes: config.modes, path: tmp)
+            try? echo.save()
+            print("config: \(url.path)")
+            print((try? String(contentsOf: tmp, encoding: .utf8)) ?? "<save failed>")
+            exit(0)
+        }
+
+        MainActor.assumeIsolated {
+            let app = NSApplication.shared
+            let delegate = AppDelegate(configPath: cliConfig, modeOverride: cliMode)
+            app.delegate = delegate
+            app.setActivationPolicy(.accessory)
+            app.run()
+        }
     }
-}
-
-if printConfig {
-    // Diagnostic: load the resolved config and echo it re-serialized, to
-    // verify modes.json round-trips losslessly. Exits without starting the UI.
-    let url = Config.resolvePath(cliPath: cliConfig)
-    let config = Config.loadOrCreate(at: url)
-    let tmp = FileManager.default.temporaryDirectory
-        .appendingPathComponent("foldwise-config-check.json")
-    let echo = Config(
-        activeMode: config.activeMode, hotkey: config.hotkey,
-        toggleHotkey: config.toggleHotkey, pauseAudio: config.pauseAudio,
-        hudPosition: config.hudPosition, hudStyle: config.hudStyle,
-        modeOrder: config.modeOrder, modes: config.modes, path: tmp)
-    try? echo.save()
-    print("config: \(url.path)")
-    print((try? String(contentsOf: tmp, encoding: .utf8)) ?? "<save failed>")
-    exit(0)
-}
-
-MainActor.assumeIsolated {
-    let app = NSApplication.shared
-    let delegate = AppDelegate(configPath: cliConfig, modeOverride: cliMode)
-    app.delegate = delegate
-    app.setActivationPolicy(.accessory)
-    app.run()
 }

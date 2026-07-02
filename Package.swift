@@ -8,11 +8,19 @@ let package = Package(
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.12.4")
     ],
     targets: [
-        .executableTarget(
-            name: "FoldWiseVoice",
+        .target(
+            name: "FoldWiseVoiceKit",
             dependencies: [
                 .product(name: "FluidAudio", package: "FluidAudio")
             ]
+        ),
+        .executableTarget(
+            name: "FoldWiseVoice",
+            dependencies: ["FoldWiseVoiceKit"]
+        ),
+        .testTarget(
+            name: "FoldWiseVoiceKitTests",
+            dependencies: ["FoldWiseVoiceKit"]
         )
     ]
 )

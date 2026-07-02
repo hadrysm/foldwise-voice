@@ -32,7 +32,7 @@ REPO = Path(__file__).resolve().parents[1]
 APP_NAME = "FoldWise Voice Native"
 BUNDLE_ID = "com.foldwise.voice.native"
 DIST = REPO / "dist"
-SWIFT_DIR = REPO / "swift"
+SWIFT_DIR = REPO
 VERSION = (REPO / "version.txt").read_text().strip()
 
 
