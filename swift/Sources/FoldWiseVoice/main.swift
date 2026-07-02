@@ -76,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.settings.show()
         }
         hud.recorder = pipeline.recorder
+        hud.onStop = { [weak self] in self?.pipeline.stopRecording() }
         menuBar = MenuBarController(
             config: config,
             onModeChanged: {},

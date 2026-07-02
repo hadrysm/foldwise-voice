@@ -282,9 +282,12 @@ struct SettingsView: View {
                 Text("FoldWise Voice")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
-                Text("Version \(appVersion)")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+                HStack(spacing: 5) {
+                    Text("Version \(appVersion)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                    sidebarUpdateControl
+                }
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 10)
@@ -293,6 +296,40 @@ struct SettingsView: View {
         .padding(.top, 34)  // clear the traffic lights
         .frame(width: 192)
         .background(VisualEffect(material: .sidebar))
+    }
+
+    /// Compact companion to the Updates row: a tiny refresh button next to
+    /// the sidebar version label, sharing the same updateState.
+    @ViewBuilder
+    private var sidebarUpdateControl: some View {
+        switch model.updateState {
+        case .checking:
+            ProgressView()
+                .controlSize(.small)
+                .scaleEffect(0.5)
+                .frame(width: 12, height: 12)
+        case .available(let version, let downloadURL):
+            Button("Get v\(version)") {
+                NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(Color.accentColor)
+        case .unavailable:
+            EmptyView()
+        case .idle, .upToDate, .failed:
+            Button {
+                model.onCheckUpdates?()
+            } label: {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 14, height: 14)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Check for updates")
+        }
     }
 
     private func sidebarRow(_ pane: SettingsModel.Pane) -> some View {

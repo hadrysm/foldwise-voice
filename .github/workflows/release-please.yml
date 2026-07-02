@@ -24,6 +24,17 @@ jobs:
   # Build the .dmg and attach it to the release the job above just created.
   # Must be chained here (not an `on: release` workflow): releases created
   # with the default GITHUB_TOKEN don't trigger other workflows.
+  #
+  # Signing/notarization is optional and driven by repo secrets. Without them
+  # the .dmg is ad-hoc signed and Gatekeeper requires "Open Anyway" on first
+  # launch. To ship notarized builds, add:
+  #   MACOS_CERTIFICATE          base64 of the Developer ID Application .p12
+  #                              (base64 -i cert.p12 | pbcopy)
+  #   MACOS_CERTIFICATE_PASSWORD password of that .p12
+  #   CODESIGN_IDENTITY          e.g. "Developer ID Application: Name (TEAMID)"
+  #   NOTARY_APPLE_ID            Apple ID email
+  #   NOTARY_PASSWORD            app-specific password (appleid.apple.com)
+  #   NOTARY_TEAM_ID             10-char team ID
   upload-dmg:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created }}
@@ -32,8 +43,37 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
+      - name: Import Developer ID certificate
+        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          echo "$MACOS_CERTIFICATE" | base64 --decode > cert.p12
+          security import cert.p12 -k build.keychain \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm cert.p12
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
       - name: Build .dmg
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
         run: python3 scripts/build_swift_app.py --dmg
+      - name: Notarize and staple
+        if: ${{ secrets.NOTARY_APPLE_ID != '' }}
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: |
+          xcrun notarytool submit dist/FoldWise-Voice-*.dmg \
+            --apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_PASSWORD" \
+            --team-id "$NOTARY_TEAM_ID" --wait
+          xcrun stapler staple dist/FoldWise-Voice-*.dmg
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}

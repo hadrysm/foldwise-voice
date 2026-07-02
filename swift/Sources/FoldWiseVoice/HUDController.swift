@@ -21,12 +21,16 @@ final class HUDController {
     static let miniSize = CGSize(width: 90, height: 16)
     static let hoverSize = CGSize(width: 150, height: 26)
     static let fullSize = CGSize(width: 340, height: 64)
+    /// Recording pill is a single label-free row, so it can be slimmer.
+    static let listeningSize = CGSize(width: 340, height: 44)
     static let bottomMargin: CGFloat = 96
 
     let model = HUDModel()
     private let config: Config
     private let onSettings: () -> Void
     weak var recorder: AudioRecorder?
+    /// Invoked by the HUD's stop button; wired to Pipeline.stopRecording().
+    var onStop: (() -> Void)?
 
     private var panel: HUDPanel?
     private var levelTimer: Timer?
@@ -67,7 +71,7 @@ final class HUDController {
         } else {
             stopLevelTimer()
         }
-        setSize(Self.fullSize)
+        setSize(phase == .listening ? Self.listeningSize : Self.fullSize)
         panel?.orderFrontRegardless()
     }
 
@@ -107,7 +111,8 @@ final class HUDController {
         let view = HUDView(
             model: model,
             onHover: { [weak self] over in self?.setHover(over) },
-            onGear: { [weak self] in self?.onSettings() })
+            onGear: { [weak self] in self?.onSettings() },
+            onStop: { [weak self] in self?.onStop?() })
         p.contentView = NSHostingView(rootView: view)
 
         NotificationCenter.default.addObserver(
