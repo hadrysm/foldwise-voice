@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/hadrysm/foldwise-voice/compare/v0.4.0...v0.4.1) (2026-07-02)
+
+
+### Maintenance
+
+* add shared Conductor settings with setup, run, and archive scripts ([#10](https://github.com/hadrysm/foldwise-voice/issues/10)) ([367a261](https://github.com/hadrysm/foldwise-voice/commit/367a26179c989a0769117c8ae50da90da3477354))
+
 ## [0.4.0](https://github.com/hadrysm/foldwise-voice/compare/v0.3.0...v0.4.0) (2026-07-02)
 
 
