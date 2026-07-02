@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/hadrysm/foldwise-voice/compare/v0.3.0...v0.4.0) (2026-07-02)
+
+
+### Features
+
+* notify users in the menu bar when a newer release is available ([#7](https://github.com/hadrysm/foldwise-voice/issues/7)) ([34a072b](https://github.com/hadrysm/foldwise-voice/commit/34a072b6926e00aa56f4a139cb202c70b3d433f2))
+
 ## [0.3.0](https://github.com/hadrysm/foldwise-voice/compare/v0.2.0...v0.3.0) (2026-07-02)
 
 
