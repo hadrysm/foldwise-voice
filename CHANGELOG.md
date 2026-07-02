@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/hadrysm/foldwise-voice/compare/v0.6.1...v0.6.2) (2026-07-02)
+
+
+### Bug Fixes
+
+* stop trusting tap creation as proof the global hotkey works ([#26](https://github.com/hadrysm/foldwise-voice/issues/26)) ([e6f04dd](https://github.com/hadrysm/foldwise-voice/commit/e6f04ddc714eec02113d7a8d6694377ff96e7c12))
+
 ## [0.6.1](https://github.com/hadrysm/foldwise-voice/compare/v0.6.0...v0.6.1) (2026-07-02)
 
 
