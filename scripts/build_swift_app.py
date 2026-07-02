@@ -110,7 +110,8 @@ def sign(app: Path) -> None:
     # Ad-hoc signature gives the bundle a stable identity for TCC grants.
     # A real Developer ID (CODESIGN_IDENTITY) additionally enables the
     # hardened runtime, which notarization requires.
-    identity = os.environ.get("CODESIGN_IDENTITY", "-")
+    # Empty (e.g. an unset CI secret) means ad-hoc, same as unset.
+    identity = os.environ.get("CODESIGN_IDENTITY") or "-"
     cmd = ["codesign", "--force", "--deep", "-s", identity]
     entitlements = DIST / "entitlements.plist"
     if identity != "-":

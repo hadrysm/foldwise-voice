@@ -36,6 +36,7 @@ struct HUDView: View {
     @ObservedObject var model: HUDModel
     var onHover: (Bool) -> Void
     var onGear: () -> Void
+    var onStop: () -> Void
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
@@ -94,6 +95,38 @@ struct HUDView: View {
 
     @ViewBuilder
     private func fullContent(t: Double) -> some View {
+        if model.phase == .listening {
+            listeningContent(t: t)
+        } else {
+            statusContent(t: t)
+        }
+    }
+
+    /// Recording: no text, just the pulsing dot, live bars and a stop button.
+    @ViewBuilder
+    private func listeningContent(t: Double) -> some View {
+        let pulse = 0.72 + 0.28 * (0.5 + 0.5 * sin(t * 9.0))
+        HStack(spacing: 12) {
+            Circle()
+                .fill(model.dotColor)
+                .frame(width: 9, height: 9)
+                .opacity(pulse)
+                .shadow(color: model.dotColor.opacity(0.7), radius: 4)
+            WaveformBars(
+                count: 26, barWidth: 4, gap: 3, alpha: 0.85,
+                heights: heights(t: t, count: 26)
+            )
+            .frame(height: 20)
+            stopButton
+            if model.hovering {
+                gearButton
+            }
+        }
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private func statusContent(t: Double) -> some View {
         let pulse = 0.72 + 0.28 * (0.5 + 0.5 * sin(t * 9.0))
         VStack(spacing: 3) {
             HStack(spacing: 9) {
@@ -139,6 +172,19 @@ struct HUDView: View {
         default:
             return Array(repeating: 2.5, count: count)
         }
+    }
+
+    private var stopButton: some View {
+        Button(action: onStop) {
+            Image(systemName: "stop.fill")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(Color.red.opacity(0.88)))
+        }
+        .buttonStyle(.plain)
+        .help("Stop recording")
+        .transition(.scale(scale: 0.6).combined(with: .opacity))
     }
 
     private var gearButton: some View {
