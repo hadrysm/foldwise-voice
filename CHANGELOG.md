@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.0](https://github.com/hadrysm/foldwise-voice/compare/v0.2.0...v0.3.0) (2026-07-02)
+
+
+### Features
+
+* add gemma3 and phi4-mini to the Ollama model catalog ([84702ff](https://github.com/hadrysm/foldwise-voice/commit/84702ffa2ecdc4222e0e98272edc94d81b5791f4))
+* automated version bumping (release-please) and version display in settings ([ef7c419](https://github.com/hadrysm/foldwise-voice/commit/ef7c419bc9a383b81e2c0e72d4985f225d069c55))
+* build a distributable .dmg installer for the native Swift app ([e26b425](https://github.com/hadrysm/foldwise-voice/commit/e26b42597bbd2f515da110fc71f5a23adb0ddd56))
+* build a distributable .dmg installer for the native Swift app ([e361055](https://github.com/hadrysm/foldwise-voice/commit/e3610559db38cef116e5da5f37839ac4fe8c0e12))
+* local on-device dictation app (mlx-whisper + Ollama modes) ([734823c](https://github.com/hadrysm/foldwise-voice/commit/734823c3dd51d9b55860c0dbf3d70ddee2dfd61b))
+* native Swift app (Parakeet ANE + SwiftUI) and HUD drag-bug fix ([9216cd9](https://github.com/hadrysm/foldwise-voice/commit/9216cd9631c7f3f8cbde2d5a392bb2055c63d1a1))
+* sidebar settings UI with Ollama model picker and in-app installs ([527c446](https://github.com/hadrysm/foldwise-voice/commit/527c446a1ba505df34c5e188bab568e55dc2ee79))
+
+
+### Bug Fixes
+
+* prompt for Accessibility at launch so auto-paste isn't silently skipped ([#5](https://github.com/hadrysm/foldwise-voice/issues/5)) ([d21a942](https://github.com/hadrysm/foldwise-voice/commit/d21a942f3934e12a49b831e352d333fb0b1dde95))
+* prompt for Microphone and Accessibility at first launch ([#6](https://github.com/hadrysm/foldwise-voice/issues/6)) ([0cdd518](https://github.com/hadrysm/foldwise-voice/commit/0cdd518ea602e6eadd8e72d1371fa1392440bbbd))
+* seven bugs found in deep review of both apps ([f6f0fdc](https://github.com/hadrysm/foldwise-voice/commit/f6f0fdc1e9ab61771d198799491382e9c2e48324))
+
+
+### Maintenance
+
+* local config — cmd_r hotkey and updated HUD position ([d847cfa](https://github.com/hadrysm/foldwise-voice/commit/d847cfa4d44556d6b86b50ff11225978c1bf9559))
+* persist HUD position from Swift app ([7950b68](https://github.com/hadrysm/foldwise-voice/commit/7950b686d812bef72e907a623830e21e2e317e72))
+* persist updated HUD position ([9fa3f48](https://github.com/hadrysm/foldwise-voice/commit/9fa3f48534904c84ec7fcc059e053d38ab816908))
+
 ## 0.2.0
 
 ### Features
