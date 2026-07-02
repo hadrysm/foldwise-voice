@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/hadrysm/foldwise-voice/compare/v0.5.0...v0.6.0) (2026-07-02)
+
+
+### Features
+
+* HUD stop button, sidebar update check, optional CI signing ([#21](https://github.com/hadrysm/foldwise-voice/issues/21)) ([e6b8502](https://github.com/hadrysm/foldwise-voice/commit/e6b850240ae3dc5832e7f6f99fbc2f0567648413))
+
 ## [0.5.0](https://github.com/hadrysm/foldwise-voice/compare/v0.4.4...v0.5.0) (2026-07-02)
 
 
