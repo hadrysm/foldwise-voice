@@ -12,11 +12,27 @@ import logging
 import time
 
 import pyperclip
-from pynput.keyboard import Controller, Key
 
 log = logging.getLogger(__name__)
 
 _notified_no_ax = False
+
+# Virtual keycode for the ANSI "V" key (kVK_ANSI_V). We post Cmd+V by keycode
+# rather than by character so macOS never has to resolve the current keyboard
+# layout via the Text Input Source APIs — those must run on the main thread on
+# recent macOS and abort (SIGTRAP) when called from the pipeline worker thread.
+_KVK_ANSI_V = 0x09
+
+
+def _post_cmd_v() -> None:
+    """Synthesize a Cmd+V keystroke via Quartz, safe to call off-main-thread."""
+    import Quartz
+
+    src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+    for down in (True, False):
+        ev = Quartz.CGEventCreateKeyboardEvent(src, _KVK_ANSI_V, down)
+        Quartz.CGEventSetFlags(ev, Quartz.kCGEventFlagMaskCommand)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
 
 
 def accessibility_trusted() -> bool:
@@ -64,11 +80,8 @@ def insert_text(text: str, restore_clipboard: bool = True) -> bool:
             log.info("Accessibility not granted — transcript left on clipboard.")
         return False
 
-    kb = Controller()
     time.sleep(0.05)  # let the clipboard settle before pasting
-    with kb.pressed(Key.cmd):
-        kb.press("v")
-        kb.release("v")
+    _post_cmd_v()
 
     if restore_clipboard and previous is not None:
         # Give the focused app time to read the clipboard before restoring.
