@@ -27,8 +27,8 @@ final class HotkeyListener {
         onRelease: @escaping () -> Void,
         onToggle: @escaping () -> Void
     ) throws {
-        self.ptt = try KeyMap.parse(pttKey)
-        self.toggle = try toggleKey.map { try KeyMap.parse($0) }
+        ptt = try KeyMap.parse(pttKey)
+        toggle = try toggleKey.map { try KeyMap.parse($0) }
         self.onPress = onPress
         self.onRelease = onRelease
         self.onToggle = onToggle
@@ -48,8 +48,8 @@ final class HotkeyListener {
         // grant lost while running — revoked, or invalidated by an app update
         // re-signing the binary — leaves a tap that exists but is permanently
         // disabled (so drop back to monitors and keep retrying).
-        retryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) {
-            [weak self] _ in self?.checkTapHealth()
+        retryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            self?.checkTapHealth()
         }
     }
 
@@ -82,8 +82,8 @@ final class HotkeyListener {
 
         let mask =
             (1 << CGEventType.keyDown.rawValue)
-            | (1 << CGEventType.keyUp.rawValue)
-            | (1 << CGEventType.flagsChanged.rawValue)
+                | (1 << CGEventType.keyUp.rawValue)
+                | (1 << CGEventType.flagsChanged.rawValue)
 
         let callback: CGEventTapCallBack = { _, type, event, userInfo in
             let listener = Unmanaged<HotkeyListener>.fromOpaque(userInfo!).takeUnretainedValue()
@@ -130,16 +130,21 @@ final class HotkeyListener {
         let handler: (NSEvent) -> Void = { [weak self] event in self?.handle(nsEvent: event) }
         monitors.append(
             NSEvent.addGlobalMonitorForEvents(
-                matching: [.keyDown, .keyUp, .flagsChanged], handler: handler) as Any)
+                matching: [.keyDown, .keyUp, .flagsChanged], handler: handler
+            ) as Any
+        )
         monitors.append(
             NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) {
                 handler($0)
                 return $0
-            } as Any)
+            } as Any
+        )
     }
 
     private func removeMonitors() {
-        for m in monitors { NSEvent.removeMonitor(m) }
+        for m in monitors {
+            NSEvent.removeMonitor(m)
+        }
         monitors = []
     }
 
@@ -176,11 +181,13 @@ final class HotkeyListener {
             if event.isARepeat { return }
             dispatch(
                 keycode: CGKeyCode(event.keyCode),
-                character: event.charactersIgnoringModifiers?.lowercased(), down: true)
+                character: event.charactersIgnoringModifiers?.lowercased(), down: true
+            )
         case .keyUp:
             dispatch(
                 keycode: CGKeyCode(event.keyCode),
-                character: event.charactersIgnoringModifiers?.lowercased(), down: false)
+                character: event.charactersIgnoringModifiers?.lowercased(), down: false
+            )
         default:
             break
         }
@@ -196,8 +203,8 @@ final class HotkeyListener {
 
     private func matches(_ spec: KeySpec, keycode: CGKeyCode, character: String?) -> Bool {
         switch spec {
-        case .keycode(let code): return code == keycode
-        case .character(let c): return c == character
+        case let .keycode(code): code == keycode
+        case let .character(c): c == character
         }
     }
 

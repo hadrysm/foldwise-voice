@@ -33,7 +33,7 @@ enum TextInserter {
             return false
         }
 
-        usleep(50_000)  // let the clipboard settle before pasting
+        usleep(50000) // let the clipboard settle before pasting
 
         let source = CGEventSource(stateID: .hidSystemState)
         let vKey: CGKeyCode = 9

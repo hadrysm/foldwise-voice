@@ -9,7 +9,7 @@ import AVFoundation
 import Foundation
 
 final class AudioRecorder {
-    static let sampleRate = 16_000.0
+    static let sampleRate = 16000.0
 
     private let engine = AVAudioEngine()
     private var converter: AVAudioConverter?
@@ -43,11 +43,11 @@ final class AudioRecorder {
         }
         let outputFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32, sampleRate: Self.sampleRate,
-            channels: 1, interleaved: false)!
+            channels: 1, interleaved: false
+        )!
         converter = AVAudioConverter(from: inputFormat, to: outputFormat)
 
-        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) {
-            [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             self?.consume(buffer, outputFormat: outputFormat)
         }
         do {
@@ -114,7 +114,9 @@ final class AudioRecorder {
 
         let frames = Int(out.frameLength)
         var peak: Float = 0
-        for i in 0..<frames { peak = max(peak, abs(channel[i])) }
+        for i in 0 ..< frames {
+            peak = max(peak, abs(channel[i]))
+        }
 
         lock.lock()
         if recording {

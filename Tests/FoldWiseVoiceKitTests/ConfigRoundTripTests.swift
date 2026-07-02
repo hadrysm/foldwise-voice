@@ -6,15 +6,15 @@
 // them downloads the ~600 MB Parakeet model, which must never happen in tests.
 
 import XCTest
-
 @testable import FoldWiseVoiceKit
 
 final class ConfigRoundTripTests: XCTestCase {
-    private var dir: URL!
+    /// XCTest instantiates the case once per test method, so each test gets
+    /// its own scratch directory.
+    private let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("foldwise-tests-\(UUID().uuidString)")
 
     override func setUpWithError() throws {
-        dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("foldwise-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 
@@ -24,40 +24,40 @@ final class ConfigRoundTripTests: XCTestCase {
 
     private func write(_ json: String) throws -> URL {
         let url = dir.appendingPathComponent("modes.json")
-        try json.data(using: .utf8)!.write(to: url)
+        try Data(json.utf8).write(to: url)
         return url
     }
 
     private let fixture = """
-        {
-          "active_mode": "Middle",
-          "hotkey": "cmd_r",
-          "toggle_hotkey": null,
-          "pause_audio": false,
-          "hud_position": [100, 200],
-          "hud_style": "minimal",
-          "modes": {
-            "Zebra": {
-              "asr_model": "custom-model",
-              "llm_model": "llama3.2:3b",
-              "system_prompt": "Say \\"hi\\"\\nplease",
-              "vocab": ["FoldWise", "Ollama"]
-            },
-            "Alpha": {
-              "asr_model": "custom-model",
-              "llm_model": null,
-              "system_prompt": null,
-              "vocab": []
-            },
-            "Middle": {
-              "asr_model": "other-model",
-              "llm_model": "",
-              "system_prompt": null,
-              "vocab": []
-            }
-          }
+    {
+      "active_mode": "Middle",
+      "hotkey": "cmd_r",
+      "toggle_hotkey": null,
+      "pause_audio": false,
+      "hud_position": [100, 200],
+      "hud_style": "minimal",
+      "modes": {
+        "Zebra": {
+          "asr_model": "custom-model",
+          "llm_model": "llama3.2:3b",
+          "system_prompt": "Say \\"hi\\"\\nplease",
+          "vocab": ["FoldWise", "Ollama"]
+        },
+        "Alpha": {
+          "asr_model": "custom-model",
+          "llm_model": null,
+          "system_prompt": null,
+          "vocab": []
+        },
+        "Middle": {
+          "asr_model": "other-model",
+          "llm_model": "",
+          "system_prompt": null,
+          "vocab": []
         }
-        """
+      }
+    }
+    """
 
     private func roundTrip(_ json: String) throws -> Config {
         let url = try write(json)
@@ -103,7 +103,7 @@ final class ConfigRoundTripTests: XCTestCase {
         try config.save()
         let text = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(text.hasSuffix("\n"))
-        let data = text.data(using: .utf8)!
+        let data = try XCTUnwrap(text.data(using: .utf8))
         XCTAssertNoThrow(try JSONSerialization.jsonObject(with: data))
     }
 

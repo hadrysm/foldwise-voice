@@ -14,12 +14,14 @@ enum HUDStyle: String, CaseIterable, Identifiable {
     /// live waveform only while recording, short text for statuses.
     case minimal
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var displayName: String {
         switch self {
-        case .classic: return "Classic"
-        case .minimal: return "Minimal"
+        case .classic: "Classic"
+        case .minimal: "Minimal"
         }
     }
 }
@@ -45,10 +47,10 @@ final class HUDModel: ObservableObject {
 
     var dotColor: Color {
         switch phase {
-        case .listening: return .red
-        case .working: return .orange
-        case .error: return .yellow
-        default: return .green
+        case .listening: .red
+        case .working: .orange
+        case .error: .yellow
+        default: .green
         }
     }
 }
@@ -77,7 +79,9 @@ struct HUDView: View {
                                 Color(white: 0.10).opacity(mini ? 0.55 : 0.72),
                                 Color(white: 0.02).opacity(mini ? 0.65 : 0.85),
                             ],
-                            startPoint: .top, endPoint: .bottom))
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
                 }
 
                 if mini {
@@ -91,11 +95,14 @@ struct HUDView: View {
                     model.style == .minimal
                         ? LinearGradient(
                             colors: [.white.opacity(0.14), .white.opacity(0.05)],
-                            startPoint: .top, endPoint: .bottom)
+                            startPoint: .top, endPoint: .bottom
+                        )
                         : LinearGradient(
                             colors: [.white.opacity(0.28), .white.opacity(0.06)],
-                            startPoint: .top, endPoint: .bottom),
-                    lineWidth: 1)
+                            startPoint: .top, endPoint: .bottom
+                        ),
+                    lineWidth: 1
+                )
             )
             .contentShape(Capsule())
         }
@@ -114,7 +121,8 @@ struct HUDView: View {
             ZStack {
                 WaveformBars(
                     count: 12, barWidth: 3, gap: 2, alpha: 0.45,
-                    heights: WaveformBars.idleHeights(t: t, count: 12))
+                    heights: WaveformBars.idleHeights(t: t, count: 12)
+                )
                 if model.hovering {
                     HStack {
                         Spacer()
@@ -135,11 +143,13 @@ struct HUDView: View {
         if model.hovering {
             HStack(spacing: 13) {
                 minimalIconButton(
-                    "sparkles", size: 12, help: "Change mode", action: onChangeMode)
+                    "sparkles", size: 12, help: "Change mode", action: onChangeMode
+                )
                 // Logo mark doubling as start-recording; swap for the real
                 // logo asset once there is one.
                 minimalIconButton(
-                    "mic.fill", size: 12, help: "Start dictation", action: onRecord)
+                    "mic.fill", size: 12, help: "Start dictation", action: onRecord
+                )
                 Button(action: onGear) {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .font(.system(size: 9, weight: .semibold))
@@ -155,7 +165,8 @@ struct HUDView: View {
         } else {
             WaveformBars(
                 count: 7, barWidth: 3, gap: 3, alpha: 0.9,
-                heights: Self.minimalIdleGlyph)
+                heights: Self.minimalIdleGlyph
+            )
         }
     }
 
@@ -190,7 +201,6 @@ struct HUDView: View {
     }
 
     /// Recording, minimal: just the live waveform; stop appears on hover.
-    @ViewBuilder
     private func minimalListeningContent(t: Double) -> some View {
         HStack(spacing: 10) {
             WaveformBars(
@@ -206,7 +216,6 @@ struct HUDView: View {
     }
 
     /// Working / done / error, minimal: one short text line, no dot.
-    @ViewBuilder
     private func minimalStatusContent() -> some View {
         HStack(spacing: 8) {
             Text(model.label)
@@ -283,8 +292,8 @@ struct HUDView: View {
             }
         case .working:
             let phase = t * 4.5
-            return (0..<count).map { i -> CGFloat in
-                let wave: Double = 0.5 + 0.5 * sin(phase + Double(i) * 0.55)
+            return (0 ..< count).map { i -> CGFloat in
+                let wave = 0.5 + 0.5 * sin(phase + Double(i) * 0.55)
                 return CGFloat(4.0 + 5.0 * wave)
             }
         default:
@@ -326,9 +335,9 @@ struct WaveformBars: View {
     var heights: [CGFloat]
 
     static func idleHeights(t: Double, count: Int) -> [CGFloat] {
-        let phase = t * 2.7  // slow breathing
-        return (0..<count).map { i -> CGFloat in
-            let wave: Double = 0.5 + 0.5 * sin(phase + Double(i) * 0.4)
+        let phase = t * 2.7 // slow breathing
+        return (0 ..< count).map { i -> CGFloat in
+            let wave = 0.5 + 0.5 * sin(phase + Double(i) * 0.4)
             return CGFloat(2.0 + 3.0 * wave)
         }
     }
@@ -337,15 +346,17 @@ struct WaveformBars: View {
         Canvas { ctx, size in
             let total = CGFloat(count) * barWidth + CGFloat(count - 1) * gap
             let x0 = (size.width - total) / 2
-            for i in 0..<count {
+            for i in 0 ..< count {
                 let h = i < heights.count ? heights[i] : 2.0
                 let rect = CGRect(
                     x: x0 + CGFloat(i) * (barWidth + gap),
                     y: (size.height - h) / 2,
-                    width: barWidth, height: h)
+                    width: barWidth, height: h
+                )
                 ctx.fill(
                     Path(roundedRect: rect, cornerRadius: barWidth / 2),
-                    with: .color(.white.opacity(alpha)))
+                    with: .color(.white.opacity(alpha))
+                )
             }
         }
         .allowsHitTesting(false)

@@ -2,15 +2,15 @@
 // and the mode-mutation helpers used by the settings UI.
 
 import XCTest
-
 @testable import FoldWiseVoiceKit
 
 final class ConfigBehaviorTests: XCTestCase {
-    private var dir: URL!
+    /// XCTest instantiates the case once per test method, so each test gets
+    /// its own scratch directory.
+    private let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("foldwise-tests-\(UUID().uuidString)")
 
     override func setUpWithError() throws {
-        dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("foldwise-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 
@@ -18,7 +18,9 @@ final class ConfigBehaviorTests: XCTestCase {
         try FileManager.default.removeItem(at: dir)
     }
 
-    private var path: URL { dir.appendingPathComponent("modes.json") }
+    private var path: URL {
+        dir.appendingPathComponent("modes.json")
+    }
 
     func testDefaultConfigShape() {
         let config = Config.defaultConfig(path: path)
@@ -40,29 +42,29 @@ final class ConfigBehaviorTests: XCTestCase {
     }
 
     func testLoadOrCreateFallsBackToDefaultsOnCorruptJSON() throws {
-        try "{ this is not json".data(using: .utf8)!.write(to: path)
+        try Data("{ this is not json".utf8).write(to: path)
         let config = Config.loadOrCreate(at: path)
         XCTAssertEqual(config.modeOrder, ["Voice to Text", "Clean", "Email", "Bullets"])
     }
 
     func testLoadThrowsWhenModesMissingOrEmpty() throws {
-        try #"{"active_mode": "Clean"}"#.data(using: .utf8)!.write(to: path)
+        try Data(#"{"active_mode": "Clean"}"#.utf8).write(to: path)
         XCTAssertThrowsError(try Config.load(from: path))
-        try #"{"modes": {}}"#.data(using: .utf8)!.write(to: path)
+        try Data(#"{"modes": {}}"#.utf8).write(to: path)
         XCTAssertThrowsError(try Config.load(from: path))
     }
 
     func testUnknownActiveModeFallsBackToFirstModeInFileOrder() throws {
         let json = """
-            {
-              "active_mode": "Nope",
-              "modes": {
-                "Second": {"asr_model": "m", "llm_model": null, "system_prompt": null, "vocab": []},
-                "First": {"asr_model": "m", "llm_model": null, "system_prompt": null, "vocab": []}
-              }
-            }
-            """
-        try json.data(using: .utf8)!.write(to: path)
+        {
+          "active_mode": "Nope",
+          "modes": {
+            "Second": {"asr_model": "m", "llm_model": null, "system_prompt": null, "vocab": []},
+            "First": {"asr_model": "m", "llm_model": null, "system_prompt": null, "vocab": []}
+          }
+        }
+        """
+        try Data(json.utf8).write(to: path)
         let config = try Config.load(from: path)
         XCTAssertEqual(config.activeMode, "Second")
         XCTAssertEqual(config.mode.name, "Second")

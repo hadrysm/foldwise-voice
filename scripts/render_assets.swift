@@ -12,7 +12,8 @@ func renderBitmap(pixelsWide: Int, pixelsHigh: Int,
     let rep = NSBitmapImageRep(
         bitmapDataPlanes: nil, pixelsWide: pixelsWide, pixelsHigh: pixelsHigh,
         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-        colorSpaceName: .calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        colorSpaceName: .calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0
+    )!
     let ctx = NSGraphicsContext(bitmapImageRep: rep)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = ctx
@@ -35,6 +36,7 @@ func drawCentered(_ text: String, y: CGFloat, width: CGFloat,
 }
 
 // MARK: - App icon on Apple's Big Sur grid: the tile fills 824/1024 of the
+
 // canvas with a ~22.5% corner radius and a soft drop shadow, so it sits at
 // the same visual weight as system app icons.
 
@@ -87,6 +89,7 @@ for (name, px) in iconSizes {
 }
 
 // MARK: - DMG background: 660×400 pt (the conventional installer window size)
+
 // drawn at 2x so Finder shows it sharp on retina. Icons render at 128 pt with
 // centers at Finder (180, 190) and (480, 190); keep those areas clear.
 
@@ -128,5 +131,6 @@ let bg = renderBitmap(pixelsWide: Int(bgW) * 2, pixelsHigh: Int(bgH) * 2) {
                  font: NSFont.systemFont(ofSize: 11.5),
                  color: NSColor(calibratedWhite: 0.45, alpha: 1))
 }
-bg.size = NSSize(width: bgW, height: bgH)  // 144 dpi → Finder renders 660×400 pt
+
+bg.size = NSSize(width: bgW, height: bgH) // 144 dpi → Finder renders 660×400 pt
 writePNG(bg, to: outDir.appendingPathComponent("dmg-background.png"))

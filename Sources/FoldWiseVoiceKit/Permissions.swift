@@ -5,9 +5,9 @@
 // the clipboard, or a hotkey that only works while the app is frontmost — so
 // all are surfaced up front with native dialogs.
 
-import AVFoundation
 import AppKit
 import ApplicationServices
+import AVFoundation
 
 @MainActor
 enum Permissions {
@@ -39,7 +39,8 @@ enum Permissions {
                 message: "FoldWise Voice can't hear you until Microphone access "
                     + "is enabled in System Settings → Privacy & Security → "
                     + "Microphone.",
-                pane: "Privacy_Microphone")
+                pane: "Privacy_Microphone"
+            )
             next()
         @unknown default:
             next()
@@ -48,10 +49,10 @@ enum Permissions {
 
     // MARK: - Accessibility
 
-    // The AX system prompt only appears while the app has never been added to
-    // the Accessibility list; once it's listed (unchecked), further calls are
-    // silent. Track whether we've prompted so later launches fall back to an
-    // alert that links to System Settings.
+    /// The AX system prompt only appears while the app has never been added to
+    /// the Accessibility list; once it's listed (unchecked), further calls are
+    /// silent. Track whether we've prompted so later launches fall back to an
+    /// alert that links to System Settings.
     private static let axPromptedKey = "AXPermissionPrompted"
 
     private static func requestAccessibility() {
@@ -65,7 +66,7 @@ enum Permissions {
             // entry.
             let options =
                 [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-                as CFDictionary
+                    as CFDictionary
             AXIsProcessTrustedWithOptions(options)
         } else {
             explainAndOfferSettings(
@@ -77,7 +78,8 @@ enum Permissions {
                     + "If FoldWise Voice already shows as enabled there, the "
                     + "grant belongs to a previous version of the app: remove "
                     + "it from the list with the − button, then add it back.",
-                pane: "Privacy_Accessibility")
+                pane: "Privacy_Accessibility"
+            )
         }
     }
 
@@ -110,7 +112,8 @@ enum Permissions {
                     + "If FoldWise Voice already shows as enabled there, the "
                     + "grant belongs to a previous version of the app: remove "
                     + "it from the list with the − button, then add it back.",
-                pane: "Privacy_ListenEvent")
+                pane: "Privacy_ListenEvent"
+            )
         }
     }
 
@@ -126,9 +129,9 @@ enum Permissions {
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Not Now")
         if alert.runModal() == .alertFirstButtonReturn,
-            let url = URL(
-                string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")
-        {
+           let url = URL(
+               string: "x-apple.systempreferences:com.apple.preference.security?\(pane)"
+           ) {
             NSWorkspace.shared.open(url)
         }
     }

@@ -39,7 +39,7 @@ final class Transcriber {
         do {
             manager = try await ensureLoaded().value
         } catch {
-            loadTask = nil  // allow a retry on the next dictation
+            loadTask = nil // allow a retry on the next dictation
             throw error
         }
         var decoderState = try TdtDecoderState()

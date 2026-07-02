@@ -16,7 +16,9 @@ struct Mode {
     var systemPrompt: String?
     var vocab: [String]
 
-    var usesLLM: Bool { !(llmModel ?? "").isEmpty }
+    var usesLLM: Bool {
+        !(llmModel ?? "").isEmpty
+    }
 }
 
 final class Config {
@@ -47,7 +49,9 @@ final class Config {
         self.path = path
     }
 
-    var mode: Mode { modes[activeMode] ?? modes[modeOrder[0]]! }
+    var mode: Mode {
+        modes[activeMode] ?? modes[modeOrder[0]]!
+    }
 
     /// The Ollama model used by LLM modes (they share one by convention).
     var llmModel: String? {
@@ -109,22 +113,22 @@ final class Config {
     private static func jsonString(_ s: String) -> String {
         let data = try! JSONSerialization.data(withJSONObject: [s])
         var text = String(data: data, encoding: .utf8)!
-        text.removeFirst()  // [
-        text.removeLast()  // ]
+        text.removeFirst() // [
+        text.removeLast() // ]
         return text
     }
 
     private static func jsonValue(_ v: Any?) -> String {
         switch v {
-        case nil: return "null"
-        case let raw as RawJSON: return raw.text
-        case let s as String: return jsonString(s)
-        case let b as Bool: return b ? "true" : "false"
+        case nil: "null"
+        case let raw as RawJSON: raw.text
+        case let s as String: jsonString(s)
+        case let b as Bool: b ? "true" : "false"
         case let arr as [String]:
-            return "[" + arr.map { jsonString($0) }.joined(separator: ", ") + "]"
+            "[" + arr.map { jsonString($0) }.joined(separator: ", ") + "]"
         case let arr as [Double]:
-            return "[" + arr.map { String(format: "%.1f", $0) }.joined(separator: ", ") + "]"
-        default: return "null"
+            "[" + arr.map { String(format: "%.1f", $0) }.joined(separator: ", ") + "]"
+        default: "null"
         }
     }
 
@@ -133,11 +137,12 @@ final class Config {
     static func load(from url: URL) throws -> Config {
         let data = try Data(contentsOf: url)
         guard let raw = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let modesRaw = raw["modes"] as? [String: Any], !modesRaw.isEmpty
+              let modesRaw = raw["modes"] as? [String: Any], !modesRaw.isEmpty
         else {
             throw NSError(
                 domain: "FoldWiseVoice", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "\(url.path): 'modes' must contain at least one mode"])
+                userInfo: [NSLocalizedDescriptionKey: "\(url.path): 'modes' must contain at least one mode"]
+            )
         }
 
         var modes: [String: Mode] = [:]
@@ -157,11 +162,10 @@ final class Config {
         var active = raw["active_mode"] as? String ?? ""
         if modes[active] == nil { active = order[0] }
 
-        var hudPosition: [Double]? = nil
+        var hudPosition: [Double]?
         if let pos = raw["hud_position"] as? [Any], pos.count == 2,
-            let x = pos[0] as? Double ?? (pos[0] as? Int).map(Double.init),
-            let y = pos[1] as? Double ?? (pos[1] as? Int).map(Double.init)
-        {
+           let x = pos[0] as? Double ?? (pos[0] as? Int).map(Double.init),
+           let y = pos[1] as? Double ?? (pos[1] as? Int).map(Double.init) {
             hudPosition = [x, y]
         }
 
@@ -192,7 +196,7 @@ final class Config {
                 positions.append((name, tail.endIndex))
             }
         }
-        return positions.sorted { $0.1 < $1.1 }.map { $0.0 }
+        return positions.sorted { $0.1 < $1.1 }.map(\.0)
     }
 
     /// Resolution order: --config arg, $FOLDWISE_CONFIG, ./modes.json,
@@ -206,7 +210,7 @@ final class Config {
         let cwd = URL(fileURLWithPath: fm.currentDirectoryPath)
         for candidate in [cwd.appendingPathComponent("modes.json"),
                           cwd.deletingLastPathComponent().appendingPathComponent("modes.json")]
-        where fm.fileExists(atPath: candidate.path) {
+            where fm.fileExists(atPath: candidate.path) {
             return candidate
         }
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -230,18 +234,21 @@ final class Config {
                 + "and obvious transcription errors. Remove filler words (um, uh, "
                 + "like, you know). Do NOT change meaning, add content, or answer "
                 + "questions. Output ONLY the cleaned text.",
-            vocab: ["FoldWise", "Ollama", "Anthropic"])
+            vocab: ["FoldWise", "Ollama", "Anthropic"]
+        )
         let raw = Mode(name: "Voice to Text", asrModel: asr, llmModel: nil, systemPrompt: nil, vocab: [])
         let email = Mode(
             name: "Email", asrModel: asr, llmModel: "llama3.2:3b",
             systemPrompt: "Rewrite this dictation as a clear, concise, professional email "
                 + "body. Output only the email text.",
-            vocab: [])
+            vocab: []
+        )
         let bullets = Mode(
             name: "Bullets", asrModel: asr, llmModel: "llama3.2:3b",
             systemPrompt: "Convert this dictation into a tight bulleted list, one idea per "
                 + "bullet. Output only the list.",
-            vocab: [])
+            vocab: []
+        )
         return Config(
             activeMode: "Clean", hotkey: "alt_r", toggleHotkey: nil, pauseAudio: true,
             hudPosition: nil,

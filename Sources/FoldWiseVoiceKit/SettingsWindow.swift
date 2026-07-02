@@ -14,53 +14,65 @@ enum ModelCatalog {
     struct Entry: Identifiable {
         let name: String
         let size: String
-        let speed: Int  // 1…5, higher = faster polish turnaround
-        let quality: Int  // 1…5, higher = better cleanup/rewrites
+        let speed: Int // 1…5, higher = faster polish turnaround
+        let quality: Int // 1…5, higher = better cleanup/rewrites
         let blurb: String
-        var id: String { name }
+        var id: String {
+            name
+        }
     }
 
     static let entries: [Entry] = [
         Entry(
             name: "gemma3:1b", size: "815 MB", speed: 5, quality: 2,
             blurb: "The smallest download here. Quick punctuation and filler "
-                + "cleanup on any Mac; too small for faithful Email rewrites."),
+                + "cleanup on any Mac; too small for faithful Email rewrites."
+        ),
         Entry(
             name: "llama3.2:1b", size: "1.3 GB", speed: 5, quality: 2,
             blurb: "Tiny and near-instant. Fine for punctuation and filler removal; "
-                + "struggles with bigger rewrites like Email or Bullets."),
+                + "struggles with bigger rewrites like Email or Bullets."
+        ),
         Entry(
             name: "llama3.2:3b", size: "2.0 GB", speed: 4, quality: 3,
             blurb: "The default — best balance for dictation. Fast enough to feel "
-                + "instant and solid at following the mode prompts."),
+                + "instant and solid at following the mode prompts."
+        ),
         Entry(
             name: "qwen2.5:3b", size: "1.9 GB", speed: 4, quality: 3,
             blurb: "On par with Llama 3.2 3B for cleanup, with stronger "
-                + "multilingual dictation."),
+                + "multilingual dictation."
+        ),
         Entry(
             name: "gemma2:2b", size: "1.6 GB", speed: 4, quality: 2,
             blurb: "Google's compact model. Snappy at simple cleanup; less strict "
-                + "about \"output only the text\" prompts."),
+                + "about \"output only the text\" prompts."
+        ),
         Entry(
             name: "phi4-mini:3.8b", size: "2.5 GB", speed: 4, quality: 3,
             blurb: "Microsoft's small model. Follows the mode prompts closely and "
-                + "handles multilingual dictation well for its size."),
+                + "handles multilingual dictation well for its size."
+        ),
         Entry(
             name: "gemma3:4b", size: "3.3 GB", speed: 4, quality: 4,
             blurb: "Google's current small model — the best cleanup quality below "
-                + "the 7B tier, with strong multilingual support."),
+                + "the 7B tier, with strong multilingual support."
+        ),
         Entry(
             name: "qwen2.5:7b", size: "4.7 GB", speed: 3, quality: 4,
             blurb: "Noticeably better Email and Bullets rewrites. A beat slower; "
-                + "comfortable on 16 GB+ Macs."),
+                + "comfortable on 16 GB+ Macs."
+        ),
         Entry(
             name: "llama3.1:8b", size: "4.9 GB", speed: 2, quality: 4,
             blurb: "High-quality rewriting and prompt adherence. Slower to respond; "
-                + "wants ~8 GB of memory free."),
+                + "wants ~8 GB of memory free."
+        ),
         Entry(
             name: "mistral:7b", size: "4.4 GB", speed: 3, quality: 3,
             blurb: "Solid all-rounder, but older instruction tuning than Qwen or "
-                + "Llama at the same size."),
+                + "Llama at the same size."
+        ),
     ]
 
     /// Exact match first, then match on the part before ':' so
@@ -85,7 +97,9 @@ final class SettingsModel: ObservableObject {
         case models = "Models"
         case configuration = "Configuration"
         case sound = "Sound"
-        var id: String { rawValue }
+        var id: String {
+            rawValue
+        }
 
         var icon: String {
             switch self {
@@ -134,10 +148,10 @@ final class SettingsModel: ObservableObject {
     @Published var updateState: UpdateState = .idle
     @Published var activeMode = ""
     @Published var selectedModel = ""
-    @Published var installed: [OllamaClient.InstalledModel]? = nil  // nil = checking, [] = Ollama down
-    @Published var pullingModel: String? = nil
+    @Published var installed: [OllamaClient.InstalledModel]? // nil = checking, [] = Ollama down
+    @Published var pullingModel: String?
     @Published var pullStatus = ""
-    @Published var pullFraction: Double? = nil
+    @Published var pullFraction: Double?
     @Published var pullError = ""
     @Published var customModel = ""
     @Published var pttKey = ""
@@ -147,7 +161,7 @@ final class SettingsModel: ObservableObject {
     @Published var axTrusted = false
     @Published var status = ""
     @Published var statusIsError = false
-    @Published var recordingField: RecordingField? = nil
+    @Published var recordingField: RecordingField?
 
     var modeNames: [String] = []
     var llmModes: Set<String> = []
@@ -161,7 +175,9 @@ final class SettingsModel: ObservableObject {
     var onEditFile: (() -> Void)?
     var onCheckUpdates: (() -> Void)?
 
-    var ollamaDown: Bool { installed?.isEmpty ?? false }
+    var ollamaDown: Bool {
+        installed?.isEmpty ?? false
+    }
 
     /// False only when we can see Ollama's model list and ours isn't in it.
     var selectedModelInstalled: Bool {
@@ -181,6 +197,7 @@ private struct VisualEffect: NSViewRepresentable {
         view.state = .active
         return view
     }
+
     func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
@@ -194,7 +211,7 @@ private struct Card<Content: View>: View {
 
 private struct CardRow<Trailing: View>: View {
     let title: String
-    var subtitle: String? = nil
+    var subtitle: String?
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
@@ -227,12 +244,12 @@ private struct Keycap: View {
 
 private struct RatingDots: View {
     let label: String
-    let value: Int  // of 5
+    let value: Int // of 5
     var body: some View {
         HStack(spacing: 4) {
             Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
             HStack(spacing: 2.5) {
-                ForEach(0..<5, id: \.self) { i in
+                ForEach(0 ..< 5, id: \.self) { i in
                     Circle()
                         .fill(i < value ? AnyShapeStyle(.primary) : AnyShapeStyle(.quaternary))
                         .frame(width: 4.5, height: 4.5)
@@ -294,7 +311,7 @@ struct SettingsView: View {
             .padding(.bottom, 10)
         }
         .padding(.horizontal, 10)
-        .padding(.top, 34)  // clear the traffic lights
+        .padding(.top, 34) // clear the traffic lights
         .frame(width: 192)
         .background(VisualEffect(material: .sidebar))
     }
@@ -309,7 +326,7 @@ struct SettingsView: View {
                 .controlSize(.small)
                 .scaleEffect(0.5)
                 .frame(width: 12, height: 12)
-        case .available(let version, let downloadURL):
+        case let .available(version, downloadURL):
             Button("Get v\(version)") {
                 NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
             }
@@ -353,7 +370,8 @@ struct SettingsView: View {
         .buttonStyle(.plain)
         .background(
             model.pane == pane ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
-            in: RoundedRectangle(cornerRadius: 8))
+            in: RoundedRectangle(cornerRadius: 8)
+        )
     }
 
     // MARK: content shell
@@ -405,7 +423,8 @@ struct SettingsView: View {
                 CardRow(
                     title: "Polish model",
                     subtitle: model.selectedModel.isEmpty
-                        ? "No LLM mode configured" : model.selectedModel
+                        ? "No LLM mode configured"
+                        : model.selectedModel
                 ) {
                     if model.ollamaDown {
                         Label("Ollama offline", systemImage: "exclamationmark.triangle.fill")
@@ -432,8 +451,9 @@ struct SettingsView: View {
                             NSWorkspace.shared.open(
                                 URL(
                                     string:
-                                        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-                                )!)
+                                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                                )!
+                            )
                         }
                         .controlSize(.small)
                     }
@@ -464,7 +484,7 @@ struct SettingsView: View {
         case .idle: "Version \(appVersion)"
         case .checking: "Version \(appVersion) — checking for updates…"
         case .upToDate: "Version \(appVersion) — you're up to date"
-        case .available(let version, _): "Version \(appVersion) — v\(version) is available"
+        case let .available(version, _): "Version \(appVersion) — v\(version) is available"
         case .failed: "Version \(appVersion) — couldn't reach GitHub, try again later"
         case .unavailable: "Version \(appVersion) — update checks need a packaged build"
         }
@@ -475,7 +495,7 @@ struct SettingsView: View {
         switch model.updateState {
         case .checking:
             ProgressView().controlSize(.small)
-        case .available(let version, let downloadURL):
+        case let .available(version, downloadURL):
             Button("Download v\(version)…") {
                 NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
             }
@@ -516,7 +536,8 @@ struct SettingsView: View {
                         ) {
                             Image(
                                 systemName: model.activeMode == name
-                                    ? "checkmark.circle.fill" : "circle"
+                                    ? "checkmark.circle.fill"
+                                    : "circle"
                             )
                             .foregroundStyle(model.activeMode == name ? .blue : .secondary)
                         }
@@ -562,8 +583,7 @@ struct SettingsView: View {
             } else {
                 sectionHeader("Installed")
                 Card {
-                    ForEach(Array((model.installed ?? []).enumerated()), id: \.element.id) {
-                        i, installed in
+                    ForEach(Array((model.installed ?? []).enumerated()), id: \.element.id) { i, installed in
                         if i > 0 { Divider().padding(.leading, 14) }
                         installedRow(installed)
                     }
@@ -600,7 +620,8 @@ struct SettingsView: View {
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 160)
                             installButton(
-                                for: model.customModel.trimmingCharacters(in: .whitespaces))
+                                for: model.customModel.trimmingCharacters(in: .whitespaces)
+                            )
                         }
                     }
                 }
@@ -747,7 +768,8 @@ struct SettingsView: View {
                             set: {
                                 model.hudStyle = $0
                                 model.onCommit?()
-                            })
+                            }
+                        )
                     ) {
                         ForEach(HUDStyle.allCases) { style in
                             Text(style.displayName).tag(style.rawValue)
@@ -762,8 +784,7 @@ struct SettingsView: View {
     }
 
     private func resetButton(icon: String, help: String, action: @escaping () -> Void)
-        -> some View
-    {
+        -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
@@ -803,7 +824,7 @@ struct SettingsView: View {
 
     private func keycapLabel(_ name: String) -> String {
         if name.count == 1 { return name.uppercased() }
-        return KeyMap.pretty(name)  // "right ⌥", "f19", "esc", …
+        return KeyMap.pretty(name) // "right ⌥", "f19", "esc", …
     }
 
     // MARK: sound
@@ -821,7 +842,8 @@ struct SettingsView: View {
                         set: {
                             model.pauseAudio = $0
                             model.onCommit?()
-                        })
+                        }
+                    )
                 )
                 .toggleStyle(.switch)
                 .labelsHidden()
@@ -871,7 +893,7 @@ final class SettingsController {
         model.onRefreshModels = { [weak self] in self?.refreshModels() }
         model.onEditFile = { [weak self] in
             guard let self else { return }
-            NSWorkspace.shared.open(self.config.path)
+            NSWorkspace.shared.open(config.path)
         }
         model.onCheckUpdates = { [weak self] in self?.checkForUpdates() }
     }
@@ -930,9 +952,10 @@ final class SettingsController {
             switch await UpdateChecker.checkNow() {
             case .upToDate:
                 self.model.updateState = .upToDate
-            case .updateAvailable(let version, let downloadURL):
+            case let .updateAvailable(version, downloadURL):
                 self.model.updateState = .available(
-                    version: version, downloadURL: downloadURL)
+                    version: version, downloadURL: downloadURL
+                )
                 self.onUpdateAvailable?(version)
             case .failed:
                 self.model.updateState = .failed
@@ -978,8 +1001,7 @@ final class SettingsController {
     private func startRecording(_ field: SettingsModel.RecordingField) {
         stopRecording()
         model.recordingField = field
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) {
-            [weak self] event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
             var name: String?
             if event.type == .flagsChanged {
@@ -996,13 +1018,13 @@ final class SettingsController {
             }
             if let name, !name.isEmpty {
                 switch field {
-                case .ptt: self.model.pttKey = name
-                case .toggle: self.model.toggleKey = name
+                case .ptt: model.pttKey = name
+                case .toggle: model.toggleKey = name
                 }
-                self.commit()
+                commit()
             }
-            self.stopRecording()
-            return nil  // swallow the keystroke
+            stopRecording()
+            return nil // swallow the keystroke
         }
     }
 

@@ -3,7 +3,6 @@
 // Network paths (fetchLatestRelease/checkNow) are deliberately untested here.
 
 import XCTest
-
 @testable import FoldWiseVoiceKit
 
 @MainActor

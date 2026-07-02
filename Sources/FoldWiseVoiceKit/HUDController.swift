@@ -12,36 +12,44 @@ import AppKit
 import SwiftUI
 
 final class HUDPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
+    override var canBecomeKey: Bool {
+        false
+    }
+
+    override var canBecomeMain: Bool {
+        false
+    }
 }
 
 /// Pill sizes per HUDStyle and phase.
 extension HUDStyle {
     var miniSize: CGSize {
         switch self {
-        case .classic: return CGSize(width: 90, height: 16)
-        case .minimal: return CGSize(width: 64, height: 30)
+        case .classic: CGSize(width: 90, height: 16)
+        case .minimal: CGSize(width: 64, height: 30)
         }
     }
+
     /// Idle pill while hovered (classic: gear; minimal: control panel).
     var hoverSize: CGSize {
         switch self {
-        case .classic: return CGSize(width: 150, height: 26)
-        case .minimal: return CGSize(width: 136, height: 36)
+        case .classic: CGSize(width: 150, height: 26)
+        case .minimal: CGSize(width: 136, height: 36)
         }
     }
+
     var fullSize: CGSize {
         switch self {
-        case .classic: return CGSize(width: 340, height: 64)
-        case .minimal: return CGSize(width: 280, height: 36)
+        case .classic: CGSize(width: 340, height: 64)
+        case .minimal: CGSize(width: 280, height: 36)
         }
     }
+
     /// Recording pill is a single label-free row, so it can be slimmer.
     var listeningSize: CGSize {
         switch self {
-        case .classic: return CGSize(width: 340, height: 44)
-        case .minimal: return CGSize(width: 190, height: 36)
+        case .classic: CGSize(width: 340, height: 44)
+        case .minimal: CGSize(width: 190, height: 36)
         }
     }
 }
@@ -128,8 +136,7 @@ final class HUDController: NSObject {
 
     func flash(_ phase: HUDModel.Phase, _ label: String, seconds: TimeInterval = 1.4) {
         show(phase, label)
-        hideTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) {
-            [weak self] _ in
+        hideTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
             Task { @MainActor in self?.idle() }
         }
     }
@@ -149,7 +156,8 @@ final class HUDController: NSObject {
         let p = HUDPanel(
             contentRect: rect,
             styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered, defer: false)
+            backing: .buffered, defer: false
+        )
         p.level = .statusBar
         p.isOpaque = false
         p.backgroundColor = .clear
@@ -165,7 +173,8 @@ final class HUDController: NSObject {
             onGear: { [weak self] in self?.onSettings() },
             onStop: { [weak self] in self?.onStop?() },
             onChangeMode: { [weak self] in self?.popUpModeMenu() },
-            onRecord: { [weak self] in self?.onRecord?() })
+            onRecord: { [weak self] in self?.onRecord?() }
+        )
         p.contentView = NSHostingView(rootView: view)
 
         NotificationCenter.default.addObserver(
@@ -183,7 +192,8 @@ final class HUDController: NSObject {
         let menu = NSMenu()
         for name in config.modeOrder {
             let item = NSMenuItem(
-                title: name, action: #selector(modeMenuItemPicked(_:)), keyEquivalent: "")
+                title: name, action: #selector(modeMenuItemPicked(_:)), keyEquivalent: ""
+            )
             item.target = self
             item.state = name == config.activeMode ? .on : .off
             menu.addItem(item)
@@ -226,15 +236,13 @@ final class HUDController: NSObject {
         guard frame != panel.frame else { return }
         programmaticMove = true
         if animate {
-            NSAnimationContext.runAnimationGroup(
-                { ctx in
-                    ctx.duration = 0.22
-                    ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                    panel.animator().setFrame(frame, display: true)
-                },
-                completionHandler: { [weak self] in
-                    Task { @MainActor in self?.programmaticMove = false }
-                })
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.22
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                panel.animator().setFrame(frame, display: true)
+            } completionHandler: { [weak self] in
+                Task { @MainActor in self?.programmaticMove = false }
+            }
         } else {
             panel.setFrame(frame, display: true)
             programmaticMove = false
@@ -282,8 +290,7 @@ final class HUDController: NSObject {
         guard let anchor else { return }
         let new = [Double(anchor.x), Double(anchor.y)]
         if let old = config.hudPosition, old.count == 2,
-            abs(old[0] - new[0]) < 0.5, abs(old[1] - new[1]) < 0.5
-        {
+           abs(old[0] - new[0]) < 0.5, abs(old[1] - new[1]) < 0.5 {
             return
         }
         config.hudPosition = new.map { ($0 * 10).rounded() / 10 }
@@ -294,8 +301,7 @@ final class HUDController: NSObject {
 
     private func startLevelTimer() {
         guard levelTimer == nil else { return }
-        levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) {
-            [weak self] _ in
+        levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.model.pushLevel(self.recorder?.level ?? 0)

@@ -73,11 +73,13 @@ final class MenuBarController: NSObject {
 
         // Hidden until UpdateChecker reports a newer release.
         updateItem = NSMenuItem(
-            title: "Update Available…", action: #selector(openReleasePage(_:)), keyEquivalent: "")
+            title: "Update Available…", action: #selector(openReleasePage(_:)), keyEquivalent: ""
+        )
         updateItem.target = self
         updateItem.isHidden = true
         updateItem.image = NSImage(
-            systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil)
+            systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil
+        )
         menu.addItem(updateItem)
         updateSeparator = .separator()
         updateSeparator.isHidden = true
@@ -86,7 +88,8 @@ final class MenuBarController: NSObject {
         modeItems = []
         for name in config.modeOrder {
             let item = NSMenuItem(
-                title: name, action: #selector(switchMode(_:)), keyEquivalent: "")
+                title: name, action: #selector(switchMode(_:)), keyEquivalent: ""
+            )
             item.target = self
             menu.addItem(item)
             modeItems.append(item)
@@ -94,19 +97,22 @@ final class MenuBarController: NSObject {
 
         menu.addItem(.separator())
         let settings = NSMenuItem(
-            title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
+            title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ","
+        )
         settings.target = self
         menu.addItem(settings)
 
         let checkUpdates = NSMenuItem(
             title: "Check for Updates…", action: #selector(checkForUpdates(_:)),
-            keyEquivalent: "")
+            keyEquivalent: ""
+        )
         checkUpdates.target = self
         menu.addItem(checkUpdates)
 
         menu.addItem(.separator())
         let quit = NSMenuItem(
-            title: "Quit FoldWise Voice", action: #selector(quitApp(_:)), keyEquivalent: "q")
+            title: "Quit FoldWise Voice", action: #selector(quitApp(_:)), keyEquivalent: "q"
+        )
         quit.target = self
         menu.addItem(quit)
 

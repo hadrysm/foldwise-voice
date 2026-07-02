@@ -2,26 +2,25 @@
 // written by either app must parse identically in both.
 
 import XCTest
-
 @testable import FoldWiseVoiceKit
 
 final class KeyMapTests: XCTestCase {
     func testParseKnownKeyName() throws {
-        guard case .keycode(let code) = try KeyMap.parse("alt_r") else {
+        guard case let .keycode(code) = try KeyMap.parse("alt_r") else {
             return XCTFail("alt_r should parse as a keycode")
         }
         XCTAssertEqual(code, 61)
     }
 
     func testParseIsCaseAndWhitespaceInsensitive() throws {
-        guard case .keycode(let code) = try KeyMap.parse("  ALT_R ") else {
+        guard case let .keycode(code) = try KeyMap.parse("  ALT_R ") else {
             return XCTFail("' ALT_R ' should parse as a keycode")
         }
         XCTAssertEqual(code, 61)
     }
 
     func testParseSingleCharacterLowercases() throws {
-        guard case .character(let ch) = try KeyMap.parse("A") else {
+        guard case let .character(ch) = try KeyMap.parse("A") else {
             return XCTFail("'A' should parse as a character key")
         }
         XCTAssertEqual(ch, "a")
@@ -45,7 +44,8 @@ final class KeyMapTests: XCTestCase {
         for (code, name) in KeyMap.codeToName {
             XCTAssertEqual(
                 KeyMap.nameToCode[name], code,
-                "codeToName[\(code)] = \(name) does not map back to \(code)")
+                "codeToName[\(code)] = \(name) does not map back to \(code)"
+            )
         }
     }
 

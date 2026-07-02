@@ -34,12 +34,12 @@ final class Pipeline {
         transcriber.onLoading = { [weak self] loading in
             guard let self else { return }
             if loading {
-                guard !self.recorder.isRecording else { return }
-                self.emit(.loadingModel)
-            } else if self.lastEmitted == .loadingModel {
+                guard !recorder.isRecording else { return }
+                emit(.loadingModel)
+            } else if lastEmitted == .loadingModel {
                 // Back to whatever the load interrupted: a queued dictation
                 // continues transcribing; a launch warmup returns to idle.
-                self.emit(self.jobActive ? .transcribing : .idle)
+                emit(jobActive ? .transcribing : .idle)
             }
         }
     }
@@ -72,7 +72,11 @@ final class Pipeline {
     }
 
     func toggleRecording() {
-        recorder.isRecording ? stopRecording() : startRecording()
+        if recorder.isRecording {
+            stopRecording()
+        } else {
+            startRecording()
+        }
     }
 
     func shutdown() {
@@ -85,7 +89,7 @@ final class Pipeline {
     private func process(_ samples: [Float], mode: Mode) async {
         jobActive = true
         defer { jobActive = false }
-        guard samples.count >= 1600 else {  // < 0.1 s — no real audio captured
+        guard samples.count >= 1600 else { // < 0.1 s — no real audio captured
             emit(.idle)
             return
         }
@@ -113,7 +117,8 @@ final class Pipeline {
         if mode.usesLLM, let model = mode.llmModel, text.count > MIN_CHARS_FOR_LLM {
             emit(.polishing(model: model))
             text = await OllamaClient.polish(
-                text, model: model, systemPrompt: mode.systemPrompt, vocab: mode.vocab)
+                text, model: model, systemPrompt: mode.systemPrompt, vocab: mode.vocab
+            )
             NSLog("llm: \(text)")
         }
 

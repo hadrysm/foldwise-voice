@@ -48,7 +48,7 @@ final class UpdateChecker {
 
     private func check() {
         Task { @MainActor in
-            if case .updateAvailable(let version, _) = await Self.checkNow() {
+            if case let .updateAvailable(version, _) = await Self.checkNow() {
                 onUpdateAvailable(version)
             }
         }
@@ -76,9 +76,9 @@ final class UpdateChecker {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 10
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-            let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let tag = json["tag_name"] as? String
+              let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tag = json["tag_name"] as? String
         else { return nil }
         let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
         guard !version.isEmpty, parse(version) != nil else { return nil }
@@ -93,7 +93,7 @@ final class UpdateChecker {
     static func isNewer(_ candidate: String, than current: String) -> Bool {
         guard let a = parse(candidate), let b = parse(current) else { return false }
         let count = max(a.count, b.count)
-        for i in 0..<count {
+        for i in 0 ..< count {
             let x = i < a.count ? a[i] : 0
             let y = i < b.count ? b[i] : 0
             if x != y { return x > y }

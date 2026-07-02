@@ -49,10 +49,10 @@ enum KeyMap {
     /// The generic masks above are shared by the left/right key of a pair, so
     /// they can't tell "right ⌥ released" from "left ⌥ still held".
     private static let deviceBits: [CGKeyCode: (own: UInt64, sibling: UInt64)] = [
-        59: (0x0001, 0x2000), 62: (0x2000, 0x0001),  // ctrl_l, ctrl_r
-        56: (0x0002, 0x0004), 60: (0x0004, 0x0002),  // shift_l, shift_r
-        55: (0x0008, 0x0010), 54: (0x0010, 0x0008),  // cmd_l, cmd_r
-        58: (0x0020, 0x0040), 61: (0x0040, 0x0020),  // alt_l, alt_r
+        59: (0x0001, 0x2000), 62: (0x2000, 0x0001), // ctrl_l, ctrl_r
+        56: (0x0002, 0x0004), 60: (0x0004, 0x0002), // shift_l, shift_r
+        55: (0x0008, 0x0010), 54: (0x0010, 0x0008), // cmd_l, cmd_r
+        58: (0x0020, 0x0040), 61: (0x0040, 0x0020), // alt_l, alt_r
     ]
 
     /// Is the modifier `keycode` down, given a flagsChanged event's flags?
@@ -63,7 +63,7 @@ enum KeyMap {
     static func isModifierDown(keycode: CGKeyCode, flags: CGEventFlags) -> Bool? {
         guard let mask = modifierFlag[keycode] else { return nil }
         guard flags.contains(mask) else { return false }
-        guard let bits = deviceBits[keycode] else { return true }  // caps_lock
+        guard let bits = deviceBits[keycode] else { return true } // caps_lock
         let raw = flags.rawValue
         return raw & bits.own != 0 || raw & (bits.own | bits.sibling) == 0
     }
@@ -91,7 +91,8 @@ enum KeyMap {
             domain: "FoldWiseVoice", code: 2,
             userInfo: [
                 NSLocalizedDescriptionKey:
-                    "Unknown hotkey '\(name)'. Use a key name (e.g. 'alt_r', 'cmd_r', 'f19') or a single character."
-            ])
+                    "Unknown hotkey '\(name)'. Use a key name (e.g. 'alt_r', 'cmd_r', 'f19') or a single character.",
+            ]
+        )
     }
 }

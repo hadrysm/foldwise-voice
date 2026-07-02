@@ -45,7 +45,8 @@ final class AudioDucker {
         for app in Self.players {
             let state = osascript(
                 "if application \"\(app)\" is running then "
-                    + "tell application \"\(app)\" to get player state as text")
+                    + "tell application \"\(app)\" to get player state as text"
+            )
             if state == "playing" {
                 _ = osascript("tell application \"\(app)\" to pause")
                 pausedPlayers.append(app)

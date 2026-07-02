@@ -4,7 +4,6 @@
 
 import CoreGraphics
 import XCTest
-
 @testable import FoldWiseVoiceKit
 
 final class KeyMapModifierTests: XCTestCase {
@@ -13,7 +12,7 @@ final class KeyMapModifierTests: XCTestCase {
     private let altRBit: UInt64 = 0x0040
 
     func testNonModifierKeycodeReturnsNil() {
-        XCTAssertNil(KeyMap.isModifierDown(keycode: 49, flags: []))  // space
+        XCTAssertNil(KeyMap.isModifierDown(keycode: 49, flags: [])) // space
     }
 
     func testGenericMaskAbsentMeansUp() {
@@ -36,7 +35,8 @@ final class KeyMapModifierTests: XCTestCase {
         // Synthesized events may omit device bits entirely; the generic mask
         // alone must then count as down.
         XCTAssertEqual(
-            KeyMap.isModifierDown(keycode: altR, flags: .maskAlternate), true)
+            KeyMap.isModifierDown(keycode: altR, flags: .maskAlternate), true
+        )
     }
 
     func testCapsLockHasNoDeviceBitsAndUsesGenericMask() {

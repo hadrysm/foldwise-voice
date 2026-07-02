@@ -1,0 +1,34 @@
+# SwiftFormat — `swiftformat --lint .` in CI, `swiftformat .` locally.
+# Rule docs: https://github.com/nicklockwood/SwiftFormat/blob/main/Rules.md
+
+--exclude .build
+
+# Options
+--swiftversion 5.10            # matches Package.swift toolchain
+--indent 4                     # existing style
+--maxwidth 120                 # matches SwiftLint line_length warning
+--wraparguments preserve       # low-churn: don't rewrap existing call sites
+--wrapparameters preserve
+--wrapcollections preserve
+--wrapternary before-operators
+--self remove                  # implicit self, the codebase's existing style
+--importgrouping testable-bottom
+--stripunusedargs closure-only # don't churn delegate/callback signatures
+--header ignore                # leave existing file-header comments alone
+--elseposition same-line
+--semicolons never
+--trimwhitespace always
+
+# Extra rules (opt-in)
+--enable isEmpty               # count == 0 → isEmpty; pairs with SwiftLint empty_count
+--enable blockComments         # /* */ → // for consistency
+
+# Default rules disabled (churn / taste)
+--disable andOperator                   # keep `if a && b` over comma conditions
+--disable wrapMultilineStatementBraces  # avoids fights with preserved wrapping
+--disable hoistTry                      # keep `try` next to the throwing call
+--disable hoistAwait                    # same for await
+
+# Deliberately NOT enabled: organizeDeclarations / markTypes (whole-file
+# churn), docComments (misfires on explanatory comments), acronyms (renames
+# existing identifiers).

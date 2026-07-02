@@ -6,13 +6,13 @@
 import AppKit
 import Foundation
 
-// TCP port used as a single-instance mutex (shared with the Python app so
-// only one dictation app runs at a time).
+/// TCP port used as a single-instance mutex (shared with the Python app so
+/// only one dictation app runs at a time).
 private let lockPort: UInt16 = 47812
 
 private func acquireInstanceLock(port: UInt16) -> Bool {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
-    guard fd >= 0 else { return true }  // can't check — proceed
+    guard fd >= 0 else { return true } // can't check — proceed
     var addr = sockaddr_in()
     addr.sin_family = sa_family_t(AF_INET)
     addr.sin_port = port.bigEndian
@@ -26,7 +26,7 @@ private func acquireInstanceLock(port: UInt16) -> Bool {
         close(fd)
         return false
     }
-    return true  // fd stays open (and the port bound) for the app's lifetime
+    return true // fd stays open (and the port bound) for the app's lifetime
 }
 
 @MainActor
@@ -34,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let configPath: String?
     let modeOverride: String?
 
+    // Standard AppKit delayed-init: these exist for the app's whole life but
+    // can only be built in applicationDidFinishLaunching. Optionals would
+    // force unwrapping at every use for no real safety gain.
+    // swiftlint:disable implicitly_unwrapped_optional
     private var config: Config!
     private var pipeline: Pipeline!
     private var hud: HUDController!
@@ -41,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBar: MenuBarController!
     private var listener: HotkeyListener?
     private var updateChecker: UpdateChecker!
+    // swiftlint:enable implicitly_unwrapped_optional
 
     init(configPath: String?, modeOverride: String?) {
         self.configPath = configPath
@@ -54,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.messageText = "FoldWise Voice is already running"
             alert.informativeText =
                 "Look for the mic icon in the menu bar — on notched MacBooks it "
-                + "can be hidden if the bar is full (⌘-drag other icons to make room)."
+                    + "can be hidden if the bar is full (⌘-drag other icons to make room)."
             alert.runModal()
             NSApp.terminate(nil)
             return
@@ -83,7 +88,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onModeChanged: {},
             onSettings: { [weak self] in self?.settings.show() },
             onCheckForUpdates: { [weak self] in self?.checkForUpdatesManually() },
-            onQuit: { [weak self] in self?.quit() })
+            onQuit: { [weak self] in self?.quit() }
+        )
         settings.onUpdateAvailable = { [weak self] version in
             self?.menuBar.showUpdateAvailable(version)
         }
@@ -106,7 +112,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hud.flash(
             .done,
             "FoldWise Voice ready — hold \(KeyMap.pretty(config.hotkey)) to dictate",
-            seconds: 4.0)
+            seconds: 4.0
+        )
     }
 
     private func startListener() {
@@ -118,7 +125,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 toggleKey: config.toggleHotkey,
                 onPress: { [weak self] in self?.pipeline.startRecording() },
                 onRelease: { [weak self] in self?.pipeline.stopRecording() },
-                onToggle: { [weak self] in self?.pipeline.toggleRecording() })
+                onToggle: { [weak self] in self?.pipeline.toggleRecording() }
+            )
             l.start()
             listener = l
         } catch {
@@ -140,19 +148,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate(ignoringOtherApps: true)
             let alert = NSAlert()
             switch result {
-            case .upToDate(let current):
+            case let .upToDate(current):
                 alert.messageText = "You're up to date"
                 alert.informativeText =
                     "FoldWise Voice \(current) is the latest version."
                 alert.runModal()
-            case .updateAvailable(let version, let downloadURL):
+            case let .updateAvailable(version, downloadURL):
                 menuBar.showUpdateAvailable(version)
                 alert.messageText = "Update available"
                 alert.informativeText =
                     "FoldWise Voice v\(version) is available — you have "
-                    + "\(UpdateChecker.currentVersion() ?? "an older version"). "
-                    + "The download opens in your browser; drag the new app "
-                    + "into Applications to update."
+                        + "\(UpdateChecker.currentVersion() ?? "an older version"). "
+                        + "The download opens in your browser; drag the new app "
+                        + "into Applications to update."
                 alert.addButton(withTitle: "Download")
                 alert.addButton(withTitle: "Later")
                 if alert.runModal() == .alertFirstButtonReturn {
@@ -171,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func apply(_ state: PipelineState) {
         switch state {
-        case .listening(let mode):
+        case let .listening(mode):
             menuBar.setIcon(.listening)
             hud.show(.listening, "Listening…  (\(mode))")
         case .loadingModel:
@@ -180,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .transcribing:
             menuBar.setIcon(.working)
             hud.show(.working, "Transcribing…")
-        case .polishing(let model):
+        case let .polishing(model):
             menuBar.setIcon(.working)
             hud.show(.working, "Polishing with \(model)…")
         case .inserted:
@@ -212,10 +220,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(
             withTitle: "About FoldWise Voice",
             action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
-            keyEquivalent: "")
+            keyEquivalent: ""
+        )
         appMenu.addItem(.separator())
         let quitItem = NSMenuItem(
-            title: "Quit FoldWise Voice", action: #selector(quit), keyEquivalent: "q")
+            title: "Quit FoldWise Voice", action: #selector(quit), keyEquivalent: "q"
+        )
         quitItem.target = self
         appMenu.addItem(quitItem)
         let appItem = NSMenuItem()
@@ -231,19 +241,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(
-            withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+            withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"
+        )
         editMenu.addItem(
-            withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+            withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"
+        )
         let editItem = NSMenuItem()
         editItem.submenu = editMenu
         main.addItem(editItem)
 
         let windowMenu = NSMenu(title: "Window")
         windowMenu.addItem(
-            withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+            withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"
+        )
         windowMenu.addItem(
             withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)),
-            keyEquivalent: "m")
+            keyEquivalent: "m"
+        )
         let windowItem = NSMenuItem()
         windowItem.submenu = windowMenu
         main.addItem(windowItem)
@@ -280,7 +294,8 @@ public enum FoldWiseVoiceApp {
                 activeMode: config.activeMode, hotkey: config.hotkey,
                 toggleHotkey: config.toggleHotkey, pauseAudio: config.pauseAudio,
                 hudPosition: config.hudPosition, hudStyle: config.hudStyle,
-                modeOrder: config.modeOrder, modes: config.modes, path: tmp)
+                modeOrder: config.modeOrder, modes: config.modes, path: tmp
+            )
             try? echo.save()
             print("config: \(url.path)")
             print((try? String(contentsOf: tmp, encoding: .utf8)) ?? "<save failed>")
