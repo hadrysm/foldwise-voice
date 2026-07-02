@@ -73,7 +73,10 @@ enum Permissions {
                 message: "Without Accessibility, FoldWise Voice can't paste "
                     + "transcripts into other apps — dictations land on the "
                     + "clipboard instead. Enable it in System Settings → "
-                    + "Privacy & Security → Accessibility.",
+                    + "Privacy & Security → Accessibility.\n\n"
+                    + "If FoldWise Voice already shows as enabled there, the "
+                    + "grant belongs to a previous version of the app: remove "
+                    + "it from the list with the − button, then add it back.",
                 pane: "Privacy_Accessibility")
         }
     }
@@ -85,11 +88,30 @@ enum Permissions {
     /// Settings → Privacy & Security → Input Monitoring under its current code
     /// signature — otherwise the tap silently fails and the hotkey only works
     /// while the app is frontmost. The system shows this prompt at most once;
-    /// after a denial the call is a silent no-op, and HotkeyListener keeps
-    /// retrying the tap so a later grant takes effect without a relaunch.
+    /// after that the call is a silent no-op — including when a grant from a
+    /// previous build's signature is still listed (updates re-sign the binary,
+    /// which voids the old grant even though the toggle stays on). So on later
+    /// launches explain the fix instead. HotkeyListener keeps retrying the
+    /// tap, so a grant takes effect without a relaunch.
+    private static let imPromptedKey = "IMPermissionPrompted"
+
     private static func requestInputMonitoring() {
         guard !AXIsProcessTrusted(), !CGPreflightListenEventAccess() else { return }
-        _ = CGRequestListenEventAccess()
+        let defaults = UserDefaults.standard
+        if !defaults.bool(forKey: imPromptedKey) {
+            defaults.set(true, forKey: imPromptedKey)
+            _ = CGRequestListenEventAccess()
+        } else {
+            explainAndOfferSettings(
+                title: "The dictation hotkey only works while the app is focused",
+                message: "FoldWise Voice needs Input Monitoring to see the "
+                    + "hotkey while you're in other apps. Enable it in System "
+                    + "Settings → Privacy & Security → Input Monitoring.\n\n"
+                    + "If FoldWise Voice already shows as enabled there, the "
+                    + "grant belongs to a previous version of the app: remove "
+                    + "it from the list with the − button, then add it back.",
+                pane: "Privacy_ListenEvent")
+        }
     }
 
     // MARK: - shared alert
