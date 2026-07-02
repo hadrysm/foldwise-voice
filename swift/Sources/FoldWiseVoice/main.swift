@@ -80,7 +80,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             config: config,
             onModeChanged: {},
             onSettings: { [weak self] in self?.settings.show() },
+            onCheckForUpdates: { [weak self] in self?.checkForUpdatesManually() },
             onQuit: { [weak self] in self?.quit() })
+        settings.onUpdateAvailable = { [weak self] version in
+            self?.menuBar.showUpdateAvailable(version)
+        }
 
         pipeline.onState = { [weak self] state in
             Task { @MainActor in self?.apply(state) }
@@ -122,6 +126,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func settingsSaved() {
         startListener()
         menuBar.refreshModeChecks()
+    }
+
+    /// "Check for Updates…" from the menu bar: check immediately and always
+    /// report the outcome in an alert, unlike the silent passive check.
+    private func checkForUpdatesManually() {
+        Task { @MainActor in
+            let result = await UpdateChecker.checkNow()
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            switch result {
+            case .upToDate(let current):
+                alert.messageText = "You're up to date"
+                alert.informativeText =
+                    "FoldWise Voice \(current) is the latest version."
+                alert.runModal()
+            case .updateAvailable(let version, let downloadURL):
+                menuBar.showUpdateAvailable(version)
+                alert.messageText = "Update available"
+                alert.informativeText =
+                    "FoldWise Voice v\(version) is available — you have "
+                    + "\(UpdateChecker.currentVersion() ?? "an older version"). "
+                    + "The download opens in your browser; drag the new app "
+                    + "into Applications to update."
+                alert.addButton(withTitle: "Download")
+                alert.addButton(withTitle: "Later")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
+                }
+            case .failed:
+                alert.messageText = "Couldn't check for updates"
+                alert.informativeText = UpdateChecker.currentVersion() == nil
+                    ? "This build has no version number (dev run), so there's "
+                        + "nothing to compare against."
+                    : "GitHub couldn't be reached. Check your connection and try again."
+                alert.runModal()
+            }
+        }
     }
 
     private func apply(_ state: PipelineState) {

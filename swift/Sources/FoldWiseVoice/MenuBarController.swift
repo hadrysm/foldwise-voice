@@ -8,6 +8,7 @@ final class MenuBarController: NSObject {
     private let config: Config
     private let onModeChanged: () -> Void
     private let onSettings: () -> Void
+    private let onCheckForUpdates: () -> Void
     private let onQuit: () -> Void
 
     private var statusItem: NSStatusItem!
@@ -19,11 +20,13 @@ final class MenuBarController: NSObject {
         config: Config,
         onModeChanged: @escaping () -> Void,
         onSettings: @escaping () -> Void,
+        onCheckForUpdates: @escaping () -> Void,
         onQuit: @escaping () -> Void
     ) {
         self.config = config
         self.onModeChanged = onModeChanged
         self.onSettings = onSettings
+        self.onCheckForUpdates = onCheckForUpdates
         self.onQuit = onQuit
         super.init()
         build()
@@ -95,6 +98,12 @@ final class MenuBarController: NSObject {
         settings.target = self
         menu.addItem(settings)
 
+        let checkUpdates = NSMenuItem(
+            title: "Check for Updates…", action: #selector(checkForUpdates(_:)),
+            keyEquivalent: "")
+        checkUpdates.target = self
+        menu.addItem(checkUpdates)
+
         menu.addItem(.separator())
         let quit = NSMenuItem(
             title: "Quit FoldWise Voice", action: #selector(quitApp(_:)), keyEquivalent: "q")
@@ -118,6 +127,10 @@ final class MenuBarController: NSObject {
 
     @objc private func openSettings(_ sender: Any?) {
         onSettings()
+    }
+
+    @objc private func checkForUpdates(_ sender: Any?) {
+        onCheckForUpdates()
     }
 
     @objc private func quitApp(_ sender: Any?) {

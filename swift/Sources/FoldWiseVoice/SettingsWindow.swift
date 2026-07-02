@@ -120,7 +120,18 @@ final class SettingsModel: ObservableObject {
 
     enum RecordingField { case ptt, toggle }
 
+    enum UpdateState {
+        case idle
+        case checking
+        case upToDate
+        case available(version: String, downloadURL: URL?)
+        case failed
+        /// Dev builds (`swift run`) have no bundle version to compare.
+        case unavailable
+    }
+
     @Published var pane: Pane = .home
+    @Published var updateState: UpdateState = .idle
     @Published var activeMode = ""
     @Published var selectedModel = ""
     @Published var installed: [OllamaClient.InstalledModel]? = nil  // nil = checking, [] = Ollama down
@@ -147,6 +158,7 @@ final class SettingsModel: ObservableObject {
     var onInstallModel: ((String) -> Void)?
     var onRefreshModels: (() -> Void)?
     var onEditFile: (() -> Void)?
+    var onCheckUpdates: (() -> Void)?
 
     var ollamaDown: Bool { installed?.isEmpty ?? false }
 
@@ -388,6 +400,10 @@ struct SettingsView: View {
                         .controlSize(.small)
                     }
                 }
+                Divider().padding(.leading, 14)
+                CardRow(title: "Updates", subtitle: updateSubtitle) {
+                    updateTrailing
+                }
             }
 
             sectionHeader("Quick start")
@@ -402,6 +418,41 @@ struct SettingsView: View {
                     Keycap(text: keycapLabel(model.pttKey))
                 }
             }
+        }
+    }
+
+    private var updateSubtitle: String {
+        switch model.updateState {
+        case .idle: "Version \(appVersion)"
+        case .checking: "Version \(appVersion) — checking for updates…"
+        case .upToDate: "Version \(appVersion) — you're up to date"
+        case .available(let version, _): "Version \(appVersion) — v\(version) is available"
+        case .failed: "Version \(appVersion) — couldn't reach GitHub, try again later"
+        case .unavailable: "Version \(appVersion) — update checks need a packaged build"
+        }
+    }
+
+    @ViewBuilder
+    private var updateTrailing: some View {
+        switch model.updateState {
+        case .checking:
+            ProgressView().controlSize(.small)
+        case .available(let version, let downloadURL):
+            Button("Download v\(version)…") {
+                NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
+            }
+            .controlSize(.small)
+        case .unavailable:
+            EmptyView()
+        case .upToDate:
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Button("Check for Updates") { model.onCheckUpdates?() }
+                    .controlSize(.small)
+            }
+        case .idle, .failed:
+            Button("Check for Updates") { model.onCheckUpdates?() }
+                .controlSize(.small)
         }
     }
 
@@ -728,6 +779,10 @@ final class SettingsController {
     private var statusClearTask: Task<Void, Never>?
     private var closeObserver: NSObjectProtocol?
 
+    /// Wired by AppDelegate so a manual check here also lights up the
+    /// menu-bar "Update Available" item.
+    var onUpdateAvailable: ((String) -> Void)?
+
     init(config: Config, onSaved: @escaping () -> Void) {
         self.config = config
         self.onSaved = onSaved
@@ -755,6 +810,7 @@ final class SettingsController {
             guard let self else { return }
             NSWorkspace.shared.open(self.config.path)
         }
+        model.onCheckUpdates = { [weak self] in self?.checkForUpdates() }
     }
 
     private func build() {
@@ -787,12 +843,36 @@ final class SettingsController {
         model.axTrusted = TextInserter.accessibilityTrusted()
         model.status = ""
         refreshModels()
+        checkForUpdates()
     }
 
     private func refreshModels() {
         model.installed = nil
         Task { @MainActor in
             self.model.installed = await OllamaClient.listModels()
+        }
+    }
+
+    /// Runs whenever the window opens and on the "Check for Updates" button,
+    /// so a pending update can't hide behind the 24-hour passive timer.
+    private func checkForUpdates() {
+        guard UpdateChecker.currentVersion() != nil else {
+            model.updateState = .unavailable
+            return
+        }
+        if case .checking = model.updateState { return }
+        model.updateState = .checking
+        Task { @MainActor in
+            switch await UpdateChecker.checkNow() {
+            case .upToDate:
+                self.model.updateState = .upToDate
+            case .updateAvailable(let version, let downloadURL):
+                self.model.updateState = .available(
+                    version: version, downloadURL: downloadURL)
+                self.onUpdateAvailable?(version)
+            case .failed:
+                self.model.updateState = .failed
+            }
         }
     }
 
