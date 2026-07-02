@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/hadrysm/foldwise-voice/compare/v0.4.4...v0.5.0) (2026-07-02)
+
+
+### Features
+
+* check-for-updates button in Settings and menu bar ([#19](https://github.com/hadrysm/foldwise-voice/issues/19)) ([15d0dfb](https://github.com/hadrysm/foldwise-voice/commit/15d0dfb35385a34a580a2f3840059d041a52fc4a))
+
 ## [0.4.4](https://github.com/hadrysm/foldwise-voice/compare/v0.4.3...v0.4.4) (2026-07-02)
 
 
