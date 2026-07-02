@@ -12,6 +12,8 @@ final class MenuBarController: NSObject {
 
     private var statusItem: NSStatusItem!
     private var modeItems: [NSMenuItem] = []
+    private var updateItem: NSMenuItem!
+    private var updateSeparator: NSMenuItem!
 
     init(
         config: Config,
@@ -42,6 +44,12 @@ final class MenuBarController: NSObject {
         button.contentTintColor = tint
     }
 
+    func showUpdateAvailable(_ version: String) {
+        updateItem.title = "Update Available: v\(version)…"
+        updateItem.isHidden = false
+        updateSeparator.isHidden = false
+    }
+
     func refreshModeChecks() {
         for item in modeItems {
             item.state = item.title == config.activeMode ? .on : .off
@@ -59,6 +67,18 @@ final class MenuBarController: NSObject {
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(.separator())
+
+        // Hidden until UpdateChecker reports a newer release.
+        updateItem = NSMenuItem(
+            title: "Update Available…", action: #selector(openReleasePage(_:)), keyEquivalent: "")
+        updateItem.target = self
+        updateItem.isHidden = true
+        updateItem.image = NSImage(
+            systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil)
+        menu.addItem(updateItem)
+        updateSeparator = .separator()
+        updateSeparator.isHidden = true
+        menu.addItem(updateSeparator)
 
         modeItems = []
         for name in config.modeOrder {
@@ -90,6 +110,10 @@ final class MenuBarController: NSObject {
         try? config.save()
         refreshModeChecks()
         onModeChanged()
+    }
+
+    @objc private func openReleasePage(_ sender: Any?) {
+        NSWorkspace.shared.open(UpdateChecker.releasesPage)
     }
 
     @objc private func openSettings(_ sender: Any?) {

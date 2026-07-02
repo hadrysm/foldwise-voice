@@ -48,6 +48,13 @@ in: on first launch the app creates its own `modes.json` in
 Silicon Mac running macOS 14+. Recipients still install Ollama themselves if
 they want LLM modes; plain dictation needs nothing else.
 
+Every GitHub release also gets a .dmg attached automatically by CI, and the
+installed app checks that releases feed once a day: when a newer version
+exists, an "Update Available" item appears in the menu-bar menu linking to
+the download page. This is the app's one exception to "nothing leaves your
+machine" — a single anonymous HTTPS request to api.github.com that carries
+no audio, text, or personal data.
+
 Gatekeeper: by default the app is only ad-hoc signed, so a downloaded copy
 shows "cannot verify the developer" — recipients bypass it once with
 right-click → *Open* (or `xattr -dr com.apple.quarantine
