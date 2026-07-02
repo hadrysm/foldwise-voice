@@ -39,12 +39,17 @@ jobs:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: macos-latest
+    # `secrets` isn't allowed in step `if:` expressions, so surface the
+    # presence checks as job env vars and gate on those instead.
+    env:
+      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
+      HAS_NOTARY_CREDS: ${{ secrets.NOTARY_APPLE_ID != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
       - name: Import Developer ID certificate
-        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+        if: ${{ env.HAS_SIGNING_CERT == 'true' }}
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -64,7 +69,7 @@ jobs:
           CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
         run: python3 scripts/build_swift_app.py --dmg
       - name: Notarize and staple
-        if: ${{ secrets.NOTARY_APPLE_ID != '' }}
+        if: ${{ env.HAS_NOTARY_CREDS == 'true' }}
         env:
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
           NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}

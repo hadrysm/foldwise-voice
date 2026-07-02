@@ -3,28 +3,35 @@
   "hotkey": "cmd_r",
   "toggle_hotkey": null,
   "pause_audio": true,
-  "hud_position": [4331.0, 358.0],
+  "hud_position": [
+    1401.0,
+    389.0
+  ],
   "modes": {
     "Voice to Text": {
-      "asr_model": "mlx-community\/whisper-large-v3-turbo",
+      "asr_model": "mlx-community/whisper-large-v3-turbo",
       "llm_model": null,
       "system_prompt": null,
       "vocab": []
     },
     "Clean": {
-      "asr_model": "mlx-community\/whisper-large-v3-turbo",
+      "asr_model": "mlx-community/whisper-large-v3-turbo",
       "llm_model": "llama3.2:3b",
       "system_prompt": "You clean up dictated speech. Fix punctuation, capitalization, and obvious transcription errors. Remove filler words (um, uh, like, you know). Do NOT change meaning, add content, or answer questions. Output ONLY the cleaned text.",
-      "vocab": ["FoldWise", "Ollama", "Anthropic"]
+      "vocab": [
+        "FoldWise",
+        "Ollama",
+        "Anthropic"
+      ]
     },
     "Email": {
-      "asr_model": "mlx-community\/whisper-large-v3-turbo",
+      "asr_model": "mlx-community/whisper-large-v3-turbo",
       "llm_model": "llama3.2:3b",
       "system_prompt": "Rewrite this dictation as a clear, concise, professional email body. Output only the email text.",
       "vocab": []
     },
     "Bullets": {
-      "asr_model": "mlx-community\/whisper-large-v3-turbo",
+      "asr_model": "mlx-community/whisper-large-v3-turbo",
       "llm_model": "llama3.2:3b",
       "system_prompt": "Convert this dictation into a tight bulleted list, one idea per bullet. Output only the list.",
       "vocab": []
