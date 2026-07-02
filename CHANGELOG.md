@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.3](https://github.com/hadrysm/foldwise-voice/compare/v0.4.2...v0.4.3) (2026-07-02)
+
+
+### Bug Fixes
+
+* reduce sidebar top gap below traffic lights in settings window ([#16](https://github.com/hadrysm/foldwise-voice/issues/16)) ([1f878e8](https://github.com/hadrysm/foldwise-voice/commit/1f878e84de8bc06db4895097a21241b9d76e0b05))
+* styled installer DMG with app icon and Gatekeeper guidance ([#14](https://github.com/hadrysm/foldwise-voice/issues/14)) ([21e2fb2](https://github.com/hadrysm/foldwise-voice/commit/21e2fb2a5ccc5a5c63a2a165ca4673464cd869c0))
+
 ## [0.4.2](https://github.com/hadrysm/foldwise-voice/compare/v0.4.1...v0.4.2) (2026-07-02)
 
 
