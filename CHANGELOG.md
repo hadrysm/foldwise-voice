@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.4](https://github.com/hadrysm/foldwise-voice/compare/v0.4.3...v0.4.4) (2026-07-02)
+
+
+### Bug Fixes
+
+* show FoldWise Voice menu bar while settings window is open ([#17](https://github.com/hadrysm/foldwise-voice/issues/17)) ([9c3f845](https://github.com/hadrysm/foldwise-voice/commit/9c3f8453f6b0ae2d499f4658d68f3c8b961dd1c8))
+
 ## [0.4.3](https://github.com/hadrysm/foldwise-voice/compare/v0.4.2...v0.4.3) (2026-07-02)
 
 
