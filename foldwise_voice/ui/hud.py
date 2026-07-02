@@ -29,6 +29,8 @@ _MINI_BARS = 12
 _GEAR = 18                  # gear glyph box, anchored to the right edge
 _BOTTOM_MARGIN = 96
 _DRAG_THRESHOLD = 3.0
+_RESIZE_SECS = 0.18
+_UNHOVER_DELAY = 0.18       # hysteresis: edge flicker must not re-trigger resizes
 
 
 class _HUDView(AppKit.NSView):
@@ -195,6 +197,11 @@ class _HUDView(AppKit.NSView):
             self.window().setFrameOrigin_(
                 (self._win_origin.x + dx, self._win_origin.y + dy)
             )
+            if self.hud is not None:
+                # Keep the anchor in sync while dragging so nothing that
+                # resizes the pill mid-drag can snap it back to where the
+                # drag started.
+                self.hud._anchor_from_frame()
 
     def mouseUp_(self, event):
         if self.hud is None:
@@ -206,11 +213,18 @@ class _HUDView(AppKit.NSView):
             if self.hovering and Foundation.NSPointInRect(p, self.gear_rect):
                 self.hud._open_settings()
         self._drag_start = None
+        # A hover change during the drag was deferred — apply it now.
+        self.hud._sync_hover_size()
 
     # One-shot timer target: drop back to the idle mini pill after a flash.
     def hideTick_(self, _timer):
         if self.hud is not None:
             self.hud.idle()
+
+    # One-shot timer target: hover-exit hysteresis elapsed.
+    def unhoverTick_(self, _timer):
+        if self.hud is not None:
+            self.hud._apply_hover(False)
 
 
 class HUD:
@@ -221,6 +235,7 @@ class HUD:
         self.view = None
         self._timer = None
         self._hide_timer = None
+        self._unhover_timer = None
         self._hovering = False
         # Anchor: (center_x, bottom_y) of the pill in screen coordinates.
         self._anchor = None
@@ -284,7 +299,13 @@ class HUD:
             y = max(f.origin.y + 4, min(y, f.origin.y + f.size.height - h - 4))
         frame = Foundation.NSMakeRect(x, y, w, h)
         if animate:
-            self.panel.setFrame_display_animate_(frame, True, True)
+            # animator() is asynchronous — setFrame_display_animate_ would
+            # block the main thread and queue mouse events, which is what
+            # made hover/drag on the mini pill stutter and replay animations.
+            AppKit.NSAnimationContext.beginGrouping()
+            AppKit.NSAnimationContext.currentContext().setDuration_(_RESIZE_SECS)
+            self.panel.animator().setFrame_display_(frame, True)
+            AppKit.NSAnimationContext.endGrouping()
         else:
             self.panel.setFrame_display_(frame, True)
 
@@ -304,14 +325,43 @@ class HUD:
     # -- hover / drag / settings (called by the view) ---------------------
 
     def _set_hover(self, on: bool):
+        self._cancel_unhover()
+        if on:
+            self._apply_hover(True)
+        else:
+            # Delay the shrink: a cursor grazing the pill's edge (or briefly
+            # outrunning it during a drag) must not start a shrink/grow loop.
+            self._unhover_timer = (
+                Foundation.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                    _UNHOVER_DELAY, self.view, b"unhoverTick:", None, False
+                )
+            )
+
+    def _apply_hover(self, on: bool):
         if on == self._hovering:
             return
         self._hovering = on
         self.view.hovering = on
-        if self.view.state == "idle":
+        if self.view.state == "idle" and self.view._drag_start is None:
             w, h = (_HOVER_W, _HOVER_H) if on else (_MINI_W, _MINI_H)
             self._set_size(w, h)
         self.view.setNeedsDisplay_(True)
+
+    def _cancel_unhover(self):
+        if self._unhover_timer is not None:
+            self._unhover_timer.invalidate()
+            self._unhover_timer = None
+
+    def _anchor_from_frame(self):
+        """Track the pill's live position as its anchor (used mid-drag)."""
+        f = self.panel.frame()
+        self._anchor = (f.origin.x + f.size.width / 2, f.origin.y)
+
+    def _sync_hover_size(self):
+        """Re-apply the size for the current hover state (after a drag)."""
+        if self.view.state == "idle":
+            w, h = (_HOVER_W, _HOVER_H) if self._hovering else (_MINI_W, _MINI_H)
+            self._set_size(w, h)
 
     def _position_dragged(self):
         """A drag ended — remember (and persist) the new anchor."""
@@ -368,6 +418,7 @@ class HUD:
     def hide(self) -> None:
         """Fully remove the pill (used on quit)."""
         self._cancel_hide()
+        self._cancel_unhover()
         if self._timer is not None:
             self._timer.invalidate()
             self._timer = None

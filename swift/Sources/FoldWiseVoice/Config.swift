@@ -1,0 +1,246 @@
+// Load and save modes.json — same file and format as the Python app, so the
+// two implementations stay interchangeable. `asr_model` is preserved on save
+// but ignored here: this app always transcribes with Parakeet v3 (FluidAudio).
+
+import Foundation
+
+let MIN_CHARS_FOR_LLM = 40
+let OLLAMA_CHAT_URL = "http://localhost:11434/v1/chat/completions"
+let OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
+
+struct Mode {
+    var name: String
+    var asrModel: String
+    var llmModel: String?
+    var systemPrompt: String?
+    var vocab: [String]
+
+    var usesLLM: Bool { !(llmModel ?? "").isEmpty }
+}
+
+final class Config {
+    var activeMode: String
+    var hotkey: String
+    var toggleHotkey: String?
+    var pauseAudio: Bool
+    var hudPosition: [Double]?
+    private(set) var modeOrder: [String]
+    var modes: [String: Mode]
+    let path: URL
+
+    init(
+        activeMode: String, hotkey: String, toggleHotkey: String?, pauseAudio: Bool,
+        hudPosition: [Double]?, modeOrder: [String], modes: [String: Mode], path: URL
+    ) {
+        self.activeMode = activeMode
+        self.hotkey = hotkey
+        self.toggleHotkey = toggleHotkey
+        self.pauseAudio = pauseAudio
+        self.hudPosition = hudPosition
+        self.modeOrder = modeOrder
+        self.modes = modes
+        self.path = path
+    }
+
+    var mode: Mode { modes[activeMode] ?? modes[modeOrder[0]]! }
+
+    /// The Ollama model used by LLM modes (they share one by convention).
+    var llmModel: String? {
+        for name in modeOrder {
+            if let m = modes[name], m.usesLLM { return m.llmModel }
+        }
+        return nil
+    }
+
+    /// Point every LLM-enabled mode at `model`.
+    func setLLMModel(_ model: String) {
+        for name in modeOrder where modes[name]?.usesLLM == true {
+            modes[name]?.llmModel = model
+        }
+    }
+
+    func setActiveMode(_ name: String) {
+        guard modes[name] != nil else { return }
+        activeMode = name
+    }
+
+    // MARK: - persistence
+
+    func save() throws {
+        var top: [(String, Any?)] = [
+            ("active_mode", activeMode),
+            ("hotkey", hotkey),
+            ("toggle_hotkey", toggleHotkey),
+            ("pause_audio", pauseAudio),
+            ("hud_position", hudPosition),
+        ]
+        var modesJSON = "{\n"
+        for (i, name) in modeOrder.enumerated() {
+            guard let m = modes[name] else { continue }
+            let fields: [(String, Any?)] = [
+                ("asr_model", m.asrModel),
+                ("llm_model", m.llmModel),
+                ("system_prompt", m.systemPrompt),
+                ("vocab", m.vocab),
+            ]
+            modesJSON += "    \(Self.jsonString(name)): {\n"
+            modesJSON += fields.map { "      \(Self.jsonString($0.0)): \(Self.jsonValue($0.1))" }
+                .joined(separator: ",\n")
+            modesJSON += "\n    }" + (i < modeOrder.count - 1 ? ",\n" : "\n")
+        }
+        modesJSON += "  }"
+        top.append(("modes", RawJSON(text: modesJSON)))
+
+        var out = "{\n"
+        out += top.map { "  \(Self.jsonString($0.0)): \(Self.jsonValue($0.1))" }
+            .joined(separator: ",\n")
+        out += "\n}\n"
+        try out.data(using: .utf8)!.write(to: path)
+    }
+
+    private struct RawJSON { let text: String }
+
+    private static func jsonString(_ s: String) -> String {
+        let data = try! JSONSerialization.data(withJSONObject: [s])
+        var text = String(data: data, encoding: .utf8)!
+        text.removeFirst()  // [
+        text.removeLast()  // ]
+        return text
+    }
+
+    private static func jsonValue(_ v: Any?) -> String {
+        switch v {
+        case nil: return "null"
+        case let raw as RawJSON: return raw.text
+        case let s as String: return jsonString(s)
+        case let b as Bool: return b ? "true" : "false"
+        case let arr as [String]:
+            return "[" + arr.map { jsonString($0) }.joined(separator: ", ") + "]"
+        case let arr as [Double]:
+            return "[" + arr.map { String(format: "%.1f", $0) }.joined(separator: ", ") + "]"
+        default: return "null"
+        }
+    }
+
+    // MARK: - loading
+
+    static func load(from url: URL) throws -> Config {
+        let data = try Data(contentsOf: url)
+        guard let raw = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let modesRaw = raw["modes"] as? [String: Any], !modesRaw.isEmpty
+        else {
+            throw NSError(
+                domain: "FoldWiseVoice", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "\(url.path): 'modes' must contain at least one mode"])
+        }
+
+        var modes: [String: Mode] = [:]
+        for (name, any) in modesRaw {
+            let m = any as? [String: Any] ?? [:]
+            modes[name] = Mode(
+                name: name,
+                asrModel: (m["asr_model"] as? String) ?? "mlx-community/whisper-large-v3-turbo",
+                llmModel: m["llm_model"] as? String,
+                systemPrompt: m["system_prompt"] as? String,
+                vocab: (m["vocab"] as? [String]) ?? []
+            )
+        }
+
+        let order = modeOrder(in: String(data: data, encoding: .utf8) ?? "", names: Array(modes.keys))
+
+        var active = raw["active_mode"] as? String ?? ""
+        if modes[active] == nil { active = order[0] }
+
+        var hudPosition: [Double]? = nil
+        if let pos = raw["hud_position"] as? [Any], pos.count == 2,
+            let x = pos[0] as? Double ?? (pos[0] as? Int).map(Double.init),
+            let y = pos[1] as? Double ?? (pos[1] as? Int).map(Double.init)
+        {
+            hudPosition = [x, y]
+        }
+
+        return Config(
+            activeMode: active,
+            hotkey: (raw["hotkey"] as? String) ?? "alt_r",
+            toggleHotkey: raw["toggle_hotkey"] as? String,
+            pauseAudio: (raw["pause_audio"] as? Bool) ?? true,
+            hudPosition: hudPosition,
+            modeOrder: order,
+            modes: modes,
+            path: url
+        )
+    }
+
+    /// JSONSerialization loses key order; recover the modes' on-disk order by
+    /// locating each `"<name>":` after the "modes" key in the raw text.
+    private static func modeOrder(in text: String, names: [String]) -> [String] {
+        guard let modesKey = text.range(of: "\"modes\"") else { return names.sorted() }
+        let tail = text[modesKey.upperBound...]
+        var positions: [(String, String.Index)] = []
+        for name in names {
+            let quoted = jsonString(name)
+            if let r = tail.range(of: quoted) {
+                positions.append((name, r.lowerBound))
+            } else {
+                positions.append((name, tail.endIndex))
+            }
+        }
+        return positions.sorted { $0.1 < $1.1 }.map { $0.0 }
+    }
+
+    /// Resolution order: --config arg, $FOLDWISE_CONFIG, ./modes.json,
+    /// ../modes.json (running from swift/), Application Support.
+    static func resolvePath(cliPath: String?) -> URL {
+        let fm = FileManager.default
+        if let p = cliPath { return URL(fileURLWithPath: p) }
+        if let p = ProcessInfo.processInfo.environment["FOLDWISE_CONFIG"], !p.isEmpty {
+            return URL(fileURLWithPath: p)
+        }
+        let cwd = URL(fileURLWithPath: fm.currentDirectoryPath)
+        for candidate in [cwd.appendingPathComponent("modes.json"),
+                          cwd.deletingLastPathComponent().appendingPathComponent("modes.json")]
+        where fm.fileExists(atPath: candidate.path) {
+            return candidate
+        }
+        let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("FoldWise Voice", isDirectory: true)
+        try? fm.createDirectory(at: support, withIntermediateDirectories: true)
+        return support.appendingPathComponent("modes.json")
+    }
+
+    static func loadOrCreate(at url: URL) -> Config {
+        if let config = try? load(from: url) { return config }
+        let defaults = defaultConfig(path: url)
+        try? defaults.save()
+        return defaults
+    }
+
+    static func defaultConfig(path: URL) -> Config {
+        let asr = "mlx-community/whisper-large-v3-turbo"
+        let clean = Mode(
+            name: "Clean", asrModel: asr, llmModel: "llama3.2:3b",
+            systemPrompt: "You clean up dictated speech. Fix punctuation, capitalization, "
+                + "and obvious transcription errors. Remove filler words (um, uh, "
+                + "like, you know). Do NOT change meaning, add content, or answer "
+                + "questions. Output ONLY the cleaned text.",
+            vocab: ["FoldWise", "Ollama", "Anthropic"])
+        let raw = Mode(name: "Voice to Text", asrModel: asr, llmModel: nil, systemPrompt: nil, vocab: [])
+        let email = Mode(
+            name: "Email", asrModel: asr, llmModel: "llama3.2:3b",
+            systemPrompt: "Rewrite this dictation as a clear, concise, professional email "
+                + "body. Output only the email text.",
+            vocab: [])
+        let bullets = Mode(
+            name: "Bullets", asrModel: asr, llmModel: "llama3.2:3b",
+            systemPrompt: "Convert this dictation into a tight bulleted list, one idea per "
+                + "bullet. Output only the list.",
+            vocab: [])
+        return Config(
+            activeMode: "Clean", hotkey: "alt_r", toggleHotkey: nil, pauseAudio: true,
+            hudPosition: nil,
+            modeOrder: ["Voice to Text", "Clean", "Email", "Bullets"],
+            modes: ["Voice to Text": raw, "Clean": clean, "Email": email, "Bullets": bullets],
+            path: path
+        )
+    }
+}

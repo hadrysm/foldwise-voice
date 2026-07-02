@@ -8,6 +8,33 @@ the transcript first ("modes").
 
 Nothing ever leaves your machine.
 
+Two implementations live in this repo and share one `modes.json`:
+
+- **Native Swift app** (`swift/`, recommended) — Parakeet TDT v3 on the
+  Apple **Neural Engine** via [FluidAudio](https://github.com/FluidInference/FluidAudio)
+  (~10× faster transcription than Whisper-large on MLX), SwiftUI HUD and
+  settings, tiny memory footprint. See [Native app](#native-swift-app-recommended).
+- **Python app** (`foldwise_voice/`) — the original mlx-whisper implementation,
+  documented below.
+
+## Native Swift app (recommended)
+
+```sh
+python3 scripts/build_swift_app.py        # builds + installs "FoldWise Voice Native.app"
+# or run it directly from the repo:
+cd swift && swift run -c release
+```
+
+- ASR is **Parakeet TDT v3** (25 European languages) running on the Neural
+  Engine — the `asr_model` field in `modes.json` is ignored by the native
+  app. The model (~600 MB) downloads once on first launch, then everything
+  is offline. Ollama modes work exactly as in the Python app.
+- Same hotkeys, modes, HUD behavior, and `modes.json` as the Python app;
+  per-mode `vocab` biases only the LLM stage (Parakeet has no prompt biasing).
+- Permissions: grant **Microphone** on first dictation and add the app under
+  *Privacy & Security → Accessibility* for auto-paste. If the hotkey doesn't
+  fire, also add it under *Input Monitoring*.
+
 ## How it works
 
 ```
