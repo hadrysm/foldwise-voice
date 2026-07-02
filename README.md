@@ -55,11 +55,15 @@ the download page. This is the app's one exception to "nothing leaves your
 machine" — a single anonymous HTTPS request to api.github.com that carries
 no audio, text, or personal data.
 
-Gatekeeper: by default the app is only ad-hoc signed, so a downloaded copy
-shows "cannot verify the developer" — recipients bypass it once with
-right-click → *Open* (or `xattr -dr com.apple.quarantine
-"/Applications/FoldWise Voice.app"`). For a frictionless install you need an
-Apple Developer Program membership: set
+Gatekeeper: by default the app is only ad-hoc signed, so on first launch a
+downloaded copy shows *"Apple could not verify … is free of malware"* with
+only **Done** / **Move to Bin** buttons (macOS 15 removed the right-click →
+*Open* bypass). To open it anyway: click **Done**, then go to **System
+Settings → Privacy & Security**, scroll down, and click **Open Anyway** —
+needed once only. Alternatively, clear the quarantine flag:
+`xattr -dr com.apple.quarantine "/Applications/FoldWise Voice.app"`.
+These steps are also printed on the .dmg background. For a frictionless
+install you need an Apple Developer Program membership ($99/yr): set
 `CODESIGN_IDENTITY="Developer ID Application: …"` when building, then
 notarize the .dmg (`xcrun notarytool submit --wait`) and staple it
 (`xcrun stapler staple`).
