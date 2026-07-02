@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/hadrysm/foldwise-voice/compare/v0.4.1...v0.4.2) (2026-07-02)
+
+
+### Bug Fixes
+
+* break up HUD waveform expressions to avoid Swift type-check timeout ([#12](https://github.com/hadrysm/foldwise-voice/issues/12)) ([c659eb8](https://github.com/hadrysm/foldwise-voice/commit/c659eb89b580a9a0d8d5deb09d3ce2224f3e1165))
+
 ## [0.4.1](https://github.com/hadrysm/foldwise-voice/compare/v0.4.0...v0.4.1) (2026-07-02)
 
 
