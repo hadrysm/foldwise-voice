@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/hadrysm/foldwise-voice/compare/v0.6.0...v0.6.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* global hotkey without focus; feat: minimal recording-bar style ([#24](https://github.com/hadrysm/foldwise-voice/issues/24)) ([1309af3](https://github.com/hadrysm/foldwise-voice/commit/1309af3232f8ce40793a44481c5c6256e2c0d3c4))
+
 ## [0.6.0](https://github.com/hadrysm/foldwise-voice/compare/v0.5.0...v0.6.0) (2026-07-02)
 
 
