@@ -22,6 +22,10 @@ enum ModelCatalog {
 
     static let entries: [Entry] = [
         Entry(
+            name: "gemma3:1b", size: "815 MB", speed: 5, quality: 2,
+            blurb: "The smallest download here. Quick punctuation and filler "
+                + "cleanup on any Mac; too small for faithful Email rewrites."),
+        Entry(
             name: "llama3.2:1b", size: "1.3 GB", speed: 5, quality: 2,
             blurb: "Tiny and near-instant. Fine for punctuation and filler removal; "
                 + "struggles with bigger rewrites like Email or Bullets."),
@@ -37,6 +41,14 @@ enum ModelCatalog {
             name: "gemma2:2b", size: "1.6 GB", speed: 4, quality: 2,
             blurb: "Google's compact model. Snappy at simple cleanup; less strict "
                 + "about \"output only the text\" prompts."),
+        Entry(
+            name: "phi4-mini:3.8b", size: "2.5 GB", speed: 4, quality: 3,
+            blurb: "Microsoft's small model. Follows the mode prompts closely and "
+                + "handles multilingual dictation well for its size."),
+        Entry(
+            name: "gemma3:4b", size: "3.3 GB", speed: 4, quality: 4,
+            blurb: "Google's current small model — the best cleanup quality below "
+                + "the 7B tier, with strong multilingual support."),
         Entry(
             name: "qwen2.5:7b", size: "4.7 GB", speed: 3, quality: 4,
             blurb: "Noticeably better Email and Bullets rewrites. A beat slower; "
