@@ -81,17 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in self?.apply(state) }
         }
 
-        // Without Accessibility the app can't post the ⌘V that pastes the
-        // transcript, and dictations silently land on the clipboard. Asking
-        // with the system prompt also registers the app (with its current
-        // code signature) in System Settings → Accessibility, so the grant
-        // survives ad-hoc rebuilds better than a hand-added entry.
-        if !AXIsProcessTrusted() {
-            let options =
-                [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-                as CFDictionary
-            AXIsProcessTrustedWithOptions(options)
-        }
+        Permissions.requestAtLaunch()
 
         startListener()
         pipeline.transcriber.warmup()
