@@ -132,8 +132,9 @@ struct HUDView: View {
             }
         case .working:
             let phase = t * 4.5
-            return (0..<count).map { i in
-                CGFloat(4.0 + 5.0 * (0.5 + 0.5 * sin(phase + Double(i) * 0.55)))
+            return (0..<count).map { i -> CGFloat in
+                let wave: Double = 0.5 + 0.5 * sin(phase + Double(i) * 0.55)
+                return CGFloat(4.0 + 5.0 * wave)
             }
         default:
             return Array(repeating: 2.5, count: count)
@@ -162,8 +163,9 @@ struct WaveformBars: View {
 
     static func idleHeights(t: Double, count: Int) -> [CGFloat] {
         let phase = t * 2.7  // slow breathing
-        return (0..<count).map { i in
-            CGFloat(2.0 + 3.0 * (0.5 + 0.5 * sin(phase + Double(i) * 0.4)))
+        return (0..<count).map { i -> CGFloat in
+            let wave: Double = 0.5 + 0.5 * sin(phase + Double(i) * 0.4)
+            return CGFloat(2.0 + 3.0 * wave)
         }
     }
 

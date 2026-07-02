@@ -3,7 +3,7 @@
   "hotkey": "cmd_r",
   "toggle_hotkey": null,
   "pause_audio": true,
-  "hud_position": [4443.0, 165.0],
+  "hud_position": [4331.0, 358.0],
   "modes": {
     "Voice to Text": {
       "asr_model": "mlx-community\/whisper-large-v3-turbo",
