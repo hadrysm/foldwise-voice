@@ -60,8 +60,20 @@ enum OllamaClient {
         }
     }
 
-    /// Names of locally installed Ollama models; [] if Ollama is unreachable.
-    static func listModels() async -> [String] {
+    struct InstalledModel: Equatable, Identifiable {
+        let name: String
+        let sizeBytes: Int64
+        var id: String { name }
+
+        var sizeText: String {
+            sizeBytes > 0
+                ? ByteCountFormatter.string(fromByteCount: sizeBytes, countStyle: .file)
+                : ""
+        }
+    }
+
+    /// Locally installed Ollama models; [] if Ollama is unreachable.
+    static func listModels() async -> [InstalledModel] {
         var request = URLRequest(url: URL(string: OLLAMA_TAGS_URL)!)
         request.timeoutInterval = 2
         guard let (data, response) = try? await URLSession.shared.data(for: request),
@@ -69,6 +81,48 @@ enum OllamaClient {
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let models = json["models"] as? [[String: Any]]
         else { return [] }
-        return models.compactMap { $0["name"] as? String }.sorted()
+        return models.compactMap { entry in
+            guard let name = entry["name"] as? String else { return nil }
+            let size = (entry["size"] as? Int64) ?? Int64((entry["size"] as? Double) ?? 0)
+            return InstalledModel(name: name, sizeBytes: size)
+        }
+        .sorted { $0.name < $1.name }
+    }
+
+    /// Download a model from the Ollama library (`ollama pull`). Streams
+    /// NDJSON progress lines; reports (status, fraction 0…1 or nil).
+    /// Returns nil on success, or a user-facing error message.
+    static func pull(
+        model: String, onProgress: @escaping @Sendable (String, Double?) -> Void
+    ) async -> String? {
+        var request = URLRequest(url: URL(string: OLLAMA_PULL_URL)!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 120  // idle timeout; resets while bytes flow
+        request.httpBody = try? JSONSerialization.data(
+            withJSONObject: ["name": model, "stream": true])
+
+        do {
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+            else {
+                return "Ollama refused the download — is it running?"
+            }
+            for try await line in bytes.lines {
+                guard let data = line.data(using: .utf8),
+                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                else { continue }
+                if let error = json["error"] as? String { return error }
+                let status = json["status"] as? String ?? ""
+                var fraction: Double? = nil
+                if let total = json["total"] as? Double, total > 0 {
+                    fraction = ((json["completed"] as? Double) ?? 0) / total
+                }
+                onProgress(status, fraction)
+            }
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
     }
 }

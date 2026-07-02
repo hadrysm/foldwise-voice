@@ -7,6 +7,7 @@ import Foundation
 let MIN_CHARS_FOR_LLM = 40
 let OLLAMA_CHAT_URL = "http://localhost:11434/v1/chat/completions"
 let OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
+let OLLAMA_PULL_URL = "http://localhost:11434/api/pull"
 
 struct Mode {
     var name: String
