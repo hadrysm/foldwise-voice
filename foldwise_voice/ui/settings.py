@@ -12,6 +12,7 @@ import Foundation
 import objc
 from PyObjCTools import AppHelper
 
+from .. import __version__
 from ..config import Config
 from ..hotkey import parse_key
 from ..insert import accessibility_trusted
@@ -19,7 +20,7 @@ from ..ollama_api import list_models
 
 log = logging.getLogger(__name__)
 
-_W, _H = 460, 360
+_W, _H = 460, 384
 ACCESSIBILITY_PANE_URL = (
     "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 )
@@ -140,24 +141,29 @@ class SettingsController(AppKit.NSObject):
         c.addSubview_(ax_btn)
 
         # Bottom row.
-        edit_btn = AppKit.NSButton.alloc().initWithFrame_(((20, 16), (140, 30)))
+        edit_btn = AppKit.NSButton.alloc().initWithFrame_(((20, 40), (140, 30)))
         edit_btn.setTitle_("Edit modes.json…")
         edit_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         edit_btn.setTarget_(self)
         edit_btn.setAction_(b"openModesFile:")
         c.addSubview_(edit_btn)
 
-        self.status_label = _label("", ((170, 22), (170, 20)))
+        self.status_label = _label("", ((170, 46), (170, 20)))
         self.status_label.setFont_(AppKit.NSFont.systemFontOfSize_(11))
         c.addSubview_(self.status_label)
 
-        save_btn = AppKit.NSButton.alloc().initWithFrame_(((350, 16), (90, 30)))
+        save_btn = AppKit.NSButton.alloc().initWithFrame_(((350, 40), (90, 30)))
         save_btn.setTitle_("Save")
         save_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         save_btn.setKeyEquivalent_("\r")
         save_btn.setTarget_(self)
         save_btn.setAction_(b"save:")
         c.addSubview_(save_btn)
+
+        version = _label(f"FoldWise Voice  v{__version__}", ((20, 12), (300, 16)))
+        version.setFont_(AppKit.NSFont.systemFontOfSize_(10))
+        version.setTextColor_(AppKit.NSColor.tertiaryLabelColor())
+        c.addSubview_(version)
 
         self.window = win
 

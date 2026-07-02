@@ -19,6 +19,7 @@ REPO = Path(__file__).resolve().parents[1]
 APP_NAME = "FoldWise Voice"
 BUNDLE_ID = "com.foldwise.voice"
 DIST = REPO / "dist"
+VERSION = (REPO / "version.txt").read_text().strip()
 
 # (filename, pixel size) pairs for a complete .iconset
 ICONSET_SIZES = [
@@ -97,8 +98,8 @@ def build_bundle() -> Path:
         "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleExecutable": "foldwise-voice",
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "0.1.0",
-        "CFBundleVersion": "0.1.0",
+        "CFBundleShortVersionString": VERSION,
+        "CFBundleVersion": VERSION,
         "CFBundleIconFile": "icon",
         "LSMinimumSystemVersion": "12.0",
         "LSUIElement": True,  # menu-bar app: no Dock icon
