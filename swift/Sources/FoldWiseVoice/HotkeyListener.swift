@@ -4,6 +4,7 @@
 // return fast — the pipeline does its heavy work elsewhere.
 
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import Foundation
 
@@ -34,42 +35,51 @@ final class HotkeyListener {
     }
 
     func start() {
-        if createTap() { return }
-
-        // No Input Monitoring / Accessibility permission for the event tap
-        // yet. Fall back to NSEvent monitors so the hotkey at least works
-        // while the app is frontmost (the global monitor is equally gated,
-        // so background keystrokes stay invisible), and keep retrying the
-        // tap: TCC grants made in System Settings never revive an
-        // already-failed tap, so without the retry a relaunch would be the
-        // only way to get the hotkey working globally.
-        NSLog("CGEventTap unavailable — falling back to NSEvent monitors, will retry")
-        installMonitors()
+        if !createTap() {
+            // No effective Input Monitoring / Accessibility grant for the
+            // event tap yet. Fall back to NSEvent monitors so the hotkey at
+            // least works while the app is frontmost (the global monitor is
+            // equally gated, so background keystrokes stay invisible).
+            NSLog("CGEventTap unavailable — falling back to NSEvent monitors, will retry")
+            installMonitors()
+        }
+        // Watchdog, both directions: a grant made in System Settings never
+        // revives an already-failed tap (so retry until one succeeds), and a
+        // grant lost while running — revoked, or invalidated by an app update
+        // re-signing the binary — leaves a tap that exists but is permanently
+        // disabled (so drop back to monitors and keep retrying).
         retryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) {
-            [weak self] _ in
-            guard let self, self.createTap() else { return }
-            NSLog("CGEventTap acquired — hotkey now works in the background")
-            self.removeMonitors()
-            self.retryTimer?.invalidate()
-            self.retryTimer = nil
+            [weak self] _ in self?.checkTapHealth()
         }
     }
 
     func stop() {
         retryTimer?.invalidate()
         retryTimer = nil
-        if let tap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            if let runLoopSource {
-                CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-            }
-        }
-        tap = nil
-        runLoopSource = nil
+        destroyTap()
         removeMonitors()
     }
 
+    private func checkTapHealth() {
+        if let tap {
+            if CGEvent.tapIsEnabled(tap: tap) { return }
+            NSLog("CGEventTap lost — falling back to NSEvent monitors, will retry")
+            destroyTap()
+            installMonitors()
+        } else if createTap() {
+            NSLog("CGEventTap acquired — hotkey now works in the background")
+            removeMonitors()
+        }
+    }
+
     private func createTap() -> Bool {
+        // tapCreate alone is not proof the hotkey works: with a stale TCC
+        // entry (an earlier build's signature still listed in System
+        // Settings) it can succeed while WindowServer never enables event
+        // delivery. Preflight the actual permission, and verify the tap
+        // really came up enabled.
+        guard AXIsProcessTrusted() || CGPreflightListenEventAccess() else { return false }
+
         let mask =
             (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.keyUp.rawValue)
@@ -96,7 +106,24 @@ final class HotkeyListener {
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        guard CGEvent.tapIsEnabled(tap: tap) else {
+            destroyTap()
+            return false
+        }
         return true
+    }
+
+    private func destroyTap() {
+        guard let tap else { return }
+        CGEvent.tapEnable(tap: tap, enable: false)
+        if let runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        }
+        // Without this the dead tap lingers in the session tap list for the
+        // life of the process.
+        CFMachPortInvalidate(tap)
+        self.tap = nil
+        runLoopSource = nil
     }
 
     private func installMonitors() {
