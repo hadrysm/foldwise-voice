@@ -1,9 +1,8 @@
 """Build the native Swift app as 'FoldWise Voice Native.app' and install it.
 
-Unlike the Python launcher bundle (scripts/build_app.py), this bundle contains
-a real compiled binary — no venv, no launcher script. It shares the repo's
-modes.json via the LSEnvironment FOLDWISE_CONFIG hook, so both apps stay
-interchangeable.
+The bundle contains a real compiled binary — no launcher script. The local
+install shares the repo's modes.json via the LSEnvironment FOLDWISE_CONFIG
+hook, so repo edits to modes take effect without a rebuild.
 
 With --dmg it instead builds a distributable disk image: a self-contained
 'FoldWise Voice.app' (no repo paths baked in — the app creates its own
@@ -91,7 +90,7 @@ def build_bundle(binary: Path, dest: Path, name: str, icon: Path,
         ),
     }
     if share_repo_config:
-        # Share the repo's modes.json with the Python app. Never set for the
+        # Point the local install at the repo's modes.json. Never set for the
         # .dmg build: the repo path doesn't exist on other machines, and the
         # app falls back to ~/Library/Application Support/FoldWise Voice/.
         plist["LSEnvironment"] = {"FOLDWISE_CONFIG": str(REPO / "modes.json")}
