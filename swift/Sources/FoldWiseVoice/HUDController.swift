@@ -189,10 +189,12 @@ final class HUDController {
     // MARK: - drag persistence
 
     private func windowMoved() {
-        guard let panel else { return }
+        // Only user drags move the anchor. Programmatic resizes can be
+        // clamped at a screen edge, which shifts midX — tracking those would
+        // drift the anchor toward the screen center on every dictation.
+        guard let panel, !programmaticMove else { return }
         let f = panel.frame
         anchor = CGPoint(x: f.midX, y: f.minY)
-        guard !programmaticMove else { return }
         saveWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.persistAnchor() }
         saveWork = work

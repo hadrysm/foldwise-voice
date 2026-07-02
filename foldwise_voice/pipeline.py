@@ -14,7 +14,7 @@ import numpy as np
 
 from . import asr, insert, llm
 from .audio import AudioRecorder
-from .config import MIN_CHARS_FOR_LLM, Config
+from .config import MIN_CHARS_FOR_LLM, Config, Mode
 from .ducking import AudioDucker
 
 log = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class Pipeline:
         self.recorder = AudioRecorder()
         self.ducker = AudioDucker()
         self.on_state = on_state
-        self._jobs: queue.Queue[np.ndarray | None] = queue.Queue()
+        self._jobs: queue.Queue[tuple[np.ndarray, Mode] | None] = queue.Queue()
         self._worker = threading.Thread(target=self._run, daemon=True, name="pipeline")
         self._worker.start()
 
@@ -61,7 +61,9 @@ class Pipeline:
         self.ducker.restore()
         print(f"○ stopped ({audio.size / 16000:.1f}s) — transcribing…")
         self._emit("transcribing")
-        self._jobs.put(audio)
+        # Capture the mode now: a mode switch while this job waits in the
+        # queue must not change how an already-spoken dictation is handled.
+        self._jobs.put((audio, self.config.mode))
 
     def toggle_recording(self) -> None:
         if self.recorder.is_recording:
@@ -78,18 +80,16 @@ class Pipeline:
 
     def _run(self) -> None:
         while True:
-            audio = self._jobs.get()
-            if audio is None:
+            job = self._jobs.get()
+            if job is None:
                 return
             try:
-                self._process(audio)
+                self._process(*job)
             except Exception as e:
                 log.exception("pipeline job failed")
                 self._emit("error", str(e))
 
-    def _process(self, audio: np.ndarray) -> None:
-        mode = self.config.mode
-
+    def _process(self, audio: np.ndarray, mode: Mode) -> None:
         if audio.size < 1600:  # < 0.1 s — no real audio captured
             log.info("No audio captured — skipping.")
             self._emit("idle")

@@ -94,7 +94,7 @@ final class HotkeyListener {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
         case .flagsChanged:
             let keycode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-            let down = KeyMap.modifierFlag[keycode].map { event.flags.contains($0) } ?? false
+            let down = KeyMap.isModifierDown(keycode: keycode, flags: event.flags) ?? false
             dispatch(keycode: keycode, character: nil, down: down)
         case .keyDown:
             if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return }
@@ -113,7 +113,7 @@ final class HotkeyListener {
         case .flagsChanged:
             let keycode = CGKeyCode(event.keyCode)
             let flags = CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))
-            let down = KeyMap.modifierFlag[keycode].map { flags.contains($0) } ?? false
+            let down = KeyMap.isModifierDown(keycode: keycode, flags: flags) ?? false
             dispatch(keycode: keycode, character: nil, down: down)
         case .keyDown:
             if event.isARepeat { return }

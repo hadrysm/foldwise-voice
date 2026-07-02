@@ -95,7 +95,7 @@ final class Config {
         out += top.map { "  \(Self.jsonString($0.0)): \(Self.jsonValue($0.1))" }
             .joined(separator: ",\n")
         out += "\n}\n"
-        try out.data(using: .utf8)!.write(to: path)
+        try out.data(using: .utf8)!.write(to: path, options: .atomic)
     }
 
     private struct RawJSON { let text: String }

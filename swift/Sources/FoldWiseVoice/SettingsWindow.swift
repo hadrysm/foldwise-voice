@@ -207,8 +207,9 @@ final class SettingsController {
                 // Capture modifiers on press only (flag bit present).
                 let keycode = CGKeyCode(event.keyCode)
                 let flags = CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))
-                let isDown = KeyMap.modifierFlag[keycode].map { flags.contains($0) } ?? false
-                guard isDown else { return nil }
+                guard KeyMap.isModifierDown(keycode: keycode, flags: flags) == true else {
+                    return nil
+                }
                 name = KeyMap.codeToName[keycode]
             } else {
                 name = KeyMap.codeToName[CGKeyCode(event.keyCode)]

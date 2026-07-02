@@ -45,6 +45,29 @@ enum KeyMap {
         57: .maskAlphaShift,
     ]
 
+    /// Device-specific flag bits (NX_DEVICE…KEYMASK): (this key, its sibling).
+    /// The generic masks above are shared by the left/right key of a pair, so
+    /// they can't tell "right ⌥ released" from "left ⌥ still held".
+    private static let deviceBits: [CGKeyCode: (own: UInt64, sibling: UInt64)] = [
+        59: (0x0001, 0x2000), 62: (0x2000, 0x0001),  // ctrl_l, ctrl_r
+        56: (0x0002, 0x0004), 60: (0x0004, 0x0002),  // shift_l, shift_r
+        55: (0x0008, 0x0010), 54: (0x0010, 0x0008),  // cmd_l, cmd_r
+        58: (0x0020, 0x0040), 61: (0x0040, 0x0020),  // alt_l, alt_r
+    ]
+
+    /// Is the modifier `keycode` down, given a flagsChanged event's flags?
+    /// nil if `keycode` is not a modifier key. Uses the device-specific bit
+    /// when present (falling back to the generic mask for synthesized events
+    /// that omit device bits) so releasing one key of a left/right pair is
+    /// not masked by the other key still being held.
+    static func isModifierDown(keycode: CGKeyCode, flags: CGEventFlags) -> Bool? {
+        guard let mask = modifierFlag[keycode] else { return nil }
+        guard flags.contains(mask) else { return false }
+        guard let bits = deviceBits[keycode] else { return true }  // caps_lock
+        let raw = flags.rawValue
+        return raw & bits.own != 0 || raw & (bits.own | bits.sibling) == 0
+    }
+
     static let prettyNames: [String: String] = [
         "alt_r": "right ⌥", "alt_l": "left ⌥", "alt": "left ⌥",
         "cmd_r": "right ⌘", "cmd_l": "left ⌘", "cmd": "left ⌘",

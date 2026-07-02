@@ -45,6 +45,7 @@ class SettingsController(AppKit.NSObject):
         self.config = None
         self.on_saved = None
         self.window = None
+        self._record_listener = None
         return self
 
     # -- construction -------------------------------------------------
@@ -216,9 +217,18 @@ class SettingsController(AppKit.NSObject):
     # -- key recording -------------------------------------------------
 
     @objc.python_method
+    def _stop_record_listener(self):
+        if self._record_listener is not None:
+            self._record_listener.stop()
+            self._record_listener = None
+
+    @objc.python_method
     def _record_into(self, field):
         from pynput import keyboard
 
+        # Only one recorder at a time — otherwise clicking Record… on both
+        # fields would make the next keypress fill both.
+        self._stop_record_listener()
         field.setStringValue_("press any key…")
 
         def on_press(key):
@@ -228,7 +238,8 @@ class SettingsController(AppKit.NSObject):
             AppHelper.callAfter(field.setStringValue_, name)
             return False  # one keypress, then stop the listener
 
-        keyboard.Listener(on_press=on_press).start()
+        self._record_listener = keyboard.Listener(on_press=on_press)
+        self._record_listener.start()
 
     def recordPtt_(self, _sender):
         self._record_into(self.ptt_field)
@@ -246,6 +257,7 @@ class SettingsController(AppKit.NSObject):
         AppKit.NSWorkspace.sharedWorkspace().openFile_(str(self.config.path.resolve()))
 
     def save_(self, _sender):
+        self._stop_record_listener()
         ptt = self.ptt_field.stringValue().strip()
         toggle = self.toggle_field.stringValue().strip() or None
         try:

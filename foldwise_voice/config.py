@@ -123,7 +123,10 @@ class Config:
                 for m in self.modes.values()
             },
         }
-        self.path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        # Write-then-rename so a crash mid-write can't corrupt modes.json.
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        tmp.replace(self.path)
 
 
 def load_config(path: str | Path = "modes.json") -> Config:
