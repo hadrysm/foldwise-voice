@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settings: SettingsController!
     private var menuBar: MenuBarController!
     private var listener: HotkeyListener?
+    private var updateChecker: UpdateChecker!
 
     init(configPath: String?, modeOverride: String?) {
         self.configPath = configPath
@@ -80,6 +81,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pipeline.onState = { [weak self] state in
             Task { @MainActor in self?.apply(state) }
         }
+
+        updateChecker = UpdateChecker { [weak self] version in
+            self?.menuBar.showUpdateAvailable(version)
+        }
+        updateChecker.start()
 
         Permissions.requestAtLaunch()
 
