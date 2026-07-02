@@ -1,7 +1,8 @@
-// Passive update check against GitHub Releases: on launch and once a day,
-// compare the bundle version with the latest release tag and surface a
-// menu-bar item when a newer version exists. Never downloads anything —
-// the user opens the release page and grabs the .dmg themselves.
+// Update check against GitHub Releases: passively on launch and once a day
+// (surfacing a menu-bar item when a newer version exists), plus on demand via
+// checkNow() for the "Check for Updates" button in Settings and the menu bar.
+// Never installs anything — the update button hands the .dmg download (or the
+// release page) to the browser and the user drags the app in themselves.
 
 import Foundation
 
@@ -11,6 +12,19 @@ final class UpdateChecker {
         URL(string: "https://api.github.com/repos/hadrysm/foldwise-voice/releases/latest")!
     static let releasesPage =
         URL(string: "https://github.com/hadrysm/foldwise-voice/releases/latest")!
+
+    struct Release {
+        let version: String
+        /// Direct .dmg asset download, when the release has one.
+        let dmgURL: URL?
+    }
+
+    enum CheckResult {
+        case upToDate(current: String)
+        case updateAvailable(version: String, downloadURL: URL?)
+        /// Offline, rate-limited, or a dev build with no bundle version.
+        case failed
+    }
 
     private let onUpdateAvailable: (String) -> Void
     private var timer: Timer?
@@ -33,22 +47,31 @@ final class UpdateChecker {
     }
 
     private func check() {
-        guard let current = Self.currentVersion() else { return }
-        Task {
-            guard let latest = await Self.fetchLatestVersion() else { return }
-            if Self.isNewer(latest, than: current) {
-                onUpdateAvailable(latest)
+        Task { @MainActor in
+            if case .updateAvailable(let version, _) = await Self.checkNow() {
+                onUpdateAvailable(version)
             }
         }
+    }
+
+    /// One immediate check with an explicit outcome, for user-initiated
+    /// "Check for Updates" (the passive path reuses it and only acts on
+    /// `.updateAvailable`).
+    static func checkNow() async -> CheckResult {
+        guard let current = currentVersion() else { return .failed }
+        guard let release = await fetchLatestRelease() else { return .failed }
+        return isNewer(release.version, than: current)
+            ? .updateAvailable(version: release.version, downloadURL: release.dmgURL)
+            : .upToDate(current: current)
     }
 
     static func currentVersion() -> String? {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
     }
 
-    /// Latest release version ("0.4.0"), or nil if offline / rate-limited /
-    /// the tag doesn't look like a version. Failures are silent by design.
-    static func fetchLatestVersion() async -> String? {
+    /// Latest release ("0.4.0" plus its .dmg asset URL), or nil if offline /
+    /// rate-limited / the tag doesn't look like a version.
+    static func fetchLatestRelease() async -> Release? {
         var request = URLRequest(url: latestReleaseAPI)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 10
@@ -58,7 +81,12 @@ final class UpdateChecker {
             let tag = json["tag_name"] as? String
         else { return nil }
         let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-        return version.isEmpty || parse(version) == nil ? nil : version
+        guard !version.isEmpty, parse(version) != nil else { return nil }
+        let dmgURL = ((json["assets"] as? [[String: Any]]) ?? [])
+            .compactMap { $0["browser_download_url"] as? String }
+            .first { $0.hasSuffix(".dmg") }
+            .flatMap(URL.init(string:))
+        return Release(version: version, dmgURL: dmgURL)
     }
 
     /// Numeric component-wise comparison, so "0.10.0" > "0.9.0".
