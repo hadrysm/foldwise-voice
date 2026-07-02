@@ -5,11 +5,23 @@ a real compiled binary — no venv, no launcher script. It shares the repo's
 modes.json via the LSEnvironment FOLDWISE_CONFIG hook, so both apps stay
 interchangeable.
 
-Usage:  python3 scripts/build_swift_app.py
+With --dmg it instead builds a distributable disk image: a self-contained
+'FoldWise Voice.app' (no repo paths baked in — the app creates its own
+modes.json in ~/Library/Application Support/FoldWise Voice/ on first launch)
+inside a drag-to-Applications .dmg.
+
+By default the bundle is ad-hoc signed. To sign the .dmg build with a real
+Developer ID (required for notarization), set CODESIGN_IDENTITY, e.g.
+CODESIGN_IDENTITY="Developer ID Application: Jane Doe (TEAMID)".
+
+Usage:  python3 scripts/build_swift_app.py         # build + install locally
+        python3 scripts/build_swift_app.py --dmg   # build dist/FoldWise-Voice-<version>.dmg
 """
 
 from __future__ import annotations
 
+import argparse
+import os
 import plistlib
 import shutil
 import subprocess
@@ -36,8 +48,8 @@ def build_binary() -> Path:
     return binary
 
 
-def build_bundle(binary: Path) -> Path:
-    app = DIST / f"{APP_NAME}.app"
+def build_bundle(binary: Path, dest: Path, name: str, share_repo_config: bool) -> Path:
+    app = dest / f"{name}.app"
     shutil.rmtree(app, ignore_errors=True)
     macos = app / "Contents" / "MacOS"
     resources = app / "Contents" / "Resources"
@@ -45,8 +57,8 @@ def build_bundle(binary: Path) -> Path:
     resources.mkdir(parents=True)
 
     plist = {
-        "CFBundleName": APP_NAME,
-        "CFBundleDisplayName": APP_NAME,
+        "CFBundleName": name,
+        "CFBundleDisplayName": name,
         "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleExecutable": "FoldWiseVoice",
         "CFBundlePackageType": "APPL",
@@ -59,9 +71,12 @@ def build_bundle(binary: Path) -> Path:
             "FoldWise Voice records the microphone while you hold the "
             "dictation hotkey, and transcribes it entirely on this Mac."
         ),
-        # Share the repo's modes.json with the Python app.
-        "LSEnvironment": {"FOLDWISE_CONFIG": str(REPO / "modes.json")},
     }
+    if share_repo_config:
+        # Share the repo's modes.json with the Python app. Never set for the
+        # .dmg build: the repo path doesn't exist on other machines, and the
+        # app falls back to ~/Library/Application Support/FoldWise Voice/.
+        plist["LSEnvironment"] = {"FOLDWISE_CONFIG": str(REPO / "modes.json")}
     if PYTHON_APP_ICON.exists():
         shutil.copy2(PYTHON_APP_ICON, resources / "icon.icns")
         plist["CFBundleIconFile"] = "icon"
@@ -70,10 +85,38 @@ def build_bundle(binary: Path) -> Path:
         plistlib.dump(plist, f)
 
     shutil.copy2(binary, macos / "FoldWiseVoice")
-
-    # Ad-hoc signature gives the bundle a stable identity for TCC grants.
-    subprocess.run(["codesign", "--force", "--deep", "-s", "-", str(app)], check=True)
+    sign(app)
     return app
+
+
+def sign(app: Path) -> None:
+    # Ad-hoc signature gives the bundle a stable identity for TCC grants.
+    # A real Developer ID (CODESIGN_IDENTITY) additionally enables the
+    # hardened runtime, which notarization requires.
+    identity = os.environ.get("CODESIGN_IDENTITY", "-")
+    cmd = ["codesign", "--force", "--deep", "-s", identity]
+    entitlements = DIST / "entitlements.plist"
+    if identity != "-":
+        with open(entitlements, "wb") as f:
+            plistlib.dump({"com.apple.security.device.audio-input": True}, f)
+        cmd += ["--options", "runtime", "--entitlements", str(entitlements)]
+    try:
+        subprocess.run(cmd + [str(app)], check=True)
+    finally:
+        entitlements.unlink(missing_ok=True)
+
+
+def build_dmg(app: Path) -> Path:
+    staging = app.parent
+    (staging / "Applications").symlink_to("/Applications")
+    dmg = DIST / f"FoldWise-Voice-{VERSION}.dmg"
+    dmg.unlink(missing_ok=True)
+    subprocess.run(
+        ["hdiutil", "create", "-volname", "FoldWise Voice", "-srcfolder",
+         str(staging), "-format", "UDZO", str(dmg)],
+        check=True,
+    )
+    return dmg
 
 
 def install(app: Path) -> Path:
@@ -92,8 +135,33 @@ def install(app: Path) -> Path:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--dmg", action="store_true",
+        help="build a distributable .dmg instead of installing locally",
+    )
+    args = parser.parse_args()
+
     binary = build_binary()
-    app = build_bundle(binary)
+
+    if args.dmg:
+        staging = DIST / "dmg"
+        shutil.rmtree(staging, ignore_errors=True)
+        staging.mkdir(parents=True)
+        app = build_bundle(binary, staging, "FoldWise Voice", share_repo_config=False)
+        dmg = build_dmg(app)
+        print(f"Built: {dmg}")
+        if os.environ.get("CODESIGN_IDENTITY"):
+            print("Signed with your Developer ID. To pass Gatekeeper on download,")
+            print("notarize it:  xcrun notarytool submit <dmg> --keychain-profile <p> --wait")
+            print("then:         xcrun stapler staple <dmg>")
+        else:
+            print("Ad-hoc signed (no Developer ID). Recipients must bypass Gatekeeper")
+            print("once: right-click the app → Open, or run")
+            print('  xattr -dr com.apple.quarantine "/Applications/FoldWise Voice.app"')
+        return
+
+    app = build_bundle(binary, DIST, APP_NAME, share_repo_config=True)
     installed = install(app)
     print(f"Built and installed: {installed}")
     print("First launch: grant Microphone when prompted; add the app under")

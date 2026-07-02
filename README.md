@@ -35,6 +35,28 @@ cd swift && swift run -c release
   *Privacy & Security → Accessibility* for auto-paste. If the hotkey doesn't
   fire, also add it under *Input Monitoring*.
 
+### Distribute as a .dmg
+
+```sh
+python3 scripts/build_swift_app.py --dmg   # → dist/FoldWise-Voice-<version>.dmg
+```
+
+This builds a self-contained **FoldWise Voice.app** in a drag-to-Applications
+disk image. Unlike the locally installed bundle, it has no repo paths baked
+in: on first launch the app creates its own `modes.json` in
+`~/Library/Application Support/FoldWise Voice/`, so it works on any Apple
+Silicon Mac running macOS 14+. Recipients still install Ollama themselves if
+they want LLM modes; plain dictation needs nothing else.
+
+Gatekeeper: by default the app is only ad-hoc signed, so a downloaded copy
+shows "cannot verify the developer" — recipients bypass it once with
+right-click → *Open* (or `xattr -dr com.apple.quarantine
+"/Applications/FoldWise Voice.app"`). For a frictionless install you need an
+Apple Developer Program membership: set
+`CODESIGN_IDENTITY="Developer ID Application: …"` when building, then
+notarize the .dmg (`xcrun notarytool submit --wait`) and staple it
+(`xcrun stapler staple`).
+
 ## How it works
 
 ```
