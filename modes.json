@@ -1,9 +1,9 @@
 {
   "active_mode": "Clean",
-  "hotkey": "alt_r",
+  "hotkey": "cmd_r",
   "toggle_hotkey": null,
   "pause_audio": true,
-  "hud_position": [1904.0, 20.0],
+  "hud_position": [3533.0, 407.0],
   "modes": {
     "Voice to Text": {
       "asr_model": "mlx-community\/whisper-large-v3-turbo",
