@@ -21,6 +21,7 @@ APP_NAME = "FoldWise Voice Native"
 BUNDLE_ID = "com.foldwise.voice.native"
 DIST = REPO / "dist"
 SWIFT_DIR = REPO / "swift"
+VERSION = (REPO / "version.txt").read_text().strip()
 PYTHON_APP_ICON = DIST / "FoldWise Voice.app" / "Contents" / "Resources" / "icon.icns"
 
 
@@ -49,8 +50,8 @@ def build_bundle(binary: Path) -> Path:
         "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleExecutable": "FoldWiseVoice",
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "0.2.0",
-        "CFBundleVersion": "0.2.0",
+        "CFBundleShortVersionString": VERSION,
+        "CFBundleVersion": VERSION,
         "LSMinimumSystemVersion": "14.0",
         "LSUIElement": True,  # menu-bar app: no Dock icon
         "NSHighResolutionCapable": True,

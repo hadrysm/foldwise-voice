@@ -242,6 +242,13 @@ private func sectionHeader(_ text: String) -> some View {
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
 
+    /// Set in Info.plist by scripts/build_swift_app.py from version.txt;
+    /// absent when running the bare binary (swift run).
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? "dev"
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             sidebar
@@ -259,11 +266,16 @@ struct SettingsView: View {
                 sidebarRow(pane)
             }
             Spacer()
-            Text("FoldWise Voice")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-                .padding(.horizontal, 10)
-                .padding(.bottom, 10)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("FoldWise Voice")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text("Version \(appVersion)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
         }
         .padding(.horizontal, 10)
         .padding(.top, 52)  // clear the traffic lights
