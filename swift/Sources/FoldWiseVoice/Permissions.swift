@@ -1,7 +1,9 @@
-// Launch-time permission checks. Dictation needs Microphone (to record) and
-// Accessibility (to post the ⌘V that pastes the transcript); missing either
-// fails silently mid-dictation — empty transcripts or text stranded on the
-// clipboard — so both are surfaced up front with native dialogs.
+// Launch-time permission checks. Dictation needs Microphone (to record),
+// Accessibility (to post the ⌘V that pastes the transcript), and Input
+// Monitoring or Accessibility (for the global-hotkey event tap); missing any
+// of them fails silently mid-dictation — empty transcripts, text stranded on
+// the clipboard, or a hotkey that only works while the app is frontmost — so
+// all are surfaced up front with native dialogs.
 
 import AVFoundation
 import AppKit
@@ -9,10 +11,13 @@ import ApplicationServices
 
 @MainActor
 enum Permissions {
-    /// Check Microphone then Accessibility, chaining so the two dialogs
-    /// never stack on top of each other.
+    /// Check Microphone, then Accessibility, then Input Monitoring, chaining
+    /// off the microphone callback so its dialog never stacks with the rest.
     static func requestAtLaunch() {
-        requestMicrophone { requestAccessibility() }
+        requestMicrophone {
+            requestAccessibility()
+            requestInputMonitoring()
+        }
     }
 
     // MARK: - Microphone
@@ -71,6 +76,20 @@ enum Permissions {
                     + "Privacy & Security → Accessibility.",
                 pane: "Privacy_Accessibility")
         }
+    }
+
+    // MARK: - Input Monitoring
+
+    /// The global-hotkey event tap is gated by Input Monitoring (Accessibility
+    /// also satisfies it). Ask explicitly so the app gets listed in System
+    /// Settings → Privacy & Security → Input Monitoring under its current code
+    /// signature — otherwise the tap silently fails and the hotkey only works
+    /// while the app is frontmost. The system shows this prompt at most once;
+    /// after a denial the call is a silent no-op, and HotkeyListener keeps
+    /// retrying the tap so a later grant takes effect without a relaunch.
+    private static func requestInputMonitoring() {
+        guard !AXIsProcessTrusted(), !CGPreflightListenEventAccess() else { return }
+        _ = CGRequestListenEventAccess()
     }
 
     // MARK: - shared alert
