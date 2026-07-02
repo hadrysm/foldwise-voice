@@ -4,6 +4,26 @@
 
 import SwiftUI
 
+/// Visual style of the floating bar, chosen in Settings → Configuration.
+/// Persisted in modes.json as `hud_style`; more styles can be added here and
+/// they appear in the picker automatically.
+enum HUDStyle: String, CaseIterable, Identifiable {
+    /// Translucent pill with status dot, text labels and always-visible bars.
+    case classic
+    /// Solid near-black pill: waveform glyph when idle (controls on hover),
+    /// live waveform only while recording, short text for statuses.
+    case minimal
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .classic: return "Classic"
+        case .minimal: return "Minimal"
+        }
+    }
+}
+
 final class HUDModel: ObservableObject {
     enum Phase: Equatable {
         case idle, listening, working, done, error
@@ -12,6 +32,7 @@ final class HUDModel: ObservableObject {
     @Published var phase: Phase = .idle
     @Published var label: String = ""
     @Published var hovering = false
+    @Published var style: HUDStyle = .classic
 
     /// Waveform ring buffer; mutated by the controller at 30 Hz while
     /// listening. Not @Published — TimelineView redraws continuously anyway.
@@ -37,6 +58,8 @@ struct HUDView: View {
     var onHover: (Bool) -> Void
     var onGear: () -> Void
     var onStop: () -> Void
+    var onChangeMode: () -> Void
+    var onRecord: () -> Void
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
@@ -44,14 +67,18 @@ struct HUDView: View {
             let mini = model.phase == .idle
 
             ZStack {
-                Capsule().fill(.ultraThinMaterial)
-                Capsule().fill(
-                    LinearGradient(
-                        colors: [
-                            Color(white: 0.10).opacity(mini ? 0.55 : 0.72),
-                            Color(white: 0.02).opacity(mini ? 0.65 : 0.85),
-                        ],
-                        startPoint: .top, endPoint: .bottom))
+                if model.style == .minimal {
+                    Capsule().fill(Color(white: 0.07).opacity(0.97))
+                } else {
+                    Capsule().fill(.ultraThinMaterial)
+                    Capsule().fill(
+                        LinearGradient(
+                            colors: [
+                                Color(white: 0.10).opacity(mini ? 0.55 : 0.72),
+                                Color(white: 0.02).opacity(mini ? 0.65 : 0.85),
+                            ],
+                            startPoint: .top, endPoint: .bottom))
+                }
 
                 if mini {
                     miniContent(t: t)
@@ -61,9 +88,13 @@ struct HUDView: View {
             }
             .overlay(
                 Capsule().strokeBorder(
-                    LinearGradient(
-                        colors: [.white.opacity(0.28), .white.opacity(0.06)],
-                        startPoint: .top, endPoint: .bottom),
+                    model.style == .minimal
+                        ? LinearGradient(
+                            colors: [.white.opacity(0.14), .white.opacity(0.05)],
+                            startPoint: .top, endPoint: .bottom)
+                        : LinearGradient(
+                            colors: [.white.opacity(0.28), .white.opacity(0.06)],
+                            startPoint: .top, endPoint: .bottom),
                     lineWidth: 1)
             )
             .contentShape(Capsule())
@@ -77,29 +108,116 @@ struct HUDView: View {
 
     @ViewBuilder
     private func miniContent(t: Double) -> some View {
-        ZStack {
-            WaveformBars(
-                count: 12, barWidth: 3, gap: 2, alpha: 0.45,
-                heights: WaveformBars.idleHeights(t: t, count: 12))
-            if model.hovering {
-                HStack {
-                    Spacer()
-                    gearButton
+        if model.style == .minimal {
+            minimalMiniContent()
+        } else {
+            ZStack {
+                WaveformBars(
+                    count: 12, barWidth: 3, gap: 2, alpha: 0.45,
+                    heights: WaveformBars.idleHeights(t: t, count: 12))
+                if model.hovering {
+                    HStack {
+                        Spacer()
+                        gearButton
+                    }
+                    .padding(.trailing, 4)
                 }
-                .padding(.trailing, 4)
             }
         }
+    }
+
+    /// Static "···|·|·" glyph; hovering swaps it for the control panel:
+    /// change mode, start dictation (app logo placeholder), open settings.
+    private static let minimalIdleGlyph: [CGFloat] = [3, 3, 3, 12, 3, 9, 3]
+
+    @ViewBuilder
+    private func minimalMiniContent() -> some View {
+        if model.hovering {
+            HStack(spacing: 13) {
+                minimalIconButton(
+                    "sparkles", size: 12, help: "Change mode", action: onChangeMode)
+                // Logo mark doubling as start-recording; swap for the real
+                // logo asset once there is one.
+                minimalIconButton(
+                    "mic.fill", size: 12, help: "Start dictation", action: onRecord)
+                Button(action: onGear) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(.white.opacity(0.12)))
+                }
+                .buttonStyle(.plain)
+                .help("Open settings")
+            }
+            .padding(.horizontal, 6)
+            .transition(.opacity)
+        } else {
+            WaveformBars(
+                count: 7, barWidth: 3, gap: 3, alpha: 0.9,
+                heights: Self.minimalIdleGlyph)
+        }
+    }
+
+    private func minimalIconButton(
+        _ symbol: String, size: CGFloat, help: String, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.92))
+                .frame(width: 22, height: 26)
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     // MARK: - expanded pill
 
     @ViewBuilder
     private func fullContent(t: Double) -> some View {
-        if model.phase == .listening {
+        if model.style == .minimal {
+            if model.phase == .listening {
+                minimalListeningContent(t: t)
+            } else {
+                minimalStatusContent()
+            }
+        } else if model.phase == .listening {
             listeningContent(t: t)
         } else {
             statusContent(t: t)
         }
+    }
+
+    /// Recording, minimal: just the live waveform; stop appears on hover.
+    @ViewBuilder
+    private func minimalListeningContent(t: Double) -> some View {
+        HStack(spacing: 10) {
+            WaveformBars(
+                count: 20, barWidth: 3, gap: 2.5, alpha: 0.95,
+                heights: heights(t: t, count: 20)
+            )
+            .frame(height: 18)
+            if model.hovering {
+                stopButton
+            }
+        }
+        .padding(.horizontal, 14)
+    }
+
+    /// Working / done / error, minimal: one short text line, no dot.
+    @ViewBuilder
+    private func minimalStatusContent() -> some View {
+        HStack(spacing: 8) {
+            Text(model.label)
+                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.95))
+                .lineLimit(1)
+            if model.hovering {
+                gearButton
+            }
+        }
+        .padding(.horizontal, 14)
     }
 
     /// Recording: no text, just the pulsing dot, live bars and a stop button.

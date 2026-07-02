@@ -16,13 +16,38 @@ final class HUDPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-@MainActor
-final class HUDController {
-    static let miniSize = CGSize(width: 90, height: 16)
-    static let hoverSize = CGSize(width: 150, height: 26)
-    static let fullSize = CGSize(width: 340, height: 64)
+/// Pill sizes per HUDStyle and phase.
+extension HUDStyle {
+    var miniSize: CGSize {
+        switch self {
+        case .classic: return CGSize(width: 90, height: 16)
+        case .minimal: return CGSize(width: 64, height: 30)
+        }
+    }
+    /// Idle pill while hovered (classic: gear; minimal: control panel).
+    var hoverSize: CGSize {
+        switch self {
+        case .classic: return CGSize(width: 150, height: 26)
+        case .minimal: return CGSize(width: 136, height: 36)
+        }
+    }
+    var fullSize: CGSize {
+        switch self {
+        case .classic: return CGSize(width: 340, height: 64)
+        case .minimal: return CGSize(width: 280, height: 36)
+        }
+    }
     /// Recording pill is a single label-free row, so it can be slimmer.
-    static let listeningSize = CGSize(width: 340, height: 44)
+    var listeningSize: CGSize {
+        switch self {
+        case .classic: return CGSize(width: 340, height: 44)
+        case .minimal: return CGSize(width: 190, height: 36)
+        }
+    }
+}
+
+@MainActor
+final class HUDController: NSObject {
     static let bottomMargin: CGFloat = 96
 
     let model = HUDModel()
@@ -31,6 +56,11 @@ final class HUDController {
     weak var recorder: AudioRecorder?
     /// Invoked by the HUD's stop button; wired to Pipeline.stopRecording().
     var onStop: (() -> Void)?
+    /// Invoked by the hover panel's record button; wired to toggleRecording().
+    var onRecord: (() -> Void)?
+    /// Fired after the hover panel's mode menu changes the active mode, so
+    /// the menu-bar checkmarks stay in sync.
+    var onModeChanged: (() -> Void)?
 
     private var panel: HUDPanel?
     private var levelTimer: Timer?
@@ -44,6 +74,8 @@ final class HUDController {
     init(config: Config, onSettings: @escaping () -> Void) {
         self.config = config
         self.onSettings = onSettings
+        super.init()
+        model.style = HUDStyle(rawValue: config.hudStyle) ?? .classic
         if let pos = config.hudPosition, pos.count == 2 {
             anchor = CGPoint(x: pos[0], y: pos[1])
         }
@@ -57,7 +89,7 @@ final class HUDController {
         stopLevelTimer()
         model.phase = .idle
         model.label = ""
-        setSize(model.hovering ? Self.hoverSize : Self.miniSize)
+        setSize(size(for: .idle))
         panel?.orderFrontRegardless()
     }
 
@@ -71,8 +103,27 @@ final class HUDController {
         } else {
             stopLevelTimer()
         }
-        setSize(phase == .listening ? Self.listeningSize : Self.fullSize)
+        setSize(size(for: phase))
         panel?.orderFrontRegardless()
+    }
+
+    /// Re-read `config.hudStyle` (after a settings save) and re-fit the pill.
+    func styleChanged() {
+        let style = HUDStyle(rawValue: config.hudStyle) ?? .classic
+        guard model.style != style else { return }
+        model.style = style
+        if panel != nil {
+            setSize(size(for: model.phase))
+        }
+    }
+
+    private func size(for phase: HUDModel.Phase) -> CGSize {
+        let style = model.style
+        switch phase {
+        case .idle: return model.hovering ? style.hoverSize : style.miniSize
+        case .listening: return style.listeningSize
+        default: return style.fullSize
+        }
     }
 
     func flash(_ phase: HUDModel.Phase, _ label: String, seconds: TimeInterval = 1.4) {
@@ -94,7 +145,7 @@ final class HUDController {
 
     private func ensurePanel() {
         guard panel == nil else { return }
-        let rect = NSRect(origin: .zero, size: Self.miniSize)
+        let rect = NSRect(origin: .zero, size: model.style.miniSize)
         let p = HUDPanel(
             contentRect: rect,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -112,7 +163,9 @@ final class HUDController {
             model: model,
             onHover: { [weak self] over in self?.setHover(over) },
             onGear: { [weak self] in self?.onSettings() },
-            onStop: { [weak self] in self?.onStop?() })
+            onStop: { [weak self] in self?.onStop?() },
+            onChangeMode: { [weak self] in self?.popUpModeMenu() },
+            onRecord: { [weak self] in self?.onRecord?() })
         p.contentView = NSHostingView(rootView: view)
 
         NotificationCenter.default.addObserver(
@@ -122,7 +175,26 @@ final class HUDController {
         }
 
         panel = p
-        setSize(Self.miniSize, animate: false)
+        setSize(model.style.miniSize, animate: false)
+    }
+
+    /// Built fresh from config on every click so it can never go stale.
+    private func popUpModeMenu() {
+        let menu = NSMenu()
+        for name in config.modeOrder {
+            let item = NSMenuItem(
+                title: name, action: #selector(modeMenuItemPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.state = name == config.activeMode ? .on : .off
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    @objc private func modeMenuItemPicked(_ item: NSMenuItem) {
+        config.setActiveMode(item.title)
+        try? config.save()
+        onModeChanged?()
     }
 
     private func defaultAnchor() -> CGPoint {
@@ -187,7 +259,7 @@ final class HUDController {
         guard model.hovering != over else { return }
         model.hovering = over
         if model.phase == .idle {
-            setSize(over ? Self.hoverSize : Self.miniSize)
+            setSize(size(for: .idle))
         }
     }
 

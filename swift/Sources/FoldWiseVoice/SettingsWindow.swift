@@ -143,6 +143,7 @@ final class SettingsModel: ObservableObject {
     @Published var pttKey = ""
     @Published var toggleKey = ""
     @Published var pauseAudio = true
+    @Published var hudStyle = HUDStyle.classic.rawValue
     @Published var axTrusted = false
     @Published var status = ""
     @Published var statusIsError = false
@@ -732,6 +733,31 @@ struct SettingsView: View {
             )
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
+
+            sectionHeader("Recording bar")
+            Card {
+                CardRow(
+                    title: "Style",
+                    subtitle: "How the floating dictation bar looks"
+                ) {
+                    Picker(
+                        "",
+                        selection: Binding(
+                            get: { model.hudStyle },
+                            set: {
+                                model.hudStyle = $0
+                                model.onCommit?()
+                            })
+                    ) {
+                        ForEach(HUDStyle.allCases) { style in
+                            Text(style.displayName).tag(style.rawValue)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
         }
     }
 
@@ -877,6 +903,7 @@ final class SettingsController {
         model.pttKey = config.hotkey
         model.toggleKey = config.toggleHotkey ?? ""
         model.pauseAudio = config.pauseAudio
+        model.hudStyle = (HUDStyle(rawValue: config.hudStyle) ?? .classic).rawValue
         model.axTrusted = TextInserter.accessibilityTrusted()
         model.status = ""
         refreshModels()
@@ -1005,6 +1032,7 @@ final class SettingsController {
         config.hotkey = ptt
         config.toggleHotkey = toggle.isEmpty ? nil : toggle
         config.pauseAudio = model.pauseAudio
+        config.hudStyle = model.hudStyle
         do {
             try config.save()
         } catch {

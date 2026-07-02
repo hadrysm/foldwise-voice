@@ -77,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hud.recorder = pipeline.recorder
         hud.onStop = { [weak self] in self?.pipeline.stopRecording() }
+        hud.onRecord = { [weak self] in self?.pipeline.toggleRecording() }
         menuBar = MenuBarController(
             config: config,
             onModeChanged: {},
@@ -86,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.onUpdateAvailable = { [weak self] version in
             self?.menuBar.showUpdateAvailable(version)
         }
+        hud.onModeChanged = { [weak self] in self?.menuBar.refreshModeChecks() }
 
         pipeline.onState = { [weak self] state in
             Task { @MainActor in self?.apply(state) }
@@ -127,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func settingsSaved() {
         startListener()
         menuBar.refreshModeChecks()
+        hud.styleChanged()
     }
 
     /// "Check for Updates…" from the menu bar: check immediately and always
@@ -274,8 +277,8 @@ if printConfig {
     let echo = Config(
         activeMode: config.activeMode, hotkey: config.hotkey,
         toggleHotkey: config.toggleHotkey, pauseAudio: config.pauseAudio,
-        hudPosition: config.hudPosition, modeOrder: config.modeOrder,
-        modes: config.modes, path: tmp)
+        hudPosition: config.hudPosition, hudStyle: config.hudStyle,
+        modeOrder: config.modeOrder, modes: config.modes, path: tmp)
     try? echo.save()
     print("config: \(url.path)")
     print((try? String(contentsOf: tmp, encoding: .utf8)) ?? "<save failed>")

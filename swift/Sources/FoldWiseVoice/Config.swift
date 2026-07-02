@@ -25,19 +25,23 @@ final class Config {
     var toggleHotkey: String?
     var pauseAudio: Bool
     var hudPosition: [Double]?
+    /// HUDStyle raw value; unknown values fall back to .classic at use sites.
+    var hudStyle: String
     private(set) var modeOrder: [String]
     var modes: [String: Mode]
     let path: URL
 
     init(
         activeMode: String, hotkey: String, toggleHotkey: String?, pauseAudio: Bool,
-        hudPosition: [Double]?, modeOrder: [String], modes: [String: Mode], path: URL
+        hudPosition: [Double]?, hudStyle: String = "classic", modeOrder: [String],
+        modes: [String: Mode], path: URL
     ) {
         self.activeMode = activeMode
         self.hotkey = hotkey
         self.toggleHotkey = toggleHotkey
         self.pauseAudio = pauseAudio
         self.hudPosition = hudPosition
+        self.hudStyle = hudStyle
         self.modeOrder = modeOrder
         self.modes = modes
         self.path = path
@@ -74,6 +78,7 @@ final class Config {
             ("toggle_hotkey", toggleHotkey),
             ("pause_audio", pauseAudio),
             ("hud_position", hudPosition),
+            ("hud_style", hudStyle),
         ]
         var modesJSON = "{\n"
         for (i, name) in modeOrder.enumerated() {
@@ -166,6 +171,7 @@ final class Config {
             toggleHotkey: raw["toggle_hotkey"] as? String,
             pauseAudio: (raw["pause_audio"] as? Bool) ?? true,
             hudPosition: hudPosition,
+            hudStyle: (raw["hud_style"] as? String) ?? "classic",
             modeOrder: order,
             modes: modes,
             path: url
