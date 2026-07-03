@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.3](https://github.com/hadrysm/foldwise-voice/compare/v0.6.2...v0.6.3) (2026-07-03)
+
+
+### Maintenance
+
+* force release for the tests/lint/restructure PR ([aa8f3f7](https://github.com/hadrysm/foldwise-voice/commit/aa8f3f735788f977968537c0e948caed1eb96384))
+
 ## [0.6.2](https://github.com/hadrysm/foldwise-voice/compare/v0.6.1...v0.6.2) (2026-07-02)
 
 
