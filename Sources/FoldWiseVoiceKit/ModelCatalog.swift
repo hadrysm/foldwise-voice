@@ -28,13 +28,13 @@ enum ModelCatalog {
         ),
         Entry(
             name: "llama3.2:3b", size: "2.0 GB", speed: 4, quality: 3,
-            blurb: "The default — best balance for dictation. Fast enough to feel "
+            blurb: "Great balance for dictation. Fast enough to feel "
                 + "instant and solid at following the mode prompts."
         ),
         Entry(
             name: "qwen2.5:3b", size: "1.9 GB", speed: 4, quality: 3,
-            blurb: "On par with Llama 3.2 3B for cleanup, with stronger "
-                + "multilingual dictation."
+            blurb: "The default — sticks strictly to \"output only\" prompts, "
+                + "with stronger multilingual dictation."
         ),
         Entry(
             name: "gemma2:2b", size: "1.6 GB", speed: 4, quality: 2,

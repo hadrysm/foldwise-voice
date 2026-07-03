@@ -299,7 +299,7 @@ final class Config {
     static func defaultConfig(path: URL) -> Config {
         let asr = "mlx-community/whisper-large-v3-turbo"
         let clean = Mode(
-            name: "Clean", asrModel: asr, llmModel: "llama3.2:3b",
+            name: "Clean", asrModel: asr, llmModel: "qwen2.5:3b",
             systemPrompt: "You clean up dictated speech. Fix punctuation, capitalization, "
                 + "and obvious transcription errors. Remove filler words (um, uh, "
                 + "like, you know). Do NOT change meaning, add content, or answer "
@@ -308,13 +308,13 @@ final class Config {
         )
         let raw = Mode(name: "Voice to Text", asrModel: asr, llmModel: nil, systemPrompt: nil, vocab: [])
         let email = Mode(
-            name: "Email", asrModel: asr, llmModel: "llama3.2:3b",
+            name: "Email", asrModel: asr, llmModel: "qwen2.5:3b",
             systemPrompt: "Rewrite this dictation as a clear, concise, professional email "
                 + "body. Output only the email text.",
             vocab: []
         )
         let bullets = Mode(
-            name: "Bullets", asrModel: asr, llmModel: "llama3.2:3b",
+            name: "Bullets", asrModel: asr, llmModel: "qwen2.5:3b",
             systemPrompt: "Convert this dictation into a tight bulleted list, one idea per "
                 + "bullet. Output only the list.",
             vocab: []
