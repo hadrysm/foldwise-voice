@@ -5,6 +5,7 @@
 
 import AppKit
 import Foundation
+import os
 
 /// TCP port used as a single-instance mutex (shared with the Python app so
 /// only one dictation app runs at a time).
@@ -130,7 +131,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             l.start()
             listener = l
         } catch {
-            NSLog("Hotkey setup failed: \(error.localizedDescription)")
+            Log.app.error(
+                "Hotkey setup failed: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 

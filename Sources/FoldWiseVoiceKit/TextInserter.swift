@@ -5,6 +5,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import os
 
 enum TextInserter {
     /// Pending clipboard restore; canceled when a newer insert supersedes it.
@@ -16,33 +17,32 @@ enum TextInserter {
 
     /// Copy `text` and paste it into the focused app. Returns true if a
     /// synthetic Cmd+V was posted, false for the clipboard-only fallback.
+    /// The pasteboard, permission check, and keystroke are parameters with
+    /// production defaults so tests can drive the restore logic against a
+    /// private named pasteboard.
     @MainActor
-    static func insert(_ text: String) -> Bool {
+    static func insert(
+        _ text: String,
+        pasteboard: NSPasteboard = .general,
+        trusted: () -> Bool = accessibilityTrusted,
+        postPaste: () -> Void = postCmdV,
+        restoreDelay: TimeInterval = 0.4
+    ) -> Bool {
         guard !text.isEmpty else { return false }
 
         restoreWork?.cancel()
         restoreWork = nil
 
-        let pasteboard = NSPasteboard.general
         let previous = pasteboard.string(forType: .string)
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        guard accessibilityTrusted() else {
-            NSLog("Accessibility not granted — transcript left on the clipboard")
+        guard trusted() else {
+            Log.insert.warning("Accessibility not granted — transcript left on the clipboard")
             return false
         }
 
-        usleep(50000) // let the clipboard settle before pasting
-
-        let source = CGEventSource(stateID: .hidSystemState)
-        let vKey: CGKeyCode = 9
-        for down in [true, false] {
-            guard let event = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: down)
-            else { continue }
-            event.flags = .maskCommand
-            event.post(tap: .cghidEventTap)
-        }
+        postPaste()
 
         if let previous {
             // Give the focused app time to read the clipboard before
@@ -55,8 +55,22 @@ enum TextInserter {
                 pasteboard.setString(previous, forType: .string)
             }
             restoreWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay, execute: work)
         }
         return true
+    }
+
+    /// Synthesize Cmd+V into the focused app (needs Accessibility).
+    static func postCmdV() {
+        usleep(50000) // let the clipboard settle before pasting
+
+        let source = CGEventSource(stateID: .hidSystemState)
+        let vKey: CGKeyCode = 9
+        for down in [true, false] {
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: down)
+            else { continue }
+            event.flags = .maskCommand
+            event.post(tap: .cghidEventTap)
+        }
     }
 }

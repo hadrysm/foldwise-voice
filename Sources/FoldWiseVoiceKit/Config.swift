@@ -3,6 +3,7 @@
 // but ignored here: this app always transcribes with Parakeet v3 (FluidAudio).
 
 import Foundation
+import os
 
 let MIN_CHARS_FOR_LLM = 40
 let OLLAMA_CHAT_URL = "http://localhost:11434/v1/chat/completions"
@@ -50,7 +51,22 @@ final class Config {
     }
 
     var mode: Mode {
-        modes[activeMode] ?? modes[modeOrder[0]]!
+        // load() guarantees at least one mode, but modes.json is hand-editable
+        // and `modes` is mutable — degrade to raw dictation rather than crash
+        // if the invariant is ever broken.
+        if let m = modes[activeMode] { return m }
+        // Local copy: Logger messages are autoclosures, where the formatter's
+        // redundantSelf rule and the compiler's explicit-self rule collide.
+        let requested = activeMode
+        if let first = modeOrder.first, let m = modes[first] {
+            Log.config.error("""
+            Active mode '\(requested, privacy: .public)' not in modes.json — \
+            using '\(first, privacy: .public)'
+            """)
+            return m
+        }
+        Log.config.error("modes.json has no usable modes — using built-in raw dictation")
+        return Mode(name: "Voice to Text", asrModel: "", llmModel: nil, systemPrompt: nil, vocab: [])
     }
 
     /// The Ollama model used by LLM modes (they share one by convention).

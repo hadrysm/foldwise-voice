@@ -4,6 +4,7 @@
 // ever blocking the UI.
 
 import Foundation
+import os
 
 enum PipelineState: Equatable {
     case listening(mode: String)
@@ -104,7 +105,9 @@ final class Pipeline {
             if !transcriber.ready { emit(.loadingModel) }
             text = try await transcriber.transcribe(samples)
         } catch {
-            NSLog("Transcription failed: \(error)")
+            Log.pipeline.error(
+                "Transcription failed: \(String(describing: error), privacy: .public)"
+            )
             emit(.error("\(error)"))
             return
         }
@@ -112,14 +115,14 @@ final class Pipeline {
             emit(.idle)
             return
         }
-        NSLog("raw: \(text)")
+        Log.pipeline.info("raw: \(text, privacy: .private)")
 
         if mode.usesLLM, let model = mode.llmModel, text.count > MIN_CHARS_FOR_LLM {
             emit(.polishing(model: model))
             text = await OllamaClient.polish(
                 text, model: model, systemPrompt: mode.systemPrompt, vocab: mode.vocab
             )
-            NSLog("llm: \(text)")
+            Log.pipeline.info("llm: \(text, privacy: .private)")
         }
 
         let finalText = text
