@@ -45,7 +45,7 @@ Apply the coding standards in @docs/CODING_STANDARDS.md. Look for opportunities 
 Also check correctness:
 
 - Are edge cases handled? Are new/changed behaviours covered by tests?
-- Are there force-unwraps, `as!` or `try!` casts in non-test code, or unchecked assumptions?
+- Are there force-unwraps, force-casts (as!), force-tries (try!), or unchecked assumptions in non-test code?
 - Does the change introduce injection vulnerabilities, credential leaks, or other security issues?
 
 Maintain balance — avoid over-simplification that reduces clarity, creates overly clever solutions, combines too many concerns into single functions, removes helpful abstractions, or makes the code harder to debug or extend.
