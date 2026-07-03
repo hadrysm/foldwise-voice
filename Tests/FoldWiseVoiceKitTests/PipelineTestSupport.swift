@@ -51,6 +51,27 @@ final class FakeTranscriber: Transcribing {
     }
 }
 
+/// Records each text handed to the insert stage, reporting `succeeds` back to
+/// the Pipeline. Locked because the insert closure runs on a job Task.
+final class InsertSpy {
+    private let lock = NSLock()
+    private var collected: [String] = []
+    var succeeds = true
+
+    func insert(_ text: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        collected.append(text)
+        return succeeds
+    }
+
+    var texts: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return collected
+    }
+}
+
 final class StateCollector {
     private let lock = NSLock()
     private var collected: [PipelineState] = []
