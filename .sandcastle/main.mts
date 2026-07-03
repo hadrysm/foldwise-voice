@@ -36,10 +36,10 @@
 // interactive picker offers the open PRDs, the whole queue, and manual
 // PRD entry, then suggests an iteration cap.
 
-import { execFileSync, execSync } from 'node:child_process';
-import * as readline from 'node:readline/promises';
-import * as sandcastle from '@ai-hero/sandcastle';
-import { noSandbox } from '@ai-hero/sandcastle/sandboxes/no-sandbox';
+import { execFileSync, execSync } from "node:child_process";
+import * as readline from "node:readline/promises";
+import * as sandcastle from "@ai-hero/sandcastle";
+import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import {
   HANDOFF_LABEL,
   RELEASE_GATE_LABEL,
@@ -59,7 +59,7 @@ import {
   type PickerPrd,
   type StopReason,
   type SubIssue,
-} from './batch.mts';
+} from "./batch.mts";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -80,8 +80,11 @@ For example, up to five cycles over PRD #31's released slices:
 With no arguments on a TTY, an interactive picker chooses the batch and
 the iteration cap. Without a TTY, arguments are required.`;
 
-const parsed = resolveLaunchMode(process.argv.slice(2), process.stdin.isTTY === true);
-if (parsed.kind === 'invalid') {
+const parsed = resolveLaunchMode(
+  process.argv.slice(2),
+  process.stdin.isTTY === true,
+);
+if (parsed.kind === "invalid") {
   console.error(USAGE);
   process.exit(1);
 }
@@ -103,24 +106,28 @@ function fetchSubIssues(prdNumber: number): SubIssue[] {
   }`;
   const response = JSON.parse(
     execFileSync(
-      'gh',
+      "gh",
       [
-        'api',
-        'graphql',
-        '-F',
-        'owner={owner}',
-        '-F',
-        'name={repo}',
-        '-F',
+        "api",
+        "graphql",
+        "-F",
+        "owner={owner}",
+        "-F",
+        "name={repo}",
+        "-F",
         `number=${prdNumber}`,
-        '-f',
+        "-f",
         `query=${query}`,
       ],
-      { encoding: 'utf8' },
+      { encoding: "utf8" },
     ),
   );
   type LabelNode = { name: string };
-  type SubIssueNode = { number: number; state: SubIssue['state']; labels: { nodes: LabelNode[] } };
+  type SubIssueNode = {
+    number: number;
+    state: SubIssue["state"];
+    labels: { nodes: LabelNode[] };
+  };
   const nodes: SubIssueNode[] = response.data.repository.issue.subIssues.nodes;
   return nodes.map((node) => ({
     number: node.number,
@@ -133,19 +140,30 @@ function fetchSubIssues(prdNumber: number): SubIssue[] {
 function listOpenIssues<T>(label: string, fields: string): T[] {
   return JSON.parse(
     execFileSync(
-      'gh',
-      ['issue', 'list', '--state', 'open', '--label', label, '--limit', '100', '--json', fields],
-      { encoding: 'utf8' },
+      "gh",
+      [
+        "issue",
+        "list",
+        "--state",
+        "open",
+        "--label",
+        label,
+        "--limit",
+        "100",
+        "--json",
+        fields,
+      ],
+      { encoding: "utf8" },
     ),
   );
 }
 
 /** The open PRDs (label `prd`) offered as picker rows. */
-const fetchOpenPrds = (): PickerPrd[] => listOpenIssues('prd', 'number,title');
+const fetchOpenPrds = (): PickerPrd[] => listOpenIssues("prd", "number,title");
 
 /** How many issues the whole-queue run would draw from. */
 const countReadyForAgentIssues = (): number =>
-  listOpenIssues(RELEASE_GATE_LABEL, 'number').length;
+  listOpenIssues(RELEASE_GATE_LABEL, "number").length;
 
 // ---------------------------------------------------------------------------
 // Interactive batch picker
@@ -172,27 +190,30 @@ async function askUntil<T>(
 }
 
 async function pickBatch(): Promise<RunMode> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
   try {
     const prds = fetchOpenPrds();
-    console.log('Pick a batch:');
+    console.log("Pick a batch:");
     for (const line of pickerMenu(prds)) console.log(line);
 
     const choice: PickerChoice = await askUntil(
       rl,
-      'Batch: ',
+      "Batch: ",
       (input) => resolvePickerChoice(input, prds),
-      'Enter one of the row numbers above.',
+      "Enter one of the row numbers above.",
     );
 
     let prdNumber: number | undefined;
-    if (choice.kind === 'prd') prdNumber = choice.prdNumber;
-    if (choice.kind === 'manual-prd') {
+    if (choice.kind === "prd") prdNumber = choice.prdNumber;
+    if (choice.kind === "manual-prd") {
       prdNumber = await askUntil(
         rl,
-        'PRD number: ',
+        "PRD number: ",
         parseIssueNumber,
-        'Enter a positive issue number, e.g. 31.',
+        "Enter a positive issue number, e.g. 31.",
       );
     }
 
@@ -203,19 +224,19 @@ async function pickBatch(): Promise<RunMode> {
     const suggested = suggestedIterationCap(openSliceCount);
     console.log(
       `${openSliceCount} open slice(s) in the queue — suggesting ${suggested} iterations` +
-        ' (one cycle per slice plus slack for reviewer bounces).',
+        " (one cycle per slice plus slack for reviewer bounces).",
     );
 
     const maxIterations = await askUntil(
       rl,
       `Max iterations [${suggested}]: `,
       (input) => resolveIterationCap(input, suggested),
-      'Enter a positive number, or leave empty to accept.',
+      "Enter a positive number, or leave empty to accept.",
     );
 
     return prdNumber === undefined
-      ? { kind: 'whole-queue', maxIterations }
-      : { kind: 'scoped', maxIterations, prdNumber };
+      ? { kind: "whole-queue", maxIterations }
+      : { kind: "scoped", maxIterations, prdNumber };
   } finally {
     rl.close();
   }
@@ -226,18 +247,20 @@ async function pickBatchOrAbort(): Promise<RunMode> {
   try {
     return await pickBatch();
   } catch (error) {
-    if ((error as { code?: string }).code === 'ABORT_ERR') {
-      console.error('\nPicker aborted — nothing was run.');
+    if ((error as { code?: string }).code === "ABORT_ERR") {
+      console.error("\nPicker aborted — nothing was run.");
       process.exit(1);
     }
     throw error;
   }
 }
 
-const mode: RunMode = parsed.kind === 'interactive' ? await pickBatchOrAbort() : parsed;
+const mode: RunMode =
+  parsed.kind === "interactive" ? await pickBatchOrAbort() : parsed;
 
 /** Tip of the current branch. */
-const gitHead = (): string => execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+const gitHead = (): string =>
+  execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
 
 /**
  * The commits in `base..head`, oldest first, for `Closes #<n>` attribution.
@@ -246,23 +269,26 @@ const gitHead = (): string => execSync('git rev-parse HEAD', { encoding: 'utf8' 
  */
 function commitsInRange(base: string, head: string): Commit[] {
   const raw = execFileSync(
-    'git',
-    ['log', '-z', '--reverse', '--format=%H%n%B', `${base}..${head}`],
-    { encoding: 'utf8' },
+    "git",
+    ["log", "-z", "--reverse", "--format=%H%n%B", `${base}..${head}`],
+    { encoding: "utf8" },
   );
   return raw
-    .split('\0')
+    .split("\0")
     .filter((entry) => entry.length > 0)
     .map((entry) => {
-      const firstNewline = entry.indexOf('\n');
-      return { sha: entry.slice(0, firstNewline), message: entry.slice(firstNewline + 1) };
+      const firstNewline = entry.indexOf("\n");
+      return {
+        sha: entry.slice(0, firstNewline),
+        message: entry.slice(firstNewline + 1),
+      };
     });
 }
 
 console.log(
-  mode.kind === 'scoped'
+  mode.kind === "scoped"
     ? `Scope: PRD #${mode.prdNumber} (open ready-for-agent sub-issues)`
-    : 'Scope: whole ready-for-agent queue',
+    : "Scope: whole ready-for-agent queue",
 );
 
 // ---------------------------------------------------------------------------
@@ -273,7 +299,7 @@ console.log(
 // stopped — together they decide the end-of-run handoff. `iteration-cap`
 // holds unless a break says otherwise.
 const runCommits: Commit[] = [];
-let stopReason: StopReason = 'iteration-cap';
+let stopReason: StopReason = "iteration-cap";
 
 for (let iteration = 1; iteration <= mode.maxIterations; iteration++) {
   console.log(`\n=== Iteration ${iteration}/${mode.maxIterations} ===\n`);
@@ -287,7 +313,7 @@ for (let iteration = 1; iteration <= mode.maxIterations; iteration++) {
   // — no manual fix to print. The stop reason is never read on that path:
   // no released slice is open, so decideHandoff lands on `complete`.
   let sliceFilter: string;
-  if (mode.kind === 'scoped') {
+  if (mode.kind === "scoped") {
     const subIssues = fetchSubIssues(mode.prdNumber);
     const queue = openSliceNumbers(subIssues);
     if (queue.length === 0) {
@@ -295,10 +321,14 @@ for (let iteration = 1; iteration <= mode.maxIterations; iteration++) {
         console.error(explainEmptyScopedQueue(subIssues, mode.prdNumber));
         process.exit(1);
       }
-      console.log(`Scoped queue for PRD #${mode.prdNumber} is empty — stopping.`);
+      console.log(
+        `Scoped queue for PRD #${mode.prdNumber} is empty — stopping.`,
+      );
       break;
     }
-    console.log(`Queue for PRD #${mode.prdNumber}: ${queue.map((n) => `#${n}`).join(', ')}`);
+    console.log(
+      `Queue for PRD #${mode.prdNumber}: ${queue.map((n) => `#${n}`).join(", ")}`,
+    );
     sliceFilter = sliceNumbersFilter(queue);
   } else {
     sliceFilter = sliceNumbersFilter(undefined);
@@ -319,12 +349,12 @@ for (let iteration = 1; iteration <= mode.maxIterations; iteration++) {
   // hands it to the reviewer. A higher value would let the agent drain
   // several issues in one pass, which defeats the per-issue review.
   const implement = await sandcastle.run({
-    name: 'implementer',
+    name: "implementer",
     maxIterations: 1,
-    agent: sandcastle.claudeCode('claude-fable-5', { effort: 'xhigh' }),
+    agent: sandcastle.claudeCode("claude-fable-5", { effort: "high" }),
     sandbox: noSandbox(),
-    branchStrategy: { type: 'head' },
-    promptFile: './.sandcastle/implement-prompt.md',
+    branchStrategy: { type: "head" },
+    promptFile: "./.sandcastle/implement-prompt.md",
     promptArgs: {
       SLICE_FILTER: sliceFilter,
     },
@@ -333,8 +363,8 @@ for (let iteration = 1; iteration <= mode.maxIterations; iteration++) {
   if (!implement.commits.length) {
     // No commits means the backlog is empty or every remaining issue is
     // blocked — there is nothing left to implement or review, so stop.
-    console.log('Implementation agent made no commits. Stopping.');
-    stopReason = 'no-commits';
+    console.log("Implementation agent made no commits. Stopping.");
+    stopReason = "no-commits";
     break;
   }
 
@@ -352,18 +382,18 @@ for (let iteration = 1; iteration <= mode.maxIterations; iteration++) {
   // this iteration's work — and either approves or amends it in place.
   // ---------------------------------------------------------------------------
   await sandcastle.run({
-    name: 'reviewer',
+    name: "reviewer",
     maxIterations: 1,
-    agent: sandcastle.claudeCode('claude-fable-5'),
+    agent: sandcastle.claudeCode("claude-fable-5", { effort: "high" }),
     sandbox: noSandbox(),
-    branchStrategy: { type: 'head' },
-    promptFile: './.sandcastle/review-prompt.md',
+    branchStrategy: { type: "head" },
+    promptFile: "./.sandcastle/review-prompt.md",
     promptArgs: {
       BASE: base,
     },
   });
 
-  console.log('\nReview complete.');
+  console.log("\nReview complete.");
 }
 
 // ---------------------------------------------------------------------------
@@ -375,18 +405,30 @@ for (let iteration = 1; iteration <= mode.maxIterations; iteration++) {
 // runs have no PRD to hand off. Nothing is pushed either way.
 // ---------------------------------------------------------------------------
 
-if (mode.kind === 'scoped') {
+if (mode.kind === "scoped") {
   const handoff = decideHandoff({
     prdNumber: mode.prdNumber,
     subIssues: fetchSubIssues(mode.prdNumber),
     commits: runCommits,
     stopReason,
   });
-  const complete = handoff.kind === 'complete';
+  const complete = handoff.kind === "complete";
   if (complete) {
-    execFileSync('gh', ['issue', 'edit', String(mode.prdNumber), '--add-label', HANDOFF_LABEL]);
+    execFileSync("gh", [
+      "issue",
+      "edit",
+      String(mode.prdNumber),
+      "--add-label",
+      HANDOFF_LABEL,
+    ]);
   }
-  execFileSync('gh', ['issue', 'comment', String(mode.prdNumber), '--body', handoff.comment]);
+  execFileSync("gh", [
+    "issue",
+    "comment",
+    String(mode.prdNumber),
+    "--body",
+    handoff.comment,
+  ]);
   console.log(
     complete
       ? `\nBatch drained — labeled PRD #${mode.prdNumber} \`${HANDOFF_LABEL}\` and posted the summary.`
@@ -394,4 +436,4 @@ if (mode.kind === 'scoped') {
   );
 }
 
-console.log('\nAll done.');
+console.log("\nAll done.");

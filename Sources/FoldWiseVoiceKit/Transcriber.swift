@@ -6,7 +6,7 @@
 import FluidAudio
 import Foundation
 
-final class Transcriber {
+final class Transcriber: Transcribing {
     private var manager: AsrManager?
     private var loadTask: Task<AsrManager, Error>?
     /// True once models are loaded and transcription is instant.

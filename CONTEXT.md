@@ -1,10 +1,33 @@
 # Context
 
-Glossary of the batch-workflow vocabulary used across this repo's issues,
-prompts, and agent tooling. Terms only — for the decisions behind the
-workflow, see `docs/adr/`.
+Glossaries for this repo: the **dictation pipeline** the app runs, and the
+**batch workflow** used across issues, prompts, and agent tooling. Terms
+only — for the decisions behind either, see `docs/adr/`.
 
-## Glossary
+## Dictation pipeline
+
+**Dictation session** — One press-to-insert cycle: from holding the hotkey
+and speaking, through to the (optionally polished) text landing in the
+focused app — or left on the clipboard when it can't be pasted. The unit the
+app sequences and reports progress for.
+_Avoid_: recording, dictation
+
+**Stage** — One of the four steps a dictation session flows through: record
+the audio, transcribe it to text, optionally polish that text, and insert it
+into the focused app.
+
+**Polish** — The optional stage that rewrites a raw transcript with a local
+LLM (Ollama) per the active Mode. Skipped for raw modes and very short
+transcripts, and it falls back to the raw transcript whenever Ollama is
+unreachable.
+_Avoid_: clean, format, LLM step
+
+**Mode** — A named dictation profile that decides whether and how to polish:
+its LLM model, system prompt, and preserved vocabulary. E.g. "Voice to Text"
+(raw), "Clean", "Email", "Bullets".
+_Avoid_: profile, preset
+
+## Batch workflow
 
 **PRD** — a GitHub issue carrying the `prd` label that holds a product
 requirements document: the problem, the solution shape, and a planned
