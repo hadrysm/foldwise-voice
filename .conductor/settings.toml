@@ -1,12 +1,17 @@
 #:schema https://conductor.build/schemas/settings.repo.schema.json
 
 [scripts]
-# Pre-resolve Swift package dependencies so first builds are fast.
+# Pre-resolve Swift package dependencies so first builds are fast, and
+# install the Sandcastle runner's dependencies (guarded: a machine without
+# pnpm still sets up — only the Sandcastle runner needs them).
 setup = '''
 set -e
 git config core.hooksPath .githooks
 if command -v swift >/dev/null 2>&1; then
   swift package resolve
+fi
+if command -v pnpm >/dev/null 2>&1; then
+  pnpm -C .sandcastle install
 fi
 '''
 # Remove the entire workspace directory. Also guarantees untracked
