@@ -23,13 +23,25 @@ struct Mode {
 }
 
 final class Config {
-    var activeMode: String
-    var hotkey: String
-    var toggleHotkey: String?
+    var activeMode: String {
+        didSet { if oldValue != activeMode { pendingChanges.insert(.activeMode) } }
+    }
+
+    var hotkey: String {
+        didSet { if oldValue != hotkey { pendingChanges.insert(.hotkeys) } }
+    }
+
+    var toggleHotkey: String? {
+        didSet { if oldValue != toggleHotkey { pendingChanges.insert(.hotkeys) } }
+    }
+
     var pauseAudio: Bool
     var hudPosition: [Double]?
     /// HUDStyle raw value; unknown values fall back to .classic at use sites.
-    var hudStyle: String
+    var hudStyle: String {
+        didSet { if oldValue != hudStyle { pendingChanges.insert(.hudStyle) } }
+    }
+
     private(set) var modeOrder: [String]
     var modes: [String: Mode]
     let path: URL
@@ -87,6 +99,45 @@ final class Config {
     func setActiveMode(_ name: String) {
         guard modes[name] != nil else { return }
         activeMode = name
+    }
+
+    // MARK: - change propagation
+
+    /// One member per thing subscribers *act on*, not per property: both
+    /// hotkeys share `.hotkeys` because the listener can only rebind both at
+    /// once, and properties nobody re-reads (`hudPosition`, `pauseAudio`)
+    /// have no member at all — persisting them notifies no one.
+    struct ChangeSet: OptionSet {
+        let rawValue: Int
+
+        static let activeMode = ChangeSet(rawValue: 1 << 0)
+        static let hotkeys = ChangeSet(rawValue: 1 << 1)
+        static let hudStyle = ChangeSet(rawValue: 1 << 2)
+    }
+
+    /// Changed keys accumulated by the tracked properties' `didSet`s,
+    /// delivered and cleared by `saveAndNotify()`.
+    private var pendingChanges: ChangeSet = []
+    /// Observers are app-lifetime singletons, so this list is append-only.
+    private var observers: [(ChangeSet) -> Void] = []
+
+    @MainActor
+    func onChange(_ observer: @escaping (ChangeSet) -> Void) {
+        observers.append(observer)
+    }
+
+    /// The mutate → persist → notify transaction. A failed save throws
+    /// before the pending set is touched, so nobody is told about a change
+    /// that never reached disk — and a later retry still carries it.
+    @MainActor
+    func saveAndNotify() throws {
+        try save()
+        let changes = pendingChanges
+        pendingChanges = []
+        guard !changes.isEmpty else { return }
+        for observer in observers {
+            observer(changes)
+        }
     }
 
     // MARK: - persistence

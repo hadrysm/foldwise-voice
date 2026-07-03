@@ -8,7 +8,6 @@ import SwiftUI
 @MainActor
 final class SettingsController {
     private let config: Config
-    private let onSaved: () -> Void
     private let model = SettingsModel()
     private var window: NSWindow?
     private var keyMonitor: Any?
@@ -19,9 +18,8 @@ final class SettingsController {
     /// menu-bar "Update Available" item.
     var onUpdateAvailable: ((String) -> Void)?
 
-    init(config: Config, onSaved: @escaping () -> Void) {
+    init(config: Config) {
         self.config = config
-        self.onSaved = onSaved
         wire()
     }
 
@@ -211,13 +209,12 @@ final class SettingsController {
         config.pauseAudio = model.pauseAudio
         config.hudStyle = model.hudStyle
         do {
-            try config.save()
+            try config.saveAndNotify()
         } catch {
             setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
             return
         }
         setStatus("Saved ✓", isError: false, clearAfter: 2)
-        onSaved()
     }
 
     private func setStatus(_ text: String, isError: Bool, clearAfter seconds: Double? = nil) {
