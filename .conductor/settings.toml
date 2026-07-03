@@ -30,13 +30,15 @@ icon = "mic"
 command = "swift build"
 icon = "hammer"
 
-# Launch the Sandcastle implement→review runner; with no arguments it lands
-# in the interactive batch picker. Local-only: the agents run on the host
-# (the app cannot build in a Linux container) and need the host's `claude`
-# and `gh` logins. Uses the tsx vendored in .sandcastle/ — there is no hoisted root
-# node_modules, and `npx` would download from the registry at run time.
-# Sandcastle requires cwd = repo root (the default) for git and prompt-file
-# resolution.
+# Launch the Sandcastle sequential-reviewer loop (stock upstream template,
+# no arguments): each cycle runs an implement agent then a review agent in a
+# shared host worktree; commits land on a sandcastle/sequential-reviewer/*
+# branch for the maintainer to merge manually. Local-only: the agents run on
+# the host (the app cannot build in a Linux container) and need the host's
+# `claude` and `gh` logins. Uses the tsx vendored in .sandcastle/ — there is
+# no hoisted root node_modules, and `npx` would download from the registry
+# at run time. Sandcastle requires cwd = repo root (the default) for git and
+# prompt-file resolution.
 [scripts.run.sandcastle]
 command = ".sandcastle/node_modules/.bin/tsx .sandcastle/main.mts"
 available_in = "local"

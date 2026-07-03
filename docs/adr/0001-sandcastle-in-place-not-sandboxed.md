@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted (2026-07-03)
+Accepted (2026-07-03). Amended (2026-07-03): the runner moved from custom
+orchestration with the `head` branch strategy to the stock upstream
+sequential-reviewer template, which works in host git worktrees on named
+`sandcastle/sequential-reviewer/*` branches. The no-sandbox (host execution)
+decision is unchanged.
 
 ## Context
 
@@ -28,11 +32,14 @@ Two facts about this repo make that default unworkable or redundant:
 
 ## Decision
 
-Run Sandcastle **in place on the macOS host**: the no-sandbox provider with
-the `head` branch strategy. Agents execute directly in the current checkout
-and commit to whatever branch the workspace is on. **No Dockerfile is
-included in this repo**, deliberately — its absence signals that container
-mode is not a supported configuration, not an omission.
+Run Sandcastle **on the macOS host**: the no-sandbox provider, with the
+stock sequential-reviewer template's branch handling. Sandcastle creates a
+git worktree on the host for each implement→review cycle; agents execute
+there directly and commit to a named `sandcastle/sequential-reviewer/*`
+branch, which the maintainer reviews and merges into the workspace branch
+by hand. **No Dockerfile is included in this repo**, deliberately — its
+absence signals that container mode is not a supported configuration, not
+an omission.
 
 Consequences that follow from this decision:
 
@@ -42,9 +49,10 @@ Consequences that follow from this decision:
   stays free of `package.json`/`node_modules` noise.
 - **Agents inherit the host environment.** Their `claude` and `gh` calls use
   the maintainer's existing logins; no token juggling in a `.env` file.
-- **The human gate moves to the branch, not the merge.** Since commits land
-  on the workspace branch directly, the run never pushes and never opens a
-  PR — the maintainer reviews the workspace diff and opens the PR by hand.
+- **The human gate is the manual merge.** The run never pushes and never
+  opens a PR — commits land on a local `sandcastle/sequential-reviewer/*`
+  branch, and the maintainer reviews its diff and merges (then opens any PR)
+  by hand.
 - **Host runs are trust-scoped.** Agents run with the maintainer's user
   privileges, so the runner is a local, human-launched tool only — never
   wired into CI or run on untrusted input.
@@ -58,9 +66,9 @@ a throwaway `sandcastle/*` branch) was rejected because:
   agents' mandatory verify loop (`swift build --build-tests`, then
   `swift test --skip-build`) would fail on every iteration. This is a hard constraint, not a
   preference.
-- The isolation it buys is already provided by Conductor worktrees, while
-  the throwaway-branch strategy would move results *off* the workspace
-  branch the maintainer actually reviews in Conductor.
+- The isolation it buys is already provided by Conductor worktrees and by
+  the host git worktrees Sandcastle creates per cycle — the container adds
+  nothing but the build breakage above.
 
 Should the package ever gain a Linux-buildable core (e.g. a platform-free
 library target), this decision is worth revisiting for that subset.

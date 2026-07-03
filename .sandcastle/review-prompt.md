@@ -1,6 +1,6 @@
 # TASK
 
-Review the code changes made since commit `{{BASE}}` on the current branch along two axes:
+Review the code changes made on branch `{{BRANCH}}` — the branch you are currently on, branched from `{{TARGET_BRANCH}}` — along two axes:
 
 1. **Spec** — the work does what its issue asked: every acceptance criterion is satisfied by the diff.
 2. **Standards** — the code is clear, consistent, and maintainable per the project coding standards.
@@ -11,11 +11,11 @@ You MUST end in exactly one of the three terminal states listed at the end of th
 
 ## Diff under review
 
-!`git diff {{BASE}} HEAD`
+!`git diff {{TARGET_BRANCH}}...HEAD`
 
 ## Commits under review (full messages — the `Closes #<n>` line identifies the issue)
 
-!`git log {{BASE}}..HEAD`
+!`git log {{TARGET_BRANCH}}..HEAD`
 
 # REVIEW PROCESS
 
