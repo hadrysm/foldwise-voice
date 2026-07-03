@@ -33,6 +33,7 @@ export const HANDOFF_LABEL = 'code-review';
 export type LaunchMode =
   | { kind: 'whole-queue'; maxIterations: number }
   | { kind: 'scoped'; maxIterations: number; prdNumber: number }
+  | { kind: 'interactive' }
   | { kind: 'invalid' };
 
 const positiveInteger = (raw: string): number | undefined =>
@@ -41,10 +42,14 @@ const positiveInteger = (raw: string): number | undefined =>
 /**
  * Parse CLI arguments into a launch mode: a lone iteration count runs the
  * whole `ready-for-agent` queue, a second argument scopes the run to that
- * PRD's sub-issues, and anything else is invalid.
+ * PRD's sub-issues, and anything else is invalid. No arguments at all means
+ * the interactive batch picker — but only on a TTY; without one (a
+ * misconfigured automation) the launch is invalid, so it aborts with usage
+ * instead of hanging on a prompt nobody will answer.
  */
-export function resolveLaunchMode(args: string[]): LaunchMode {
-  if (args.length < 1 || args.length > 2) return { kind: 'invalid' };
+export function resolveLaunchMode(args: string[], stdinIsTTY: boolean): LaunchMode {
+  if (args.length === 0) return stdinIsTTY ? { kind: 'interactive' } : { kind: 'invalid' };
+  if (args.length > 2) return { kind: 'invalid' };
 
   const maxIterations = positiveInteger(args[0]);
   if (maxIterations === undefined) return { kind: 'invalid' };
@@ -55,6 +60,75 @@ export function resolveLaunchMode(args: string[]): LaunchMode {
   if (prdNumber === undefined) return { kind: 'invalid' };
 
   return { kind: 'scoped', maxIterations, prdNumber };
+}
+
+/**
+ * Validate the picker's manual PRD entry: a bare positive issue number
+ * (no `#` prefix). `undefined` means re-prompt.
+ */
+export function parseIssueNumber(raw: string): number | undefined {
+  return positiveInteger(raw.trim());
+}
+
+/** An open PRD offered as a row in the interactive batch picker. */
+export type PickerPrd = {
+  number: number;
+  title: string;
+};
+
+/** What the maintainer picked from the batch menu. */
+export type PickerChoice =
+  | { kind: 'prd'; prdNumber: number }
+  | { kind: 'whole-queue' }
+  | { kind: 'manual-prd' };
+
+/**
+ * The batch menu's rows, numbered for `resolvePickerChoice`: the open PRDs
+ * in order, then the two escape hatches — the whole `ready-for-agent`
+ * queue, and manual PRD entry for a PRD that isn't in the shortlist.
+ */
+export function pickerMenu(prds: PickerPrd[]): string[] {
+  const rows = [
+    ...prds.map((prd) => `PRD #${prd.number} — ${prd.title}`),
+    'Whole ready-for-agent queue',
+    'Enter a PRD number manually',
+  ];
+  return rows.map((row, index) => `  ${index + 1}) ${row}`);
+}
+
+/**
+ * Map a menu answer to its choice, mirroring `pickerMenu`'s row order.
+ * Anything off the menu resolves to `undefined` so the picker can
+ * re-prompt.
+ */
+export function resolvePickerChoice(
+  input: string,
+  prds: PickerPrd[],
+): PickerChoice | undefined {
+  const row = positiveInteger(input.trim());
+  if (row === undefined) return undefined;
+  if (row <= prds.length) return { kind: 'prd', prdNumber: prds[row - 1].number };
+  if (row === prds.length + 1) return { kind: 'whole-queue' };
+  if (row === prds.length + 2) return { kind: 'manual-prd' };
+  return undefined;
+}
+
+/**
+ * The picker's suggested iteration cap: one implement→review cycle per open
+ * slice, plus two spare cycles so a reviewer bounce or two can be retried
+ * without stalling the batch at the cap.
+ */
+export function suggestedIterationCap(openSliceCount: number): number {
+  return openSliceCount + 2;
+}
+
+/**
+ * Parse the cap prompt's answer: an empty answer accepts the suggestion,
+ * anything else must be a positive integer. `undefined` means re-prompt.
+ */
+export function resolveIterationCap(input: string, suggested: number): number | undefined {
+  const trimmed = input.trim();
+  return trimmed === '' ? suggested : positiveInteger(trimmed);
 }
 
 /**

@@ -32,18 +32,31 @@
 //   .sandcastle/node_modules/.bin/tsx .sandcastle/main.mts 1
 // or a run scoped to PRD #31's released sub-issues:
 //   .sandcastle/node_modules/.bin/tsx .sandcastle/main.mts 5 31
+// With no arguments on a TTY (the Conductor run-button case), an
+// interactive picker offers the open PRDs, the whole queue, and manual
+// PRD entry, then suggests an iteration cap.
 
 import { execFileSync, execSync } from 'node:child_process';
+import * as readline from 'node:readline/promises';
 import * as sandcastle from '@ai-hero/sandcastle';
 import { noSandbox } from '@ai-hero/sandcastle/sandboxes/no-sandbox';
 import {
   HANDOFF_LABEL,
+  RELEASE_GATE_LABEL,
   decideHandoff,
   explainEmptyScopedQueue,
   openSliceNumbers,
+  parseIssueNumber,
+  pickerMenu,
+  resolveIterationCap,
   resolveLaunchMode,
+  resolvePickerChoice,
   sliceNumbersFilter,
+  suggestedIterationCap,
   type Commit,
+  type LaunchMode,
+  type PickerChoice,
+  type PickerPrd,
   type StopReason,
   type SubIssue,
 } from './batch.mts';
@@ -62,10 +75,13 @@ over the whole ready-for-agent queue:
 
 [prdNumber] scopes the run to that PRD's open ready-for-agent sub-issues.
 For example, up to five cycles over PRD #31's released slices:
-  .sandcastle/node_modules/.bin/tsx .sandcastle/main.mts 5 31`;
+  .sandcastle/node_modules/.bin/tsx .sandcastle/main.mts 5 31
 
-const mode = resolveLaunchMode(process.argv.slice(2));
-if (mode.kind === 'invalid') {
+With no arguments on a TTY, an interactive picker chooses the batch and
+the iteration cap. Without a TTY, arguments are required.`;
+
+const parsed = resolveLaunchMode(process.argv.slice(2), process.stdin.isTTY === true);
+if (parsed.kind === 'invalid') {
   console.error(USAGE);
   process.exit(1);
 }
@@ -112,6 +128,113 @@ function fetchSubIssues(prdNumber: number): SubIssue[] {
     labels: node.labels.nodes.map((label) => label.name),
   }));
 }
+
+/** Open issues carrying `label`, with the given `--json` fields. */
+function listOpenIssues<T>(label: string, fields: string): T[] {
+  return JSON.parse(
+    execFileSync(
+      'gh',
+      ['issue', 'list', '--state', 'open', '--label', label, '--limit', '100', '--json', fields],
+      { encoding: 'utf8' },
+    ),
+  );
+}
+
+/** The open PRDs (label `prd`) offered as picker rows. */
+const fetchOpenPrds = (): PickerPrd[] => listOpenIssues('prd', 'number,title');
+
+/** How many issues the whole-queue run would draw from. */
+const countReadyForAgentIssues = (): number =>
+  listOpenIssues(RELEASE_GATE_LABEL, 'number').length;
+
+// ---------------------------------------------------------------------------
+// Interactive batch picker
+//
+// The Conductor run-button path: no arguments, a TTY. Every prompt
+// re-asks until the answer parses — the parsing itself lives in
+// `batch.mts`, where it is unit-tested; this function only does I/O.
+// ---------------------------------------------------------------------------
+
+type RunMode = Extract<LaunchMode, { maxIterations: number }>;
+
+/** Ask until the answer parses; the parsers live (tested) in `batch.mts`. */
+async function askUntil<T>(
+  rl: readline.Interface,
+  prompt: string,
+  parse: (input: string) => T | undefined,
+  hint: string,
+): Promise<T> {
+  for (;;) {
+    const answer = parse(await rl.question(prompt));
+    if (answer !== undefined) return answer;
+    console.log(hint);
+  }
+}
+
+async function pickBatch(): Promise<RunMode> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const prds = fetchOpenPrds();
+    console.log('Pick a batch:');
+    for (const line of pickerMenu(prds)) console.log(line);
+
+    const choice: PickerChoice = await askUntil(
+      rl,
+      'Batch: ',
+      (input) => resolvePickerChoice(input, prds),
+      'Enter one of the row numbers above.',
+    );
+
+    let prdNumber: number | undefined;
+    if (choice.kind === 'prd') prdNumber = choice.prdNumber;
+    if (choice.kind === 'manual-prd') {
+      prdNumber = await askUntil(
+        rl,
+        'PRD number: ',
+        parseIssueNumber,
+        'Enter a positive issue number, e.g. 31.',
+      );
+    }
+
+    const openSliceCount =
+      prdNumber === undefined
+        ? countReadyForAgentIssues()
+        : openSliceNumbers(fetchSubIssues(prdNumber)).length;
+    const suggested = suggestedIterationCap(openSliceCount);
+    console.log(
+      `${openSliceCount} open slice(s) in the queue — suggesting ${suggested} iterations` +
+        ' (one cycle per slice plus slack for reviewer bounces).',
+    );
+
+    const maxIterations = await askUntil(
+      rl,
+      `Max iterations [${suggested}]: `,
+      (input) => resolveIterationCap(input, suggested),
+      'Enter a positive number, or leave empty to accept.',
+    );
+
+    return prdNumber === undefined
+      ? { kind: 'whole-queue', maxIterations }
+      : { kind: 'scoped', maxIterations, prdNumber };
+  } finally {
+    rl.close();
+  }
+}
+
+/** Ctrl+D at a picker prompt aborts the launch, not the stack trace. */
+async function pickBatchOrAbort(): Promise<RunMode> {
+  try {
+    return await pickBatch();
+  } catch (error) {
+    if ((error as { code?: string }).code === 'ABORT_ERR') {
+      console.error('\nPicker aborted — nothing was run.');
+      process.exit(1);
+    }
+    throw error;
+  }
+}
+
+const mode: RunMode = parsed.kind === 'interactive' ? await pickBatchOrAbort() : parsed;
 
 /** Tip of the current branch. */
 const gitHead = (): string => execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
