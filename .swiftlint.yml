@@ -1,0 +1,88 @@
+# SwiftLint — run as `swiftlint lint --strict` in CI.
+# Philosophy: SwiftFormat owns formatting; SwiftLint owns bugs & idioms.
+# Every SwiftLint rule that overlaps a SwiftFormat rule is disabled so the
+# two tools can never fight (see .swiftformat).
+
+included:
+  - Sources
+  - Tests
+
+excluded:
+  - .build
+
+disabled_rules:
+  # Formatting territory owned by SwiftFormat:
+  - trailing_comma          # SwiftFormat trailingCommas inserts them
+  - opening_brace           # SwiftFormat braces/wrap rules
+  - colon
+  - comma
+  - closing_brace
+  - operator_whitespace
+  - return_arrow_whitespace
+  - statement_position      # SwiftFormat elseOnSameLine
+  - switch_case_alignment   # SwiftFormat indent
+  - trailing_whitespace     # SwiftFormat trailingSpace
+  - trailing_newline        # SwiftFormat linebreakAtEndOfFile
+  - vertical_whitespace     # SwiftFormat consecutiveBlankLines
+  - void_return             # SwiftFormat void
+  # Pragmatic disables:
+  - todo                    # TODOs must not fail --strict CI
+  - identifier_name         # SCREAMING_SNAKE file constants; short math names
+  - cyclomatic_complexity   # big switches over keycodes/states are legitimate
+  - function_body_length    # metrics rules hard-block under --strict
+  - type_body_length
+  - file_length
+  - large_tuple
+
+opt_in_rules:
+  # Bug-catching:
+  - weak_delegate                          # retain cycles via strong delegate refs
+  - unowned_variable_capture               # unowned in escaping closures = crash risk
+  - discarded_notification_center_observer # dropped observer token = silent leak
+  - unhandled_throwing_task                # Task { try ... } silently swallows errors
+  - overridden_super_call
+  - prohibited_super_call
+  - implicitly_unwrapped_optional          # IUOs are latent crashes
+  - fatal_error_message
+  - identical_operands
+  - empty_count                            # .count == 0 → .isEmpty
+  - legacy_objc_type
+  - legacy_multiple
+  # Perf/idiom:
+  - first_where
+  - last_where
+  - contains_over_first_not_nil
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_range_nil_comparison
+  - sorted_first_last
+  - empty_string
+  - empty_collection_literal
+  - redundant_nil_coalescing
+  - toggle_bool
+  - reduce_boolean
+  # Consistency (cheap, near-zero churn):
+  - modifier_order
+  - shorthand_optional_binding
+  - self_binding
+  - yoda_condition
+  - period_spacing
+  - private_swiftui_state
+  - discouraged_assert
+
+# Analyzer rules (unused_import/unused_declaration) intentionally omitted:
+# they need `swiftlint analyze` with an xcodebuild compile log, which a pure
+# SwiftPM CI job can't produce cheaply. Use Periphery locally for dead code.
+
+line_length:
+  warning: 120
+  error: 160
+  ignores_urls: true
+  ignores_comments: true
+
+function_parameter_count:
+  warning: 6            # closure-callback injection needs a bit more room
+  error: 8
+
+nesting:
+  type_level: 2

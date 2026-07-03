@@ -1,0 +1,3 @@
+import FoldWiseVoiceKit
+
+FoldWiseVoiceApp.main()

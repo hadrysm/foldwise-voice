@@ -1,37 +1,26 @@
 #:schema https://conductor.build/schemas/settings.repo.schema.json
 
 [scripts]
-# Create the Python venv (uv when available, matching the README) and
-# pre-resolve Swift package dependencies so first builds are fast.
+# Pre-resolve Swift package dependencies so first builds are fast.
 setup = '''
 set -e
-if command -v uv >/dev/null 2>&1; then
-  uv venv --python 3.12 .venv
-  uv pip install --python .venv/bin/python -r requirements.txt
-else
-  python3 -m venv .venv
-  .venv/bin/pip install -r requirements.txt
-fi
+git config core.hooksPath .githooks
 if command -v swift >/dev/null 2>&1; then
-  swift package resolve --package-path swift
+  swift package resolve
 fi
 '''
 # Remove the entire workspace directory. Also guarantees untracked
-# artifacts (.venv, swift/.build, dist) never block worktree removal.
+# artifacts (swift/.build, dist) never block worktree removal.
 archive = 'if [ -n "$CONDUCTOR_WORKSPACE_PATH" ]; then rm -rf "$CONDUCTOR_WORKSPACE_PATH"; fi'
 # The app grabs a global hotkey, the microphone, and system audio ducking —
 # only one instance can meaningfully run at a time.
 run_mode = "nonconcurrent"
 
 [scripts.run.swift-app]
-command = "cd swift && swift run -c release"
+command = "swift run -c release"
 default = true
 icon = "mic"
 
-[scripts.run.python-app]
-command = ".venv/bin/python -m foldwise_voice --ui"
-icon = "terminal"
-
 [scripts.run.swift-build]
-command = "swift build --package-path swift"
+command = "swift build"
 icon = "hammer"

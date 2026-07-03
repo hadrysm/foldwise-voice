@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  pull_request:
+  # Also run on main so the SPM cache stays warm for PRs (caches created on
+  # PR branches are not shared with sibling PRs; caches from main are).
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  lint:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Both tools are preinstalled on the GitHub macOS images; brew is a
+      # self-healing fallback in case an image update drops them.
+      - name: Install tools if missing
+        run: |
+          which swiftlint  || brew install swiftlint
+          which swiftformat || brew install swiftformat
+      - name: SwiftFormat (lint mode)
+        run: swiftformat --lint .
+      - name: SwiftLint
+        run: swiftlint lint --strict --reporter github-actions-logging
+
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+      - name: Build (including tests)
+        run: swift build --build-tests
+      - name: Test
+        run: swift test --skip-build

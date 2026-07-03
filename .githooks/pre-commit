@@ -1,0 +1,28 @@
+#!/bin/sh
+# Pre-commit hook (husky/lint-staged equivalent, no Node required).
+# Formats and lints ONLY the staged Swift files, re-staging what the
+# formatter fixes; hard-fails on lint errors the tools can't auto-fix.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+# Skip for one commit:    git commit --no-verify
+
+set -e
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR -- '*.swift')
+[ -z "$staged" ] && exit 0
+
+if ! command -v swiftformat >/dev/null 2>&1 || ! command -v swiftlint >/dev/null 2>&1; then
+    echo "pre-commit: swiftformat/swiftlint not installed — skipping checks."
+    echo "pre-commit: install with:  brew install swiftformat swiftlint"
+    exit 0
+fi
+
+echo "$staged" | while IFS= read -r file; do
+    [ -f "$file" ] || continue
+    swiftformat --quiet "$file"
+    swiftlint lint --fix --quiet "$file" >/dev/null || true
+    git add "$file"
+done
+
+# shellcheck disable=SC2086 — file list is newline-safe for this repo
+echo "$staged" | tr '\n' '\0' | xargs -0 swiftlint lint --strict --quiet --
