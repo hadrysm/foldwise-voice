@@ -80,9 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let recorder = AudioRecorder()
         let transcriber = Transcriber()
         pipeline = Pipeline(config: config, recorder: recorder, transcriber: transcriber)
-        settings = SettingsController(config: config) { [weak self] in
-            self?.settingsSaved()
-        }
+        settings = SettingsController(config: config)
         hud = HUDController(config: config) { [weak self] in
             self?.settings.show()
         }
@@ -91,7 +89,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hud.onRecord = { [weak self] in self?.pipeline.toggleRecording() }
         menuBar = MenuBarController(
             config: config,
-            onModeChanged: {},
             onSettings: { [weak self] in self?.settings.show() },
             onCheckForUpdates: { [weak self] in self?.checkForUpdatesManually() },
             onQuit: { [weak self] in self?.quit() }
@@ -99,7 +96,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.onUpdateAvailable = { [weak self] version in
             self?.menuBar.showUpdateAvailable(version)
         }
-        hud.onModeChanged = { [weak self] in self?.menuBar.refreshModeChecks() }
+        // The other config reactors subscribe in their own inits; the hotkey
+        // listener has no controller object, so its subscription lives here.
+        // Rebinding tears down the TCC-sensitive event tap, so it must run
+        // only when a hotkey actually changed.
+        config.onChange { [weak self] changes in
+            if changes.contains(.hotkeys) { self?.startListener() }
+        }
 
         pipeline.onState = { [weak self] state in
             Task { @MainActor in self?.apply(state) }
@@ -140,12 +143,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 "Hotkey setup failed: \(error.localizedDescription, privacy: .public)"
             )
         }
-    }
-
-    private func settingsSaved() {
-        startListener()
-        menuBar.refreshModeChecks()
-        hud.styleChanged()
     }
 
     /// "Check for Updates…" from the menu bar: check immediately and always

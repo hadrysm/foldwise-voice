@@ -6,7 +6,6 @@ import AppKit
 @MainActor
 final class MenuBarController: NSObject {
     private let config: Config
-    private let onModeChanged: () -> Void
     private let onSettings: () -> Void
     private let onCheckForUpdates: () -> Void
     private let onQuit: () -> Void
@@ -23,18 +22,21 @@ final class MenuBarController: NSObject {
 
     init(
         config: Config,
-        onModeChanged: @escaping () -> Void,
         onSettings: @escaping () -> Void,
         onCheckForUpdates: @escaping () -> Void,
         onQuit: @escaping () -> Void
     ) {
         self.config = config
-        self.onModeChanged = onModeChanged
         self.onSettings = onSettings
         self.onCheckForUpdates = onCheckForUpdates
         self.onQuit = onQuit
         super.init()
         build()
+        // Wherever the active mode is changed — here, the HUD's mode menu,
+        // or Settings — the checkmarks follow.
+        config.onChange { [weak self] changes in
+            if changes.contains(.activeMode) { self?.refreshModeChecks() }
+        }
     }
 
     enum Icon { case idle, listening, working }
@@ -58,7 +60,7 @@ final class MenuBarController: NSObject {
         updateSeparator.isHidden = false
     }
 
-    func refreshModeChecks() {
+    private func refreshModeChecks() {
         for item in modeItems {
             item.state = item.title == config.activeMode ? .on : .off
         }
@@ -121,9 +123,7 @@ final class MenuBarController: NSObject {
 
     @objc private func switchMode(_ sender: NSMenuItem) {
         config.setActiveMode(sender.title)
-        try? config.save()
-        refreshModeChecks()
-        onModeChanged()
+        try? config.saveAndNotify()
     }
 
     @objc private func openReleasePage(_ sender: Any?) {

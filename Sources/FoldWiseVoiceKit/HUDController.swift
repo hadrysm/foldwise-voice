@@ -66,9 +66,6 @@ final class HUDController: NSObject {
     var onStop: (() -> Void)?
     /// Invoked by the hover panel's record button; wired to toggleRecording().
     var onRecord: (() -> Void)?
-    /// Fired after the hover panel's mode menu changes the active mode, so
-    /// the menu-bar checkmarks stay in sync.
-    var onModeChanged: (() -> Void)?
 
     private var panel: HUDPanel?
     private var moveObserver: NSObjectProtocol?
@@ -87,6 +84,9 @@ final class HUDController: NSObject {
         model.style = HUDStyle(rawValue: config.hudStyle) ?? .classic
         if let pos = config.hudPosition, pos.count == 2 {
             anchor = CGPoint(x: pos[0], y: pos[1])
+        }
+        config.onChange { [weak self] changes in
+            if changes.contains(.hudStyle) { self?.styleChanged() }
         }
     }
 
@@ -120,8 +120,8 @@ final class HUDController: NSObject {
         panel?.orderFrontRegardless()
     }
 
-    /// Re-read `config.hudStyle` (after a settings save) and re-fit the pill.
-    func styleChanged() {
+    /// Re-read `config.hudStyle` (on a `.hudStyle` change) and re-fit the pill.
+    private func styleChanged() {
         let style = HUDStyle(rawValue: config.hudStyle) ?? .classic
         guard model.style != style else { return }
         model.style = style
@@ -208,8 +208,7 @@ final class HUDController: NSObject {
 
     @objc private func modeMenuItemPicked(_ item: NSMenuItem) {
         config.setActiveMode(item.title)
-        try? config.save()
-        onModeChanged?()
+        try? config.saveAndNotify()
     }
 
     private func defaultAnchor() -> CGPoint {
@@ -298,8 +297,10 @@ final class HUDController: NSObject {
            abs(old[0] - new[0]) < 0.5, abs(old[1] - new[1]) < 0.5 {
             return
         }
+        // hudPosition has no ChangeSet member, so this persists silently —
+        // in particular it never rebuilds the TCC-sensitive hotkey tap.
         config.hudPosition = new.map { ($0 * 10).rounded() / 10 }
-        try? config.save()
+        try? config.saveAndNotify()
     }
 
     // MARK: - timers
