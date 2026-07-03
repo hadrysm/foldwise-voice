@@ -38,6 +38,9 @@ final class FakeTranscriber: Transcribing {
     var ready = true
     var onLoading: ((Bool) -> Void)?
     var result: Result<String, Error> = .success("")
+    /// Awaited at the start of every `transcribe` call, so a test can hold a
+    /// session mid-transcription or fire `onLoading` while a job is active.
+    var onTranscribe: (() async -> Void)?
     private(set) var warmupCount = 0
     private(set) var received: [[Float]] = []
 
@@ -47,7 +50,29 @@ final class FakeTranscriber: Transcribing {
 
     func transcribe(_ samples: [Float]) async throws -> String {
         received.append(samples)
+        await onTranscribe?()
         return try result.get()
+    }
+}
+
+/// A one-shot async gate: `wait()` suspends until `open()`, which releases
+/// every current and future waiter. Lets a test hold the first session in
+/// its transcribe stage while it queues a second one behind it.
+actor Latch {
+    private var opened = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !opened else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        opened = true
+        for waiter in waiters {
+            waiter.resume()
+        }
+        waiters.removeAll()
     }
 }
 
