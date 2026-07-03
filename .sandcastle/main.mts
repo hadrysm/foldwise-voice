@@ -37,10 +37,14 @@ import { execFileSync, execSync } from 'node:child_process';
 import * as sandcastle from '@ai-hero/sandcastle';
 import { noSandbox } from '@ai-hero/sandcastle/sandboxes/no-sandbox';
 import {
+  HANDOFF_LABEL,
+  decideHandoff,
   explainEmptyScopedQueue,
   openSliceNumbers,
   resolveLaunchMode,
   sliceNumbersFilter,
+  type Commit,
+  type StopReason,
   type SubIssue,
 } from './batch.mts';
 
@@ -109,6 +113,29 @@ function fetchSubIssues(prdNumber: number): SubIssue[] {
   }));
 }
 
+/** Tip of the current branch. */
+const gitHead = (): string => execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+
+/**
+ * The commits in `base..head`, oldest first, for `Closes #<n>` attribution.
+ * Called on the range an implement phase just produced, so review
+ * amendments (made later) never enter the attribution pool.
+ */
+function commitsInRange(base: string, head: string): Commit[] {
+  const raw = execFileSync(
+    'git',
+    ['log', '-z', '--reverse', '--format=%H%n%B', `${base}..${head}`],
+    { encoding: 'utf8' },
+  );
+  return raw
+    .split('\0')
+    .filter((entry) => entry.length > 0)
+    .map((entry) => {
+      const firstNewline = entry.indexOf('\n');
+      return { sha: entry.slice(0, firstNewline), message: entry.slice(firstNewline + 1) };
+    });
+}
+
 console.log(
   mode.kind === 'scoped'
     ? `Scope: PRD #${mode.prdNumber} (open ready-for-agent sub-issues)`
@@ -119,26 +146,33 @@ console.log(
 // Main loop
 // ---------------------------------------------------------------------------
 
+// Implement commits accumulated across iterations, and why the loop
+// stopped — together they decide the end-of-run handoff. `iteration-cap`
+// holds unless a break says otherwise.
+const runCommits: Commit[] = [];
+let stopReason: StopReason = 'iteration-cap';
+
 for (let iteration = 1; iteration <= mode.maxIterations; iteration++) {
   console.log(`\n=== Iteration ${iteration}/${mode.maxIterations} ===\n`);
 
   // The jq fragment narrowing the implementer's issue query. For a scoped
   // run the queue is re-resolved every iteration, so slices closed by
   // earlier iterations drop out automatically. An empty queue on the first
-  // iteration is a misconfigured launch (abort, non-zero); later it means
-  // the batch drained (or was descoped) mid-run — either way the explainer
-  // states the actual reason.
+  // iteration is a misconfigured launch (abort, non-zero, with the
+  // explainer's copy-pasteable fix); later it means the batch drained (or
+  // was descoped) mid-run, which the end-of-run handoff reports and labels
+  // — no manual fix to print. The stop reason is never read on that path:
+  // no released slice is open, so decideHandoff lands on `complete`.
   let sliceFilter: string;
   if (mode.kind === 'scoped') {
     const subIssues = fetchSubIssues(mode.prdNumber);
     const queue = openSliceNumbers(subIssues);
     if (queue.length === 0) {
-      const explanation = explainEmptyScopedQueue(subIssues, mode.prdNumber);
       if (iteration === 1) {
-        console.error(explanation);
+        console.error(explainEmptyScopedQueue(subIssues, mode.prdNumber));
         process.exit(1);
       }
-      console.log(`${explanation}\n\nStopping.`);
+      console.log(`Scoped queue for PRD #${mode.prdNumber} is empty — stopping.`);
       break;
     }
     console.log(`Queue for PRD #${mode.prdNumber}: ${queue.map((n) => `#${n}`).join(', ')}`);
@@ -149,7 +183,7 @@ for (let iteration = 1; iteration <= mode.maxIterations; iteration++) {
 
   // Tip of the current branch before the implementer runs — the reviewer
   // diffs against this, so each review covers exactly one iteration's work.
-  const base = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+  const base = gitHead();
 
   // ---------------------------------------------------------------------------
   // Phase 1: Implement
@@ -177,8 +211,13 @@ for (let iteration = 1; iteration <= mode.maxIterations; iteration++) {
     // No commits means the backlog is empty or every remaining issue is
     // blocked — there is nothing left to implement or review, so stop.
     console.log('Implementation agent made no commits. Stopping.');
+    stopReason = 'no-commits';
     break;
   }
+
+  // Snapshot the implement phase's commits now, before the reviewer runs,
+  // so its amendments stay out of the slice attribution.
+  runCommits.push(...commitsInRange(base, gitHead()));
 
   console.log(`\nImplementation complete on branch: ${implement.branch}`);
   console.log(`Commits: ${implement.commits.length}`);
@@ -202,6 +241,34 @@ for (let iteration = 1; iteration <= mode.maxIterations; iteration++) {
   });
 
   console.log('\nReview complete.');
+}
+
+// ---------------------------------------------------------------------------
+// Handoff
+//
+// A scoped run ends by handing the batch back to the human on GitHub: a
+// drained PRD gets the handoff label plus a per-slice summary, a stalled
+// one gets a report of what remains and why the run stopped. Whole-queue
+// runs have no PRD to hand off. Nothing is pushed either way.
+// ---------------------------------------------------------------------------
+
+if (mode.kind === 'scoped') {
+  const handoff = decideHandoff({
+    prdNumber: mode.prdNumber,
+    subIssues: fetchSubIssues(mode.prdNumber),
+    commits: runCommits,
+    stopReason,
+  });
+  const complete = handoff.kind === 'complete';
+  if (complete) {
+    execFileSync('gh', ['issue', 'edit', String(mode.prdNumber), '--add-label', HANDOFF_LABEL]);
+  }
+  execFileSync('gh', ['issue', 'comment', String(mode.prdNumber), '--body', handoff.comment]);
+  console.log(
+    complete
+      ? `\nBatch drained — labeled PRD #${mode.prdNumber} \`${HANDOFF_LABEL}\` and posted the summary.`
+      : `\nBatch stalled — posted the stall report on PRD #${mode.prdNumber}.`,
+  );
 }
 
 console.log('\nAll done.');

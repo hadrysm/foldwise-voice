@@ -1,11 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import {
+  commitShasByIssue,
+  decideHandoff,
   explainEmptyScopedQueue,
   openSliceNumbers,
   releasedSlices,
   resolveLaunchMode,
   sliceNumbersFilter,
+  type Commit,
   type SubIssue,
 } from '../batch.mts';
 
@@ -14,6 +17,8 @@ const slice = (number: number, state: SubIssue['state'], labels: string[]): SubI
   state,
   labels,
 });
+
+const commit = (sha: string, message: string): Commit => ({ sha, message });
 
 describe('resolveLaunchMode', () => {
   it('runs the whole queue when given a lone iteration count', () => {
@@ -101,6 +106,160 @@ describe('sliceNumbersFilter', () => {
 
   it('passes everything through for the whole-queue run', () => {
     expect(selectedNumbers(sliceNumbersFilter(undefined), fixture)).toEqual([34, 35, 36]);
+  });
+});
+
+describe('commitShasByIssue', () => {
+  it('attributes a commit to the slice named on its Closes line', () => {
+    const byIssue = commitShasByIssue([
+      commit('abc1234def', 'RALPH: implement the picker\n\nCloses #36'),
+    ]);
+    expect(byIssue.get(36)).toEqual(['abc1234def']);
+  });
+
+  it('collects every commit for a bounced-and-retried slice in order', () => {
+    const byIssue = commitShasByIssue([
+      commit('abc1234def', 'RALPH: first attempt\n\nCloses #36'),
+      commit('def5678abc', 'RALPH: address the bounce\n\nCloses #36'),
+    ]);
+    expect(byIssue.get(36)).toEqual(['abc1234def', 'def5678abc']);
+  });
+
+  it('matches the Closes keyword case-insensitively, as GitHub does', () => {
+    const byIssue = commitShasByIssue([commit('abc1234def', 'RALPH: fix\n\ncloses #34')]);
+    expect(byIssue.get(34)).toEqual(['abc1234def']);
+  });
+
+  it('ignores a mid-line prose mention of closing an issue', () => {
+    const byIssue = commitShasByIssue([
+      commit('abc1234def', 'RALPH: fix\n\nThis probably also closes #7 as a side effect.'),
+    ]);
+    expect(byIssue.size).toBe(0);
+  });
+
+  it('does not attribute commits without a Closes line, such as review amendments', () => {
+    const byIssue = commitShasByIssue([commit('abc1234def', 'RALPH: review fixes for #36')]);
+    expect(byIssue.size).toBe(0);
+  });
+});
+
+describe('decideHandoff', () => {
+  const drained = [
+    slice(32, 'CLOSED', ['ready-for-agent']),
+    slice(36, 'CLOSED', ['ready-for-agent']),
+  ];
+  const drainedCommits = [
+    commit('abc1234def', 'RALPH: one\n\nCloses #32'),
+    commit('def5678abc', 'RALPH: two\n\nCloses #36'),
+  ];
+
+  it('completes when every released slice is closed', () => {
+    const handoff = decideHandoff({
+      prdNumber: 31,
+      subIssues: drained,
+      commits: drainedCommits,
+      stopReason: 'iteration-cap',
+    });
+    expect(handoff.kind).toBe('complete');
+  });
+
+  it('summarizes each slice with its short commit SHAs', () => {
+    const handoff = decideHandoff({
+      prdNumber: 31,
+      subIssues: drained,
+      commits: drainedCommits,
+      stopReason: 'iteration-cap',
+    });
+    expect(handoff.comment).toContain('#32: `abc1234`');
+  });
+
+  it('marks a slice with several implement commits as bounced and retried', () => {
+    const handoff = decideHandoff({
+      prdNumber: 31,
+      subIssues: [slice(36, 'CLOSED', ['ready-for-agent'])],
+      commits: [
+        commit('abc1234def', 'RALPH: first attempt\n\nCloses #36'),
+        commit('def5678abc', 'RALPH: address the bounce\n\nCloses #36'),
+      ],
+      stopReason: 'iteration-cap',
+    });
+    expect(handoff.comment).toContain('#36: `abc1234`, `def5678` (bounced and retried)');
+  });
+
+  it('notes a closed released slice with no commit attributed this run', () => {
+    const handoff = decideHandoff({
+      prdNumber: 31,
+      subIssues: [slice(32, 'CLOSED', ['ready-for-agent'])],
+      commits: [],
+      stopReason: 'iteration-cap',
+    });
+    expect(handoff.comment).toContain('#32: no commit attributed this run');
+  });
+
+  it('ignores unreleased sub-issues when deciding completion', () => {
+    const handoff = decideHandoff({
+      prdNumber: 31,
+      subIssues: [slice(32, 'CLOSED', ['ready-for-agent']), slice(34, 'OPEN', [])],
+      commits: drainedCommits,
+      stopReason: 'iteration-cap',
+    });
+    expect(handoff.kind).toBe('complete');
+  });
+
+  it('stalls when a released slice is still open', () => {
+    const handoff = decideHandoff({
+      prdNumber: 31,
+      subIssues: [slice(36, 'OPEN', ['ready-for-agent'])],
+      commits: [],
+      stopReason: 'iteration-cap',
+    });
+    expect(handoff.kind).toBe('stalled');
+  });
+
+  it('lists the remaining open slices in the stall report', () => {
+    const handoff = decideHandoff({
+      prdNumber: 31,
+      subIssues: [
+        slice(36, 'OPEN', ['ready-for-agent']),
+        slice(38, 'OPEN', ['ready-for-agent']),
+      ],
+      commits: [],
+      stopReason: 'iteration-cap',
+    });
+    expect(handoff.comment).toContain('#36, #38');
+  });
+
+  it('states that the iteration cap stopped the run', () => {
+    const handoff = decideHandoff({
+      prdNumber: 31,
+      subIssues: [slice(36, 'OPEN', ['ready-for-agent'])],
+      commits: [],
+      stopReason: 'iteration-cap',
+    });
+    expect(handoff.comment).toContain('iteration cap reached');
+  });
+
+  it('states that the implementer made no commits when that stopped the run', () => {
+    const handoff = decideHandoff({
+      prdNumber: 31,
+      subIssues: [slice(36, 'OPEN', ['ready-for-agent'])],
+      commits: [],
+      stopReason: 'no-commits',
+    });
+    expect(handoff.comment).toContain('implementer made no commits');
+  });
+
+  it('reports progress made before the stall, slice by slice', () => {
+    const handoff = decideHandoff({
+      prdNumber: 31,
+      subIssues: [
+        slice(32, 'CLOSED', ['ready-for-agent']),
+        slice(36, 'OPEN', ['ready-for-agent']),
+      ],
+      commits: [commit('abc1234def', 'RALPH: one\n\nCloses #32')],
+      stopReason: 'iteration-cap',
+    });
+    expect(handoff.comment).toContain('#32: `abc1234`');
   });
 });
 
