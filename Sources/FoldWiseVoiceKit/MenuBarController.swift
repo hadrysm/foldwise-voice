@@ -11,10 +11,15 @@ final class MenuBarController: NSObject {
     private let onCheckForUpdates: () -> Void
     private let onQuit: () -> Void
 
-    private var statusItem: NSStatusItem!
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var modeItems: [NSMenuItem] = []
-    private var updateItem: NSMenuItem!
-    private var updateSeparator: NSMenuItem!
+    /// Hidden until UpdateChecker reports a newer release.
+    private let updateItem = NSMenuItem(
+        title: "Update Available…",
+        action: #selector(MenuBarController.openReleasePage(_:)),
+        keyEquivalent: ""
+    )
+    private let updateSeparator: NSMenuItem = .separator()
 
     init(
         config: Config,
@@ -60,7 +65,6 @@ final class MenuBarController: NSObject {
     }
 
     private func build() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setIcon(.idle)
 
         let menu = NSMenu()
@@ -71,17 +75,12 @@ final class MenuBarController: NSObject {
         menu.addItem(header)
         menu.addItem(.separator())
 
-        // Hidden until UpdateChecker reports a newer release.
-        updateItem = NSMenuItem(
-            title: "Update Available…", action: #selector(openReleasePage(_:)), keyEquivalent: ""
-        )
         updateItem.target = self
         updateItem.isHidden = true
         updateItem.image = NSImage(
             systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil
         )
         menu.addItem(updateItem)
-        updateSeparator = .separator()
         updateSeparator.isHidden = true
         menu.addItem(updateSeparator)
 

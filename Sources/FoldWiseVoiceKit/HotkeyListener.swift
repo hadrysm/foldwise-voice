@@ -150,44 +150,62 @@ final class HotkeyListener {
 
     // MARK: - event handling
 
+    /// A keystroke normalized from either event source (CGEventTap or NSEvent
+    /// monitors), so the modifier and repeat logic exists exactly once.
+    private enum RawKeyEvent {
+        case flagsChanged(keycode: CGKeyCode, flags: CGEventFlags)
+        case key(keycode: CGKeyCode, character: String?, down: Bool, isRepeat: Bool)
+    }
+
+    private func process(_ raw: RawKeyEvent) {
+        switch raw {
+        case let .flagsChanged(keycode, flags):
+            let down = KeyMap.isModifierDown(keycode: keycode, flags: flags) ?? false
+            dispatch(keycode: keycode, character: nil, down: down)
+        case .key(_, _, _, isRepeat: true):
+            break
+        case let .key(keycode, character, down, _):
+            dispatch(keycode: keycode, character: character, down: down)
+        }
+    }
+
     private func handle(type: CGEventType, event: CGEvent) {
+        let keycode = { CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode)) }
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
         case .flagsChanged:
-            let keycode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-            let down = KeyMap.isModifierDown(keycode: keycode, flags: event.flags) ?? false
-            dispatch(keycode: keycode, character: nil, down: down)
+            process(.flagsChanged(keycode: keycode(), flags: event.flags))
         case .keyDown:
-            if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return }
-            let keycode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-            dispatch(keycode: keycode, character: character(of: event), down: true)
+            process(.key(
+                keycode: keycode(), character: character(of: event), down: true,
+                isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            ))
         case .keyUp:
-            let keycode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-            dispatch(keycode: keycode, character: character(of: event), down: false)
+            process(.key(keycode: keycode(), character: character(of: event), down: false, isRepeat: false))
         default:
             break
         }
     }
 
     private func handle(nsEvent event: NSEvent) {
+        let character = { event.charactersIgnoringModifiers?.lowercased() }
         switch event.type {
         case .flagsChanged:
-            let keycode = CGKeyCode(event.keyCode)
-            let flags = CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))
-            let down = KeyMap.isModifierDown(keycode: keycode, flags: flags) ?? false
-            dispatch(keycode: keycode, character: nil, down: down)
+            process(.flagsChanged(
+                keycode: CGKeyCode(event.keyCode),
+                flags: CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))
+            ))
         case .keyDown:
-            if event.isARepeat { return }
-            dispatch(
-                keycode: CGKeyCode(event.keyCode),
-                character: event.charactersIgnoringModifiers?.lowercased(), down: true
-            )
+            process(.key(
+                keycode: CGKeyCode(event.keyCode), character: character(), down: true,
+                isRepeat: event.isARepeat
+            ))
         case .keyUp:
-            dispatch(
-                keycode: CGKeyCode(event.keyCode),
-                character: event.charactersIgnoringModifiers?.lowercased(), down: false
-            )
+            process(.key(
+                keycode: CGKeyCode(event.keyCode), character: character(), down: false,
+                isRepeat: false
+            ))
         default:
             break
         }

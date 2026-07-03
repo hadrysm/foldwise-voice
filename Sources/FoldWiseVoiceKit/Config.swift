@@ -105,14 +105,17 @@ final class Config {
         out += top.map { "  \(Self.jsonString($0.0)): \(Self.jsonValue($0.1))" }
             .joined(separator: ",\n")
         out += "\n}\n"
-        try out.data(using: .utf8)!.write(to: path, options: .atomic)
+        try Data(out.utf8).write(to: path, options: .atomic)
     }
 
     private struct RawJSON { let text: String }
 
     private static func jsonString(_ s: String) -> String {
-        let data = try! JSONSerialization.data(withJSONObject: [s])
-        var text = String(data: data, encoding: .utf8)!
+        // Serializing a single-element string array can't realistically fail,
+        // but a save must never crash dictation — degrade to "" instead.
+        guard let data = try? JSONSerialization.data(withJSONObject: [s]),
+              var text = String(data: data, encoding: .utf8)
+        else { return "\"\"" }
         text.removeFirst() // [
         text.removeLast() // ]
         return text

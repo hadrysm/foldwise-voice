@@ -71,6 +71,7 @@ final class HUDController: NSObject {
     var onModeChanged: (() -> Void)?
 
     private var panel: HUDPanel?
+    private var moveObserver: NSObjectProtocol?
     private var levelTimer: Timer?
     private var hideTimer: Timer?
     private var unhoverWork: DispatchWorkItem?
@@ -87,6 +88,10 @@ final class HUDController: NSObject {
         if let pos = config.hudPosition, pos.count == 2 {
             anchor = CGPoint(x: pos[0], y: pos[1])
         }
+    }
+
+    deinit {
+        if let moveObserver { NotificationCenter.default.removeObserver(moveObserver) }
     }
 
     // MARK: - public API (main thread)
@@ -177,7 +182,7 @@ final class HUDController: NSObject {
         )
         p.contentView = NSHostingView(rootView: view)
 
-        NotificationCenter.default.addObserver(
+        moveObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didMoveNotification, object: p, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.windowMoved() }
