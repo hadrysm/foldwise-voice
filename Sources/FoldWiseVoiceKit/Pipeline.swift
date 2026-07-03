@@ -6,6 +6,24 @@
 import Foundation
 import os
 
+/// The record stage's seam (ADR-0002). `AudioRecorder` is the production
+/// conformer; tests inject a fake with canned samples.
+protocol AudioRecording: AnyObject {
+    func start()
+    func stop() -> [Float]
+    func close()
+}
+
+/// The transcribe stage's seam (ADR-0002). Mirrors `Transcriber`'s full
+/// surface because the asynchronous loading-model dance is part of the
+/// behavior under test.
+protocol Transcribing: AnyObject {
+    var ready: Bool { get }
+    var onLoading: ((Bool) -> Void)? { get set }
+    func warmup()
+    func transcribe(_ samples: [Float]) async throws -> String
+}
+
 enum PipelineState: Equatable {
     case listening(mode: String)
     case loadingModel
@@ -19,23 +37,39 @@ enum PipelineState: Equatable {
 
 final class Pipeline {
     let config: Config
-    let recorder = AudioRecorder()
     let ducker = AudioDucker()
-    let transcriber = Transcriber()
+
+    private let recorder: AudioRecording
+    private let transcriber: Transcribing
+    private let polish: (String, Mode) async -> String
+    private let insert: (String) async -> Bool
 
     /// May fire from any thread — UIs must hop to the main thread themselves.
     var onState: ((PipelineState) -> Void)?
 
+    /// Owned here rather than read back through the record seam, so the
+    /// start/stop guards are self-contained and fakes needn't track it.
+    private var recording = false
     private var lastJob: Task<Void, Never>?
     private var jobActive = false
     private var lastEmitted: PipelineState = .idle
 
-    init(config: Config) {
+    init(
+        config: Config,
+        recorder: AudioRecording = AudioRecorder(),
+        transcriber: Transcribing = Transcriber(),
+        polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
+        insert: @escaping (String) async -> Bool = Pipeline.pasteboardInsert
+    ) {
         self.config = config
-        transcriber.onLoading = { [weak self] loading in
+        self.recorder = recorder
+        self.transcriber = transcriber
+        self.polish = polish
+        self.insert = insert
+        self.transcriber.onLoading = { [weak self] loading in
             guard let self else { return }
             if loading {
-                guard !recorder.isRecording else { return }
+                guard !recording else { return }
                 emit(.loadingModel)
             } else if lastEmitted == .loadingModel {
                 // Back to whatever the load interrupted: a queued dictation
@@ -43,6 +77,19 @@ final class Pipeline {
                 emit(jobActive ? .transcribing : .idle)
             }
         }
+    }
+
+    // MARK: - production stage defaults
+
+    static func ollamaPolish(_ text: String, mode: Mode) async -> String {
+        guard let model = mode.llmModel else { return text }
+        return await OllamaClient.polish(
+            text, model: model, systemPrompt: mode.systemPrompt, vocab: mode.vocab
+        )
+    }
+
+    static func pasteboardInsert(_ text: String) async -> Bool {
+        await MainActor.run { TextInserter.insert(text) }
     }
 
     private func emit(_ state: PipelineState) {
@@ -53,14 +100,16 @@ final class Pipeline {
     // MARK: - called from the hotkey listener (must be fast)
 
     func startRecording() {
-        guard !recorder.isRecording else { return }
+        guard !recording else { return }
+        recording = true
         if config.pauseAudio { ducker.duck() }
         recorder.start()
         emit(.listening(mode: config.activeMode))
     }
 
     func stopRecording() {
-        guard recorder.isRecording else { return }
+        guard recording else { return }
+        recording = false
         let samples = recorder.stop()
         ducker.restore()
         emit(.transcribing)
@@ -73,11 +122,17 @@ final class Pipeline {
     }
 
     func toggleRecording() {
-        if recorder.isRecording {
+        if recording {
             stopRecording()
         } else {
             startRecording()
         }
+    }
+
+    /// Test hook: awaits the most recently queued session job. Each job
+    /// awaits its predecessor, so this drains the whole chain.
+    func awaitPendingJob() async {
+        await lastJob?.value
     }
 
     func shutdown() {
@@ -119,14 +174,11 @@ final class Pipeline {
 
         if mode.usesLLM, let model = mode.llmModel, text.count > MIN_CHARS_FOR_LLM {
             emit(.polishing(model: model))
-            text = await OllamaClient.polish(
-                text, model: model, systemPrompt: mode.systemPrompt, vocab: mode.vocab
-            )
+            text = await polish(text, mode)
             Log.pipeline.info("llm: \(text, privacy: .private)")
         }
 
-        let finalText = text
-        let pasted = await MainActor.run { TextInserter.insert(finalText) }
+        let pasted = await insert(text)
         emit(pasted ? .inserted : .clipboard)
     }
 }
