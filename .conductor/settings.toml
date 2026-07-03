@@ -1,12 +1,17 @@
 #:schema https://conductor.build/schemas/settings.repo.schema.json
 
 [scripts]
-# Pre-resolve Swift package dependencies so first builds are fast.
+# Pre-resolve Swift package dependencies so first builds are fast, and
+# install the Sandcastle runner's dependencies (guarded: a machine without
+# pnpm still sets up — only the Sandcastle runner needs them).
 setup = '''
 set -e
 git config core.hooksPath .githooks
 if command -v swift >/dev/null 2>&1; then
   swift package resolve
+fi
+if command -v pnpm >/dev/null 2>&1; then
+  pnpm -C .sandcastle install
 fi
 '''
 # Remove the entire workspace directory. Also guarantees untracked
@@ -24,3 +29,15 @@ icon = "mic"
 [scripts.run.swift-build]
 command = "swift build"
 icon = "hammer"
+
+# Launch the Sandcastle implement→review runner; with no arguments it lands
+# in the interactive batch picker. Local-only: the agents run on the host
+# (the app cannot build in a Linux container) and need the host's `claude`
+# and `gh` logins. Uses the tsx vendored in .sandcastle/ — there is no hoisted root
+# node_modules, and `npx` would download from the registry at run time.
+# Sandcastle requires cwd = repo root (the default) for git and prompt-file
+# resolution.
+[scripts.run.sandcastle]
+command = ".sandcastle/node_modules/.bin/tsx .sandcastle/main.mts"
+available_in = "local"
+icon = "castle"
