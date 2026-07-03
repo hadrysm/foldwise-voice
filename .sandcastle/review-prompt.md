@@ -1,6 +1,6 @@
 # TASK
 
-Review the code changes made on branch `{{BRANCH}}` — the branch you are currently on, branched from `{{TARGET_BRANCH}}` — along two axes:
+Review the code changes committed on your current branch since `{{REVIEW_BASE}}` — the commit this iteration started from — along two axes:
 
 1. **Spec** — the work does what its issue asked: every acceptance criterion is satisfied by the diff.
 2. **Standards** — the code is clear, consistent, and maintainable per the project coding standards.
@@ -11,11 +11,11 @@ You MUST end in exactly one of the three terminal states listed at the end of th
 
 ## Diff under review
 
-!`git diff {{TARGET_BRANCH}}...HEAD`
+!`git diff {{REVIEW_BASE}}...HEAD`
 
 ## Commits under review (full messages — the `Closes #<n>` line identifies the issue)
 
-!`git log {{TARGET_BRANCH}}..HEAD`
+!`git log {{REVIEW_BASE}}..HEAD`
 
 # REVIEW PROCESS
 
@@ -57,7 +57,7 @@ Maintain balance — avoid over-simplification that reduces clarity, creates ove
 Every review ends in exactly one of these three states — they are exhaustive:
 
 1. **Approve** — every acceptance criterion is met and the code needs no changes. Make no commits; leave the issue closed.
-2. **Fix in place** — you made spec or standards fixes. Verify nothing is broken by running, in order: `swiftformat .`, `swiftlint --fix && swiftlint lint --strict`, `swift build --build-tests`, `swift test --skip-build`. Then commit describing what the review changed and why.
+2. **Fix in place** — you made spec or standards fixes. Verify nothing is broken by running, in order: `swiftformat .`, `swiftlint --fix && swiftlint lint --strict`, `swift build --build-tests`, `swift test --skip-build`. Then make a single **Conventional Commit** — pick the type from what you changed (`fix:` for a spec correction; `refactor:`, `style:`, or `docs:` for standards cleanups) — describing what the review changed and why.
 3. **Reopen** — one or more acceptance criteria are unmet and you cannot fix them here. Reopen the issue with the explanatory comment (Spec axis, step 4). Commit any fixes you did make before finishing — never leave uncommitted changes behind.
 
 If in doubt between fix-in-place and reopen, reopen — an explicit bounce with a reason beats a half-fix.

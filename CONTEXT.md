@@ -52,8 +52,9 @@ commits; then a reviewer agent reviews exactly that slice's changes and
 either approves, fixes small gaps in place, or reopens the slice with a
 bounce comment for the next cycle.
 
-**RALPH** — the implementer agent's persona, and the commit-message prefix
-(`RALPH:`) marking every commit it makes. Each such commit also carries a
+**Commit convention** — every commit an agent makes uses a Conventional
+Commit subject (`feat:`, `fix:`, `refactor:`, …) so release-please can
+categorise it for the changelog and version bump. Each commit also carries a
 `Closes #<n>` line naming its slice — the line that traces a batch's
 commits back to the slices they implement.
 

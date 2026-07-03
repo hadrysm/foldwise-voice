@@ -6,13 +6,13 @@
 
 The list above has already been filtered to issues ready for work and is the sole source of truth for what work exists. Do not run your own unfiltered query to find more issues — if the list is empty, there is nothing to do.
 
-## Recent RALPH commits (last 10)
+## Recent completed slices (last 10)
 
-!`git log --oneline --grep="RALPH" -10`
+!`git log --oneline --grep="Closes #" -10`
 
 # Task
 
-You are RALPH — an autonomous coding agent working through issues one at a time.
+You are an autonomous coding agent working through issues one at a time.
 
 ## Priority order
 
@@ -38,12 +38,17 @@ Pick the highest-priority open issue that is not blocked by another open issue.
 
    Fix any failures before proceeding — a commit that fails any of these will be rejected by CI.
 5. **Commit** — make a single git commit. The message MUST:
-   - Start with `RALPH:` prefix
-   - Include a `Closes #<n>` line referencing the issue this commit implements — the reviewer uses it to trace the commit back to the issue
-   - Include the task completed and any PRD reference
-   - List key decisions made
-   - List files changed
-   - Note any blockers for the next iteration
+   - Start the **subject line** with a Conventional Commit type so release-please can categorise the change: `feat:`, `fix:`, `perf:`, `refactor:`, `docs:`, `build:`, `chore:`, `test:`, `style:`, or `ci:`. Add an optional scope when it clarifies, e.g. `fix(hotkey): …`. Choose the type from what the change *is*:
+     - `feat:` — a new user-facing capability (most tracer bullets)
+     - `fix:` — corrects broken user-facing behaviour (most bug fixes)
+     - `perf:` — a performance improvement with no behaviour change
+     - `refactor:` — an internal cleanup with no user-visible change
+     - `docs:`, `build:`, `test:`, `style:`, `ci:` — as named
+     - `chore:` — anything that fits none of the above
+
+     Keep the subject in the imperative mood, ~72 characters or fewer, with no trailing period.
+   - Include a `Closes #<n>` line in the body referencing the issue this commit implements — the reviewer uses it to trace the commit back to the issue, and release-please uses it to link the changelog entry.
+   - In the body, record the task completed and any PRD reference, the key decisions made, the files changed, and any blockers for the next iteration.
 6. **Close** — close the issue with `gh issue close <ID> --comment "Completed by Sandcastle"` explaining what was done.
 
 ## Rules

@@ -28,7 +28,7 @@ swift run -c release
   fire, also add it under *Input Monitoring*.
 - [Ollama](https://ollama.com) is only needed for LLM modes; dictation works
   without it. Install models from the app's Settings → Models pane, or
-  `brew install ollama && ollama pull llama3.2:3b`.
+  `brew install ollama && ollama pull qwen2.5:3b`.
 
 While running:
 
@@ -64,9 +64,9 @@ Edit `modes.json` (or use Settings) to configure hotkeys and modes. Ships with:
 | Mode | LLM | What it does |
 |---|---|---|
 | Voice to Text | — | raw transcript, no LLM |
-| Clean | llama3.2:3b | fixes punctuation, removes filler words (um, uh…) |
-| Email | llama3.2:3b | rewrites dictation as a professional email body |
-| Bullets | llama3.2:3b | converts dictation into a bulleted list |
+| Clean | qwen2.5:3b | fixes punctuation, removes filler words (um, uh…) |
+| Email | qwen2.5:3b | rewrites dictation as a professional email body |
+| Bullets | qwen2.5:3b | converts dictation into a bulleted list |
 
 Top-level settings:
 
