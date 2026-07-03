@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/hadrysm/foldwise-voice/compare/v0.7.0...v0.8.0) (2026-07-03)
+
+
+### Features
+
+* **config:** Config owns change propagation — mutate, persist, notify ([#57](https://github.com/hadrysm/foldwise-voice/issues/57)) ([69556fb](https://github.com/hadrysm/foldwise-voice/commit/69556fb3c7b2fc82626af6d9794ab294bdfaa465))
+
 ## [0.7.0](https://github.com/hadrysm/foldwise-voice/compare/v0.6.3...v0.7.0) (2026-07-03)
 
 
