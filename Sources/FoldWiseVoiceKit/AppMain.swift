@@ -74,14 +74,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         config = Config.loadOrCreate(at: url)
         if let modeOverride { config.setActiveMode(modeOverride) }
 
-        pipeline = Pipeline(config: config)
+        // Composition root: the one recorder is shared between the Pipeline
+        // and the HUD's level meter, and warmup is triggered here (below),
+        // not inside Pipeline.
+        let recorder = AudioRecorder()
+        let transcriber = Transcriber()
+        pipeline = Pipeline(config: config, recorder: recorder, transcriber: transcriber)
         settings = SettingsController(config: config) { [weak self] in
             self?.settingsSaved()
         }
         hud = HUDController(config: config) { [weak self] in
             self?.settings.show()
         }
-        hud.recorder = pipeline.recorder
+        hud.recorder = recorder
         hud.onStop = { [weak self] in self?.pipeline.stopRecording() }
         hud.onRecord = { [weak self] in self?.pipeline.toggleRecording() }
         menuBar = MenuBarController(
@@ -108,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Permissions.requestAtLaunch()
 
         startListener()
-        pipeline.transcriber.warmup()
+        transcriber.warmup()
 
         hud.flash(
             .done,

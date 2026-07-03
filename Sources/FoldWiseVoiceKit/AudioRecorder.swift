@@ -9,7 +9,7 @@ import AVFoundation
 import Foundation
 import os
 
-final class AudioRecorder {
+final class AudioRecorder: AudioRecording {
     static let sampleRate = 16000.0
 
     private let engine = AVAudioEngine()
