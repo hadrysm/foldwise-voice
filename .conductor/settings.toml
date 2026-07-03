@@ -4,6 +4,7 @@
 # Pre-resolve Swift package dependencies so first builds are fast.
 setup = '''
 set -e
+git config core.hooksPath .githooks
 if command -v swift >/dev/null 2>&1; then
   swift package resolve
 fi
