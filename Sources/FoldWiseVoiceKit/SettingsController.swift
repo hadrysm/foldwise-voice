@@ -25,6 +25,10 @@ final class SettingsController {
         wire()
     }
 
+    deinit {
+        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+    }
+
     func show() {
         if window == nil { build() }
         populate()

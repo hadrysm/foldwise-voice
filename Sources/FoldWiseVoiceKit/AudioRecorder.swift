@@ -7,6 +7,7 @@
 
 import AVFoundation
 import Foundation
+import os
 
 final class AudioRecorder {
     static let sampleRate = 16000.0
@@ -38,7 +39,7 @@ final class AudioRecorder {
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0 else {
-            NSLog("No audio input device available")
+            Log.audio.error("No audio input device available")
             return
         }
         let outputFormat = AVAudioFormat(
@@ -54,7 +55,9 @@ final class AudioRecorder {
             try engine.start()
             engineStarted = true
         } catch {
-            NSLog("Audio engine failed to start: \(error.localizedDescription)")
+            Log.audio.error(
+                "Audio engine failed to start: \(error.localizedDescription, privacy: .public)"
+            )
             input.removeTap(onBus: 0)
         }
     }

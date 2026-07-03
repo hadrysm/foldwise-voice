@@ -14,11 +14,15 @@ Prefer clarity over brevity. Explicit code beats clever code.
   (`Mode` in `Config.swift`) or an exhaustive `enum` (`PipelineState` in
   `Pipeline.swift`). Reserve `final class` for objects that own mutable state or
   side effects (`Pipeline`, `HotkeyListener`).
-- **No force-unwrap, `as!`, or `try!` in non-test code.** `Sources/` has zero today;
-  keep it that way. Recoverable failures `throw` (`KeyMap.parse`, `Config.load(from:)`);
-  non-critical paths degrade gracefully with `guard let` / `try?` plus an `NSLog`
-  explaining what was skipped — see `OllamaClient` falling back to the raw transcript
-  when Ollama is unreachable.
+- **No force-unwrap, `as!`, or `try!` where failure is reachable at runtime.**
+  Sanctioned exceptions, all of which are unreachable-by-construction: unwrapping a
+  compile-time-constant literal (`URL(string:)!` on a hardcoded URL in
+  `UpdateChecker`), an invariant guaranteed by an API contract (the C callback's
+  `userInfo!` in `HotkeyListener`), and app-lifecycle IUO properties confined to
+  `AppMain`. Anything else: recoverable failures `throw` (`KeyMap.parse`,
+  `Config.load(from:)`); non-critical paths degrade gracefully with `guard let` /
+  `try?` plus a log line explaining what was skipped — see `OllamaClient` falling
+  back to the raw transcript when Ollama is unreachable.
 - **Fail early in initializers.** If a type can't do its job with the arguments given,
   its `init` throws (`HotkeyListener.init` parses hotkey strings up front) rather than
   deferring the crash to first use.
@@ -26,7 +30,9 @@ Prefer clarity over brevity. Explicit code beats clever code.
 - **Comments explain *why*, not *what*.** Don't narrate code the reader can see;
   do record a constraint the code can't show (e.g. the note in
   `ConfigRoundTripTests.swift` on why the serializer is hand-rolled).
-- No commented-out code and no `TODO` comments in committed code — file an issue instead.
+- No commented-out code and no `TODO` comments in committed code — file an issue
+  instead. (SwiftLint's `todo` rule is deliberately disabled so `--strict` CI never
+  hard-fails on one; this rule is enforced by review.)
 
 ## Testing
 
@@ -37,9 +43,10 @@ Use **XCTest**. It is the suite's existing framework; do not introduce Swift Tes
 
 Test **behavior through the public interface**, never internals. A test passes data
 into a public function or type and asserts on what comes back or what observably
-changed. If a test needs a `private` member, `@testable` peeking beyond the module
-boundary, or knowledge of *how* the result was computed, the test — or the
-interface — is wrong.
+changed. (`@testable import FoldWiseVoiceKit` is the norm here — the Kit's types are
+`internal` because it is an app module, not a library — so "public interface" means
+a type's non-`private` API.) If a test needs a `private` member or knowledge of
+*how* the result was computed, the test — or the interface — is wrong.
 
 Name tests `test<What><Condition>` so the failure message reads as a sentence:
 `testLoadOrCreateWritesDefaultsWhenFileMissing`, `testModeOrderSurvivesNonAlphabetically`.

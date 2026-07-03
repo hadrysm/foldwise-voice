@@ -7,6 +7,7 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import os
 
 final class HotkeyListener {
     private let ptt: KeySpec
@@ -40,7 +41,7 @@ final class HotkeyListener {
             // event tap yet. Fall back to NSEvent monitors so the hotkey at
             // least works while the app is frontmost (the global monitor is
             // equally gated, so background keystrokes stay invisible).
-            NSLog("CGEventTap unavailable — falling back to NSEvent monitors, will retry")
+            Log.hotkey.warning("CGEventTap unavailable — falling back to NSEvent monitors, will retry")
             installMonitors()
         }
         // Watchdog, both directions: a grant made in System Settings never
@@ -63,11 +64,11 @@ final class HotkeyListener {
     private func checkTapHealth() {
         if let tap {
             if CGEvent.tapIsEnabled(tap: tap) { return }
-            NSLog("CGEventTap lost — falling back to NSEvent monitors, will retry")
+            Log.hotkey.warning("CGEventTap lost — falling back to NSEvent monitors, will retry")
             destroyTap()
             installMonitors()
         } else if createTap() {
-            NSLog("CGEventTap acquired — hotkey now works in the background")
+            Log.hotkey.info("CGEventTap acquired — hotkey now works in the background")
             removeMonitors()
         }
     }
@@ -152,12 +153,14 @@ final class HotkeyListener {
 
     /// A keystroke normalized from either event source (CGEventTap or NSEvent
     /// monitors), so the modifier and repeat logic exists exactly once.
-    private enum RawKeyEvent {
+    /// Internal (not private) together with `process(_:)`: this is the seam
+    /// where the dispatch state machine is tested with synthetic events.
+    enum RawKeyEvent {
         case flagsChanged(keycode: CGKeyCode, flags: CGEventFlags)
         case key(keycode: CGKeyCode, character: String?, down: Bool, isRepeat: Bool)
     }
 
-    private func process(_ raw: RawKeyEvent) {
+    func process(_ raw: RawKeyEvent) {
         switch raw {
         case let .flagsChanged(keycode, flags):
             let down = KeyMap.isModifierDown(keycode: keycode, flags: flags) ?? false

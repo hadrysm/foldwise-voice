@@ -4,6 +4,7 @@
 // dictation must keep working.
 
 import Foundation
+import os
 
 enum OllamaClient {
     static func polish(
@@ -43,19 +44,35 @@ enum OllamaClient {
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode),
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            guard (200 ..< 300).contains(status),
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let choices = json["choices"] as? [[String: Any]],
                   let message = choices.first?["message"] as? [String: Any],
                   let content = message["content"] as? String
             else {
-                NSLog("Ollama returned an unexpected response — using raw transcript")
+                // A non-2xx body is Ollama's error JSON ("model not found",
+                // …) — safe to log. A 2xx that fails the shape checks may
+                // hold transcript-derived model output, so log only that the
+                // shape was unexpected, never its bytes.
+                let detail = (200 ..< 300).contains(status)
+                    ? "unexpected response shape"
+                    : String(bytes: data.prefix(200), encoding: .utf8) ?? "<non-UTF-8 body>"
+                Log.ollama.error("""
+                Unexpected response from \(model, privacy: .public) \
+                (HTTP \(status, privacy: .public)) — using raw transcript: \
+                \(detail, privacy: .public)
+                """)
                 return text
             }
             let polished = content.trimmingCharacters(in: .whitespacesAndNewlines)
             return polished.isEmpty ? text : polished
         } catch {
-            NSLog("Ollama unavailable, falling back to raw transcript: \(error.localizedDescription)")
+            Log.ollama.error("""
+            Ollama unreachable at \(OLLAMA_CHAT_URL, privacy: .public), \
+            falling back to raw transcript: \
+            \(error.localizedDescription, privacy: .public)
+            """)
             return text
         }
     }
