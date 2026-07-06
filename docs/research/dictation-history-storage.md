@@ -246,7 +246,7 @@ posture (nothing leaves the machine) and should not force a heavy new dependency
 
 **Storage choice.** Three realistic options:
 
-- **Append-only JSONL** (`~/Library/Application Support/foldwise-voice/history.jsonl`,
+- **Append-only JSONL** (`~/Library/Application Support/FoldWise Voice/history.jsonl`,
   one JSON object per line). Zero new dependency, matches the existing `Codable`
   habit, trivially appendable at pipeline end, and mirrors superwhisper's
   "folder of JSON" ethos. Weakness: no indexed search, and you rewrite the whole

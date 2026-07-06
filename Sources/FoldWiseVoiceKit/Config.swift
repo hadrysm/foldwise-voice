@@ -58,7 +58,8 @@ final class Config {
     /// Pipeline records nothing and no `history.jsonl` is written. Persisted in
     /// modes.json; like `pauseAudio` nobody re-reads it through change
     /// propagation, so it has no `ChangeSet` member — the Pipeline reads it
-    /// fresh at the start of each session.
+    /// fresh when the dictation session stops (frozen at stop time alongside
+    /// `mode`), not at session start.
     var saveHistory: Bool
     /// How long history is kept before the launch sweep prunes it (PRD #78).
     /// Persisted in modes.json as a day count; like `saveHistory` nobody
