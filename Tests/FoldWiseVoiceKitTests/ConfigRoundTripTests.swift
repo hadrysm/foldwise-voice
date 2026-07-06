@@ -163,6 +163,50 @@ final class ConfigRoundTripTests: XCTestCase {
         XCTAssertEqual(reloaded.historyRetention, .sevenDays)
     }
 
+    func testRetentionRoundTripsNinetyDays() throws {
+        let json = """
+        {
+          "active_mode": "Only",
+          "hotkey": "alt_r",
+          "pause_audio": true,
+          "retention_days": 90,
+          "modes": {
+            "Only": {
+              "asr_model": "m",
+              "llm_model": null,
+              "system_prompt": null,
+              "vocab": []
+            }
+          }
+        }
+        """
+        let reloaded = try roundTrip(json)
+        XCTAssertEqual(reloaded.historyRetention, .ninetyDays)
+    }
+
+    func testRetentionRoundTripsForever() throws {
+        // `.forever` persists as the sentinel `retention_days: 0`; confirm the
+        // sentinel survives save/load rather than collapsing to the default.
+        let json = """
+        {
+          "active_mode": "Only",
+          "hotkey": "alt_r",
+          "pause_audio": true,
+          "retention_days": 0,
+          "modes": {
+            "Only": {
+              "asr_model": "m",
+              "llm_model": null,
+              "system_prompt": null,
+              "vocab": []
+            }
+          }
+        }
+        """
+        let reloaded = try roundTrip(json)
+        XCTAssertEqual(reloaded.historyRetention, .forever)
+    }
+
     func testSaveIsStableAcrossRepeatedRoundTrips() throws {
         let url = try write(fixture)
         let config = try Config.load(from: url)
