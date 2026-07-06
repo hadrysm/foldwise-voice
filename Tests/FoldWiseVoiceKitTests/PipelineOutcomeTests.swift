@@ -115,6 +115,41 @@ final class PipelineOutcomeTests: XCTestCase {
         XCTAssertEqual(spy.texts, [longTranscript])
     }
 
+    /// An off-task polish (a poem instead of a cleanup) is discarded and the
+    /// raw transcript is pasted — the reported "write me a verse" outcome in a
+    /// Clean (In-place) Mode. The wiring runs through the injected `polish`
+    /// closure, no live Ollama.
+    func testInsertReceivesRawTranscriptWhenPolishGoesOffTask() async {
+        let cleanMode = Mode(
+            name: "Clean", asrModel: "", llmModel: "llama3", systemPrompt: nil, vocab: [],
+            expands: false
+        )
+        let spy = InsertSpy()
+        _ = await runSession(
+            config: makeTestConfig(mode: cleanMode),
+            transcript: .success(longTranscript),
+            polish: { _, _ in
+                "Roses are red, violets are blue,\nA poem replies where a cleanup was due."
+            },
+            insert: { spy.insert($0) }
+        )
+        XCTAssertEqual(spy.texts, [longTranscript])
+    }
+
+    /// A legitimate polish (the transcript, cleaned) is on-task, so the polished
+    /// text is pasted rather than the raw transcript.
+    func testInsertReceivesPolishedTextWhenPolishStaysOnTask() async {
+        let spy = InsertSpy()
+        let cleaned = "This transcript is unquestionably longer than the forty-character polish threshold."
+        _ = await runSession(
+            config: makeTestConfig(mode: llmMode),
+            transcript: .success(longTranscript),
+            polish: { _, _ in cleaned },
+            insert: { spy.insert($0) }
+        )
+        XCTAssertEqual(spy.texts, [cleaned])
+    }
+
     // MARK: - insert outcome
 
     func testSessionEmitsInsertedWhenInsertSucceeds() async {

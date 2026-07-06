@@ -184,6 +184,103 @@ enum OllamaClient {
         return keywords.contains(where: trimmed.contains)
     }
 
+    // MARK: - off-task detection (#72)
+
+    // Overlap below which an In-place polish has drifted too far from the
+    // transcript; the loose FLOOR paired with a length blow-up catches the
+    // "wrote me a verse" case in any Mode. Set by OllamaOffTaskTests, not
+    // guessed — see that fixture table for the keep/fallback separation.
+    private static let STRICT_OVERLAP = 0.5
+    private static let FLOOR_OVERLAP = 0.3
+    private static let BLOWUP_FACTOR = 1.5
+
+    /// Known assistant/refusal openers, as word lists. A candidate that *begins*
+    /// with one — and whose words the user did not speak — is a model reply, not
+    /// a transform. Tokenized the same way as the compared text so apostrophes
+    /// and commas never matter.
+    private static let refusalOpeners: [[String]] = [
+        "i'm sorry", "i am sorry", "i apologize", "i cannot", "i can't", "i can not",
+        "i'm not able to", "i am not able to", "i'm unable to", "i am unable to",
+        "i'm afraid i can't", "sorry i can't", "unfortunately i can't",
+        "i won't be able to", "as an ai",
+    ].map(words)
+
+    /// The verdict of the off-task check plus the signals behind it, kept
+    /// together so the Pipeline can log which rule fired and its scores without
+    /// recomputing them.
+    struct OffTaskVerdict {
+        /// True when the candidate should be discarded for the raw transcript.
+        let fellBack: Bool
+        /// The rule that fired — "overlap", "blowup", or "refusal" — or "" when
+        /// the polish was kept. Logged at public level; carries no content.
+        let signal: String
+        let overlap: Double
+        let lengthRatio: Double
+    }
+
+    /// Whether a Polish candidate is a *reply to* the transcript (an answer,
+    /// refusal, or poem) rather than a *transform* of it, in which case the
+    /// session pastes the raw transcript instead. Pure so the thresholds are
+    /// pinned by a fixture table without a network, mirroring `deleteOutcome`.
+    ///
+    /// Word-overlap is the backbone and assumes a language- and
+    /// content-preserving transform (ADR-0004): a Mode that translates or
+    /// heavily summarizes shares almost no words and would false-fall-back, so
+    /// such Modes are out of scope. `expands` loosens the calibration for
+    /// Expanding Modes, whose legitimate output has honestly lower overlap.
+    static func isOffTask(_ candidate: String, transcript: String, expands: Bool) -> Bool {
+        offTaskVerdict(candidate, transcript: transcript, expands: expands).fellBack
+    }
+
+    /// The decision behind `isOffTask`, with the signals exposed for logging.
+    /// The OR-of-rules is the decision: fall back when an In-place polish drifts
+    /// below the strict overlap, when any polish combines low overlap with a
+    /// length blow-up, or when it opens with a refusal the user did not speak.
+    static func offTaskVerdict(_ candidate: String, transcript: String, expands: Bool) -> OffTaskVerdict {
+        let transcriptWords = words(transcript)
+        let candidateWords = words(candidate)
+        let transcriptSet = Set(transcriptWords)
+        let candidateSet = Set(candidateWords)
+
+        let overlap = transcriptSet.isEmpty
+            ? 1.0
+            : Double(transcriptSet.intersection(candidateSet).count) / Double(transcriptSet.count)
+        let lengthRatio = transcriptWords.isEmpty
+            ? 1.0
+            : Double(candidateWords.count) / Double(transcriptWords.count)
+
+        func verdict(_ fellBack: Bool, _ signal: String) -> OffTaskVerdict {
+            OffTaskVerdict(fellBack: fellBack, signal: signal, overlap: overlap, lengthRatio: lengthRatio)
+        }
+
+        // A refusal opener the user did not speak — the Mode-invariant net. The
+        // "words absent" guard keeps a *dictated* refusal ("I can't help…"),
+        // whose opener words are in the transcript.
+        if let opener = refusalOpeners.first(where: { candidateWords.starts(with: $0) }),
+           opener.allSatisfy({ !transcriptSet.contains($0) }) {
+            return verdict(true, "refusal")
+        }
+        // In-place Modes must track the transcript closely.
+        if !expands, overlap < STRICT_OVERLAP {
+            return verdict(true, "overlap")
+        }
+        // The "wrote me a verse" case: little of the transcript survives and the
+        // output ballooned — caught even in an Expanding Mode.
+        if overlap < FLOOR_OVERLAP, lengthRatio > BLOWUP_FACTOR {
+            return verdict(true, "blowup")
+        }
+        return verdict(false, "")
+    }
+
+    /// Lowercased, punctuation-stripped word tokens. Swift has characters, not
+    /// model tokens, so the overlap and length signals compare words; both the
+    /// transcript and the candidate go through this same splitter.
+    private static func words(_ text: String) -> [String] {
+        text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
     struct InstalledModel: Equatable, Identifiable {
         let name: String
         let sizeBytes: Int64
