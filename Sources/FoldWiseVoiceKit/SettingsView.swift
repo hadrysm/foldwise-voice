@@ -127,7 +127,7 @@ struct SettingsView: View {
                     switch model.pane {
                     case .home: homePane
                     case .modes: modesPane
-                    case .models: modelsPane
+                    case .models: ModelsPane(model: model)
                     case .configuration: configurationPane
                     case .sound: soundPane
                     }
@@ -293,166 +293,6 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: models
-
-    private var modelsPane: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(
-                "The polish model rewrites your transcript (cleanup, email, bullets). "
-                    + "It applies to every mode that uses an LLM. Speed and quality are "
-                    + "rated for dictation on Apple Silicon."
-            )
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
-
-            if model.installed == nil {
-                Card {
-                    CardRow(title: "Checking Ollama…", subtitle: nil) { ProgressView().controlSize(.small) }
-                }
-            } else if model.ollamaDown {
-                Card {
-                    CardRow(
-                        title: "Ollama isn't running",
-                        subtitle: "Start the Ollama app (or `brew services start ollama`), then retry."
-                    ) {
-                        Button("Retry") { model.onRefreshModels?() }.controlSize(.small)
-                    }
-                }
-            } else {
-                sectionHeader("Installed")
-                Card {
-                    ForEach(Array((model.installed ?? []).enumerated()), id: \.element.id) { i, installed in
-                        if i > 0 { Divider().padding(.leading, 14) }
-                        installedRow(installed)
-                    }
-                    if !model.selectedModel.isEmpty && !model.selectedModelInstalled {
-                        if !(model.installed ?? []).isEmpty { Divider().padding(.leading, 14) }
-                        missingSelectedRow
-                    }
-                }
-
-                sectionHeader("Model library")
-                Card {
-                    let library = ModelCatalog.entries.filter { entry in
-                        !(model.installed ?? []).contains { $0.name == entry.name }
-                    }
-                    if library.isEmpty {
-                        CardRow(title: "All recommended models are installed", subtitle: nil) {
-                            EmptyView()
-                        }
-                    }
-                    ForEach(Array(library.enumerated()), id: \.element.id) { i, entry in
-                        if i > 0 { Divider().padding(.leading, 14) }
-                        libraryRow(entry)
-                    }
-                }
-
-                sectionHeader("Other")
-                Card {
-                    CardRow(
-                        title: "Install by name",
-                        subtitle: "Any model from ollama.com/library, e.g. qwen2.5:14b"
-                    ) {
-                        HStack(spacing: 8) {
-                            TextField("model:tag", text: $model.customModel)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 160)
-                            installButton(
-                                for: model.customModel.trimmingCharacters(in: .whitespaces)
-                            )
-                        }
-                    }
-                }
-
-                if !model.pullError.isEmpty {
-                    Label(model.pullError, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.red)
-                }
-            }
-        }
-    }
-
-    private func modelRatings(_ name: String) -> some View {
-        Group {
-            if let entry = ModelCatalog.entry(for: name) {
-                VStack(alignment: .trailing, spacing: 3) {
-                    RatingDots(label: "Speed", value: entry.speed)
-                    RatingDots(label: "Quality", value: entry.quality)
-                }
-            }
-        }
-    }
-
-    private func installedRow(_ installed: OllamaClient.InstalledModel) -> some View {
-        let entry = ModelCatalog.entry(for: installed.name)
-        let selected = installed.name == model.selectedModel
-        return Button {
-            model.onSelectModel?(installed.name)
-        } label: {
-            CardRow(
-                title: installed.name
-                    + (installed.sizeText.isEmpty ? "" : "  ·  \(installed.sizeText)"),
-                subtitle: entry?.blurb
-            ) {
-                HStack(spacing: 12) {
-                    modelRatings(installed.name)
-                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(selected ? .blue : .secondary)
-                }
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var missingSelectedRow: some View {
-        CardRow(
-            title: model.selectedModel,
-            subtitle: "Configured in modes.json but not installed — polishing falls back "
-                + "to the raw transcript until it is."
-        ) {
-            HStack(spacing: 12) {
-                modelRatings(model.selectedModel)
-                installButton(for: model.selectedModel)
-            }
-        }
-    }
-
-    private func libraryRow(_ entry: ModelCatalog.Entry) -> some View {
-        CardRow(title: "\(entry.name)  ·  \(entry.size)", subtitle: entry.blurb) {
-            HStack(spacing: 12) {
-                modelRatings(entry.name)
-                installButton(for: entry.name)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func installButton(for name: String) -> some View {
-        if model.pullingModel == name {
-            VStack(alignment: .trailing, spacing: 2) {
-                ProgressView(value: model.pullFraction)
-                    .frame(width: 110)
-                Text(pullProgressText)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        } else {
-            Button("Install") { model.onInstallModel?(name) }
-                .controlSize(.small)
-                .disabled(name.isEmpty || model.pullingModel != nil)
-        }
-    }
-
-    private var pullProgressText: String {
-        if let fraction = model.pullFraction {
-            return "\(Int(fraction * 100))% — \(model.pullStatus)"
-        }
-        return model.pullStatus
-    }
-
     // MARK: configuration (keyboard shortcuts)
 
     private var configurationPane: some View {
@@ -587,5 +427,218 @@ struct SettingsView: View {
                 .labelsHidden()
             }
         }
+    }
+}
+
+// MARK: models
+
+/// The Models pane owns the pending-uninstall selection: a right-click on an
+/// installed row arms `pendingUninstall`, which drives the confirmation alert.
+/// Removal itself is mediated by SettingsController via `onDeleteModel`.
+struct ModelsPane: View {
+    @ObservedObject var model: SettingsModel
+    @State private var pendingUninstall: OllamaClient.InstalledModel?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(
+                "The polish model rewrites your transcript (cleanup, email, bullets). "
+                    + "It applies to every mode that uses an LLM. Speed and quality are "
+                    + "rated for dictation on Apple Silicon."
+            )
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+
+            if model.installed == nil {
+                Card {
+                    CardRow(title: "Checking Ollama…", subtitle: nil) { ProgressView().controlSize(.small) }
+                }
+            } else if model.ollamaDown {
+                Card {
+                    CardRow(
+                        title: "Ollama isn't running",
+                        subtitle: "Start the Ollama app (or `brew services start ollama`), then retry."
+                    ) {
+                        Button("Retry") { model.onRefreshModels?() }.controlSize(.small)
+                    }
+                }
+            } else {
+                sectionHeader("Installed")
+                Card {
+                    ForEach(Array((model.installed ?? []).enumerated()), id: \.element.id) { i, installed in
+                        if i > 0 { Divider().padding(.leading, 14) }
+                        installedRow(installed)
+                    }
+                    if !model.selectedModel.isEmpty && !model.selectedModelInstalled {
+                        if !(model.installed ?? []).isEmpty { Divider().padding(.leading, 14) }
+                        missingSelectedRow
+                    }
+                }
+
+                sectionHeader("Model library")
+                Card {
+                    let library = ModelCatalog.entries.filter { entry in
+                        !(model.installed ?? []).contains { $0.name == entry.name }
+                    }
+                    if library.isEmpty {
+                        CardRow(title: "All recommended models are installed", subtitle: nil) {
+                            EmptyView()
+                        }
+                    }
+                    ForEach(Array(library.enumerated()), id: \.element.id) { i, entry in
+                        if i > 0 { Divider().padding(.leading, 14) }
+                        libraryRow(entry)
+                    }
+                }
+
+                sectionHeader("Other")
+                Card {
+                    CardRow(
+                        title: "Install by name",
+                        subtitle: "Any model from ollama.com/library, e.g. qwen2.5:14b"
+                    ) {
+                        HStack(spacing: 8) {
+                            TextField("model:tag", text: $model.customModel)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 160)
+                            installButton(
+                                for: model.customModel.trimmingCharacters(in: .whitespaces)
+                            )
+                        }
+                    }
+                }
+
+                if !model.pullError.isEmpty {
+                    Label(model.pullError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
+                }
+                if !model.deleteError.isEmpty {
+                    Label(model.deleteError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+        .alert(
+            "Uninstall \(pendingUninstall?.name ?? "")?",
+            isPresented: Binding(
+                get: { pendingUninstall != nil },
+                set: { if !$0 { pendingUninstall = nil } }
+            ),
+            presenting: pendingUninstall
+        ) { target in
+            Button("Uninstall", role: .destructive) { model.onDeleteModel?(target.name) }
+            Button("Cancel", role: .cancel) {}
+        } message: { target in
+            Text(uninstallMessage(for: target))
+        }
+    }
+
+    /// Body of the confirmation alert: the space freed, plus the raw-text
+    /// warning when the row is the model Polish currently uses.
+    private func uninstallMessage(for target: OllamaClient.InstalledModel) -> String {
+        var message = target.sizeText.isEmpty
+            ? "This permanently removes \(target.name) from Ollama."
+            : "This permanently removes \(target.name) and frees \(target.sizeText)."
+        if target.name == model.selectedModel {
+            message += " It's your current Polish model, so dictation will insert "
+                + "raw text until you choose another."
+        }
+        return message
+    }
+
+    private func modelRatings(_ name: String) -> some View {
+        Group {
+            if let entry = ModelCatalog.entry(for: name) {
+                VStack(alignment: .trailing, spacing: 3) {
+                    RatingDots(label: "Speed", value: entry.speed)
+                    RatingDots(label: "Quality", value: entry.quality)
+                }
+            }
+        }
+    }
+
+    private func installedRow(_ installed: OllamaClient.InstalledModel) -> some View {
+        let entry = ModelCatalog.entry(for: installed.name)
+        let selected = installed.name == model.selectedModel
+        let deleting = model.deletingModel == installed.name
+        return Button {
+            model.onSelectModel?(installed.name)
+        } label: {
+            CardRow(
+                title: installed.name
+                    + (installed.sizeText.isEmpty ? "" : "  ·  \(installed.sizeText)"),
+                subtitle: entry?.blurb
+            ) {
+                if deleting {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Uninstalling…")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        modelRatings(installed.name)
+                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(selected ? .blue : .secondary)
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Uninstall…") { pendingUninstall = installed }
+                .disabled(model.pullingModel != nil || model.deletingModel != nil)
+        }
+    }
+
+    private var missingSelectedRow: some View {
+        CardRow(
+            title: model.selectedModel,
+            subtitle: "Configured in modes.json but not installed — polishing falls back "
+                + "to the raw transcript until it is."
+        ) {
+            HStack(spacing: 12) {
+                modelRatings(model.selectedModel)
+                installButton(for: model.selectedModel)
+            }
+        }
+    }
+
+    private func libraryRow(_ entry: ModelCatalog.Entry) -> some View {
+        CardRow(title: "\(entry.name)  ·  \(entry.size)", subtitle: entry.blurb) {
+            HStack(spacing: 12) {
+                modelRatings(entry.name)
+                installButton(for: entry.name)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func installButton(for name: String) -> some View {
+        if model.pullingModel == name {
+            VStack(alignment: .trailing, spacing: 2) {
+                ProgressView(value: model.pullFraction)
+                    .frame(width: 110)
+                Text(pullProgressText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        } else {
+            Button("Install") { model.onInstallModel?(name) }
+                .controlSize(.small)
+                .disabled(name.isEmpty || model.pullingModel != nil)
+        }
+    }
+
+    private var pullProgressText: String {
+        if let fraction = model.pullFraction {
+            return "\(Int(fraction * 100))% — \(model.pullStatus)"
+        }
+        return model.pullStatus
     }
 }
