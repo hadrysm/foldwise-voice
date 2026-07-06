@@ -97,6 +97,25 @@ final class InsertSpy {
     }
 }
 
+/// Records each `HistoryEntry` handed to the Pipeline's record seam. Locked
+/// because the record closure runs on a job Task, off the main thread.
+final class RecordSpy {
+    private let lock = NSLock()
+    private var collected: [HistoryEntry] = []
+
+    func record(_ entry: HistoryEntry) {
+        lock.lock()
+        defer { lock.unlock() }
+        collected.append(entry)
+    }
+
+    var entries: [HistoryEntry] {
+        lock.lock()
+        defer { lock.unlock() }
+        return collected
+    }
+}
+
 final class StateCollector {
     private let lock = NSLock()
     private var collected: [PipelineState] = []

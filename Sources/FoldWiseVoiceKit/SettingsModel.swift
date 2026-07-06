@@ -11,6 +11,7 @@ final class SettingsModel: ObservableObject {
         case models = "Models"
         case configuration = "Configuration"
         case sound = "Sound"
+        case history = "History"
         var id: String {
             rawValue
         }
@@ -22,6 +23,7 @@ final class SettingsModel: ObservableObject {
             case .models: "shippingbox.fill"
             case .configuration: "gearshape.fill"
             case .sound: "speaker.wave.2.fill"
+            case .history: "clock.fill"
             }
         }
 
@@ -32,6 +34,7 @@ final class SettingsModel: ObservableObject {
             case .models: .purple
             case .configuration: .gray
             case .sound: .teal
+            case .history: .pink
             }
         }
 
@@ -42,6 +45,7 @@ final class SettingsModel: ObservableObject {
             case .models: "Ollama Models"
             case .configuration: "Keyboard Shortcuts"
             case .sound: "Sound"
+            case .history: "Dictation History"
             }
         }
     }
@@ -81,6 +85,9 @@ final class SettingsModel: ObservableObject {
 
     var modeNames: [String] = []
     var llmModes: Set<String> = []
+    /// Loaded from the HistoryStore when the window opens; rendered by the
+    /// History pane newest-first. Set before navigation, like `modeNames`.
+    var historyEntries: [HistoryEntry] = []
 
     // wired by SettingsController
     var onCommit: (() -> Void)?

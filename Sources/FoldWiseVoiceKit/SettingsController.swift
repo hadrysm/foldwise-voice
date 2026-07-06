@@ -8,6 +8,7 @@ import SwiftUI
 @MainActor
 final class SettingsController {
     private let config: Config
+    private let historyStore: HistoryStore
     private let model = SettingsModel()
     private var window: NSWindow?
     private var keyMonitor: Any?
@@ -18,8 +19,9 @@ final class SettingsController {
     /// menu-bar "Update Available" item.
     var onUpdateAvailable: ((String) -> Void)?
 
-    init(config: Config) {
+    init(config: Config, historyStore: HistoryStore) {
         self.config = config
+        self.historyStore = historyStore
         wire()
     }
 
@@ -81,6 +83,7 @@ final class SettingsController {
         model.pauseAudio = config.pauseAudio
         model.hudStyle = (HUDStyle(rawValue: config.hudStyle) ?? .classic).rawValue
         model.axTrusted = TextInserter.accessibilityTrusted()
+        model.historyEntries = historyStore.load()
         model.status = ""
         refreshModels()
         checkForUpdates()

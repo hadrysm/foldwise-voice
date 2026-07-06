@@ -3,6 +3,7 @@
 // transcription jobs run in chained Tasks so they process in order without
 // ever blocking the UI.
 
+import AppKit
 import Foundation
 import os
 
@@ -43,6 +44,11 @@ final class Pipeline {
     private let transcriber: Transcribing
     private let polish: (String, Mode) async -> String
     private let insert: (String) async -> Bool
+    /// Best-effort history sink (PRD #78): handed the assembled entry after
+    /// insertion. A closure seam mirroring `polish`/`insert` (ADR-0002).
+    private let record: (HistoryEntry) -> Void
+    /// Frontmost-app name at insert time. Injectable so tests stay AppKit-free.
+    private let frontmostApp: () async -> String?
 
     /// May fire from any thread — UIs must hop to the main thread themselves.
     var onState: ((PipelineState) -> Void)?
@@ -59,13 +65,17 @@ final class Pipeline {
         recorder: AudioRecording = AudioRecorder(),
         transcriber: Transcribing = Transcriber(),
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
-        insert: @escaping (String) async -> Bool = Pipeline.pasteboardInsert
+        insert: @escaping (String) async -> Bool = Pipeline.pasteboardInsert,
+        record: @escaping (HistoryEntry) -> Void = Pipeline.recordToHistory,
+        frontmostApp: @escaping () async -> String? = Pipeline.frontmostAppName
     ) {
         self.config = config
         self.recorder = recorder
         self.transcriber = transcriber
         self.polish = polish
         self.insert = insert
+        self.record = record
+        self.frontmostApp = frontmostApp
         self.transcriber.onLoading = { [weak self] loading in
             guard let self else { return }
             if loading {
@@ -91,6 +101,14 @@ final class Pipeline {
 
     static func pasteboardInsert(_ text: String) async -> Bool {
         await MainActor.run { TextInserter.insert(text) }
+    }
+
+    static func recordToHistory(_ entry: HistoryEntry) {
+        JSONLHistoryStore(url: JSONLHistoryStore.defaultURL).append(entry)
+    }
+
+    static func frontmostAppName() async -> String? {
+        await MainActor.run { NSWorkspace.shared.frontmostApplication?.localizedName }
     }
 
     private func emit(_ state: PipelineState) {
@@ -172,6 +190,8 @@ final class Pipeline {
             return
         }
         Log.pipeline.info("raw: \(text, privacy: .private)")
+        let rawText = text
+        var isPolished = false
 
         if mode.usesLLM, let model = mode.llmModel, text.count > MIN_CHARS_FOR_LLM {
             emit(.polishing(model: model))
@@ -186,12 +206,31 @@ final class Pipeline {
                 logOffTaskFallback(verdict, mode: mode)
             } else {
                 text = candidate
+                isPolished = true
             }
             Log.pipeline.info("llm: \(text, privacy: .private)")
         }
 
+        // Frontmost app is the paste target, captured just before insertion.
+        let sourceApp = await frontmostApp()
         let pasted = await insert(text)
         emit(pasted ? .inserted : .clipboard)
+
+        // Recorded after insertion so a history write can never delay the
+        // paste (PRD #78); `record` is best-effort and never breaks a session.
+        record(HistoryEntry(
+            id: UUID(),
+            createdAt: Date(),
+            text: text,
+            rawText: rawText,
+            isPolished: isPolished,
+            modeName: mode.name,
+            wordCount: text.split(whereSeparator: { $0.isWhitespace }).count,
+            sourceApp: sourceApp,
+            durationMs: Int(Double(samples.count) / AudioRecorder.sampleRate * 1000),
+            flagged: false,
+            flagReason: nil
+        ))
     }
 
     /// One public-level line per off-task fallback, for tuning thresholds from

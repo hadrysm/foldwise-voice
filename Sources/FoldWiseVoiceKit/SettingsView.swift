@@ -130,6 +130,7 @@ struct SettingsView: View {
                     case .models: ModelsPane(model: model)
                     case .configuration: configurationPane
                     case .sound: soundPane
+                    case .history: HistoryPane(entries: model.historyEntries)
                     }
                 }
                 .padding(.horizontal, 28)

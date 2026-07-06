@@ -30,7 +30,9 @@ final class PipelineOutcomeTests: XCTestCase {
             recorder: FakeRecorder(samples: samples),
             transcriber: transcriber,
             polish: polish,
-            insert: insert
+            insert: insert,
+            record: { _ in },
+            frontmostApp: { nil }
         )
         let collector = StateCollector()
         pipeline.onState = { collector.append($0) }
