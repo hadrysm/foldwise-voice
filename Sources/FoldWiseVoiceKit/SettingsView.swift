@@ -599,6 +599,7 @@ struct ModelsPane: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(deleting)
 
             if !deleting {
                 uninstallMenu(for: installed)
