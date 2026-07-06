@@ -82,6 +82,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // One store shared between the record seam and the History pane, so a
         // dictation just spoken is on disk for the pane to load (PRD #78).
         let historyStore = JSONLHistoryStore(url: JSONLHistoryStore.defaultURL)
+        // A single best-effort retention sweep at launch drops entries past the
+        // configured window (Forever leaves everything, PRD #78).
+        historyStore.sweep(retention: config.historyRetention, now: Date())
         pipeline = Pipeline(
             config: config, recorder: recorder, transcriber: transcriber,
             record: { historyStore.append($0) }
@@ -304,7 +307,8 @@ public enum FoldWiseVoiceApp {
             let echo = Config(
                 activeMode: config.activeMode, hotkey: config.hotkey,
                 toggleHotkey: config.toggleHotkey, pauseAudio: config.pauseAudio,
-                saveHistory: config.saveHistory, hudPosition: config.hudPosition,
+                saveHistory: config.saveHistory,
+                historyRetention: config.historyRetention, hudPosition: config.hudPosition,
                 hudStyle: config.hudStyle, modeOrder: config.modeOrder,
                 modes: config.modes, path: tmp
             )

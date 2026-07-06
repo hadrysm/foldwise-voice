@@ -166,4 +166,58 @@ final class HistoryStoreRoundTripTests: XCTestCase {
 
         XCTAssertEqual(store.load(), [fresh])
     }
+
+    // MARK: - retention sweep (PRD #78, slice 4)
+
+    /// A fixed reference "now" the sweep measures the window against, so the
+    /// test is deterministic rather than depending on the wall clock.
+    private let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+    private func entry(daysBeforeNow days: Double, text: String) -> HistoryEntry {
+        entry(secondsSince1970: now.timeIntervalSince1970 - days * 86400, text: text)
+    }
+
+    func testSweepDropsEntriesOlderThanWindow() {
+        let store = JSONLHistoryStore(url: storeURL)
+        let old = entry(daysBeforeNow: 40, text: "old")
+        let recent = entry(daysBeforeNow: 5, text: "recent")
+        store.append(old)
+        store.append(recent)
+
+        store.sweep(retention: .thirtyDays, now: now)
+
+        XCTAssertEqual(store.load(), [recent])
+    }
+
+    func testSweepKeepsEntriesWithinWindow() {
+        let store = JSONLHistoryStore(url: storeURL)
+        let recent = entry(daysBeforeNow: 29, text: "recent")
+        store.append(recent)
+
+        store.sweep(retention: .thirtyDays, now: now)
+
+        XCTAssertEqual(store.load(), [recent])
+    }
+
+    func testSweepForeverKeepsEverything() {
+        let store = JSONLHistoryStore(url: storeURL)
+        let ancient = entry(daysBeforeNow: 5000, text: "ancient")
+        store.append(ancient)
+
+        store.sweep(retention: .forever, now: now)
+
+        XCTAssertEqual(store.load(), [ancient])
+    }
+
+    /// The sweep is best-effort: an unwritable path degrades to a no-op that
+    /// doesn't throw, so a failing sweep can never break launch (PRD #78).
+    func testSweepOnBlockedPathIsBestEffortNoOp() throws {
+        let blocker = dir.appendingPathComponent("blocker")
+        try Data("not a directory".utf8).write(to: blocker)
+        let store = JSONLHistoryStore(url: blocker.appendingPathComponent("history.jsonl"))
+
+        store.sweep(retention: .thirtyDays, now: now)
+
+        XCTAssertEqual(store.load(), [])
+    }
 }

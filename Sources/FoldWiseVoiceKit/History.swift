@@ -24,6 +24,50 @@ struct HistoryEntry: Codable, Identifiable, Equatable {
     var flagReason: String? // reserved; not captured in v1
 }
 
+/// How long dictation history is kept before the launch sweep deletes it
+/// (PRD #78). Persisted as a day count (`.forever` as 0) alongside the app's
+/// other settings and offered as a picker in the History pane. This is a
+/// control distinct from the "Save dictation history" on/off switch:
+/// `.forever` keeps everything, it does not turn saving off.
+enum RetentionWindow: Int, CaseIterable, Identifiable {
+    case sevenDays = 7
+    case thirtyDays = 30
+    case ninetyDays = 90
+    case forever = 0
+
+    static let `default` = RetentionWindow.thirtyDays
+
+    var id: Int {
+        rawValue
+    }
+
+    /// Persisted day count; 0 means keep everything.
+    var days: Int {
+        rawValue
+    }
+
+    /// Reconstruct from the persisted day count, falling back to the default
+    /// for an absent or unrecognized value.
+    init(days: Int) {
+        self = RetentionWindow(rawValue: days) ?? .default
+    }
+
+    /// Oldest age an entry may reach before the sweep drops it, or nil for
+    /// `.forever` — the sweep leaves a Forever store untouched.
+    var maxAge: TimeInterval? {
+        self == .forever ? nil : TimeInterval(days) * 86400
+    }
+
+    var label: String {
+        switch self {
+        case .sevenDays: "7 days"
+        case .thirtyDays: "30 days"
+        case .ninetyDays: "90 days"
+        case .forever: "Forever"
+        }
+    }
+}
+
 /// The persistence seam for history. A best-effort store: mutations swallow
 /// failures (a history write must never break a dictation session, PRD #78)
 /// and `load` returns what it can read. `JSONLHistoryStore` is the production
@@ -35,6 +79,9 @@ protocol HistoryStore: AnyObject {
     func delete(id: UUID)
     /// Empties the store, leaving no residue for the next append.
     func clearAll()
+    /// Deletes entries older than `window` measured from `now`; a `.forever`
+    /// window leaves the store untouched. Best-effort like the other mutations.
+    func sweep(retention window: RetentionWindow, now: Date)
 }
 
 /// Appends entries as one JSON object per line to a `history.jsonl` file —
@@ -118,6 +165,15 @@ final class JSONLHistoryStore: HistoryStore {
                 "History clear-all skipped: \(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+
+    func sweep(retention window: RetentionWindow, now: Date) {
+        guard let maxAge = window.maxAge else { return } // .forever — keep everything
+        let cutoff = now.addingTimeInterval(-maxAge)
+        let all = load()
+        let kept = all.filter { $0.createdAt >= cutoff }
+        guard kept.count != all.count else { return } // nothing expired — no rewrite
+        rewrite(kept)
     }
 
     /// Best-effort whole-file replacement shared by the mutating operations: a

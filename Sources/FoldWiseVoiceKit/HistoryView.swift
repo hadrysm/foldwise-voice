@@ -1,10 +1,11 @@
 // The History pane content (PRD #78): a "Save dictation history" master switch
-// above a date-grouped list of past dictations — TODAY / YESTERDAY / date
-// headers, newest first — each row showing a timestamp and the inserted text,
-// with an empty state when there is none. Hovering a row reveals Copy; a
-// per-row overflow menu offers Delete; a Clear all history control (behind a
-// confirmation) empties the store. Turning saving off offers to delete what is
-// already saved. Search, filters, and retention arrive in later slices.
+// and a separate retention (auto-delete) control above a date-grouped list of
+// past dictations — TODAY / YESTERDAY / date headers, newest first — each row
+// showing a timestamp and the inserted text, with an empty state when there is
+// none. Hovering a row reveals Copy; a per-row overflow menu offers Delete; a
+// Clear all history control (behind a confirmation) empties the store. Turning
+// saving off offers to delete what is already saved. Search and filters arrive
+// in later slices.
 
 import SwiftUI
 
@@ -17,6 +18,9 @@ struct HistoryPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             saveHistoryCard
+            if model.saveHistory {
+                retentionCard
+            }
             if model.historyEntries.isEmpty {
                 emptyState
             } else {
@@ -68,6 +72,37 @@ struct HistoryPane: View {
                 )
                 .toggleStyle(.switch)
                 .labelsHidden()
+            }
+        }
+    }
+
+    /// Auto-delete window, kept a separate card from the on/off switch so
+    /// "Forever" and "Off" never read as the same thing (PRD #78). Shown only
+    /// while saving is on, since retention governs what gets saved.
+    private var retentionCard: some View {
+        Card {
+            CardRow(
+                title: "Keep history for",
+                subtitle: "Automatically delete dictations older than this. "
+                    + "\u{201C}Forever\u{201D} keeps everything — it does not turn saving off."
+            ) {
+                Picker(
+                    "",
+                    selection: Binding(
+                        get: { model.retention },
+                        set: { newValue in
+                            model.retention = newValue
+                            model.onCommit?()
+                        }
+                    )
+                ) {
+                    ForEach(RetentionWindow.allCases) { window in
+                        Text(window.label).tag(window)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
             }
         }
     }

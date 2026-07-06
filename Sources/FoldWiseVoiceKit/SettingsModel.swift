@@ -79,6 +79,8 @@ final class SettingsModel: ObservableObject {
     @Published var pauseAudio = true
     /// Master "Save dictation history" switch, surfaced in the History pane.
     @Published var saveHistory = true
+    /// Auto-delete window for history, a control distinct from `saveHistory`.
+    @Published var retention = RetentionWindow.default
     @Published var hudStyle = HUDStyle.classic.rawValue
     @Published var axTrusted = false
     @Published var status = ""

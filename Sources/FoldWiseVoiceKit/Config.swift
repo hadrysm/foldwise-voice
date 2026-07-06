@@ -60,6 +60,11 @@ final class Config {
     /// propagation, so it has no `ChangeSet` member — the Pipeline reads it
     /// fresh at the start of each session.
     var saveHistory: Bool
+    /// How long history is kept before the launch sweep prunes it (PRD #78).
+    /// Persisted in modes.json as a day count; like `saveHistory` nobody
+    /// re-reads it through change propagation, so it has no `ChangeSet` member —
+    /// the launch sweep reads it once at startup.
+    var historyRetention: RetentionWindow
     var hudPosition: [Double]?
     /// HUDStyle raw value; unknown values fall back to .classic at use sites.
     var hudStyle: String {
@@ -72,7 +77,8 @@ final class Config {
 
     init(
         activeMode: String, hotkey: String, toggleHotkey: String?, pauseAudio: Bool,
-        saveHistory: Bool = true, hudPosition: [Double]?, hudStyle: String = "classic",
+        saveHistory: Bool = true, historyRetention: RetentionWindow = .default,
+        hudPosition: [Double]?, hudStyle: String = "classic",
         modeOrder: [String], modes: [String: Mode], path: URL
     ) {
         self.activeMode = activeMode
@@ -80,6 +86,7 @@ final class Config {
         self.toggleHotkey = toggleHotkey
         self.pauseAudio = pauseAudio
         self.saveHistory = saveHistory
+        self.historyRetention = historyRetention
         self.hudPosition = hudPosition
         self.hudStyle = hudStyle
         self.modeOrder = modeOrder
@@ -174,6 +181,7 @@ final class Config {
             ("toggle_hotkey", toggleHotkey),
             ("pause_audio", pauseAudio),
             ("save_history", saveHistory),
+            ("retention_days", historyRetention.days),
             ("hud_position", hudPosition),
             ("hud_style", hudStyle),
         ]
@@ -220,6 +228,7 @@ final class Config {
         case let raw as RawJSON: raw.text
         case let s as String: jsonString(s)
         case let b as Bool: b ? "true" : "false"
+        case let i as Int: String(i)
         case let arr as [String]:
             "[" + arr.map { jsonString($0) }.joined(separator: ", ") + "]"
         case let arr as [Double]:
@@ -272,6 +281,9 @@ final class Config {
             toggleHotkey: raw["toggle_hotkey"] as? String,
             pauseAudio: (raw["pause_audio"] as? Bool) ?? true,
             saveHistory: (raw["save_history"] as? Bool) ?? true,
+            historyRetention: RetentionWindow(
+                days: (raw["retention_days"] as? Int) ?? RetentionWindow.default.days
+            ),
             hudPosition: hudPosition,
             hudStyle: (raw["hud_style"] as? String) ?? "classic",
             modeOrder: order,
