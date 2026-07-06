@@ -128,11 +128,17 @@ final class JSONLHistoryStore: HistoryStore {
     private let url: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
-    /// Append observers, registered once at startup and app-lifetime, so no
-    /// unsubscribe path and no locking is needed: registration completes before
-    /// the first dictation can append (AppMain wires the pane before the hotkey
-    /// listener starts).
+    /// Append observers, registered once at startup and app-lifetime, so there
+    /// is no unsubscribe path (AppMain wires the pane before the hotkey listener
+    /// starts). Access still goes through `lock` so registration and the
+    /// snapshot taken in `append` can't race.
     private var appendObservers: [(HistoryEntry) -> Void] = []
+    /// Serializes every file operation and observer access. The pipeline appends
+    /// off the main thread while the History pane mutates the store on the main
+    /// actor, so an `append` must never interleave with an
+    /// `update`/`delete`/`sweep` load-then-rewrite — otherwise the rewrite would
+    /// silently drop the just-appended entry.
+    private let lock = NSLock()
 
     init(url: URL) {
         self.url = url
@@ -149,6 +155,81 @@ final class JSONLHistoryStore: HistoryStore {
     }
 
     func append(_ entry: HistoryEntry) {
+        lock.lock()
+        let persisted = writeAppend(entry)
+        // Snapshot under the lock so a concurrent `onAppend` can't mutate the
+        // array mid-loop.
+        let observers = persisted ? appendObservers : []
+        lock.unlock()
+        // Only after the entry is on disk, and outside the lock: an open pane
+        // must never prepend a dictation the store failed to persist (ADR-0003).
+        // May run off the main thread (the pipeline records off-main), so
+        // observers hop themselves.
+        for observer in observers {
+            observer(entry)
+        }
+    }
+
+    func onAppend(_ observer: @escaping (HistoryEntry) -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        appendObservers.append(observer)
+    }
+
+    func load() -> [HistoryEntry] {
+        lock.lock()
+        defer { lock.unlock() }
+        return readEntries()
+    }
+
+    /// Replaces the matching row by rewriting the whole file. Rewriting
+    /// everything (rather than editing in place) is acceptable at the volumes
+    /// this feature targets and is what the eventual DB backend removes.
+    func update(_ entry: HistoryEntry) {
+        lock.lock()
+        defer { lock.unlock() }
+        let all = readEntries()
+        guard all.contains(where: { $0.id == entry.id }) else { return }
+        rewrite(all.map { $0.id == entry.id ? entry : $0 })
+    }
+
+    /// Deletes by rewriting the whole file without the target row.
+    func delete(id: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        rewrite(readEntries().filter { $0.id != id })
+    }
+
+    func clearAll() {
+        lock.lock()
+        defer { lock.unlock() }
+        do {
+            let fm = FileManager.default
+            if fm.fileExists(atPath: url.path) {
+                try fm.removeItem(at: url)
+            }
+        } catch {
+            Log.history.error(
+                "History clear-all skipped: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    func sweep(retention window: RetentionWindow, now: Date) {
+        guard let maxAge = window.maxAge else { return } // .forever — keep everything
+        lock.lock()
+        defer { lock.unlock() }
+        let cutoff = now.addingTimeInterval(-maxAge)
+        let all = readEntries()
+        let kept = all.filter { $0.createdAt >= cutoff }
+        guard kept.count != all.count else { return } // nothing expired — no rewrite
+        rewrite(kept)
+    }
+
+    /// Writes one JSONL line for `entry`, returning whether it reached disk so
+    /// `append` only notifies observers for a persisted entry. Callers hold
+    /// `lock`.
+    private func writeAppend(_ entry: HistoryEntry) -> Bool {
         do {
             // JSONEncoder emits a single line (newlines inside strings are
             // escaped), so one entry maps to exactly one JSONL line.
@@ -171,21 +252,13 @@ final class JSONLHistoryStore: HistoryStore {
             Log.history.error(
                 "History append skipped: \(error.localizedDescription, privacy: .public)"
             )
-            return
+            return false
         }
-        // Only after the entry is on disk: an open pane must never prepend a
-        // dictation the store failed to persist (ADR-0003). May run off the main
-        // thread (the pipeline records off-main), so observers hop themselves.
-        for observer in appendObservers {
-            observer(entry)
-        }
+        return true
     }
 
-    func onAppend(_ observer: @escaping (HistoryEntry) -> Void) {
-        appendObservers.append(observer)
-    }
-
-    func load() -> [HistoryEntry] {
+    /// Reads and decodes the whole file. Callers hold `lock`.
+    private func readEntries() -> [HistoryEntry] {
         guard let data = try? Data(contentsOf: url) else { return [] }
         var entries: [HistoryEntry] = []
         // `split` drops empty subsequences, so a trailing newline or blank line
@@ -198,45 +271,9 @@ final class JSONLHistoryStore: HistoryStore {
         return entries
     }
 
-    /// Replaces the matching row by rewriting the whole file. Rewriting
-    /// everything (rather than editing in place) is acceptable at the volumes
-    /// this feature targets and is what the eventual DB backend removes.
-    func update(_ entry: HistoryEntry) {
-        let all = load()
-        guard all.contains(where: { $0.id == entry.id }) else { return }
-        rewrite(all.map { $0.id == entry.id ? entry : $0 })
-    }
-
-    /// Deletes by rewriting the whole file without the target row.
-    func delete(id: UUID) {
-        rewrite(load().filter { $0.id != id })
-    }
-
-    func clearAll() {
-        do {
-            let fm = FileManager.default
-            if fm.fileExists(atPath: url.path) {
-                try fm.removeItem(at: url)
-            }
-        } catch {
-            Log.history.error(
-                "History clear-all skipped: \(error.localizedDescription, privacy: .public)"
-            )
-        }
-    }
-
-    func sweep(retention window: RetentionWindow, now: Date) {
-        guard let maxAge = window.maxAge else { return } // .forever — keep everything
-        let cutoff = now.addingTimeInterval(-maxAge)
-        let all = load()
-        let kept = all.filter { $0.createdAt >= cutoff }
-        guard kept.count != all.count else { return } // nothing expired — no rewrite
-        rewrite(kept)
-    }
-
     /// Best-effort whole-file replacement shared by the mutating operations: a
     /// failure is logged and swallowed rather than thrown, keeping the store's
-    /// no-throw contract (PRD #78).
+    /// no-throw contract (PRD #78). Callers hold `lock`.
     private func rewrite(_ entries: [HistoryEntry]) {
         do {
             var data = Data()
