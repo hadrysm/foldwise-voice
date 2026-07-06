@@ -17,9 +17,26 @@ struct Mode {
     var llmModel: String?
     var systemPrompt: String?
     var vocab: [String]
+    /// In-place vs Expanding calibration (ADR-0004): an In-place Mode's polish
+    /// tracks the transcript closely (`false`); an Expanding Mode legitimately
+    /// restructures and grows it (`true`). Sizes the Polish token cap and, in
+    /// #72, calibrates the off-task check. Internal and NOT persisted — there is
+    /// no config-schema change — so it is re-derived from the Mode name on load.
+    /// Defaults to `true` (loose): an unknown/user-defined Mode skews
+    /// generative, and a false fallback (discarding a good polish) is worse than
+    /// letting a mildly off-task reply through — the output is inert either way.
+    var expands: Bool = true
 
     var usesLLM: Bool {
         !(llmModel ?? "").isEmpty
+    }
+
+    /// Built-in In-place Mode names. Every other Mode — a built-in Expanding
+    /// Mode (Email, Bullets) or any user-defined Mode — is Expanding. This is
+    /// the single source of truth for `expands`, applied both when building the
+    /// defaults and when loading, since the flag is never written to disk.
+    static func expands(forName name: String) -> Bool {
+        !["Clean", "Voice to Text"].contains(name)
     }
 }
 
@@ -224,7 +241,8 @@ final class Config {
                 asrModel: (m["asr_model"] as? String) ?? "mlx-community/whisper-large-v3-turbo",
                 llmModel: m["llm_model"] as? String,
                 systemPrompt: m["system_prompt"] as? String,
-                vocab: (m["vocab"] as? [String]) ?? []
+                vocab: (m["vocab"] as? [String]) ?? [],
+                expands: Mode.expands(forName: name)
             )
         }
 
@@ -305,20 +323,24 @@ final class Config {
                 + "and obvious transcription errors. Remove filler words (um, uh, "
                 + "like, you know). Do NOT change meaning, add content, or answer "
                 + "questions. Output ONLY the cleaned text.",
-            vocab: ["FoldWise", "Ollama", "Anthropic"]
+            vocab: ["FoldWise", "Ollama", "Anthropic"],
+            expands: Mode.expands(forName: "Clean")
         )
-        let raw = Mode(name: "Voice to Text", asrModel: asr, llmModel: nil, systemPrompt: nil, vocab: [])
+        let raw = Mode(
+            name: "Voice to Text", asrModel: asr, llmModel: nil, systemPrompt: nil,
+            vocab: [], expands: Mode.expands(forName: "Voice to Text")
+        )
         let email = Mode(
             name: "Email", asrModel: asr, llmModel: "qwen2.5:3b",
             systemPrompt: "Rewrite this dictation as a clear, concise, professional email "
                 + "body. Output only the email text.",
-            vocab: []
+            vocab: [], expands: Mode.expands(forName: "Email")
         )
         let bullets = Mode(
             name: "Bullets", asrModel: asr, llmModel: "qwen2.5:3b",
             systemPrompt: "Convert this dictation into a tight bulleted list, one idea per "
                 + "bullet. Output only the list.",
-            vocab: []
+            vocab: [], expands: Mode.expands(forName: "Bullets")
         )
         return Config(
             activeMode: "Clean", hotkey: "alt_r", toggleHotkey: nil, pauseAudio: true,

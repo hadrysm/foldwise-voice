@@ -84,7 +84,8 @@ final class Pipeline {
     static func ollamaPolish(_ text: String, mode: Mode) async -> String {
         guard let model = mode.llmModel else { return text }
         return await OllamaClient.polish(
-            text, model: model, systemPrompt: mode.systemPrompt, vocab: mode.vocab
+            text, model: model, systemPrompt: mode.systemPrompt, vocab: mode.vocab,
+            expands: mode.expands
         )
     }
 
