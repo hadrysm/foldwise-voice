@@ -43,6 +43,7 @@ final class SettingsController {
         model.onRecord = { [weak self] field in self?.startRecording(field) }
         model.onSelectModel = { [weak self] name in self?.selectModel(name) }
         model.onInstallModel = { [weak self] name in self?.installModel(name) }
+        model.onDeleteModel = { [weak self] name in self?.deleteModel(name) }
         model.onRefreshModels = { [weak self] in self?.refreshModels() }
         model.onEditFile = { [weak self] in
             guard let self else { return }
@@ -144,6 +145,27 @@ final class SettingsController {
                 self.model.customModel = ""
                 self.model.selectedModel = name
                 self.commit()
+                self.refreshModels()
+            }
+        }
+    }
+
+    /// Remove `name` from the local Ollama, then refresh the installed list.
+    /// Single-flight and blocked while a download runs, so the app is only ever
+    /// in one Ollama-mutating state at a time. Removing the active Polish model
+    /// deliberately leaves Config untouched (ADR-0003: nothing re-reads it, so
+    /// nothing is signalled) — the existing "Not installed — fix…" affordance
+    /// picks up the missing model and Polish falls back to the raw transcript.
+    private func deleteModel(_ name: String) {
+        guard model.deletingModel == nil, model.pullingModel == nil, !name.isEmpty else { return }
+        model.deletingModel = name
+        model.deleteError = ""
+        Task { @MainActor in
+            let error = await OllamaClient.delete(model: name)
+            self.model.deletingModel = nil
+            if let error {
+                self.model.deleteError = "Couldn't uninstall \(name): \(error)"
+            } else {
                 self.refreshModels()
             }
         }
