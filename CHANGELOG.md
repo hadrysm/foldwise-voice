@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.0](https://github.com/hadrysm/foldwise-voice/compare/v0.9.0...v0.10.0) (2026-07-06)
+
+
+### Features
+
+* **models:** kebab overflow menu replaces right-click uninstall ([#77](https://github.com/hadrysm/foldwise-voice/issues/77)) ([59d6ca1](https://github.com/hadrysm/foldwise-voice/commit/59d6ca1b4f6bfa7cec3185636ba47a77e6d447ab))
+* **models:** uninstall an installed Ollama model from the Models pane ([#67](https://github.com/hadrysm/foldwise-voice/issues/67)) ([a2e0db2](https://github.com/hadrysm/foldwise-voice/commit/a2e0db21bb7ef48708283ecd434b83f6016127d2))
+
+
+### Maintenance
+
+* stop tracking runtime modes.json ([#76](https://github.com/hadrysm/foldwise-voice/issues/76)) ([55f774b](https://github.com/hadrysm/foldwise-voice/commit/55f774b3fe7ebb290ec216754bdd0b8a644ffb95))
+
 ## [0.9.0](https://github.com/hadrysm/foldwise-voice/compare/v0.8.0...v0.9.0) (2026-07-03)
 
 
