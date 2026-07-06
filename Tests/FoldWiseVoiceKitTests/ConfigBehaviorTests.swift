@@ -96,4 +96,44 @@ final class ConfigBehaviorTests: XCTestCase {
         mode.llmModel = "llama3.2:3b"
         XCTAssertTrue(mode.usesLLM)
     }
+
+    func testBuiltInInPlaceModesDoNotExpand() {
+        let config = Config.defaultConfig(path: path)
+        XCTAssertEqual(config.modes["Clean"]?.expands, false)
+        XCTAssertEqual(config.modes["Voice to Text"]?.expands, false)
+    }
+
+    func testBuiltInExpandingModesExpand() {
+        let config = Config.defaultConfig(path: path)
+        XCTAssertEqual(config.modes["Email"]?.expands, true)
+        XCTAssertEqual(config.modes["Bullets"]?.expands, true)
+    }
+
+    func testLoadedUserDefinedModeDefaultsToExpanding() throws {
+        let json = """
+        {
+          "active_mode": "Custom",
+          "modes": {
+            "Custom": {"asr_model": "m", "llm_model": "qwen2.5:3b", "system_prompt": "do a thing", "vocab": []}
+          }
+        }
+        """
+        try Data(json.utf8).write(to: path)
+        let config = try Config.load(from: path)
+        XCTAssertEqual(config.modes["Custom"]?.expands, true)
+    }
+
+    func testReloadedBuiltInKeepsInPlaceCalibration() throws {
+        // `expands` is never persisted, so a reloaded Clean must re-derive its
+        // In-place calibration from the name — not silently become loose.
+        try Config.defaultConfig(path: path).save()
+        let reloaded = try Config.load(from: path)
+        XCTAssertEqual(reloaded.modes["Clean"]?.expands, false)
+    }
+
+    func testExpandsIsNotPersisted() throws {
+        try Config.defaultConfig(path: path).save()
+        let written = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertFalse(written.contains("expands"))
+    }
 }

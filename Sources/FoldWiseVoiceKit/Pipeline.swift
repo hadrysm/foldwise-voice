@@ -84,7 +84,8 @@ final class Pipeline {
     static func ollamaPolish(_ text: String, mode: Mode) async -> String {
         guard let model = mode.llmModel else { return text }
         return await OllamaClient.polish(
-            text, model: model, systemPrompt: mode.systemPrompt, vocab: mode.vocab
+            text, model: model, systemPrompt: mode.systemPrompt, vocab: mode.vocab,
+            expands: mode.expands
         )
     }
 
@@ -174,11 +175,37 @@ final class Pipeline {
 
         if mode.usesLLM, let model = mode.llmModel, text.count > MIN_CHARS_FOR_LLM {
             emit(.polishing(model: model))
-            text = await polish(text, mode)
+            let candidate = await polish(text, mode)
+            // The candidate is already sanitized (the polish stage strips
+            // narration), so the check judges the transform, not stripped
+            // scaffolding. On a positive result `text` stays the raw
+            // transcript — extending the "model unreachable" fallback to
+            // "model answered the wrong question" (ADR-0004). No new HUD state.
+            let verdict = OllamaClient.offTaskVerdict(candidate, transcript: text, expands: mode.expands)
+            if verdict.fellBack {
+                logOffTaskFallback(verdict, mode: mode)
+            } else {
+                text = candidate
+            }
             Log.pipeline.info("llm: \(text, privacy: .private)")
         }
 
         let pasted = await insert(text)
         emit(pasted ? .inserted : .clipboard)
+    }
+
+    /// One public-level line per off-task fallback, for tuning thresholds from
+    /// field behavior: the signal that fired plus the numeric overlap and
+    /// length ratio, never the discarded output or the transcript (those stay
+    /// on the `.private` "llm:"/"raw:" lines).
+    private func logOffTaskFallback(_ verdict: OllamaClient.OffTaskVerdict, mode: Mode) {
+        let overlap = String(format: "%.2f", verdict.overlap)
+        let ratio = String(format: "%.2f", verdict.lengthRatio)
+        Log.pipeline.error("""
+        Polish off-task (\(verdict.signal, privacy: .public)) in mode \
+        \(mode.name, privacy: .public) [expands=\(String(mode.expands), privacy: .public)] — \
+        overlap \(overlap, privacy: .public), length ratio \(ratio, privacy: .public); \
+        pasting raw transcript
+        """)
     }
 }
