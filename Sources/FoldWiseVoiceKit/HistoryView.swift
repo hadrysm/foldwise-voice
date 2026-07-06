@@ -2,10 +2,11 @@
 // and a separate retention (auto-delete) control above a date-grouped list of
 // past dictations — TODAY / YESTERDAY / date headers, newest first — each row
 // showing a timestamp and the inserted text, with an empty state when there is
-// none. Hovering a row reveals Copy; a per-row overflow menu offers Delete; a
-// Clear all history control (behind a confirmation) empties the store. Turning
-// saving off offers to delete what is already saved. Search and filters arrive
-// in later slices.
+// none. A search box filters live across the polished and raw text and a
+// "Flagged only" toggle narrows to bookmarked rows. Hovering a row reveals Copy
+// and Flag; a per-row overflow menu offers Delete; a Clear all history control
+// (behind a confirmation) empties the store. Turning saving off offers to
+// delete what is already saved.
 
 import SwiftUI
 
@@ -14,6 +15,8 @@ struct HistoryPane: View {
     @State private var hoveredRow: UUID?
     @State private var confirmingClearAll = false
     @State private var confirmingDeleteOnOff = false
+    @State private var search = ""
+    @State private var flaggedOnly = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -121,8 +124,16 @@ struct HistoryPane: View {
     }
 
     private var populated: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            groupedList
+        let filtered = HistoryFilter.apply(
+            to: model.historyEntries, query: search, flaggedOnly: flaggedOnly
+        )
+        return VStack(alignment: .leading, spacing: 16) {
+            searchControls
+            if filtered.isEmpty {
+                noMatchesState
+            } else {
+                groupedList(filtered)
+            }
             HStack {
                 Spacer()
                 Button("Clear all history…", role: .destructive) {
@@ -133,9 +144,62 @@ struct HistoryPane: View {
         }
     }
 
-    private var groupedList: some View {
+    /// Live search over both the polished and raw text, plus a Flagged-only
+    /// toggle. Both narrow the loaded list in memory via `HistoryFilter`;
+    /// neither touches the store.
+    private var searchControls: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                TextField("Search dictations", text: $search)
+                    .textFieldStyle(.plain)
+                if !search.isEmpty {
+                    Button {
+                        search = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear search")
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+
+            Toggle(isOn: $flaggedOnly) {
+                Label("Flagged only", systemImage: "flag.fill")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .toggleStyle(.button)
+            .controlSize(.small)
+            .help("Show only dictations you have flagged")
+        }
+    }
+
+    /// Shown when the store has entries but the search / Flagged-only filter
+    /// leaves none — distinct from the first-run empty state.
+    private var noMatchesState: some View {
+        let flaggedButEmpty = flaggedOnly && search.trimmingCharacters(in: .whitespaces).isEmpty
+        return Card {
+            CardRow(
+                title: flaggedButEmpty ? "No flagged dictations" : "No matches",
+                subtitle: flaggedButEmpty
+                    ? "Flag a dictation to bookmark it for your own review."
+                    : "No dictation matches your search. Try different words, or clear "
+                        + "the filters above."
+            ) {
+                EmptyView()
+            }
+        }
+    }
+
+    private func groupedList(_ entries: [HistoryEntry]) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            ForEach(HistoryPane.grouped(model.historyEntries), id: \.header) { group in
+            ForEach(HistoryPane.grouped(entries), id: \.header) { group in
                 sectionHeader(group.header)
                 Card {
                     ForEach(Array(group.entries.enumerated()), id: \.element.id) { i, entry in
@@ -162,6 +226,21 @@ struct HistoryPane: View {
                     }
                     .buttonStyle(.plain)
                     .help("Copy text")
+                }
+                // A flagged row keeps its filled flag on show even off-hover, so
+                // the bookmark is visible at a glance; hovering reveals the flag
+                // affordance on unflagged rows.
+                if hoveredRow == entry.id || entry.flagged {
+                    Button {
+                        model.onFlagHistory?(entry)
+                    } label: {
+                        Image(systemName: entry.flagged ? "flag.fill" : "flag")
+                            .foregroundStyle(
+                                entry.flagged ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(entry.flagged ? "Remove flag" : "Flag for my review")
                 }
                 overflowMenu(entry)
             }

@@ -167,6 +167,48 @@ final class HistoryStoreRoundTripTests: XCTestCase {
         XCTAssertEqual(store.load(), [fresh])
     }
 
+    // MARK: - update one (PRD #78, slice 5)
+
+    /// Toggling a flag persists: the store replaces the matching entry, and a
+    /// separate instance reads the new `flagged` back — the round-trip the
+    /// Flag action relies on.
+    func testUpdatePersistsFlaggedAcrossStoreInstances() {
+        var written = entry(secondsSince1970: 1_700_000_000, text: "bookmark me")
+        JSONLHistoryStore(url: storeURL).append(written)
+
+        written.flagged = true
+        JSONLHistoryStore(url: storeURL).update(written)
+
+        XCTAssertEqual(JSONLHistoryStore(url: storeURL).load(), [written])
+    }
+
+    /// Updating one entry rewrites only that row, leaving its neighbours and
+    /// their order untouched.
+    func testUpdateReplacesOnlyTheMatchingEntry() {
+        let store = JSONLHistoryStore(url: storeURL)
+        let first = entry(secondsSince1970: 1_700_000_000, text: "first")
+        var second = entry(secondsSince1970: 1_700_000_060, text: "second")
+        let third = entry(secondsSince1970: 1_700_000_120, text: "third")
+        store.append(first)
+        store.append(second)
+        store.append(third)
+
+        second.text = "second edited"
+        store.update(second)
+
+        XCTAssertEqual(store.load(), [first, second, third])
+    }
+
+    func testUpdateUnknownIdLeavesEntriesUnchanged() {
+        let store = JSONLHistoryStore(url: storeURL)
+        let only = entry(secondsSince1970: 1_700_000_000, text: "only")
+        store.append(only)
+
+        store.update(entry(secondsSince1970: 1_700_000_060, text: "ghost"))
+
+        XCTAssertEqual(store.load(), [only])
+    }
+
     // MARK: - retention sweep (PRD #78, slice 4)
 
     /// A fixed reference "now" the sweep measures the window against, so the

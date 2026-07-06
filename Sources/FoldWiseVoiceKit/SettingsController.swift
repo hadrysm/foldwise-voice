@@ -53,6 +53,7 @@ final class SettingsController {
         }
         model.onCheckUpdates = { [weak self] in self?.checkForUpdates() }
         model.onCopyHistory = { [weak self] entry in self?.copyToPasteboard(entry.text) }
+        model.onFlagHistory = { [weak self] entry in self?.flagHistory(entry) }
         model.onDeleteHistory = { [weak self] entry in self?.deleteHistory(entry) }
         model.onClearHistory = { [weak self] in self?.clearHistory() }
     }
@@ -185,6 +186,15 @@ final class SettingsController {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+
+    /// Toggle the row's local bookmark and persist it. Purely local — no
+    /// network activity — then re-read so the pane reflects what persisted.
+    private func flagHistory(_ entry: HistoryEntry) {
+        var toggled = entry
+        toggled.flagged.toggle()
+        historyStore.update(toggled)
+        model.historyEntries = historyStore.load()
     }
 
     /// Delete and clear-all go through the store, then re-read it so the pane's

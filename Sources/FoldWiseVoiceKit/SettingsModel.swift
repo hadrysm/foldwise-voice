@@ -104,8 +104,10 @@ final class SettingsModel: ObservableObject {
     var onCheckUpdates: (() -> Void)?
     /// History pane row actions, mediated by SettingsController (which owns the
     /// store and the pasteboard). Copy puts the row's polished text on the
-    /// pasteboard; delete removes one row; clear empties the store.
+    /// pasteboard; flag toggles the row's local bookmark; delete removes one
+    /// row; clear empties the store.
     var onCopyHistory: ((HistoryEntry) -> Void)?
+    var onFlagHistory: ((HistoryEntry) -> Void)?
     var onDeleteHistory: ((HistoryEntry) -> Void)?
     var onClearHistory: (() -> Void)?
 

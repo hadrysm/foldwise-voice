@@ -75,6 +75,10 @@ enum RetentionWindow: Int, CaseIterable, Identifiable {
 protocol HistoryStore: AnyObject {
     func append(_ entry: HistoryEntry)
     func load() -> [HistoryEntry]
+    /// Replaces the stored entry sharing `entry.id`, keeping the others and
+    /// their order; a no-op if none matches. The persist path for toggling
+    /// `flagged` and for Re-run Polish overwriting `text`/`isPolished`.
+    func update(_ entry: HistoryEntry)
     /// Removes exactly the entry with `id`; a no-op if none matches.
     func delete(id: UUID)
     /// Empties the store, leaving no residue for the next append.
@@ -150,6 +154,12 @@ final class JSONLHistoryStore: HistoryStore {
     /// Deletes by rewriting the whole file without the target row. Rewriting
     /// everything (rather than editing in place) is acceptable at the volumes
     /// this feature targets and is what the eventual DB backend removes.
+    func update(_ entry: HistoryEntry) {
+        let all = load()
+        guard all.contains(where: { $0.id == entry.id }) else { return }
+        rewrite(all.map { $0.id == entry.id ? entry : $0 })
+    }
+
     func delete(id: UUID) {
         rewrite(load().filter { $0.id != id })
     }
@@ -195,6 +205,26 @@ final class JSONLHistoryStore: HistoryStore {
             Log.history.error(
                 "History rewrite skipped: \(error.localizedDescription, privacy: .public)"
             )
+        }
+    }
+}
+
+/// The History pane's list filter, kept a pure function so its matching rules
+/// are unit-tested apart from the (untested) SwiftUI view (PRD #78). Narrows to
+/// flagged rows when `flaggedOnly` is set, then keeps rows whose polished `text`
+/// or raw `rawText` contains `query` — case-insensitively, so a dictation is
+/// found by any words it contained whichever version the user remembers. A
+/// blank query matches every row. Order-preserving.
+enum HistoryFilter {
+    static func apply(
+        to entries: [HistoryEntry], query: String, flaggedOnly: Bool
+    ) -> [HistoryEntry] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return entries.filter { entry in
+            if flaggedOnly, !entry.flagged { return false }
+            guard !needle.isEmpty else { return true }
+            return entry.text.localizedCaseInsensitiveContains(needle)
+                || entry.rawText.localizedCaseInsensitiveContains(needle)
         }
     }
 }
