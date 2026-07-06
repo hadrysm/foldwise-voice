@@ -151,7 +151,7 @@ final class JSONLHistoryStore: HistoryStore {
         return entries
     }
 
-    /// Deletes by rewriting the whole file without the target row. Rewriting
+    /// Replaces the matching row by rewriting the whole file. Rewriting
     /// everything (rather than editing in place) is acceptable at the volumes
     /// this feature targets and is what the eventual DB backend removes.
     func update(_ entry: HistoryEntry) {
@@ -160,6 +160,7 @@ final class JSONLHistoryStore: HistoryStore {
         rewrite(all.map { $0.id == entry.id ? entry : $0 })
     }
 
+    /// Deletes by rewriting the whole file without the target row.
     func delete(id: UUID) {
         rewrite(load().filter { $0.id != id })
     }

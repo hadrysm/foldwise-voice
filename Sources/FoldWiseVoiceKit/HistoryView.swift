@@ -183,7 +183,7 @@ struct HistoryPane: View {
     /// Shown when the store has entries but the search / Flagged-only filter
     /// leaves none — distinct from the first-run empty state.
     private var noMatchesState: some View {
-        let flaggedButEmpty = flaggedOnly && search.trimmingCharacters(in: .whitespaces).isEmpty
+        let flaggedButEmpty = flaggedOnly && search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return Card {
             CardRow(
                 title: flaggedButEmpty ? "No flagged dictations" : "No matches",
