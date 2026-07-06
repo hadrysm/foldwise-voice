@@ -27,6 +27,24 @@ its LLM model, system prompt, and preserved vocabulary. E.g. "Voice to Text"
 (raw), "Clean", "Email", "Bullets".
 _Avoid_: profile, preset
 
+**In-place Mode** — A Mode whose Polish output tracks the transcript closely:
+same words, same rough length, fixed punctuation/casing. E.g. "Clean". Off-task
+detection can be strict here — the polished text should stay near the raw one.
+_Avoid_: transform-in-place, tight mode
+
+**Expanding Mode** — A Mode whose Polish legitimately restructures and grows the
+transcript — reordering, rephrasing, dropping filler. E.g. "Email", "Bullets".
+Off-task detection must be looser here, because low overlap and larger length
+are honest for these Modes, not a sign the model went off-task.
+_Avoid_: generative mode, loose mode
+
+**Off-task** — The Polish failure the app defends against: the model *replies
+to* or *obeys* the transcript (an answer, a refusal, a poem) instead of
+*transforming* it per the Mode. Distinct from an unreachable model or a
+malformed response; the tell is answer-shaped output with little relation to
+what was said.
+_Avoid_: injected, jailbroken, hallucination
+
 ## Batch workflow
 
 **PRD** — a GitHub issue carrying the `prd` label that holds a product
