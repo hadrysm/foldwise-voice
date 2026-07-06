@@ -86,6 +86,12 @@ protocol HistoryStore: AnyObject {
     /// Deletes entries older than `window` measured from `now`; a `.forever`
     /// window leaves the store untouched. Best-effort like the other mutations.
     func sweep(retention window: RetentionWindow, now: Date)
+    /// Registers `observer`, called with each entry as it is appended, so an
+    /// open History pane can prepend a just-spoken dictation live without
+    /// polling the file — the store owns change propagation, following Config
+    /// (ADR-0003). A failed best-effort append notifies no one. Observers are
+    /// app-lifetime, so the list is append-only and never unsubscribed.
+    func onAppend(_ observer: @escaping (HistoryEntry) -> Void)
 }
 
 /// Appends entries as one JSON object per line to a `history.jsonl` file —
@@ -97,6 +103,11 @@ final class JSONLHistoryStore: HistoryStore {
     private let url: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    /// Append observers, registered once at startup and app-lifetime, so no
+    /// unsubscribe path and no locking is needed: registration completes before
+    /// the first dictation can append (AppMain wires the pane before the hotkey
+    /// listener starts).
+    private var appendObservers: [(HistoryEntry) -> Void] = []
 
     init(url: URL) {
         self.url = url
@@ -135,7 +146,18 @@ final class JSONLHistoryStore: HistoryStore {
             Log.history.error(
                 "History append skipped: \(error.localizedDescription, privacy: .public)"
             )
+            return
         }
+        // Only after the entry is on disk: an open pane must never prepend a
+        // dictation the store failed to persist (ADR-0003). May run off the main
+        // thread (the pipeline records off-main), so observers hop themselves.
+        for observer in appendObservers {
+            observer(entry)
+        }
+    }
+
+    func onAppend(_ observer: @escaping (HistoryEntry) -> Void) {
+        appendObservers.append(observer)
     }
 
     func load() -> [HistoryEntry] {

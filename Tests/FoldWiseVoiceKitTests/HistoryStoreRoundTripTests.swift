@@ -209,6 +209,51 @@ final class HistoryStoreRoundTripTests: XCTestCase {
         XCTAssertEqual(store.load(), [only])
     }
 
+    // MARK: - append observers (PRD #78, slice 7)
+
+    /// The live-update contract: an appended entry is delivered to a registered
+    /// observer, so an open History pane can prepend it without polling.
+    /// Follows the ConfigChangePropagationTests observer prior art.
+    func testAppendNotifiesObserverWithTheEntry() {
+        let store = JSONLHistoryStore(url: storeURL)
+        var received: [HistoryEntry] = []
+        store.onAppend { received.append($0) }
+        let written = entry(secondsSince1970: 1_700_000_000, text: "spoken just now")
+
+        store.append(written)
+
+        XCTAssertEqual(received, [written])
+    }
+
+    func testEachAppendNotifiesObserversInOrder() {
+        let store = JSONLHistoryStore(url: storeURL)
+        var received: [HistoryEntry] = []
+        store.onAppend { received.append($0) }
+        let first = entry(secondsSince1970: 1_700_000_000, text: "first")
+        let second = entry(secondsSince1970: 1_700_000_060, text: "second")
+
+        store.append(first)
+        store.append(second)
+
+        XCTAssertEqual(received, [first, second])
+    }
+
+    /// A best-effort no-op append (unwritable path) persisted nothing, so it
+    /// must notify no observer — the pane must never prepend a dictation that
+    /// never reached disk (mirrors the failed-save contract in
+    /// ConfigChangePropagationTests).
+    func testFailedAppendNotifiesNoObserver() throws {
+        let blocker = dir.appendingPathComponent("blocker")
+        try Data("not a directory".utf8).write(to: blocker)
+        let store = JSONLHistoryStore(url: blocker.appendingPathComponent("history.jsonl"))
+        var received: [HistoryEntry] = []
+        store.onAppend { received.append($0) }
+
+        store.append(entry(secondsSince1970: 1_700_000_000, text: "dropped"))
+
+        XCTAssertTrue(received.isEmpty)
+    }
+
     // MARK: - retention sweep (PRD #78, slice 4)
 
     /// A fixed reference "now" the sweep measures the window against, so the

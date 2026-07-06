@@ -25,6 +25,14 @@ final class SettingsController {
         self.historyStore = historyStore
         reprocessor = HistoryReprocessor(store: historyStore)
         wire()
+        // Live-prepend: the store owns change propagation (ADR-0003), so
+        // subscribe once here — a dictation spoken while the pane is open appears
+        // at the top without a reload. Registered before the hotkey listener
+        // starts (AppMain order), so no append can race registration. The store
+        // fires this off the main thread from the pipeline's record seam.
+        historyStore.onAppend { [weak self] entry in
+            Task { @MainActor in self?.prependHistory(entry) }
+        }
     }
 
     deinit {
@@ -187,6 +195,14 @@ final class SettingsController {
     }
 
     // MARK: - history row actions
+
+    /// Prepend a just-appended dictation while the pane is open (PRD #78). A
+    /// full reload (`populate`, flag/delete/re-run) replaces the whole list, so
+    /// this guards by id to stay idempotent if a reload and this callback race.
+    private func prependHistory(_ entry: HistoryEntry) {
+        guard !model.historyEntries.contains(where: { $0.id == entry.id }) else { return }
+        model.historyEntries.insert(entry, at: 0)
+    }
 
     private func copyToPasteboard(_ text: String) {
         let pasteboard = NSPasteboard.general
