@@ -304,8 +304,9 @@ public enum FoldWiseVoiceApp {
             let echo = Config(
                 activeMode: config.activeMode, hotkey: config.hotkey,
                 toggleHotkey: config.toggleHotkey, pauseAudio: config.pauseAudio,
-                hudPosition: config.hudPosition, hudStyle: config.hudStyle,
-                modeOrder: config.modeOrder, modes: config.modes, path: tmp
+                saveHistory: config.saveHistory, hudPosition: config.hudPosition,
+                hudStyle: config.hudStyle, modeOrder: config.modeOrder,
+                modes: config.modes, path: tmp
             )
             try? echo.save()
             print("config: \(url.path)")

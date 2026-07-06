@@ -77,6 +77,8 @@ final class SettingsModel: ObservableObject {
     @Published var pttKey = ""
     @Published var toggleKey = ""
     @Published var pauseAudio = true
+    /// Master "Save dictation history" switch, surfaced in the History pane.
+    @Published var saveHistory = true
     @Published var hudStyle = HUDStyle.classic.rawValue
     @Published var axTrusted = false
     @Published var status = ""

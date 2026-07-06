@@ -133,10 +133,13 @@ final class Pipeline {
         ducker.restore()
         emit(.transcribing)
         let mode = config.mode
+        // Frozen at stop time alongside `mode`: whether this session is saved is
+        // decided when the user stops speaking, not read later off the job task.
+        let saveHistory = config.saveHistory
         let previous = lastJob
         lastJob = Task {
             await previous?.value
-            await self.process(samples, mode: mode)
+            await self.process(samples, mode: mode, saveHistory: saveHistory)
         }
     }
 
@@ -161,7 +164,7 @@ final class Pipeline {
 
     // MARK: - worker
 
-    private func process(_ samples: [Float], mode: Mode) async {
+    private func process(_ samples: [Float], mode: Mode, saveHistory: Bool) async {
         jobActive = true
         defer { jobActive = false }
         guard samples.count >= 1600 else { // < 0.1 s — no real audio captured
@@ -218,6 +221,9 @@ final class Pipeline {
 
         // Recorded after insertion so a history write can never delay the
         // paste (PRD #78); `record` is best-effort and never breaks a session.
+        // Gated on the master switch: with saving off the Pipeline assembles
+        // and hands off no entry, so nothing is written to disk.
+        guard saveHistory else { return }
         record(HistoryEntry(
             id: UUID(),
             createdAt: Date(),

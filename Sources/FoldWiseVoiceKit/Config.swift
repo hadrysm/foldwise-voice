@@ -54,6 +54,12 @@ final class Config {
     }
 
     var pauseAudio: Bool
+    /// Master "Save dictation history" switch (PRD #78). When false the
+    /// Pipeline records nothing and no `history.jsonl` is written. Persisted in
+    /// modes.json; like `pauseAudio` nobody re-reads it through change
+    /// propagation, so it has no `ChangeSet` member — the Pipeline reads it
+    /// fresh at the start of each session.
+    var saveHistory: Bool
     var hudPosition: [Double]?
     /// HUDStyle raw value; unknown values fall back to .classic at use sites.
     var hudStyle: String {
@@ -66,13 +72,14 @@ final class Config {
 
     init(
         activeMode: String, hotkey: String, toggleHotkey: String?, pauseAudio: Bool,
-        hudPosition: [Double]?, hudStyle: String = "classic", modeOrder: [String],
-        modes: [String: Mode], path: URL
+        saveHistory: Bool = true, hudPosition: [Double]?, hudStyle: String = "classic",
+        modeOrder: [String], modes: [String: Mode], path: URL
     ) {
         self.activeMode = activeMode
         self.hotkey = hotkey
         self.toggleHotkey = toggleHotkey
         self.pauseAudio = pauseAudio
+        self.saveHistory = saveHistory
         self.hudPosition = hudPosition
         self.hudStyle = hudStyle
         self.modeOrder = modeOrder
@@ -166,6 +173,7 @@ final class Config {
             ("hotkey", hotkey),
             ("toggle_hotkey", toggleHotkey),
             ("pause_audio", pauseAudio),
+            ("save_history", saveHistory),
             ("hud_position", hudPosition),
             ("hud_style", hudStyle),
         ]
@@ -263,6 +271,7 @@ final class Config {
             hotkey: (raw["hotkey"] as? String) ?? "alt_r",
             toggleHotkey: raw["toggle_hotkey"] as? String,
             pauseAudio: (raw["pause_audio"] as? Bool) ?? true,
+            saveHistory: (raw["save_history"] as? Bool) ?? true,
             hudPosition: hudPosition,
             hudStyle: (raw["hud_style"] as? String) ?? "classic",
             modeOrder: order,

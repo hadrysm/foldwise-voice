@@ -1,9 +1,10 @@
-// The History pane content (PRD #78, slice 2): a date-grouped list of past
-// dictations — TODAY / YESTERDAY / date headers, newest first — each row
-// showing a timestamp and the inserted text, with an empty state when there
-// is none. Hovering a row reveals Copy; a per-row overflow menu offers Delete;
-// a Clear all history control (behind a confirmation) empties the store.
-// Search, filters, and settings arrive in later slices.
+// The History pane content (PRD #78): a "Save dictation history" master switch
+// above a date-grouped list of past dictations — TODAY / YESTERDAY / date
+// headers, newest first — each row showing a timestamp and the inserted text,
+// with an empty state when there is none. Hovering a row reveals Copy; a
+// per-row overflow menu offers Delete; a Clear all history control (behind a
+// confirmation) empties the store. Turning saving off offers to delete what is
+// already saved. Search, filters, and retention arrive in later slices.
 
 import SwiftUI
 
@@ -11,9 +12,11 @@ struct HistoryPane: View {
     @ObservedObject var model: SettingsModel
     @State private var hoveredRow: UUID?
     @State private var confirmingClearAll = false
+    @State private var confirmingDeleteOnOff = false
 
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 16) {
+            saveHistoryCard
             if model.historyEntries.isEmpty {
                 emptyState
             } else {
@@ -29,6 +32,44 @@ struct HistoryPane: View {
                     + "This can't be undone."
             )
         }
+        .alert("Delete saved dictations?", isPresented: $confirmingDeleteOnOff) {
+            Button("Delete", role: .destructive) { model.onClearHistory?() }
+            Button("Keep", role: .cancel) {}
+        } message: {
+            Text(
+                "Saving is now off, so no new dictations will be recorded. "
+                    + "Delete the dictations already saved on this Mac?"
+            )
+        }
+    }
+
+    /// The master on/off switch, shown above the list in both the empty and
+    /// populated states so history can be turned off before it fills. Turning
+    /// it off offers to also delete what is already saved (PRD #78).
+    private var saveHistoryCard: some View {
+        Card {
+            CardRow(
+                title: "Save dictation history",
+                subtitle: "Keep a text-only, on-device record of your dictations. "
+                    + "Turn this off and nothing is written to disk."
+            ) {
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { model.saveHistory },
+                        set: { isOn in
+                            model.saveHistory = isOn
+                            model.onCommit?()
+                            if !isOn, !model.historyEntries.isEmpty {
+                                confirmingDeleteOnOff = true
+                            }
+                        }
+                    )
+                )
+                .toggleStyle(.switch)
+                .labelsHidden()
+            }
+        }
     }
 
     private var emptyState: some View {
@@ -36,7 +77,8 @@ struct HistoryPane: View {
             CardRow(
                 title: "No dictations yet",
                 subtitle: "Your dictations will appear here after you speak. History is "
-                    + "text-only and stays on this Mac — no audio is ever saved."
+                    + "text-only and stays on this Mac — no audio is ever saved. Use the "
+                    + "switch above to turn saving off."
             ) {
                 EmptyView()
             }

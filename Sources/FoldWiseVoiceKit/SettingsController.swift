@@ -84,6 +84,7 @@ final class SettingsController {
         model.pttKey = config.hotkey
         model.toggleKey = config.toggleHotkey ?? ""
         model.pauseAudio = config.pauseAudio
+        model.saveHistory = config.saveHistory
         model.hudStyle = (HUDStyle(rawValue: config.hudStyle) ?? .classic).rawValue
         model.axTrusted = TextInserter.accessibilityTrusted()
         model.historyEntries = historyStore.load()
@@ -255,6 +256,7 @@ final class SettingsController {
         config.hotkey = ptt
         config.toggleHotkey = toggle.isEmpty ? nil : toggle
         config.pauseAudio = model.pauseAudio
+        config.saveHistory = model.saveHistory
         config.hudStyle = model.hudStyle
         do {
             try config.saveAndNotify()
