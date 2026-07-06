@@ -432,9 +432,10 @@ struct SettingsView: View {
 
 // MARK: models
 
-/// The Models pane owns the pending-uninstall selection: a right-click on an
-/// installed row arms `pendingUninstall`, which drives the confirmation alert.
-/// Removal itself is mediated by SettingsController via `onDeleteModel`.
+/// The Models pane owns the pending-uninstall selection: the kebab overflow
+/// menu on an installed row arms `pendingUninstall`, which drives the
+/// confirmation alert. Removal itself is mediated by SettingsController via
+/// `onDeleteModel`.
 struct ModelsPane: View {
     @ObservedObject var model: SettingsModel
     @State private var pendingUninstall: OllamaClient.InstalledModel?
@@ -559,40 +560,71 @@ struct ModelsPane: View {
         }
     }
 
+    /// The installed row is two independent, non-nested controls sharing the
+    /// card row's padding: the row-body select `Button` (title, ratings,
+    /// checkmark) and, at the trailing edge, the kebab overflow `Menu`. Keeping
+    /// the `Menu` a sibling of the `Button` — never nested inside it — avoids the
+    /// macOS click-bleed where opening the menu would also select the model.
     private func installedRow(_ installed: OllamaClient.InstalledModel) -> some View {
         let entry = ModelCatalog.entry(for: installed.name)
         let selected = installed.name == model.selectedModel
         let deleting = model.deletingModel == installed.name
-        return Button {
-            model.onSelectModel?(installed.name)
-        } label: {
-            CardRow(
-                title: installed.name
-                    + (installed.sizeText.isEmpty ? "" : "  ·  \(installed.sizeText)"),
-                subtitle: entry?.blurb
-            ) {
-                if deleting {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("Uninstalling…")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+        return HStack(alignment: .center, spacing: 12) {
+            Button {
+                model.onSelectModel?(installed.name)
+            } label: {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(installed.name
+                            + (installed.sizeText.isEmpty ? "" : "  ·  \(installed.sizeText)"))
+                            .font(.system(size: 13, weight: .semibold))
+                        if let blurb = entry?.blurb, !blurb.isEmpty {
+                            Text(blurb).font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
                     }
-                } else {
-                    HStack(spacing: 12) {
+                    Spacer(minLength: 16)
+                    if deleting {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Uninstalling…")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
                         modelRatings(installed.name)
                         Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                             .foregroundStyle(selected ? .blue : .secondary)
                     }
                 }
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            if !deleting {
+                uninstallMenu(for: installed)
+            }
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    /// The trailing kebab: a borderless, chevron-less `ellipsis` whose only item
+    /// arms the destructive uninstall confirmation. Disabled while any model is
+    /// pulling or being deleted so a conflicting op can't start.
+    private func uninstallMenu(for installed: OllamaClient.InstalledModel) -> some View {
+        Menu {
+            Button("Uninstall…", role: .destructive) { pendingUninstall = installed }
+        } label: {
+            Image(systemName: "ellipsis")
+                .foregroundStyle(.secondary)
+        }
+        .menuStyle(.button)
         .buttonStyle(.plain)
-        .contextMenu {
-            Button("Uninstall…") { pendingUninstall = installed }
-                .disabled(model.pullingModel != nil || model.deletingModel != nil)
-        }
+        .menuIndicator(.hidden)
+        .controlSize(.small)
+        .fixedSize()
+        .disabled(model.pullingModel != nil || model.deletingModel != nil)
+        .accessibilityLabel("More actions for \(installed.name)")
     }
 
     private var missingSelectedRow: some View {
