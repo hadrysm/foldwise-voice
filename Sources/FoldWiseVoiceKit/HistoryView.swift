@@ -215,7 +215,8 @@ struct HistoryPane: View {
     private func row(_ entry: HistoryEntry) -> some View {
         CardRow(
             title: entry.text,
-            subtitle: "\(entry.modeName) · \(HistoryPane.time(entry.createdAt))"
+            subtitle: "\(entry.modeName) · \(PolishStatus(entry).label) · "
+                + HistoryPane.time(entry.createdAt)
         ) {
             HStack(spacing: 8) {
                 if hoveredRow == entry.id {

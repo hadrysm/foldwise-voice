@@ -24,6 +24,31 @@ struct HistoryEntry: Codable, Identifiable, Equatable {
     var flagReason: String? // reserved; not captured in v1
 }
 
+/// What a history row's shown `text` actually is, for the row's honesty
+/// indicator (PRD #78, story 28). Derived purely from `isPolished`: `.polished`
+/// only when Polish ran AND survived the off-task check; otherwise `.raw` — the
+/// shown text is the pre-Polish transcript, whether because the Mode does not
+/// polish or because Polish went Off-task and fell back to it. Kept a pure
+/// mapping (like `RetentionWindow.label`) so the rule is unit-tested apart from
+/// the untested SwiftUI view, and so a row can never claim to be polished when
+/// it fell back to raw.
+enum PolishStatus {
+    case polished
+    case raw
+
+    init(_ entry: HistoryEntry) {
+        self = entry.isPolished ? .polished : .raw
+    }
+
+    /// One word, matching the app's raw↔polished vocabulary ("Copy raw").
+    var label: String {
+        switch self {
+        case .polished: "Polished"
+        case .raw: "Raw"
+        }
+    }
+}
+
 /// How long dictation history is kept before the launch sweep deletes it
 /// (PRD #78). Persisted as a day count (`.forever` as 0) alongside the app's
 /// other settings and offered as a picker in the History pane. This is a
