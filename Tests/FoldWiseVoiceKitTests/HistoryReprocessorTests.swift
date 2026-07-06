@@ -121,6 +121,31 @@ final class HistoryReprocessorTests: XCTestCase {
         XCTAssertEqual(box.value, rawTranscript)
     }
 
+    // MARK: - a transcript too short to polish skips the LLM and keeps the raw
+
+    /// An LLM Mode picked on a transcript below `MIN_CHARS_FOR_LLM` must not
+    /// reach the polish stage at all — the same short-input gate the live
+    /// session applies — and resolves to the raw transcript marked unpolished.
+    /// The menu offers every LLM Mode regardless of length, so this path is
+    /// reachable from the UI.
+    func testRerunPolishSkipsPolishForATooShortTranscript() async {
+        let store = JSONLHistoryStore(url: storeURL)
+        let short = "too short to polish"
+        let entry = storedEntry(text: short, rawText: short, isPolished: false)
+        store.append(entry)
+        let box = InputBox()
+        let reprocessor = HistoryReprocessor(store: store, polish: { input, _ in
+            box.value = input
+            return self.cleaned
+        })
+
+        let updated = await reprocessor.rerunPolish(entry, mode: cleanMode)
+
+        XCTAssertNil(box.value) // the polish seam was never called
+        XCTAssertEqual(updated.text, short)
+        XCTAssertFalse(updated.isPolished)
+    }
+
     // MARK: - the chosen Mode is recorded as the row's producer
 
     func testRerunPolishRecordsTheChosenModeName() async {
