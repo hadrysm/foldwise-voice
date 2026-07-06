@@ -1,19 +1,33 @@
-// The History pane content (PRD #78, slice 1): a date-grouped list of past
+// The History pane content (PRD #78, slice 2): a date-grouped list of past
 // dictations — TODAY / YESTERDAY / date headers, newest first — each row
 // showing a timestamp and the inserted text, with an empty state when there
-// is none. Per-row actions, search, filters, and settings arrive in later
-// slices; this slice only records and displays.
+// is none. Hovering a row reveals Copy; a per-row overflow menu offers Delete;
+// a Clear all history control (behind a confirmation) empties the store.
+// Search, filters, and settings arrive in later slices.
 
 import SwiftUI
 
 struct HistoryPane: View {
-    let entries: [HistoryEntry]
+    @ObservedObject var model: SettingsModel
+    @State private var hoveredRow: UUID?
+    @State private var confirmingClearAll = false
 
     var body: some View {
-        if entries.isEmpty {
-            emptyState
-        } else {
-            groupedList
+        Group {
+            if model.historyEntries.isEmpty {
+                emptyState
+            } else {
+                populated
+            }
+        }
+        .alert("Clear all dictation history?", isPresented: $confirmingClearAll) {
+            Button("Clear All", role: .destructive) { model.onClearHistory?() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This permanently removes every saved dictation from this Mac. "
+                    + "This can't be undone."
+            )
         }
     }
 
@@ -29,9 +43,22 @@ struct HistoryPane: View {
         }
     }
 
+    private var populated: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            groupedList
+            HStack {
+                Spacer()
+                Button("Clear all history…", role: .destructive) {
+                    confirmingClearAll = true
+                }
+                .controlSize(.small)
+            }
+        }
+    }
+
     private var groupedList: some View {
         VStack(alignment: .leading, spacing: 16) {
-            ForEach(HistoryPane.grouped(entries), id: \.header) { group in
+            ForEach(HistoryPane.grouped(model.historyEntries), id: \.header) { group in
                 sectionHeader(group.header)
                 Card {
                     ForEach(Array(group.entries.enumerated()), id: \.element.id) { i, entry in
@@ -48,8 +75,46 @@ struct HistoryPane: View {
             title: entry.text,
             subtitle: "\(entry.modeName) · \(HistoryPane.time(entry.createdAt))"
         ) {
-            EmptyView()
+            HStack(spacing: 8) {
+                if hoveredRow == entry.id {
+                    Button {
+                        model.onCopyHistory?(entry)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy text")
+                }
+                overflowMenu(entry)
+            }
         }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            if hovering {
+                hoveredRow = entry.id
+            } else if hoveredRow == entry.id {
+                hoveredRow = nil
+            }
+        }
+    }
+
+    /// The trailing kebab, mirroring the Models pane's overflow menu (kept a
+    /// sibling of the row so opening it never triggers a row action). Delete
+    /// removes exactly this entry from the store.
+    private func overflowMenu(_ entry: HistoryEntry) -> some View {
+        Menu {
+            Button("Delete", role: .destructive) { model.onDeleteHistory?(entry) }
+        } label: {
+            Image(systemName: "ellipsis")
+                .foregroundStyle(.secondary)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .controlSize(.small)
+        .fixedSize()
+        .accessibilityLabel("More actions")
     }
 
     // MARK: - grouping (display-only; the view is not unit-tested per PRD #78)

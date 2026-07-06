@@ -103,4 +103,67 @@ final class HistoryStoreRoundTripTests: XCTestCase {
 
         XCTAssertEqual(store.load(), [])
     }
+
+    // MARK: - delete-one and clear-all (PRD #78, slice 2)
+
+    func testDeleteRemovesExactlyTheTargetEntry() {
+        let store = JSONLHistoryStore(url: storeURL)
+        let first = entry(secondsSince1970: 1_700_000_000, text: "first")
+        let second = entry(secondsSince1970: 1_700_000_060, text: "second")
+        let third = entry(secondsSince1970: 1_700_000_120, text: "third")
+        store.append(first)
+        store.append(second)
+        store.append(third)
+
+        store.delete(id: second.id)
+
+        XCTAssertEqual(store.load(), [first, third])
+    }
+
+    func testDeleteUnknownIdLeavesEntriesUnchanged() {
+        let store = JSONLHistoryStore(url: storeURL)
+        let only = entry(secondsSince1970: 1_700_000_000, text: "only")
+        store.append(only)
+
+        store.delete(id: UUID())
+
+        XCTAssertEqual(store.load(), [only])
+    }
+
+    /// The whole-file rewrite is what a second store instance reads back, so
+    /// deletion is durable, not just an in-memory prune.
+    func testDeletePersistsAcrossStoreInstances() {
+        let kept = entry(secondsSince1970: 1_700_000_000, text: "keep")
+        let removed = entry(secondsSince1970: 1_700_000_060, text: "remove")
+        let writer = JSONLHistoryStore(url: storeURL)
+        writer.append(kept)
+        writer.append(removed)
+
+        JSONLHistoryStore(url: storeURL).delete(id: removed.id)
+
+        XCTAssertEqual(JSONLHistoryStore(url: storeURL).load(), [kept])
+    }
+
+    func testClearAllLeavesTheStoreEmpty() {
+        let store = JSONLHistoryStore(url: storeURL)
+        store.append(entry(secondsSince1970: 1_700_000_000, text: "first"))
+        store.append(entry(secondsSince1970: 1_700_000_060, text: "second"))
+
+        store.clearAll()
+
+        XCTAssertEqual(store.load(), [])
+    }
+
+    /// After clear-all a fresh append starts a clean file — clearing doesn't
+    /// leave residue that resurrects on the next write.
+    func testClearAllThenAppendStartsFresh() {
+        let store = JSONLHistoryStore(url: storeURL)
+        store.append(entry(secondsSince1970: 1_700_000_000, text: "old"))
+        store.clearAll()
+
+        let fresh = entry(secondsSince1970: 1_700_000_060, text: "new")
+        store.append(fresh)
+
+        XCTAssertEqual(store.load(), [fresh])
+    }
 }

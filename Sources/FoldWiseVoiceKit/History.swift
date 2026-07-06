@@ -24,13 +24,17 @@ struct HistoryEntry: Codable, Identifiable, Equatable {
     var flagReason: String? // reserved; not captured in v1
 }
 
-/// The persistence seam for history. A best-effort store: `append` swallows
+/// The persistence seam for history. A best-effort store: mutations swallow
 /// failures (a history write must never break a dictation session, PRD #78)
 /// and `load` returns what it can read. `JSONLHistoryStore` is the production
 /// conformer; tests drive it against a temp file injected via its initializer.
 protocol HistoryStore: AnyObject {
     func append(_ entry: HistoryEntry)
     func load() -> [HistoryEntry]
+    /// Removes exactly the entry with `id`; a no-op if none matches.
+    func delete(id: UUID)
+    /// Empties the store, leaving no residue for the next append.
+    func clearAll()
 }
 
 /// Appends entries as one JSON object per line to a `history.jsonl` file —
@@ -94,5 +98,47 @@ final class JSONLHistoryStore: HistoryStore {
             }
         }
         return entries
+    }
+
+    /// Deletes by rewriting the whole file without the target row. Rewriting
+    /// everything (rather than editing in place) is acceptable at the volumes
+    /// this feature targets and is what the eventual DB backend removes.
+    func delete(id: UUID) {
+        rewrite(load().filter { $0.id != id })
+    }
+
+    func clearAll() {
+        do {
+            let fm = FileManager.default
+            if fm.fileExists(atPath: url.path) {
+                try fm.removeItem(at: url)
+            }
+        } catch {
+            Log.history.error(
+                "History clear-all skipped: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    /// Best-effort whole-file replacement shared by the mutating operations: a
+    /// failure is logged and swallowed rather than thrown, keeping the store's
+    /// no-throw contract (PRD #78).
+    private func rewrite(_ entries: [HistoryEntry]) {
+        do {
+            var data = Data()
+            for entry in entries {
+                data.append(try encoder.encode(entry))
+                data.append(0x0A) // "\n" — one entry per JSONL line
+            }
+            let fm = FileManager.default
+            try fm.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+        } catch {
+            Log.history.error(
+                "History rewrite skipped: \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 }

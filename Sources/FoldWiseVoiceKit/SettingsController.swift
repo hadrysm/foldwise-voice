@@ -52,6 +52,9 @@ final class SettingsController {
             NSWorkspace.shared.open(config.path)
         }
         model.onCheckUpdates = { [weak self] in self?.checkForUpdates() }
+        model.onCopyHistory = { [weak self] entry in self?.copyToPasteboard(entry.text) }
+        model.onDeleteHistory = { [weak self] entry in self?.deleteHistory(entry) }
+        model.onClearHistory = { [weak self] in self?.clearHistory() }
     }
 
     private func build() {
@@ -172,6 +175,26 @@ final class SettingsController {
                 self.refreshModels()
             }
         }
+    }
+
+    // MARK: - history row actions
+
+    private func copyToPasteboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
+    /// Delete and clear-all go through the store, then re-read it so the pane's
+    /// list reflects what actually persisted.
+    private func deleteHistory(_ entry: HistoryEntry) {
+        historyStore.delete(id: entry.id)
+        model.historyEntries = historyStore.load()
+    }
+
+    private func clearHistory() {
+        historyStore.clearAll()
+        model.historyEntries = historyStore.load()
     }
 
     // MARK: - key recording

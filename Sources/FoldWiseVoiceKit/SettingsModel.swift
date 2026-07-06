@@ -85,9 +85,9 @@ final class SettingsModel: ObservableObject {
 
     var modeNames: [String] = []
     var llmModes: Set<String> = []
-    /// Loaded from the HistoryStore when the window opens; rendered by the
-    /// History pane newest-first. Set before navigation, like `modeNames`.
-    var historyEntries: [HistoryEntry] = []
+    /// Loaded from the HistoryStore when the window opens and re-read after a
+    /// delete or clear-all, so the History pane reflects the store live.
+    @Published var historyEntries: [HistoryEntry] = []
 
     // wired by SettingsController
     var onCommit: (() -> Void)?
@@ -98,6 +98,12 @@ final class SettingsModel: ObservableObject {
     var onRefreshModels: (() -> Void)?
     var onEditFile: (() -> Void)?
     var onCheckUpdates: (() -> Void)?
+    /// History pane row actions, mediated by SettingsController (which owns the
+    /// store and the pasteboard). Copy puts the row's polished text on the
+    /// pasteboard; delete removes one row; clear empties the store.
+    var onCopyHistory: ((HistoryEntry) -> Void)?
+    var onDeleteHistory: ((HistoryEntry) -> Void)?
+    var onClearHistory: (() -> Void)?
 
     var ollamaDown: Bool {
         installed?.isEmpty ?? false
