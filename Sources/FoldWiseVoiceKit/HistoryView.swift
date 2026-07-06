@@ -258,14 +258,22 @@ struct HistoryPane: View {
     }
 
     /// The trailing kebab, mirroring the Models pane's overflow menu (kept a
-    /// sibling of the row so opening it never triggers a row action). Copy raw
-    /// recovers the pre-Polish transcript and is only meaningful when the row is
-    /// polished; Re-run Polish reshapes the stored raw text under a Mode picked
-    /// from the polishing Modes; Delete removes exactly this entry.
+    /// sibling of the row so opening it never triggers a row action). Copy and
+    /// Flag mirror the hover buttons so they stay reachable without a pointer;
+    /// Copy raw recovers the pre-Polish transcript and is only meaningful when
+    /// the row is polished; Re-run Polish reshapes the stored raw text under a
+    /// Mode picked from the polishing Modes; Delete removes exactly this entry.
     private func overflowMenu(_ entry: HistoryEntry) -> some View {
         Menu {
+            // Copy and Flag also live behind hover on the row, but the menu is
+            // the always-present path so keyboard and VoiceOver users can still
+            // reach them without a pointer.
+            Button("Copy") { model.onCopyHistory?(entry) }
             if entry.isPolished {
                 Button("Copy raw") { model.onCopyRawHistory?(entry) }
+            }
+            Button(entry.flagged ? "Remove flag" : "Flag for my review") {
+                model.onFlagHistory?(entry)
             }
             let polishModes = model.modeNames.filter { model.llmModes.contains($0) }
             if !polishModes.isEmpty {
@@ -275,9 +283,9 @@ struct HistoryPane: View {
                     }
                 }
             }
-            if entry.isPolished || !polishModes.isEmpty {
-                Divider()
-            }
+            // Copy and Flag are always present above, so Delete always earns a
+            // separator to keep the destructive action set apart.
+            Divider()
             Button("Delete", role: .destructive) { model.onDeleteHistory?(entry) }
         } label: {
             Image(systemName: "ellipsis")
