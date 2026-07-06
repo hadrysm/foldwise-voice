@@ -67,6 +67,8 @@ final class SettingsModel: ObservableObject {
     @Published var pullStatus = ""
     @Published var pullFraction: Double?
     @Published var pullError = ""
+    @Published var deletingModel: String?
+    @Published var deleteError = ""
     @Published var customModel = ""
     @Published var pttKey = ""
     @Published var toggleKey = ""
@@ -85,6 +87,7 @@ final class SettingsModel: ObservableObject {
     var onRecord: ((RecordingField) -> Void)?
     var onSelectModel: ((String) -> Void)?
     var onInstallModel: ((String) -> Void)?
+    var onDeleteModel: ((String) -> Void)?
     var onRefreshModels: (() -> Void)?
     var onEditFile: (() -> Void)?
     var onCheckUpdates: (() -> Void)?

@@ -216,4 +216,33 @@ enum OllamaClient {
             return error.localizedDescription
         }
     }
+
+    /// Remove a locally installed model (`ollama rm`). Issues
+    /// `DELETE /api/delete` with `{"model": <name>}` against the local Ollama.
+    /// Returns nil on success, or a user-facing error message.
+    static func delete(model: String) async -> String? {
+        var request = URLRequest(url: URL(string: OLLAMA_DELETE_URL)!)
+        request.httpMethod = "DELETE"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["model": model])
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            return deleteOutcome(status: (response as? HTTPURLResponse)?.statusCode ?? -1)
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Maps a `DELETE /api/delete` HTTP status to an optional error message —
+    /// the sole decision in the delete path, kept pure so it is unit-testable
+    /// without a network. `2xx` succeeds; `404` also succeeds — the model is
+    /// already gone (e.g. removed via the CLI), which is the goal state, so
+    /// surfacing it as an error would only confuse. Anything else is a real
+    /// failure with a human-readable message.
+    static func deleteOutcome(status: Int) -> String? {
+        if (200 ..< 300).contains(status) || status == 404 { return nil }
+        return "Ollama returned an unexpected status (HTTP \(status))."
+    }
 }
