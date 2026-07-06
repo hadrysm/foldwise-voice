@@ -9,6 +9,7 @@ import SwiftUI
 final class SettingsController {
     private let config: Config
     private let historyStore: HistoryStore
+    private let reprocessor: HistoryReprocessor
     private let model = SettingsModel()
     private var window: NSWindow?
     private var keyMonitor: Any?
@@ -22,6 +23,7 @@ final class SettingsController {
     init(config: Config, historyStore: HistoryStore) {
         self.config = config
         self.historyStore = historyStore
+        reprocessor = HistoryReprocessor(store: historyStore)
         wire()
     }
 
@@ -53,7 +55,11 @@ final class SettingsController {
         }
         model.onCheckUpdates = { [weak self] in self?.checkForUpdates() }
         model.onCopyHistory = { [weak self] entry in self?.copyToPasteboard(entry.text) }
+        model.onCopyRawHistory = { [weak self] entry in self?.copyToPasteboard(entry.rawText) }
         model.onFlagHistory = { [weak self] entry in self?.flagHistory(entry) }
+        model.onRerunPolish = { [weak self] entry, modeName in
+            self?.rerunPolish(entry, modeName: modeName)
+        }
         model.onDeleteHistory = { [weak self] entry in self?.deleteHistory(entry) }
         model.onClearHistory = { [weak self] in self?.clearHistory() }
     }
@@ -195,6 +201,18 @@ final class SettingsController {
         toggled.flagged.toggle()
         historyStore.update(toggled)
         model.historyEntries = historyStore.load()
+    }
+
+    /// Re-run Polish on a stored dictation under the Mode the user picked, then
+    /// re-read so the row shows the reshaped text. The reprocessor works on the
+    /// entry's stored `rawText` — no audio — and overwrites text/isPolished/
+    /// modeName, persisting the change before we reload.
+    private func rerunPolish(_ entry: HistoryEntry, modeName: String) {
+        guard let mode = config.modes[modeName] else { return }
+        Task { @MainActor in
+            await self.reprocessor.rerunPolish(entry, mode: mode)
+            self.model.historyEntries = self.historyStore.load()
+        }
     }
 
     /// Delete and clear-all go through the store, then re-read it so the pane's

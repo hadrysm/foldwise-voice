@@ -104,10 +104,14 @@ final class SettingsModel: ObservableObject {
     var onCheckUpdates: (() -> Void)?
     /// History pane row actions, mediated by SettingsController (which owns the
     /// store and the pasteboard). Copy puts the row's polished text on the
-    /// pasteboard; flag toggles the row's local bookmark; delete removes one
-    /// row; clear empties the store.
+    /// pasteboard; copy-raw puts the pre-Polish `rawText` there; flag toggles
+    /// the row's local bookmark; re-run Polish reshapes the stored raw
+    /// transcript under the named Mode; delete removes one row; clear empties
+    /// the store.
     var onCopyHistory: ((HistoryEntry) -> Void)?
+    var onCopyRawHistory: ((HistoryEntry) -> Void)?
     var onFlagHistory: ((HistoryEntry) -> Void)?
+    var onRerunPolish: ((HistoryEntry, String) -> Void)?
     var onDeleteHistory: ((HistoryEntry) -> Void)?
     var onClearHistory: (() -> Void)?
 

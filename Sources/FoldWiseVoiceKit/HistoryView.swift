@@ -4,7 +4,8 @@
 // showing a timestamp and the inserted text, with an empty state when there is
 // none. A search box filters live across the polished and raw text and a
 // "Flagged only" toggle narrows to bookmarked rows. Hovering a row reveals Copy
-// and Flag; a per-row overflow menu offers Delete; a Clear all history control
+// and Flag; a per-row overflow menu offers Copy raw (when the row is polished),
+// Re-run Polish under a chosen Mode, and Delete; a Clear all history control
 // (behind a confirmation) empties the store. Turning saving off offers to
 // delete what is already saved.
 
@@ -256,10 +257,26 @@ struct HistoryPane: View {
     }
 
     /// The trailing kebab, mirroring the Models pane's overflow menu (kept a
-    /// sibling of the row so opening it never triggers a row action). Delete
-    /// removes exactly this entry from the store.
+    /// sibling of the row so opening it never triggers a row action). Copy raw
+    /// recovers the pre-Polish transcript and is only meaningful when the row is
+    /// polished; Re-run Polish reshapes the stored raw text under a Mode picked
+    /// from the polishing Modes; Delete removes exactly this entry.
     private func overflowMenu(_ entry: HistoryEntry) -> some View {
         Menu {
+            if entry.isPolished {
+                Button("Copy raw") { model.onCopyRawHistory?(entry) }
+            }
+            let polishModes = model.modeNames.filter { model.llmModes.contains($0) }
+            if !polishModes.isEmpty {
+                Menu("Re-run Polish") {
+                    ForEach(polishModes, id: \.self) { name in
+                        Button(name) { model.onRerunPolish?(entry, name) }
+                    }
+                }
+            }
+            if entry.isPolished || !polishModes.isEmpty {
+                Divider()
+            }
             Button("Delete", role: .destructive) { model.onDeleteHistory?(entry) }
         } label: {
             Image(systemName: "ellipsis")
