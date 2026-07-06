@@ -94,6 +94,9 @@ Per-mode fields:
 
 Add a mode by copying an existing block under `"modes"` and restarting.
 
+`modes.json` is git-ignored and generated on first run — it holds local machine
+state (HUD position, hotkey, model picks), so it won't appear in a fresh clone.
+
 Transcripts shorter than ~40 characters skip the LLM to keep short
 dictations snappy.
 

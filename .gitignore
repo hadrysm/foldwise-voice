@@ -1,3 +1,7 @@
 dist/
 .DS_Store
 .build/
+
+# Runtime user config: the app rewrites it (HUD position, model picks, hotkey)
+# and generates it on first run. Defaults live in Config.swift, not this file.
+modes.json
