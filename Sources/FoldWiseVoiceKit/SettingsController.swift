@@ -11,7 +11,7 @@ final class SettingsController {
     private let historyStore: HistoryStore
     private let statsStore: StatsStore
     private let reprocessor: HistoryReprocessor
-    private let model = SettingsModel()
+    let model = SettingsModel() // internal (not private) so @testable tests can drive the wired closures
     private var window: NSWindow?
     private var keyMonitor: Any?
     private var statusClearTask: Task<Void, Never>?
