@@ -150,7 +150,7 @@ final class JSONStatsStore: StatsStore {
                 try fm.removeItem(at: url)
             }
         } catch {
-            Log.history.error(
+            Log.stats.error(
                 "Streak reset skipped: \(error.localizedDescription, privacy: .public)"
             )
         }
@@ -174,7 +174,7 @@ final class JSONStatsStore: StatsStore {
             )
             try data.write(to: url, options: .atomic)
         } catch {
-            Log.history.error(
+            Log.stats.error(
                 "Streak advance skipped: \(error.localizedDescription, privacy: .public)"
             )
         }
