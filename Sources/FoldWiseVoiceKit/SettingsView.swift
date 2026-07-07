@@ -617,8 +617,15 @@ struct ModelsPane: View {
         Menu {
             Button("Uninstall…", role: .destructive) { pendingUninstall = installed }
         } label: {
+            // The bare `ellipsis` glyph is wide but only a few points tall, so on
+            // its own it gives a thin, hard-to-hit target under `.plain`. A square
+            // frame plus a rectangular content shape widens the click area to a
+            // comfortable 28pt without resizing the glyph; it fits inside the row's
+            // height so it doesn't change row layout.
             Image(systemName: "ellipsis")
                 .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
