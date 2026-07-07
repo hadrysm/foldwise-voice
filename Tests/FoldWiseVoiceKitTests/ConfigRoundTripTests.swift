@@ -85,7 +85,10 @@ final class ConfigRoundTripTests: XCTestCase {
         XCTAssertEqual(reloaded.hudPosition, [100.0, 200.0])
     }
 
-    func testASRModelIsPreservedEvenThoughUnusedBySwiftApp() throws {
+    func testUnknownASRModelIsPreservedOnRoundTripUntilPicked() throws {
+        // The field is now live (ADR-0006), but an unknown/fossil id is still
+        // preserved on save — it is only overwritten once the user picks a
+        // catalog model — so an old config survives a round-trip untouched.
         let reloaded = try roundTrip(fixture)
         XCTAssertEqual(reloaded.modes["Zebra"]?.asrModel, "custom-model")
         XCTAssertEqual(reloaded.modes["Middle"]?.asrModel, "other-model")

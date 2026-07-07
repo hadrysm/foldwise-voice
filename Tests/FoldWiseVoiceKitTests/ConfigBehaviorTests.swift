@@ -88,6 +88,58 @@ final class ConfigBehaviorTests: XCTestCase {
         XCTAssertEqual(config.llmModel, "gemma3:1b")
     }
 
+    func testDefaultConfigUsesParakeetV3ForASRModel() {
+        // Fresh install defaults to our own id, not the old MLX fossil (ADR-0006).
+        let config = Config.defaultConfig(path: path)
+        XCTAssertEqual(config.asrModel, "parakeet-v3")
+        for name in config.modeOrder {
+            XCTAssertEqual(config.modes[name]?.asrModel, "parakeet-v3")
+        }
+    }
+
+    func testASRModelReadsTheFirstModeInOrder() throws {
+        let json = """
+        {
+          "active_mode": "Second",
+          "modes": {
+            "First": {"asr_model": "id-first", "llm_model": null, "system_prompt": null, "vocab": []},
+            "Second": {"asr_model": "id-second", "llm_model": null, "system_prompt": null, "vocab": []}
+          }
+        }
+        """
+        try Data(json.utf8).write(to: path)
+        let config = try Config.load(from: path)
+        XCTAssertEqual(config.asrModel, "id-first")
+    }
+
+    func testSetASRModelWritesEveryMode() {
+        let config = Config.defaultConfig(path: path)
+        config.setASRModel("whisper-large-v3-turbo")
+        for name in config.modeOrder {
+            XCTAssertEqual(config.modes[name]?.asrModel, "whisper-large-v3-turbo")
+        }
+        XCTAssertEqual(config.asrModel, "whisper-large-v3-turbo")
+    }
+
+    func testPickingAModelOverwritesAPreservedFossilAcrossModes() throws {
+        let json = """
+        {
+          "active_mode": "Only",
+          "modes": {
+            "Only": {
+              "asr_model": "mlx-community/whisper-large-v3-turbo",
+              "llm_model": null, "system_prompt": null, "vocab": []
+            }
+          }
+        }
+        """
+        try Data(json.utf8).write(to: path)
+        let config = try Config.load(from: path)
+        XCTAssertEqual(config.asrModel, "mlx-community/whisper-large-v3-turbo")
+        config.setASRModel("parakeet-v3")
+        XCTAssertEqual(config.asrModel, "parakeet-v3")
+    }
+
     func testUsesLLMIsFalseForNilAndEmptyModel() {
         var mode = Mode(name: "M", asrModel: "m", llmModel: nil, systemPrompt: nil, vocab: [])
         XCTAssertFalse(mode.usesLLM)

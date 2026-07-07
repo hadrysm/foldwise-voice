@@ -68,6 +68,28 @@ final class ConfigChangePropagationTests: XCTestCase {
         XCTAssertEqual(received, [.hudStyle])
     }
 
+    func testASRModelChangeNotifiesWithASRModel() throws {
+        let config = Config.defaultConfig(path: path)
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.setASRModel("whisper-large-v3-turbo")
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [.asrModel])
+    }
+
+    func testReselectingTheSameASRModelNotifiesNothing() throws {
+        let config = Config.defaultConfig(path: path)
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.setASRModel(config.asrModel)
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [])
+    }
+
     /// The guard that keeps the TCC-sensitive hotkey event tap alive across
     /// HUD drags: repositioning the pill persists but must notify no one.
     func testHudPositionChangePersistsWithoutNotifying() throws {
@@ -92,6 +114,7 @@ final class ConfigChangePropagationTests: XCTestCase {
         config.hotkey = "alt_r"
         config.toggleHotkey = nil
         config.hudStyle = "classic"
+        config.setASRModel("parakeet-v3")
         try config.saveAndNotify()
 
         XCTAssertEqual(received, [])

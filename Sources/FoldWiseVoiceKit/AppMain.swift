@@ -78,7 +78,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // and the HUD's level meter, and warmup is triggered here (below),
         // not inside Pipeline.
         let recorder = AudioRecorder()
-        let transcriber = Transcriber()
+        // The dispatcher fronts the ASR engines behind the `Transcribing` seam
+        // (ADR-0005): it resolves the active engine from `config.asrModel` and
+        // subscribes to `.asrModel` changes itself. The Pipeline drives it as an
+        // ordinary transcriber and never learns there is more than one engine.
+        let transcriber = TranscriberDispatcher(config: config)
         // One store shared between the record seam and the History pane, so a
         // dictation just spoken is on disk for the pane to load (PRD #78).
         let historyStore = JSONLHistoryStore(url: JSONLHistoryStore.defaultURL)
@@ -196,6 +200,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case let .listening(mode):
             menuBar.setIcon(.listening)
             hud.show(.listening, "Listening…  (\(mode))")
+        case let .downloadingModel(fraction):
+            menuBar.setIcon(.working)
+            hud.show(.working, "Downloading speech model… \(Int(fraction * 100))%")
         case .loadingModel:
             menuBar.setIcon(.working)
             hud.show(.working, "Preparing speech model…")

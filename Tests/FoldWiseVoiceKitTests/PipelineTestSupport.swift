@@ -37,15 +37,24 @@ final class FakeRecorder: AudioRecording {
 final class FakeTranscriber: Transcribing {
     var ready = true
     var onLoading: ((Bool) -> Void)?
+    var onDownloadProgress: ((Double) -> Void)?
     var result: Result<String, Error> = .success("")
+    /// Thrown by `prepare()` when set, so a test can drive a failed download.
+    var prepareError: Error?
     /// Awaited at the start of every `transcribe` call, so a test can hold a
     /// session mid-transcription or fire `onLoading` while a job is active.
     var onTranscribe: (() async -> Void)?
     private(set) var warmupCount = 0
+    private(set) var prepareCount = 0
     private(set) var received: [[Float]] = []
 
     func warmup() {
         warmupCount += 1
+    }
+
+    func prepare() async throws {
+        prepareCount += 1
+        if let prepareError { throw prepareError }
     }
 
     func transcribe(_ samples: [Float]) async throws -> String {

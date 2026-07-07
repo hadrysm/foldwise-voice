@@ -127,6 +127,7 @@ struct SettingsView: View {
                     switch model.pane {
                     case .home: homePane
                     case .modes: modesPane
+                    case .speech: SpeechPane(model: model)
                     case .models: ModelsPane(model: model)
                     case .configuration: configurationPane
                     case .sound: soundPane
@@ -157,9 +158,10 @@ struct SettingsView: View {
             Card {
                 CardRow(
                     title: "Speech recognition",
-                    subtitle: "Parakeet TDT v3 — fully on-device (Apple Neural Engine)"
+                    subtitle: asrSubtitle
                 ) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    Button("Change…") { model.pane = .speech }
+                        .controlSize(.small)
                 }
                 Divider().padding(.leading, 14)
                 CardRow(
@@ -216,6 +218,18 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    /// The active ASR model, described for the Home card. An unknown/fossil id
+    /// (ADR-0006) resolves to the Parakeet default the app actually transcribes
+    /// with, so the card never claims a model that isn't running.
+    private var asrSubtitle: String {
+        let entry = ASRModelCatalog.entry(for: model.asrModel)
+            ?? ASRModelCatalog.entry(for: ASRModelCatalog.defaultID)
+        guard let entry else {
+            return "Parakeet TDT v3 — fully on-device (Apple Neural Engine)"
+        }
+        return "\(entry.name) — \(entry.languages), on-device (Apple Neural Engine)"
     }
 
     private var updateSubtitle: String {
@@ -427,6 +441,197 @@ struct SettingsView: View {
                 .toggleStyle(.switch)
                 .labelsHidden()
             }
+        }
+    }
+}
+
+// MARK: speech
+
+/// The Speech pane (ADR-0006): a curated ASR catalog split into "Your Models"
+/// (downloaded) and "Available", mirroring the Ollama `ModelsPane`. Rows lead
+/// with language coverage; a downloaded model is a selectable row with a
+/// checkmark for the active one, an available model shows a Download button with
+/// fractional progress. Selection routes through `onSelectASRModel`, which
+/// persists via `setASRModel` and triggers the dispatcher's drop-before-load swap.
+struct SpeechPane: View {
+    @ObservedObject var model: SettingsModel
+    /// Armed by a downloaded row's kebab; drives the delete confirmation alert.
+    @State private var pendingDelete: ASRModelCatalog.Entry?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(
+                "Choose which speech model transcribes your dictation — it applies to "
+                    + "every mode. Parakeet is built in; Whisper reaches ~99 languages and "
+                    + "downloads on first use, then runs on-device."
+            )
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+
+            let downloaded = ASRModelCatalog.entries.filter { model.asrDownloaded.contains($0.id) }
+            let available = ASRModelCatalog.entries.filter { !model.asrDownloaded.contains($0.id) }
+
+            if !downloaded.isEmpty { section("Your Models", downloaded) }
+            if !available.isEmpty { section("Available", available) }
+
+            if !model.asrDownloadError.isEmpty {
+                Label(model.asrDownloadError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+            }
+            if !model.asrDeleteError.isEmpty {
+                Label(model.asrDeleteError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+            }
+        }
+        .alert(
+            "Delete \(pendingDelete?.name ?? "")?",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            presenting: pendingDelete
+        ) { entry in
+            Button("Delete", role: .destructive) { model.onDeleteASRModel?(entry.id) }
+            Button("Cancel", role: .cancel) {}
+        } message: { entry in
+            Text(
+                ASRModelCatalog.deleteOutcome(for: entry, isActive: model.asrModel == entry.id)
+                    .message
+            )
+        }
+    }
+
+    /// A titled card of rows, mirroring the Ollama `ModelsPane`'s Installed /
+    /// Model-library split so the pane separates downloaded from available.
+    @ViewBuilder
+    private func section(_ title: String, _ entries: [ASRModelCatalog.Entry]) -> some View {
+        sectionHeader(title)
+        Card {
+            ForEach(Array(entries.enumerated()), id: \.element.id) { i, entry in
+                if i > 0 { Divider().padding(.leading, 14) }
+                row(entry)
+            }
+        }
+    }
+
+    /// The select `Button` (title, ratings, checkmark) and the trailing
+    /// Download/spinner are siblings, never nested — a disabled select row would
+    /// otherwise also disable a nested Download button (cf. `ModelsPane`).
+    private func row(_ entry: ASRModelCatalog.Entry) -> some View {
+        let downloaded = model.asrDownloaded.contains(entry.id)
+        let selected = model.asrModel == entry.id
+        let downloading = model.asrDownloading == entry.id
+        let deleting = model.asrDeleting == entry.id
+        // The built-in default (Parakeet v3) is the permanent fallback and
+        // re-downloads at launch, so it is never offered for deletion.
+        let deletable = downloaded && !deleting && entry.id != ASRModelCatalog.defaultID
+        return HStack(alignment: .center, spacing: 12) {
+            Button {
+                model.onSelectASRModel?(entry.id)
+            } label: {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(entry.name)  ·  \(entry.languages)")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(entry.blurb).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 16)
+                    if deleting {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Deleting…").font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                    } else {
+                        ratings(entry)
+                        if downloaded {
+                            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(selected ? .blue : .secondary)
+                        }
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!downloaded || deleting)
+
+            if downloading {
+                HStack(spacing: 8) {
+                    downloadProgress
+                    Button {
+                        model.onCancelASRDownload?()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Cancel download")
+                    .accessibilityLabel("Cancel download for \(entry.name)")
+                }
+            } else if !downloaded {
+                Button("Download") { model.onDownloadASRModel?(entry.id) }
+                    .controlSize(.small)
+                    .disabled(model.asrDownloading != nil)
+            } else if deletable {
+                deleteMenu(entry)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    /// The trailing kebab on a downloaded row: a borderless `ellipsis` whose one
+    /// item arms the delete confirmation. A sibling of the select `Button`, never
+    /// nested, so opening it can't also select the model (cf. `ModelsPane`).
+    private func deleteMenu(_ entry: ASRModelCatalog.Entry) -> some View {
+        Menu {
+            Button("Delete…", role: .destructive) { pendingDelete = entry }
+        } label: {
+            Image(systemName: "ellipsis")
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .controlSize(.small)
+        .fixedSize()
+        .disabled(model.asrDownloading != nil || model.asrDeleting != nil)
+        .accessibilityLabel("More actions for \(entry.name)")
+    }
+
+    /// A fractional bar mirroring the Ollama pull UX once the engine reports a
+    /// percentage; before the first fraction (or for Parakeet, which reports
+    /// none) it degrades to the existing indeterminate spinner (#93). Once the
+    /// weights are fetched, the trailing compile-onto-the-ANE phase shows
+    /// "Preparing…" so the bar doesn't sit frozen at 100%.
+    @ViewBuilder
+    private var downloadProgress: some View {
+        if model.asrPreparing {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Preparing…").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        } else if let fraction = model.asrDownloadFraction {
+            VStack(alignment: .trailing, spacing: 2) {
+                ProgressView(value: fraction).frame(width: 110)
+                Text("\(Int(fraction * 100))%")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        } else {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Downloading…").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func ratings(_ entry: ASRModelCatalog.Entry) -> some View {
+        VStack(alignment: .trailing, spacing: 3) {
+            Text(entry.size).font(.system(size: 10)).foregroundStyle(.secondary)
+            RatingDots(label: "Speed", value: entry.speed)
+            RatingDots(label: "Quality", value: entry.quality)
         }
     }
 }

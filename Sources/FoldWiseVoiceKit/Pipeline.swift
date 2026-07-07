@@ -21,12 +21,23 @@ protocol AudioRecording: AnyObject {
 protocol Transcribing: AnyObject {
     var ready: Bool { get }
     var onLoading: ((Bool) -> Void)? { get set }
+    /// Fired with a 0…1 fraction while a model's weights download on first use,
+    /// for a HUD/pane percentage (issue #93). An engine that can't report a
+    /// fraction (FluidAudio/Parakeet) leaves this unset and degrades to the
+    /// boolean `onLoading` spinner.
+    var onDownloadProgress: ((Double) -> Void)? { get set }
     func warmup()
+    /// Load (and, on first use, download) the model, throwing on failure.
+    /// The awaitable, error-reporting sibling of fire-and-forget `warmup()`,
+    /// used by the Speech pane's Download action to fetch weights up front.
+    func prepare() async throws
     func transcribe(_ samples: [Float]) async throws -> String
 }
 
 enum PipelineState: Equatable {
     case listening(mode: String)
+    /// A model's weights are downloading on first use; `fraction` is 0…1.
+    case downloadingModel(fraction: Double)
     case loadingModel
     case transcribing
     case polishing(model: String)
@@ -34,6 +45,16 @@ enum PipelineState: Equatable {
     case clipboard
     case idle
     case error(String)
+
+    /// True while a model (down)load is on screen — downloading or loading — so
+    /// the boolean load-done signal resolves back to transcribing/idle from
+    /// whichever preparing state the HUD is currently showing.
+    var isPreparing: Bool {
+        switch self {
+        case .downloadingModel, .loadingModel: true
+        default: false
+        }
+    }
 }
 
 final class Pipeline {
@@ -81,11 +102,18 @@ final class Pipeline {
             if loading {
                 guard !recording else { return }
                 emit(.loadingModel)
-            } else if lastEmitted == .loadingModel {
-                // Back to whatever the load interrupted: a queued dictation
+            } else if lastEmitted.isPreparing {
+                // Back to whatever the (down)load interrupted: a queued dictation
                 // continues transcribing; a launch warmup returns to idle.
                 emit(jobActive ? .transcribing : .idle)
             }
+        }
+        self.transcriber.onDownloadProgress = { [weak self] fraction in
+            guard let self else { return }
+            // Suppressed while recording, like the loading spinner: the
+            // percentage would fight the live listening pill.
+            guard !recording else { return }
+            emit(.downloadingModel(fraction: fraction))
         }
     }
 

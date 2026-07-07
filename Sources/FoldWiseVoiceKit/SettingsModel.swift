@@ -8,6 +8,7 @@ final class SettingsModel: ObservableObject {
     enum Pane: String, CaseIterable, Identifiable {
         case home = "Home"
         case modes = "Modes"
+        case speech = "Speech"
         case models = "Models"
         case configuration = "Configuration"
         case sound = "Sound"
@@ -20,6 +21,7 @@ final class SettingsModel: ObservableObject {
             switch self {
             case .home: "house.fill"
             case .modes: "sparkles"
+            case .speech: "waveform"
             case .models: "shippingbox.fill"
             case .configuration: "gearshape.fill"
             case .sound: "speaker.wave.2.fill"
@@ -31,6 +33,7 @@ final class SettingsModel: ObservableObject {
             switch self {
             case .home: .orange
             case .modes: .blue
+            case .speech: .indigo
             case .models: .purple
             case .configuration: .gray
             case .sound: .teal
@@ -42,6 +45,7 @@ final class SettingsModel: ObservableObject {
             switch self {
             case .home: "FoldWise Voice"
             case .modes: "Modes"
+            case .speech: "Speech Recognition"
             case .models: "Ollama Models"
             case .configuration: "Keyboard Shortcuts"
             case .sound: "Sound"
@@ -66,6 +70,24 @@ final class SettingsModel: ObservableObject {
     @Published var updateState: UpdateState = .idle
     @Published var activeMode = ""
     @Published var selectedModel = ""
+    /// The active ASR model's catalog id (ADR-0006). Speech-pane state below.
+    @Published var asrModel = ASRModelCatalog.defaultID
+    /// Catalog ids whose weights are present and thus selectable. Parakeet (the
+    /// on-device default) is always in here; Whisper joins after a download.
+    @Published var asrDownloaded: Set<String> = [ASRModelCatalog.defaultID]
+    @Published var asrDownloading: String?
+    /// 0…1 while the downloading model reports progress; nil before the first
+    /// fraction arrives or for an engine that can't report one (Parakeet), which
+    /// keeps the pane on the indeterminate spinner (#93).
+    @Published var asrDownloadFraction: Double?
+    /// True while a just-downloaded model compiles/loads onto the Neural Engine —
+    /// the phase after the 0…1 fraction reaches 100%, which WhisperKit reports no
+    /// further progress for. The pane shows "Preparing…" here rather than a bar
+    /// frozen at 100%.
+    @Published var asrPreparing = false
+    @Published var asrDownloadError = ""
+    @Published var asrDeleting: String?
+    @Published var asrDeleteError = ""
     @Published var installed: [OllamaClient.InstalledModel]? // nil = checking, [] = Ollama down
     @Published var pullingModel: String?
     @Published var pullStatus = ""
@@ -100,6 +122,17 @@ final class SettingsModel: ObservableObject {
     var onInstallModel: ((String) -> Void)?
     var onDeleteModel: ((String) -> Void)?
     var onRefreshModels: (() -> Void)?
+    /// Speech pane, the ASR analogues of `onSelectModel` / `onInstallModel`
+    /// (ADR-0006): select an already-downloaded model as active; download an
+    /// available one's weights so it becomes selectable.
+    var onSelectASRModel: ((String) -> Void)?
+    var onDownloadASRModel: ((String) -> Void)?
+    /// Abort an in-flight download/prepare and return the row to its pre-download
+    /// state, so a slow or stalled fetch (or the post-100% compile) can be escaped.
+    var onCancelASRDownload: (() -> Void)?
+    /// Delete a downloaded model's on-disk weights to reclaim space (#95). If it
+    /// was active, dictation falls back to Parakeet until another is selected.
+    var onDeleteASRModel: ((String) -> Void)?
     var onEditFile: (() -> Void)?
     var onCheckUpdates: (() -> Void)?
     /// History pane row actions, mediated by SettingsController (which owns the

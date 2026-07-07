@@ -14,6 +14,9 @@ final class SettingsController {
     private var window: NSWindow?
     private var keyMonitor: Any?
     private var statusClearTask: Task<Void, Never>?
+    /// The in-flight ASR download/prepare, retained so the Speech pane's Cancel
+    /// can abort it; nil whenever no download is running.
+    private var asrDownloadTask: Task<Void, Never>?
     private var closeObserver: NSObjectProtocol?
 
     /// Wired by AppDelegate so a manual check here also lights up the
@@ -57,6 +60,10 @@ final class SettingsController {
         model.onInstallModel = { [weak self] name in self?.installModel(name) }
         model.onDeleteModel = { [weak self] name in self?.deleteModel(name) }
         model.onRefreshModels = { [weak self] in self?.refreshModels() }
+        model.onSelectASRModel = { [weak self] id in self?.selectASRModel(id) }
+        model.onDownloadASRModel = { [weak self] id in self?.downloadASRModel(id) }
+        model.onCancelASRDownload = { [weak self] in self?.cancelASRDownload() }
+        model.onDeleteASRModel = { [weak self] id in self?.deleteASRModel(id) }
         model.onEditFile = { [weak self] in
             guard let self else { return }
             NSWorkspace.shared.open(config.path)
@@ -96,6 +103,17 @@ final class SettingsController {
         model.llmModes = Set(config.modeOrder.filter { config.modes[$0]?.usesLLM == true })
         model.activeMode = config.activeMode
         model.selectedModel = config.llmModel ?? ""
+        model.asrModel = config.asrModel
+        // The active model must already be on disk (it's transcribing), so seed
+        // the downloaded set with the default plus the persisted choice; further
+        // downloads join it live. On-disk detection of past downloads is slice 5.
+        var downloaded: Set<String> = [ASRModelCatalog.defaultID]
+        if ASRModelCatalog.entry(for: config.asrModel) != nil { downloaded.insert(config.asrModel) }
+        model.asrDownloaded = downloaded
+        model.asrDownloading = nil
+        model.asrDownloadError = ""
+        model.asrDeleting = nil
+        model.asrDeleteError = ""
         model.pttKey = config.hotkey
         model.toggleKey = config.toggleHotkey ?? ""
         model.pauseAudio = config.pauseAudio
@@ -190,6 +208,117 @@ final class SettingsController {
                 self.model.deleteError = "Couldn't uninstall \(name): \(error)"
             } else {
                 self.refreshModels()
+            }
+        }
+    }
+
+    // MARK: - ASR models (Speech pane)
+
+    /// Make an already-downloaded ASR model active (ADR-0006). `commit` writes
+    /// it across every mode via `setASRModel` and notifies the dispatcher, which
+    /// performs the drop-before-load swap.
+    private func selectASRModel(_ id: String) {
+        model.asrModel = id
+        commit()
+    }
+
+    /// Fetch an available model's weights so it becomes selectable. Single-flight
+    /// and config-untouched: on failure the previous selection is preserved and
+    /// an error is shown; on success the id joins the downloaded set (ADR-0005).
+    private func downloadASRModel(_ id: String) {
+        // `asrDownloadTask` is the single-flight sentinel: it stays set from here
+        // until the task actually unwinds — including across a cancel of a
+        // possibly-uncooperative engine — so an instant re-click can't start a
+        // second concurrent download of the same weights.
+        guard asrDownloadTask == nil, let entry = ASRModelCatalog.entry(for: id) else { return }
+        model.asrDownloading = id
+        model.asrDownloadError = ""
+        model.asrDownloadFraction = nil
+        model.asrPreparing = false
+        asrDownloadTask = Task { @MainActor in
+            let failure = await Self.prepareASR(
+                entry,
+                onProgress: { fraction in Task { @MainActor in self.model.asrDownloadFraction = fraction } },
+                onLoading: { loading in Task { @MainActor in self.model.asrPreparing = loading } }
+            )
+            self.asrDownloadTask = nil
+            // A cancel already cleared the pane and released the throwaway engine,
+            // so don't resurrect an error or mark the model downloaded on the way out.
+            if Task.isCancelled { return }
+            self.clearASRDownloadUI()
+            if let message = ASRModelCatalog.downloadError(for: entry, failure: failure) {
+                self.model.asrDownloadError = message
+            } else {
+                self.model.asrDownloaded.insert(id)
+            }
+        }
+    }
+
+    /// Abort an in-flight ASR download/prepare and clear the pane at once, so a
+    /// slow or stalled fetch — or the post-100% compile phase — can be escaped
+    /// without waiting for it to unwind. Cancelling the task cooperatively cancels
+    /// the engine's load (see `WhisperTranscriber.prepare`); `asrDownloadTask` is
+    /// left set until that unwind completes so a re-click can't race a second
+    /// download, and the task's completion nils it and no-ops via `Task.isCancelled`.
+    private func cancelASRDownload() {
+        asrDownloadTask?.cancel()
+        clearASRDownloadUI()
+    }
+
+    /// Clear the Speech pane's downloading/fraction/preparing flags together,
+    /// returning the row to its pre-download look.
+    private func clearASRDownloadUI() {
+        model.asrDownloading = nil
+        model.asrDownloadFraction = nil
+        model.asrPreparing = false
+    }
+
+    /// Build the entry's engine and load — downloading on first use — its
+    /// weights, reporting a 0…1 fraction through `onProgress` (Whisper only; #93)
+    /// and the trailing compile-onto-the-ANE phase through `onLoading`, returning
+    /// a failure string or nil. The throwaway engine is released when this
+    /// returns, so selecting the model later reloads it from the on-disk cache
+    /// without ever holding two Whisper models resident.
+    private static func prepareASR(
+        _ entry: ASRModelCatalog.Entry,
+        onProgress: @escaping (Double) -> Void,
+        onLoading: @escaping (Bool) -> Void
+    ) async -> String? {
+        let engine = TranscriberDispatcher.buildEngine(entry.engine)
+        engine.onDownloadProgress = onProgress
+        engine.onLoading = onLoading
+        do {
+            try await engine.prepare()
+            return nil
+        } catch {
+            return "\(error)"
+        }
+    }
+
+    /// Delete a downloaded model's on-disk weights (#95). Single-flight and
+    /// blocked while a download runs, so the app is only ever in one
+    /// ASR-mutating state at a time; the built-in default (Parakeet v3) is never
+    /// deletable — it re-downloads at launch and is the fallback. Deleting the
+    /// active model re-selects the default via `commit`, which fires the
+    /// dispatcher's drop-before-load swap so dictation falls back to Parakeet.
+    private func deleteASRModel(_ id: String) {
+        guard model.asrDeleting == nil, model.asrDownloading == nil,
+              id != ASRModelCatalog.defaultID,
+              let entry = ASRModelCatalog.entry(for: id) else { return }
+        model.asrDeleting = id
+        model.asrDeleteError = ""
+        Task { @MainActor in
+            let failure = await Task.detached { ASRModelStore.delete(entry.engine) }.value
+            self.model.asrDeleting = nil
+            if let failure {
+                self.model.asrDeleteError = "Couldn't delete \(entry.name): \(failure)"
+                return
+            }
+            self.model.asrDownloaded.remove(id)
+            if ASRModelCatalog.deleteOutcome(for: entry, isActive: self.model.asrModel == id)
+                .fallsBackToDefault {
+                self.model.asrModel = ASRModelCatalog.defaultID
+                self.commit()
             }
         }
     }
@@ -296,6 +425,9 @@ final class SettingsController {
 
         if !model.selectedModel.isEmpty {
             config.setLLMModel(model.selectedModel)
+        }
+        if !model.asrModel.isEmpty {
+            config.setASRModel(model.asrModel)
         }
         config.setActiveMode(model.activeMode)
         config.hotkey = ptt
