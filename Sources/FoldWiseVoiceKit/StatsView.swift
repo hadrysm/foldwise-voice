@@ -43,9 +43,21 @@ struct StatsPane: View {
                     title: "Words dictated",
                     subtitle: "The words you actually spoke, across your saved history."
                 ) {
-                    Text(stats.totalWords.formatted())
-                        .font(.system(size: 15, weight: .semibold))
-                        .monospacedDigit()
+                    statValue(stats.totalWords.formatted())
+                }
+                Divider().padding(.leading, 14)
+                CardRow(
+                    title: "Speaking speed",
+                    subtitle: "Your words per minute over the time you held the key to talk — pauses and all."
+                ) {
+                    statValue(speakingSpeed(stats.wordsPerMinute))
+                }
+                Divider().padding(.leading, 14)
+                CardRow(
+                    title: "Active days",
+                    subtitle: "Distinct days you've dictated on."
+                ) {
+                    statValue(stats.activeDays.formatted())
                 }
             }
             if !model.saveHistory {
@@ -57,6 +69,20 @@ struct StatsPane: View {
                 .foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// One stat's trailing figure, styled uniformly across the card.
+    private func statValue(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 15, weight: .semibold))
+            .monospacedDigit()
+    }
+
+    /// Words-per-minute for display: rounded to a whole number with a unit, or
+    /// "—" when no dictation carried a duration to divide by.
+    private func speakingSpeed(_ wordsPerMinute: Double?) -> String {
+        guard let wordsPerMinute else { return "—" }
+        return "\(Int(wordsPerMinute.rounded())) wpm"
     }
 
     /// No kept dictations to project over. Adapts to *why*: when saving is off it

@@ -2,9 +2,8 @@
 // keeps (PRD #97). Four of the five stats are a lens, not a new ledger — they
 // retain nothing on disk, inherit the "Save dictation history" switch and the
 // retention window for free, and shrink honestly when history is turned off or
-// pruned. This spine slice ships the first projection stat, total words; the
-// later slices extend `UsageStats` and this aggregator with speaking speed,
-// active days, and the time-saved estimate.
+// pruned. This aggregator ships total words, speaking speed, and active days;
+// the remaining time-saved estimate extends `UsageStats` in a later slice.
 //
 // Every word count is taken from an entry's `rawText` — the pre-Polish
 // transcript, what was actually spoken — not the stored `wordCount` field, which
@@ -21,15 +20,38 @@ struct UsageStats: Equatable {
     /// Total spoken words across the kept history — the sum of each entry's
     /// `rawText` word count.
     let totalWords: Int
+    /// Aggregate speaking speed: Σ spoken words ÷ Σ dictation minutes over only
+    /// the entries that carry a positive duration. `nil` — rendered "—" — when no
+    /// timed entry exists, never 0. Deliberately not a mean of per-entry rates,
+    /// and honestly lower than a marketing figure because the stored duration is
+    /// hold-to-talk time including pauses.
+    let wordsPerMinute: Double?
+    /// Distinct calendar days (`startOfDay`) on which a dictation was recorded.
+    let activeDays: Int
 }
 
 /// Computes `UsageStats` from the history entries already loaded into the
 /// Settings model. Pure and order-independent, so its rules are unit-tested
 /// apart from the (untested) SwiftUI pane — modeled on `HistoryFilter`.
 enum UsageStatsAggregator {
-    static func aggregate(_ entries: [HistoryEntry]) -> UsageStats {
+    static func aggregate(_ entries: [HistoryEntry], calendar: Calendar = .current) -> UsageStats {
         let totalWords = entries.reduce(0) { $0 + wordCount($1.rawText) }
-        return UsageStats(totalWords: totalWords)
+
+        // WPM is an aggregate — Σ words ÷ Σ minutes — over only the entries that
+        // carry a positive hold-to-talk duration, not a mean of per-entry rates
+        // (which a few very short dictations would skew). `nil` when nothing is
+        // timed, so the pane shows "—" rather than dividing by zero or claiming
+        // "0 wpm".
+        let timed = entries.filter { ($0.durationMs ?? 0) > 0 }
+        let timedWords = timed.reduce(0) { $0 + wordCount($1.rawText) }
+        let timedMs = timed.reduce(0) { $0 + ($1.durationMs ?? 0) }
+        let wordsPerMinute = timedMs > 0 ? Double(timedWords) / (Double(timedMs) / 60000) : nil
+
+        // Distinct days someone dictated on, de-duped by startOfDay through the
+        // injected calendar so time zone and DST day arithmetic are correct.
+        let activeDays = Set(entries.map { calendar.startOfDay(for: $0.createdAt) }).count
+
+        return UsageStats(totalWords: totalWords, wordsPerMinute: wordsPerMinute, activeDays: activeDays)
     }
 
     /// Spoken-word count for one transcript, using the same whitespace split the
