@@ -72,7 +72,7 @@ enum ASRModelCatalog {
             name: "Whisper large-v3-turbo", languages: "~99 languages", size: "632 MB",
             speed: 3, quality: 4, streaming: false, translate: true,
             blurb: "OpenAI's Whisper, near-large-v3 accuracy at a fraction of the size. "
-                + "Downloads on first use, then runs on the Neural Engine across ~99 languages."
+                + "Downloads on first use, then runs on-device across ~99 languages."
         ),
         Entry(
             id: "whisper-small", engine: .whisper(variant: "openai_whisper-small"),
@@ -87,7 +87,7 @@ enum ASRModelCatalog {
             name: "Whisper large-v3", languages: "~99 languages", size: "947 MB",
             speed: 2, quality: 5, streaming: false, translate: true,
             blurb: "Full Whisper large-v3 — the most accurate option, at the cost of size "
-                + "and speed. Downloads on first use, then runs on the Neural Engine."
+                + "and speed. Downloads on first use, then runs on-device."
         ),
     ]
 

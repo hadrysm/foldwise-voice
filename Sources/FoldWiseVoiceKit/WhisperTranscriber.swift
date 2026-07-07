@@ -54,13 +54,23 @@ final class WhisperTranscriber: Transcribing {
             let folder = try await WhisperKit.download(variant: variant) { progress in
                 self?.onDownloadProgress?(progress.fractionCompleted)
             }
-            // …then compile and load them onto the ANE — the boolean spinner
-            // phase, `modelFolder` set so this never re-downloads.
+            // …then compile and load them — the boolean spinner phase,
+            // `modelFolder` set so this never re-downloads.
+            //
+            // Run the audio encoder on the GPU rather than WhisperKit's macOS-14
+            // default of the Neural Engine: compiling the large-v3-turbo encoder
+            // for the ANE on first load takes many minutes and often never
+            // finishes, whereas the GPU path loads in well under a minute
+            // (measured ~41s vs >6min unfinished on identical weights). The text
+            // decoder stays on the ANE (WhisperKit's default), and GPU-encoder is
+            // itself WhisperKit's own default on macOS < 14.
             self?.onLoading?(true)
             defer { self?.onLoading?(false) }
             let pipe = try await WhisperKit(
                 WhisperKitConfig(
-                    modelFolder: folder.path, verbose: false, logLevel: .none, load: true
+                    modelFolder: folder.path,
+                    computeOptions: ModelComputeOptions(audioEncoderCompute: .cpuAndGPU),
+                    verbose: false, logLevel: .none, load: true
                 )
             )
             self?.ready = true
