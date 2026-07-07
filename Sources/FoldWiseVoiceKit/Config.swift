@@ -31,6 +31,15 @@ struct Mode {
         !(llmModel ?? "").isEmpty
     }
 
+    /// Whether the Polish stage actually runs for `transcript`: an LLM Mode
+    /// whose transcript clears the minimum length. The single gate shared by the
+    /// live session's HUD `.polishing` emit and the Polish decision
+    /// (`Polish.run`), so the two can never disagree about whether polishing
+    /// happens — and the short-input skip is defined in exactly one place.
+    func willPolish(_ transcript: String) -> Bool {
+        usesLLM && transcript.count > MIN_CHARS_FOR_LLM
+    }
+
     /// Built-in In-place Mode names. Every other Mode — a built-in Expanding
     /// Mode (Email, Bullets) or any user-defined Mode — is Expanding. This is
     /// the single source of truth for `expands`, applied both when building the
