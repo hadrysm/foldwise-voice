@@ -194,23 +194,21 @@ final class Pipeline {
         }
         Log.pipeline.info("raw: \(text, privacy: .private)")
         let rawText = text
-        var isPolished = false
 
-        if mode.usesLLM, let model = mode.llmModel, text.count > MIN_CHARS_FOR_LLM {
+        // The keep-or-fall-back decision lives in `Polish.run`, shared with
+        // Re-run Polish (ADR-0004): the candidate is already sanitized, so the
+        // check judges the transform, not stripped scaffolding, and a fallback
+        // keeps `text` at the raw transcript — extending the "model unreachable"
+        // fallback to "model answered the wrong question." No new HUD state. The
+        // emit here matches `Polish.run`'s gate via `Mode.willPolish`.
+        if mode.willPolish(text), let model = mode.llmModel {
             emit(.polishing(model: model))
-            let candidate = await polish(text, mode)
-            // The candidate is already sanitized (the polish stage strips
-            // narration), so the check judges the transform, not stripped
-            // scaffolding. On a positive result `text` stays the raw
-            // transcript — extending the "model unreachable" fallback to
-            // "model answered the wrong question" (ADR-0004). No new HUD state.
-            let verdict = OllamaClient.offTaskVerdict(candidate, transcript: text, expands: mode.expands)
-            if verdict.fellBack {
-                logOffTaskFallback(verdict, mode: mode)
-            } else {
-                text = candidate
-                isPolished = true
-            }
+        }
+        let polished = await Polish.run(rawText: text, mode: mode, polish: polish)
+        text = polished.text
+        let isPolished = polished.isPolished
+        if let verdict = polished.verdict {
+            if verdict.fellBack { logOffTaskFallback(verdict, mode: mode) }
             Log.pipeline.info("llm: \(text, privacy: .private)")
         }
 
