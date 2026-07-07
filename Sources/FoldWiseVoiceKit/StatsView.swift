@@ -16,6 +16,14 @@ import SwiftUI
 struct StatsPane: View {
     @ObservedObject var model: SettingsModel
 
+    /// The projection, memoized. `StatsPane` observes `SettingsModel`, which has
+    /// dozens of `@Published` fields; recomputing the aggregate inline in `body`
+    /// re-ran a whole-history word-split on every unrelated publish (update-check,
+    /// model list, status clear) while the pane was open. Caching it here and
+    /// recomputing only when `historyEntries` actually changes keeps the scan off
+    /// the render path for publishes that don't affect the stats.
+    @State private var stats = UsageStats(totalWords: 0, wordsPerMinute: nil, activeDays: 0, timeSavedMinutes: nil)
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(
@@ -31,13 +39,19 @@ struct StatsPane: View {
                 populated
             }
         }
+        // `initial: true` seeds the cache on first appearance; every genuine
+        // history change (append/prepend/delete/clear all reassign the `@Published`
+        // array) fires this and re-runs the scan, so live updates are preserved
+        // while unrelated model publishes no longer re-aggregate.
+        .onChange(of: model.historyEntries, initial: true) { _, entries in
+            stats = UsageStatsAggregator.aggregate(entries)
+        }
     }
 
     /// The stats card plus, when saving is off, a note that the numbers are no
     /// longer moving — so frozen figures are never mistaken for live ones.
     private var populated: some View {
-        let stats = UsageStatsAggregator.aggregate(model.historyEntries)
-        return VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 16) {
             Card {
                 CardRow(
                     title: "Words dictated",

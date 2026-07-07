@@ -52,21 +52,35 @@ enum UsageStatsAggregator {
         calendar: Calendar = .current,
         typingWordsPerMinute: Double = UsageStatsAggregator.typingBaselineWordsPerMinute
     ) -> UsageStats {
-        let totalWords = entries.reduce(0) { $0 + wordCount($1.rawText) }
+        // One pass over the history, splitting each `rawText` exactly once. Every
+        // accumulator is order-independent, so the single loop is identical to the
+        // separate reductions it replaces — it just stops re-splitting timed
+        // entries a second time. WPM is an aggregate (Σ words ÷ Σ minutes) over
+        // only the entries that carry a positive hold-to-talk duration, not a mean
+        // of per-entry rates (which a few very short dictations would skew); a
+        // positively-timed entry contributes its already-counted words to
+        // `timedWords` and its ms to `timedMs`. Active days are de-duped by
+        // `startOfDay` through the injected calendar so time zone and DST day
+        // arithmetic are correct.
+        var totalWords = 0
+        var timedWords = 0
+        var timedMs = 0
+        var activeDaySet: Set<Date> = []
+        for entry in entries {
+            let words = wordCount(entry.rawText)
+            totalWords += words
+            let durationMs = entry.durationMs ?? 0
+            if durationMs > 0 {
+                timedWords += words
+                timedMs += durationMs
+            }
+            activeDaySet.insert(calendar.startOfDay(for: entry.createdAt))
+        }
 
-        // WPM is an aggregate — Σ words ÷ Σ minutes — over only the entries that
-        // carry a positive hold-to-talk duration, not a mean of per-entry rates
-        // (which a few very short dictations would skew). `nil` when nothing is
-        // timed, so the pane shows "—" rather than dividing by zero or claiming
-        // "0 wpm".
-        let timed = entries.filter { ($0.durationMs ?? 0) > 0 }
-        let timedWords = timed.reduce(0) { $0 + wordCount($1.rawText) }
-        let timedMs = timed.reduce(0) { $0 + ($1.durationMs ?? 0) }
+        // `nil` when nothing is timed, so the pane shows "—" rather than dividing
+        // by zero or claiming "0 wpm".
         let wordsPerMinute = timedMs > 0 ? Double(timedWords) / (Double(timedMs) / 60000) : nil
-
-        // Distinct days someone dictated on, de-duped by startOfDay through the
-        // injected calendar so time zone and DST day arithmetic are correct.
-        let activeDays = Set(entries.map { calendar.startOfDay(for: $0.createdAt) }).count
+        let activeDays = activeDaySet.count
 
         // Time saved vs typing, over the same timed entries as WPM: the minutes
         // those spoken words would have taken at the typing baseline, minus the
