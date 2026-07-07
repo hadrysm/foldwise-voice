@@ -8,6 +8,8 @@ import SwiftUI
 @MainActor
 final class SettingsController {
     private let config: Config
+    private let historyStore: HistoryStore
+    private let reprocessor: HistoryReprocessor
     private let model = SettingsModel()
     private var window: NSWindow?
     private var keyMonitor: Any?
@@ -18,9 +20,19 @@ final class SettingsController {
     /// menu-bar "Update Available" item.
     var onUpdateAvailable: ((String) -> Void)?
 
-    init(config: Config) {
+    init(config: Config, historyStore: HistoryStore) {
         self.config = config
+        self.historyStore = historyStore
+        reprocessor = HistoryReprocessor(store: historyStore)
         wire()
+        // Live-prepend: the store owns change propagation (ADR-0003), so
+        // subscribe once here — a dictation spoken while the pane is open appears
+        // at the top without a reload. Registered before the hotkey listener
+        // starts (AppMain order), so no append can race registration. The store
+        // fires this off the main thread from the pipeline's record seam.
+        historyStore.onAppend { [weak self] entry in
+            Task { @MainActor in self?.prependHistory(entry) }
+        }
     }
 
     deinit {
@@ -50,6 +62,14 @@ final class SettingsController {
             NSWorkspace.shared.open(config.path)
         }
         model.onCheckUpdates = { [weak self] in self?.checkForUpdates() }
+        model.onCopyHistory = { [weak self] entry in self?.copyToPasteboard(entry.text) }
+        model.onCopyRawHistory = { [weak self] entry in self?.copyToPasteboard(entry.rawText) }
+        model.onFlagHistory = { [weak self] entry in self?.flagHistory(entry) }
+        model.onRerunPolish = { [weak self] entry, modeName in
+            self?.rerunPolish(entry, modeName: modeName)
+        }
+        model.onDeleteHistory = { [weak self] entry in self?.deleteHistory(entry) }
+        model.onClearHistory = { [weak self] in self?.clearHistory() }
     }
 
     private func build() {
@@ -79,8 +99,11 @@ final class SettingsController {
         model.pttKey = config.hotkey
         model.toggleKey = config.toggleHotkey ?? ""
         model.pauseAudio = config.pauseAudio
+        model.saveHistory = config.saveHistory
+        model.retention = config.historyRetention
         model.hudStyle = (HUDStyle(rawValue: config.hudStyle) ?? .classic).rawValue
         model.axTrusted = TextInserter.accessibilityTrusted()
+        model.historyEntries = historyStore.load()
         model.status = ""
         refreshModels()
         checkForUpdates()
@@ -171,6 +194,55 @@ final class SettingsController {
         }
     }
 
+    // MARK: - history row actions
+
+    /// Prepend a just-appended dictation while the pane is open (PRD #78). A
+    /// full reload (`populate`, flag/delete/re-run) replaces the whole list, so
+    /// this guards by id to stay idempotent if a reload and this callback race.
+    private func prependHistory(_ entry: HistoryEntry) {
+        guard !model.historyEntries.contains(where: { $0.id == entry.id }) else { return }
+        model.historyEntries.insert(entry, at: 0)
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
+    /// Toggle the row's local bookmark and persist it. Purely local — no
+    /// network activity — then re-read so the pane reflects what persisted.
+    private func flagHistory(_ entry: HistoryEntry) {
+        var toggled = entry
+        toggled.flagged.toggle()
+        historyStore.update(toggled)
+        model.historyEntries = historyStore.load()
+    }
+
+    /// Re-run Polish on a stored dictation under the Mode the user picked, then
+    /// re-read so the row shows the reshaped text. The reprocessor works on the
+    /// entry's stored `rawText` — no audio — and overwrites text/isPolished/
+    /// modeName, persisting the change before we reload.
+    private func rerunPolish(_ entry: HistoryEntry, modeName: String) {
+        guard let mode = config.modes[modeName] else { return }
+        Task { @MainActor in
+            await self.reprocessor.rerunPolish(entry, mode: mode)
+            self.model.historyEntries = self.historyStore.load()
+        }
+    }
+
+    /// Delete and clear-all go through the store, then re-read it so the pane's
+    /// list reflects what actually persisted.
+    private func deleteHistory(_ entry: HistoryEntry) {
+        historyStore.delete(id: entry.id)
+        model.historyEntries = historyStore.load()
+    }
+
+    private func clearHistory() {
+        historyStore.clearAll()
+        model.historyEntries = historyStore.load()
+    }
+
     // MARK: - key recording
 
     private func startRecording(_ field: SettingsModel.RecordingField) {
@@ -229,12 +301,23 @@ final class SettingsController {
         config.hotkey = ptt
         config.toggleHotkey = toggle.isEmpty ? nil : toggle
         config.pauseAudio = model.pauseAudio
+        config.saveHistory = model.saveHistory
+        let retentionChanged = config.historyRetention != model.retention
+        config.historyRetention = model.retention
         config.hudStyle = model.hudStyle
         do {
             try config.saveAndNotify()
         } catch {
             setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
             return
+        }
+        // A tightened retention window must purge now, not wait for the next
+        // relaunch — the passive sweep runs only at startup (AppMain). Sweep
+        // only when the value actually changed so an unrelated save doesn't
+        // rewrite the file, then reload so an open pane drops the purged rows.
+        if retentionChanged {
+            historyStore.sweep(retention: config.historyRetention, now: Date())
+            model.historyEntries = historyStore.load()
         }
         setStatus("Saved ✓", isError: false, clearAfter: 2)
     }

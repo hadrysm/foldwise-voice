@@ -107,6 +107,106 @@ final class ConfigRoundTripTests: XCTestCase {
         XCTAssertNoThrow(try JSONSerialization.jsonObject(with: data))
     }
 
+    func testSaveHistoryDefaultsToTrueWhenAbsent() throws {
+        // The fixture carries no `save_history` key: history is saved by
+        // default (PRD #78), so a config predating the setting reads as on.
+        let reloaded = try roundTrip(fixture)
+        XCTAssertTrue(reloaded.saveHistory)
+    }
+
+    func testSaveHistoryRoundTripsWhenOff() throws {
+        let json = """
+        {
+          "active_mode": "Only",
+          "hotkey": "alt_r",
+          "pause_audio": true,
+          "save_history": false,
+          "modes": {
+            "Only": {
+              "asr_model": "m",
+              "llm_model": null,
+              "system_prompt": null,
+              "vocab": []
+            }
+          }
+        }
+        """
+        let reloaded = try roundTrip(json)
+        XCTAssertFalse(reloaded.saveHistory)
+    }
+
+    func testRetentionDefaultsTo30DaysWhenAbsent() throws {
+        // The fixture carries no `retention_days` key: a config predating the
+        // setting reads as the 30-day default (PRD #78).
+        let reloaded = try roundTrip(fixture)
+        XCTAssertEqual(reloaded.historyRetention, .thirtyDays)
+    }
+
+    func testRetentionRoundTripsWhenSet() throws {
+        let json = """
+        {
+          "active_mode": "Only",
+          "hotkey": "alt_r",
+          "pause_audio": true,
+          "retention_days": 7,
+          "modes": {
+            "Only": {
+              "asr_model": "m",
+              "llm_model": null,
+              "system_prompt": null,
+              "vocab": []
+            }
+          }
+        }
+        """
+        let reloaded = try roundTrip(json)
+        XCTAssertEqual(reloaded.historyRetention, .sevenDays)
+    }
+
+    func testRetentionRoundTripsNinetyDays() throws {
+        let json = """
+        {
+          "active_mode": "Only",
+          "hotkey": "alt_r",
+          "pause_audio": true,
+          "retention_days": 90,
+          "modes": {
+            "Only": {
+              "asr_model": "m",
+              "llm_model": null,
+              "system_prompt": null,
+              "vocab": []
+            }
+          }
+        }
+        """
+        let reloaded = try roundTrip(json)
+        XCTAssertEqual(reloaded.historyRetention, .ninetyDays)
+    }
+
+    func testRetentionRoundTripsForever() throws {
+        // `.forever` persists as the sentinel `retention_days: 0`; confirm the
+        // sentinel survives save/load rather than collapsing to the default.
+        let json = """
+        {
+          "active_mode": "Only",
+          "hotkey": "alt_r",
+          "pause_audio": true,
+          "retention_days": 0,
+          "modes": {
+            "Only": {
+              "asr_model": "m",
+              "llm_model": null,
+              "system_prompt": null,
+              "vocab": []
+            }
+          }
+        }
+        """
+        let reloaded = try roundTrip(json)
+        XCTAssertEqual(reloaded.historyRetention, .forever)
+    }
+
     func testSaveIsStableAcrossRepeatedRoundTrips() throws {
         let url = try write(fixture)
         let config = try Config.load(from: url)

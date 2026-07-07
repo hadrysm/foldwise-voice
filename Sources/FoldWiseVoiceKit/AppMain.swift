@@ -79,8 +79,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // not inside Pipeline.
         let recorder = AudioRecorder()
         let transcriber = Transcriber()
-        pipeline = Pipeline(config: config, recorder: recorder, transcriber: transcriber)
-        settings = SettingsController(config: config)
+        // One store shared between the record seam and the History pane, so a
+        // dictation just spoken is on disk for the pane to load (PRD #78).
+        let historyStore = JSONLHistoryStore(url: JSONLHistoryStore.defaultURL)
+        // A single best-effort retention sweep at launch drops entries past the
+        // configured window (Forever leaves everything, PRD #78).
+        historyStore.sweep(retention: config.historyRetention, now: Date())
+        pipeline = Pipeline(
+            config: config, recorder: recorder, transcriber: transcriber,
+            record: { historyStore.append($0) }
+        )
+        settings = SettingsController(config: config, historyStore: historyStore)
         hud = HUDController(config: config) { [weak self] in
             self?.settings.show()
         }
@@ -298,8 +307,10 @@ public enum FoldWiseVoiceApp {
             let echo = Config(
                 activeMode: config.activeMode, hotkey: config.hotkey,
                 toggleHotkey: config.toggleHotkey, pauseAudio: config.pauseAudio,
-                hudPosition: config.hudPosition, hudStyle: config.hudStyle,
-                modeOrder: config.modeOrder, modes: config.modes, path: tmp
+                saveHistory: config.saveHistory,
+                historyRetention: config.historyRetention, hudPosition: config.hudPosition,
+                hudStyle: config.hudStyle, modeOrder: config.modeOrder,
+                modes: config.modes, path: tmp
             )
             try? echo.save()
             print("config: \(url.path)")

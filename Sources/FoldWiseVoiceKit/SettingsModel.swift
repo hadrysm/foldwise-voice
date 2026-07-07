@@ -11,6 +11,7 @@ final class SettingsModel: ObservableObject {
         case models = "Models"
         case configuration = "Configuration"
         case sound = "Sound"
+        case history = "History"
         var id: String {
             rawValue
         }
@@ -22,6 +23,7 @@ final class SettingsModel: ObservableObject {
             case .models: "shippingbox.fill"
             case .configuration: "gearshape.fill"
             case .sound: "speaker.wave.2.fill"
+            case .history: "clock.fill"
             }
         }
 
@@ -32,6 +34,7 @@ final class SettingsModel: ObservableObject {
             case .models: .purple
             case .configuration: .gray
             case .sound: .teal
+            case .history: .pink
             }
         }
 
@@ -42,6 +45,7 @@ final class SettingsModel: ObservableObject {
             case .models: "Ollama Models"
             case .configuration: "Keyboard Shortcuts"
             case .sound: "Sound"
+            case .history: "Dictation History"
             }
         }
     }
@@ -73,6 +77,10 @@ final class SettingsModel: ObservableObject {
     @Published var pttKey = ""
     @Published var toggleKey = ""
     @Published var pauseAudio = true
+    /// Master "Save dictation history" switch, surfaced in the History pane.
+    @Published var saveHistory = true
+    /// Auto-delete window for history, a control distinct from `saveHistory`.
+    @Published var retention = RetentionWindow.default
     @Published var hudStyle = HUDStyle.classic.rawValue
     @Published var axTrusted = false
     @Published var status = ""
@@ -81,6 +89,9 @@ final class SettingsModel: ObservableObject {
 
     var modeNames: [String] = []
     var llmModes: Set<String> = []
+    /// Loaded from the HistoryStore when the window opens and re-read after a
+    /// delete or clear-all, so the History pane reflects the store live.
+    @Published var historyEntries: [HistoryEntry] = []
 
     // wired by SettingsController
     var onCommit: (() -> Void)?
@@ -91,6 +102,18 @@ final class SettingsModel: ObservableObject {
     var onRefreshModels: (() -> Void)?
     var onEditFile: (() -> Void)?
     var onCheckUpdates: (() -> Void)?
+    /// History pane row actions, mediated by SettingsController (which owns the
+    /// store and the pasteboard). Copy puts the row's polished text on the
+    /// pasteboard; copy-raw puts the pre-Polish `rawText` there; flag toggles
+    /// the row's local bookmark; re-run Polish reshapes the stored raw
+    /// transcript under the named Mode; delete removes one row; clear empties
+    /// the store.
+    var onCopyHistory: ((HistoryEntry) -> Void)?
+    var onCopyRawHistory: ((HistoryEntry) -> Void)?
+    var onFlagHistory: ((HistoryEntry) -> Void)?
+    var onRerunPolish: ((HistoryEntry, String) -> Void)?
+    var onDeleteHistory: ((HistoryEntry) -> Void)?
+    var onClearHistory: (() -> Void)?
 
     var ollamaDown: Bool {
         installed?.isEmpty ?? false

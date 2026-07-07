@@ -17,7 +17,9 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
             recorder: recorder,
             transcriber: transcriber,
             polish: { text, _ in text },
-            insert: { _ in true }
+            insert: { _ in true },
+            record: { _ in },
+            frontmostApp: { nil }
         )
         let collector = StateCollector()
         pipeline.onState = { collector.append($0) }
