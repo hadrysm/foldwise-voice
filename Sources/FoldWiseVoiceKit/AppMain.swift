@@ -89,11 +89,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A single best-effort retention sweep at launch drops entries past the
         // configured window (Forever leaves everything, PRD #78).
         historyStore.sweep(retention: config.historyRetention, now: Date())
+        // The one persisted stats fact: a true lifetime streak (PRD #97). It
+        // advances off the history store's existing append seam (ADR-0003), wired
+        // here app-lifetime before the hotkey listener starts so no append can
+        // race registration. Registered before the SettingsController's own
+        // onAppend observer so the streak is advanced before that observer
+        // re-reads it. Because a session only appends while "Save dictation
+        // history" is on, the streak freezes with saving off for free — no
+        // separate gate. Best-effort like the history store, so a stats write can
+        // never break a dictation session.
+        let statsStore = JSONStatsStore(url: JSONStatsStore.defaultURL)
+        historyStore.onAppend { entry in
+            statsStore.advance(on: entry.createdAt, calendar: .current)
+        }
         pipeline = Pipeline(
             config: config, recorder: recorder, transcriber: transcriber,
             record: { historyStore.append($0) }
         )
-        settings = SettingsController(config: config, historyStore: historyStore)
+        settings = SettingsController(config: config, historyStore: historyStore, statsStore: statsStore)
         hud = HUDController(config: config) { [weak self] in
             self?.settings.show()
         }

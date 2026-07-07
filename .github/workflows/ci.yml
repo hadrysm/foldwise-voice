@@ -31,13 +31,20 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      # Compiled .swiftmodule artifacts in .build are toolchain-specific: a
+      # module built by one Swift version cannot be imported by another. The
+      # cache key must include the compiler version so a runner-image toolchain
+      # bump invalidates it instead of restoring incompatible modules.
+      - name: Capture Swift toolchain version
+        id: swift
+        run: echo "hash=$(swift --version | shasum -a 256 | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         with:
           path: |
             .build
             ~/Library/Caches/org.swift.swiftpm
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
+          key: spm-${{ runner.os }}-${{ steps.swift.outputs.hash }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-${{ steps.swift.outputs.hash }}-
       - name: Build (including tests)
         run: swift build --build-tests
       - name: Test
