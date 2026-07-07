@@ -105,6 +105,20 @@ final class StreakRulesTests: XCTestCase {
         XCTAssertEqual(advanced.currentStreak, 3)
     }
 
+    /// A record at `Int.max` — reachable only via a corrupt or hand-edited
+    /// `stats.json`, which `readRecord` decodes without complaint — must saturate
+    /// on the next consecutive day rather than trap on integer overflow. A trapping
+    /// `+ 1` here would crash the session, so the increment clamps at `Int.max`.
+    func testAdvanceSaturatesAtIntMax() throws {
+        let calendar = try calendar()
+        let existing = StreakRecord(currentStreak: Int.max, lastActiveDay: try at(calendar, 2026, 1, 1, 8))
+        let nextDay = try at(calendar, 2026, 1, 2, 10)
+
+        let advanced = StreakRules.advance(existing, on: nextDay, calendar: calendar)
+
+        XCTAssertEqual(advanced, StreakRecord(currentStreak: Int.max, lastActiveDay: calendar.startOfDay(for: nextDay)))
+    }
+
     // MARK: - display
 
     func testDisplayIsNilForNoRecord() throws {

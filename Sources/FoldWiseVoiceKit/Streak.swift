@@ -49,7 +49,14 @@ enum StreakRules {
         case 0:
             return record // same day — no-op
         case 1:
-            return StreakRecord(currentStreak: record.currentStreak + 1, lastActiveDay: newDay)
+            // Saturating increment: a corrupt or hand-edited record with
+            // `currentStreak` at `Int.max` decodes fine (`readRecord` uses `try?`,
+            // which catches decode failures, not an in-range integer), so a plain
+            // trapping `+ 1` here would abort the process on the next consecutive
+            // day — breaking the store's no-throw session contract mid-dictation.
+            // Clamp at `Int.max` instead so the advance can never crash the session.
+            let (next, overflowed) = record.currentStreak.addingReportingOverflow(1)
+            return StreakRecord(currentStreak: overflowed ? Int.max : next, lastActiveDay: newDay)
         case ..<0:
             // A backwards step — a clock rollback or a westward timezone move that
             // lands `newDay` before the stored day — is ignored: we return the

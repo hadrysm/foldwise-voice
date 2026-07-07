@@ -48,6 +48,15 @@ final class StatsStoreRoundTripTests: XCTestCase {
         XCTAssertNil(JSONStatsStore(url: storeURL).load())
     }
 
+    /// A present-but-undecodable file is the other nil branch of `readRecord`: the
+    /// `try?` decode swallows the failure so a corrupt `stats.json` loads as nil
+    /// rather than throwing — a best-effort load never breaks a session.
+    func testLoadOnCorruptFileReturnsNil() throws {
+        try Data("{ not valid json".utf8).write(to: storeURL)
+
+        XCTAssertNil(JSONStatsStore(url: storeURL).load())
+    }
+
     /// A first advance persists a run of 1 at the entry's day start — the
     /// round-trip the pane reads through.
     func testFirstAdvancePersistsRunOfOne() throws {
