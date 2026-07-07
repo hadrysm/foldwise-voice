@@ -35,6 +35,11 @@ struct UsageStats: Equatable {
     /// the dictation), so it can only under-promise and never shows a negative or
     /// fabricated figure. Always an estimate, never a measured fact.
     let timeSavedMinutes: Double?
+
+    /// The zero projection — no kept dictations to draw on: no words, no timed
+    /// rate, no active days, nothing to claim as saved. Seeds the pane's memoized
+    /// cache before the first aggregate.
+    static let empty = UsageStats(totalWords: 0, wordsPerMinute: nil, activeDays: 0, timeSavedMinutes: nil)
 }
 
 /// Computes `UsageStats` from the history entries already loaded into the

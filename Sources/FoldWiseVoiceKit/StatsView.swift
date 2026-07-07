@@ -22,7 +22,7 @@ struct StatsPane: View {
     /// model list, status clear) while the pane was open. Caching it here and
     /// recomputing only when `historyEntries` actually changes keeps the scan off
     /// the render path for publishes that don't affect the stats.
-    @State private var stats = UsageStats(totalWords: 0, wordsPerMinute: nil, activeDays: 0, timeSavedMinutes: nil)
+    @State private var stats = UsageStats.empty
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
