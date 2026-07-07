@@ -511,10 +511,7 @@ struct SpeechPane: View {
             .disabled(!downloaded)
 
             if downloading {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Downloading…").font(.system(size: 11)).foregroundStyle(.secondary)
-                }
+                downloadProgress
             } else if !downloaded {
                 Button("Download") { model.onDownloadASRModel?(entry.id) }
                     .controlSize(.small)
@@ -523,6 +520,25 @@ struct SpeechPane: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// A fractional bar mirroring the Ollama pull UX once the engine reports a
+    /// percentage; before the first fraction (or for Parakeet, which reports
+    /// none) it degrades to the existing indeterminate spinner (#93).
+    @ViewBuilder
+    private var downloadProgress: some View {
+        if let fraction = model.asrDownloadFraction {
+            VStack(alignment: .trailing, spacing: 2) {
+                ProgressView(value: fraction).frame(width: 110)
+                Text("\(Int(fraction * 100))%")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        } else {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Downloading…").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
     }
 
     private func ratings(_ entry: ASRModelCatalog.Entry) -> some View {

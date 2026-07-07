@@ -222,9 +222,13 @@ final class SettingsController {
         guard model.asrDownloading == nil, let entry = ASRModelCatalog.entry(for: id) else { return }
         model.asrDownloading = id
         model.asrDownloadError = ""
+        model.asrDownloadFraction = nil
         Task { @MainActor in
-            let failure = await Self.prepareASR(entry)
+            let failure = await Self.prepareASR(entry) { fraction in
+                Task { @MainActor in self.model.asrDownloadFraction = fraction }
+            }
             self.model.asrDownloading = nil
+            self.model.asrDownloadFraction = nil
             if let message = ASRModelCatalog.downloadError(for: entry, failure: failure) {
                 self.model.asrDownloadError = message
             } else {
@@ -234,11 +238,15 @@ final class SettingsController {
     }
 
     /// Build the entry's engine and load — downloading on first use — its
-    /// weights, returning a failure string or nil. The throwaway engine is
-    /// released when this returns, so selecting the model later reloads it from
-    /// the on-disk cache without ever holding two Whisper models resident.
-    private static func prepareASR(_ entry: ASRModelCatalog.Entry) async -> String? {
+    /// weights, reporting a 0…1 fraction through `onProgress` (Whisper only; #93)
+    /// and returning a failure string or nil. The throwaway engine is released
+    /// when this returns, so selecting the model later reloads it from the
+    /// on-disk cache without ever holding two Whisper models resident.
+    private static func prepareASR(
+        _ entry: ASRModelCatalog.Entry, onProgress: @escaping (Double) -> Void
+    ) async -> String? {
         let engine = TranscriberDispatcher.buildEngine(entry.engine)
+        engine.onDownloadProgress = onProgress
         do {
             try await engine.prepare()
             return nil

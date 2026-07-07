@@ -200,6 +200,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case let .listening(mode):
             menuBar.setIcon(.listening)
             hud.show(.listening, "Listening…  (\(mode))")
+        case let .downloadingModel(fraction):
+            menuBar.setIcon(.working)
+            hud.show(.working, "Downloading speech model… \(Int(fraction * 100))%")
         case .loadingModel:
             menuBar.setIcon(.working)
             hud.show(.working, "Preparing speech model…")

@@ -22,6 +22,7 @@ final class TranscriberDispatcher: Transcribing {
     private let lock = NSLock()
     private var engine: Transcribing?
     private var storedOnLoading: ((Bool) -> Void)?
+    private var storedOnDownloadProgress: ((Double) -> Void)?
 
     @MainActor
     init(
@@ -67,6 +68,20 @@ final class TranscriberDispatcher: Transcribing {
         }
     }
 
+    var onDownloadProgress: ((Double) -> Void)? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return storedOnDownloadProgress
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            storedOnDownloadProgress = newValue
+            engine?.onDownloadProgress = newValue
+        }
+    }
+
     func warmup() {
         lock.lock()
         let current = engine
@@ -100,10 +115,12 @@ final class TranscriberDispatcher: Transcribing {
         let engineType = ASRModelCatalog.engine(forSelected: config.asrModel)
         lock.lock()
         defer { lock.unlock() }
-        let sink = storedOnLoading
+        let loadingSink = storedOnLoading
+        let progressSink = storedOnDownloadProgress
         engine = nil // release the old engine (and its loaded model) first
         let next = makeEngine(engineType)
-        next.onLoading = sink
+        next.onLoading = loadingSink
+        next.onDownloadProgress = progressSink
         engine = next
     }
 

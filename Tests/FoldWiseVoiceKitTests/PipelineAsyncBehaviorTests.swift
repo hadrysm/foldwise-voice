@@ -93,6 +93,46 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         XCTAssertEqual(collector.states, [.listening(mode: "Voice to Text")])
     }
 
+    // MARK: - fractional download progress
+
+    /// An engine that reports a download fraction surfaces it as a
+    /// `.downloadingModel(fraction:)` state, and the load-done signal resolves
+    /// it back to transcribing for the queued dictation behind it.
+    func testSessionEmitsDownloadingModelWhenEngineReportsProgress() async {
+        let transcriber = FakeTranscriber()
+        transcriber.ready = false
+        transcriber.result = .success("hello world")
+        // The real Whisper first-load downloads (reporting a fraction) then
+        // flips the loading flag off once the weights are compiled and loaded.
+        transcriber.onTranscribe = { [weak transcriber] in
+            transcriber?.onDownloadProgress?(0.5)
+            transcriber?.onLoading?(false)
+        }
+        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(
+            collector.states,
+            [
+                .listening(mode: "Voice to Text"), .transcribing,
+                .loadingModel, .downloadingModel(fraction: 0.5), .transcribing, .inserted,
+            ]
+        )
+    }
+
+    func testDownloadingModelSuppressedWhileRecording() {
+        let transcriber = FakeTranscriber()
+        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+
+        pipeline.startRecording()
+        transcriber.onDownloadProgress?(0.5)
+
+        XCTAssertEqual(collector.states, [.listening(mode: "Voice to Text")])
+    }
+
     // MARK: - silent double-tap queueing
 
     func testDoubleTappedSessionsProcessStrictlyInOrder() async {

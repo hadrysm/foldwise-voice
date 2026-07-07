@@ -37,6 +37,7 @@ final class FakeRecorder: AudioRecording {
 final class FakeTranscriber: Transcribing {
     var ready = true
     var onLoading: ((Bool) -> Void)?
+    var onDownloadProgress: ((Double) -> Void)?
     var result: Result<String, Error> = .success("")
     /// Thrown by `prepare()` when set, so a test can drive a failed download.
     var prepareError: Error?

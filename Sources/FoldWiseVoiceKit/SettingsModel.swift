@@ -76,6 +76,10 @@ final class SettingsModel: ObservableObject {
     /// on-device default) is always in here; Whisper joins after a download.
     @Published var asrDownloaded: Set<String> = [ASRModelCatalog.defaultID]
     @Published var asrDownloading: String?
+    /// 0…1 while the downloading model reports progress; nil before the first
+    /// fraction arrives or for an engine that can't report one (Parakeet), which
+    /// keeps the pane on the indeterminate spinner (#93).
+    @Published var asrDownloadFraction: Double?
     @Published var asrDownloadError = ""
     @Published var installed: [OllamaClient.InstalledModel]? // nil = checking, [] = Ollama down
     @Published var pullingModel: String?

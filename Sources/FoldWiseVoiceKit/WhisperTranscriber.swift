@@ -15,6 +15,9 @@ final class WhisperTranscriber: Transcribing {
 
     /// Fired when a (down)load starts/ends, for HUD feedback.
     var onLoading: ((Bool) -> Void)?
+    /// Fired with a 0…1 fraction while the CoreML weights download on first use,
+    /// so the HUD and Speech pane can show a real percentage (#93).
+    var onDownloadProgress: ((Double) -> Void)?
 
     init(variant: String) {
         self.variant = variant
@@ -37,11 +40,20 @@ final class WhisperTranscriber: Transcribing {
         if let loadTask { return loadTask }
         let variant = variant
         let task = Task<WhisperKit, Error> { [weak self] in
+            // Two phases so the HUD can distinguish them (#93): first fetch the
+            // CoreML weights from Hugging Face, reporting a 0…1 fraction (a no-op
+            // that resolves instantly once they're cached on disk)…
+            let folder = try await WhisperKit.download(variant: variant) { progress in
+                self?.onDownloadProgress?(progress.fractionCompleted)
+            }
+            // …then compile and load them onto the ANE — the boolean spinner
+            // phase, `modelFolder` set so this never re-downloads.
             self?.onLoading?(true)
             defer { self?.onLoading?(false) }
-            // download+load in one step; the ANE is WhisperKit's compute default.
             let pipe = try await WhisperKit(
-                WhisperKitConfig(model: variant, verbose: false, logLevel: .none, load: true)
+                WhisperKitConfig(
+                    modelFolder: folder.path, verbose: false, logLevel: .none, load: true
+                )
             )
             self?.ready = true
             return pipe

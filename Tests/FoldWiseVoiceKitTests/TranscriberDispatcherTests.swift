@@ -68,6 +68,36 @@ final class TranscriberDispatcherTests: XCTestCase {
         XCTAssertEqual(loadings, [true, false])
     }
 
+    func testOnDownloadProgressFromTheEngineReachesTheDispatchersSink() {
+        let fake = FakeTranscriber()
+        let dispatcher = TranscriberDispatcher(config: makeConfig()) { _ in fake }
+        var fractions: [Double] = []
+        dispatcher.onDownloadProgress = { fractions.append($0) }
+
+        fake.onDownloadProgress?(0.25)
+        fake.onDownloadProgress?(1.0)
+
+        XCTAssertEqual(fractions, [0.25, 1.0])
+    }
+
+    func testDownloadProgressSinkIsRewiredOntoTheSwappedEngine() throws {
+        let config = makeConfig()
+        var built: [FakeTranscriber] = []
+        let dispatcher = TranscriberDispatcher(config: config) { _ in
+            let fake = FakeTranscriber()
+            built.append(fake)
+            return fake
+        }
+        var fractions: [Double] = []
+        dispatcher.onDownloadProgress = { fractions.append($0) }
+
+        config.setASRModel("whisper-large-v3-turbo")
+        try config.saveAndNotify()
+        built.last?.onDownloadProgress?(0.75)
+
+        XCTAssertEqual(fractions, [0.75], "progress from the swapped-in engine still reaches the sink")
+    }
+
     func testResolvesTheParakeetEngineForAnUnknownFossilID() {
         // A stored MLX fossil resolves to Parakeet without being rewritten.
         let config = Config.defaultConfig(path: dir.appendingPathComponent("modes.json"))
@@ -152,6 +182,7 @@ private final class EngineLifecycleLog {
 private final class LifecycleFake: Transcribing {
     var ready = true
     var onLoading: ((Bool) -> Void)?
+    var onDownloadProgress: ((Double) -> Void)?
     private let index: Int
     private let log: EngineLifecycleLog
 
