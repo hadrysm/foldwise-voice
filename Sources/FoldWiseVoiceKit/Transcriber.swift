@@ -7,10 +7,26 @@ import FluidAudio
 import Foundation
 
 final class Transcriber: Transcribing {
+    private let version: ASRModelCatalog.ParakeetVariant
     private var manager: AsrManager?
     private var loadTask: Task<AsrManager, Error>?
     /// True once models are loaded and transcription is instant.
     private(set) var ready = false
+
+    /// v3 (multilingual) is the default so `Transcriber()` and the launch warmup
+    /// keep loading the out-of-box model; the dispatcher passes v2 for the
+    /// English-only catalog entry.
+    init(version: ASRModelCatalog.ParakeetVariant = .v3) {
+        self.version = version
+    }
+
+    /// Bridge our catalog tag to FluidAudio's checkpoint enum.
+    private var fluidVersion: AsrModelVersion {
+        switch version {
+        case .v2: .v2
+        case .v3: .v3
+        }
+    }
 
     /// Fired when a (down)load starts/ends, for HUD feedback.
     var onLoading: ((Bool) -> Void)?
@@ -33,10 +49,11 @@ final class Transcriber: Transcribing {
 
     private func ensureLoaded() -> Task<AsrManager, Error> {
         if let loadTask { return loadTask }
+        let version = fluidVersion
         let task = Task<AsrManager, Error> { [weak self] in
             self?.onLoading?(true)
             defer { self?.onLoading?(false) }
-            let models = try await AsrModels.downloadAndLoad()
+            let models = try await AsrModels.downloadAndLoad(version: version)
             let manager = AsrManager()
             try await manager.loadModels(models)
             self?.ready = true

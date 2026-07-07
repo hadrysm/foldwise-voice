@@ -10,7 +10,18 @@ final class ASRModelCatalogTests: XCTestCase {
     func testResolvesKnownParakeetID() {
         let entry = ASRModelCatalog.entry(for: "parakeet-v3")
         XCTAssertEqual(entry?.id, "parakeet-v3")
-        XCTAssertEqual(entry?.engine, .parakeet)
+        XCTAssertEqual(entry?.engine, .parakeet(version: .v3))
+    }
+
+    func testResolvesParakeetV2ToTheEnglishOnlyCheckpoint() {
+        let entry = ASRModelCatalog.entry(for: "parakeet-v2")
+        XCTAssertEqual(entry?.engine, .parakeet(version: .v2))
+        XCTAssertEqual(entry?.languages, "English")
+    }
+
+    func testResolvesWhisperSmallToItsVariant() {
+        let entry = ASRModelCatalog.entry(for: "whisper-small")
+        XCTAssertEqual(entry?.engine, .whisper(variant: "openai_whisper-small"))
     }
 
     func testDefaultIDIsAKnownEntry() {
@@ -24,12 +35,12 @@ final class ASRModelCatalogTests: XCTestCase {
     func testUnknownIDFallsBackToParakeetEngine() {
         XCTAssertEqual(
             ASRModelCatalog.engine(forSelected: "mlx-community/whisper-large-v3-turbo"),
-            .parakeet
+            .parakeet(version: .v3)
         )
     }
 
     func testKnownIDResolvesToItsEngine() {
-        XCTAssertEqual(ASRModelCatalog.engine(forSelected: "parakeet-v3"), .parakeet)
+        XCTAssertEqual(ASRModelCatalog.engine(forSelected: "parakeet-v3"), .parakeet(version: .v3))
     }
 
     func testResolvesWhisperTurboToItsEngineAndVariant() {
@@ -48,8 +59,23 @@ final class ASRModelCatalogTests: XCTestCase {
         )
     }
 
-    func testCatalogListsParakeetAndWhisperTurbo() {
-        XCTAssertEqual(ASRModelCatalog.entries.map(\.id), ["parakeet-v3", "whisper-large-v3-turbo"])
+    func testCatalogListsTheFullCuratedRoster() {
+        XCTAssertEqual(
+            ASRModelCatalog.entries.map(\.id),
+            ["parakeet-v3", "parakeet-v2", "whisper-large-v3-turbo", "whisper-small", "whisper-large-v3"]
+        )
+    }
+
+    /// No Whisper `.en` entries and no tiny/base tier: the roster stays
+    /// multilingual-led so Whisper's language reach is the headline (ADR-0006).
+    func testCatalogExcludesEnglishOnlyWhisperAndTinyBaseTiers() {
+        for entry in ASRModelCatalog.entries {
+            if case let .whisper(variant) = entry.engine {
+                XCTAssertFalse(variant.contains(".en"), "\(variant) is an English-only Whisper")
+                XCTAssertFalse(variant.contains("tiny"), "\(variant) is a tiny-tier Whisper")
+                XCTAssertFalse(variant.contains("base"), "\(variant) is a base-tier Whisper")
+            }
+        }
     }
 
     // MARK: - download outcome (pure, mirrors OllamaDeleteOutcomeTests)

@@ -447,12 +447,12 @@ struct SettingsView: View {
 
 // MARK: speech
 
-/// The Speech pane (ADR-0006): a curated ASR catalog with two-step
-/// Download-then-Select. Rows lead with language coverage; a downloaded model
-/// is a selectable row with a checkmark for the active one, an available model
-/// shows a Download button. Selection routes through `onSelectASRModel`, which
-/// persists via `setASRModel` and triggers the dispatcher's drop-before-load
-/// swap. The full sectioned roster and fractional progress arrive in later slices.
+/// The Speech pane (ADR-0006): a curated ASR catalog split into "Your Models"
+/// (downloaded) and "Available", mirroring the Ollama `ModelsPane`. Rows lead
+/// with language coverage; a downloaded model is a selectable row with a
+/// checkmark for the active one, an available model shows a Download button with
+/// fractional progress. Selection routes through `onSelectASRModel`, which
+/// persists via `setASRModel` and triggers the dispatcher's drop-before-load swap.
 struct SpeechPane: View {
     @ObservedObject var model: SettingsModel
 
@@ -466,17 +466,29 @@ struct SpeechPane: View {
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
 
-            Card {
-                ForEach(Array(ASRModelCatalog.entries.enumerated()), id: \.element.id) { i, entry in
-                    if i > 0 { Divider().padding(.leading, 14) }
-                    row(entry)
-                }
-            }
+            let downloaded = ASRModelCatalog.entries.filter { model.asrDownloaded.contains($0.id) }
+            let available = ASRModelCatalog.entries.filter { !model.asrDownloaded.contains($0.id) }
+
+            if !downloaded.isEmpty { section("Your Models", downloaded) }
+            if !available.isEmpty { section("Available", available) }
 
             if !model.asrDownloadError.isEmpty {
                 Label(model.asrDownloadError, systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(.red)
+            }
+        }
+    }
+
+    /// A titled card of rows, mirroring the Ollama `ModelsPane`'s Installed /
+    /// Model-library split so the pane separates downloaded from available.
+    @ViewBuilder
+    private func section(_ title: String, _ entries: [ASRModelCatalog.Entry]) -> some View {
+        sectionHeader(title)
+        Card {
+            ForEach(Array(entries.enumerated()), id: \.element.id) { i, entry in
+                if i > 0 { Divider().padding(.leading, 14) }
+                row(entry)
             }
         }
     }

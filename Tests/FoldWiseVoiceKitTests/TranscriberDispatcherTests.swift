@@ -108,7 +108,7 @@ final class TranscriberDispatcherTests: XCTestCase {
             return FakeTranscriber()
         }
 
-        XCTAssertEqual(engines, [.parakeet])
+        XCTAssertEqual(engines, [.parakeet(version: .v3)])
     }
 
     func testSelectionChangeRebuildsAndSwapsTheEngine() async throws {

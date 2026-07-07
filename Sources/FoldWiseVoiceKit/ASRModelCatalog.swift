@@ -8,12 +8,21 @@
 import Foundation
 
 enum ASRModelCatalog {
+    /// Which FluidAudio Parakeet checkpoint an entry loads. v3 is the
+    /// multilingual (25-language) default; v2 is NVIDIA's English-only sibling.
+    /// A dedicated tag keeps FluidAudio's `AsrModelVersion` out of the catalog.
+    enum ParakeetVariant: Equatable {
+        case v2
+        case v3
+    }
+
     /// Which ASR engine (ADR-0005) runs a catalog entry, and the model variant
     /// it needs. Each case maps to one `Transcribing` conformer behind the
-    /// dispatcher; `.whisper` carries the exact `argmaxinc/whisperkit-coreml`
-    /// variant folder name so `WhisperKit(model:)` resolves it verbatim.
+    /// dispatcher; `.parakeet` carries the FluidAudio checkpoint and `.whisper`
+    /// the exact `argmaxinc/whisperkit-coreml` variant folder name so the
+    /// engine resolves it verbatim.
     enum Engine: Equatable {
-        case parakeet
+        case parakeet(version: ParakeetVariant)
         case whisper(variant: String)
     }
 
@@ -26,26 +35,59 @@ enum ASRModelCatalog {
         let size: String
         let speed: Int // 1…5, higher = faster transcription
         let quality: Int // 1…5, higher = more accurate
+        /// Hardcoded, currently inert capability flags (ADR-0006): stored honestly
+        /// from the engines' docs, but nothing consumes them yet — no streaming
+        /// or translate UI ships in this feature.
+        let streaming: Bool
+        let translate: Bool
         let blurb: String
     }
 
     /// The out-of-box default: Parakeet TDT v3, already warmed at launch.
     static let defaultID = "parakeet-v3"
 
+    /// Curated, all-honest roster (ADR-0006): Parakeet v3/v2 plus a multilingual
+    /// Whisper size tier. No Whisper `.en` variants and no tiny/base — they would
+    /// only make Whisper look worse than Parakeet without adding language reach.
+    /// Language lists and translate flags come from the engines' own docs;
+    /// Parakeet has no X→English translate path, Whisper does.
     static let entries: [Entry] = [
         Entry(
-            id: "parakeet-v3", engine: .parakeet, name: "Parakeet TDT v3",
+            id: "parakeet-v3", engine: .parakeet(version: .v3), name: "Parakeet TDT v3",
             languages: "25 languages", size: "600 MB", speed: 5, quality: 4,
+            streaming: false, translate: false,
             blurb: "The built-in default. Runs on the Neural Engine for instant, "
                 + "power-efficient dictation across 25 European languages plus Japanese."
+        ),
+        Entry(
+            id: "parakeet-v2", engine: .parakeet(version: .v2), name: "Parakeet TDT v2",
+            languages: "English", size: "600 MB", speed: 5, quality: 4,
+            streaming: false, translate: false,
+            blurb: "NVIDIA's English-only Parakeet — the same instant Neural-Engine "
+                + "speed as v3. Pick it if you only dictate in English."
         ),
         Entry(
             id: "whisper-large-v3-turbo",
             engine: .whisper(variant: "openai_whisper-large-v3-v20240930_turbo_632MB"),
             name: "Whisper large-v3-turbo", languages: "~99 languages", size: "632 MB",
-            speed: 3, quality: 4,
+            speed: 3, quality: 4, streaming: false, translate: true,
             blurb: "OpenAI's Whisper, near-large-v3 accuracy at a fraction of the size. "
                 + "Downloads on first use, then runs on the Neural Engine across ~99 languages."
+        ),
+        Entry(
+            id: "whisper-small", engine: .whisper(variant: "openai_whisper-small"),
+            name: "Whisper small", languages: "~99 languages", size: "483 MB",
+            speed: 4, quality: 3, streaming: false, translate: true,
+            blurb: "The lightest multilingual Whisper — faster and smaller than the large "
+                + "models, with lower accuracy. A good fit for quick notes across ~99 languages."
+        ),
+        Entry(
+            id: "whisper-large-v3",
+            engine: .whisper(variant: "openai_whisper-large-v3_947MB"),
+            name: "Whisper large-v3", languages: "~99 languages", size: "947 MB",
+            speed: 2, quality: 5, streaming: false, translate: true,
+            blurb: "Full Whisper large-v3 — the most accurate option, at the cost of size "
+                + "and speed. Downloads on first use, then runs on the Neural Engine."
         ),
     ]
 
@@ -56,10 +98,10 @@ enum ASRModelCatalog {
     }
 
     /// The engine that should transcribe for a stored id. An unknown or fossil
-    /// id falls back to the default engine (Parakeet) *without* the stored
+    /// id falls back to the default engine (Parakeet v3) *without* the stored
     /// string being rewritten (ADR-0006) — the fallback is a read-time decision.
     static func engine(forSelected id: String) -> Engine {
-        entry(for: id)?.engine ?? .parakeet
+        entry(for: id)?.engine ?? .parakeet(version: .v3)
     }
 
     /// Pure outcome for a download attempt: map the engine's raw failure (nil on

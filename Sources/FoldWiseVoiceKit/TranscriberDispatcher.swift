@@ -43,7 +43,7 @@ final class TranscriberDispatcher: Transcribing {
     /// default `makeEngine`; tests inject fakes instead.
     static func buildEngine(_ engine: ASRModelCatalog.Engine) -> Transcribing {
         switch engine {
-        case .parakeet: Transcriber()
+        case let .parakeet(version): Transcriber(version: version)
         case let .whisper(variant): WhisperTranscriber(variant: variant)
         }
     }
