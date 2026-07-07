@@ -83,23 +83,17 @@ final class TranscriberDispatcher: Transcribing {
     }
 
     func warmup() {
-        lock.lock()
-        let current = engine
-        lock.unlock()
+        let current = lock.withLock { engine }
         current?.warmup()
     }
 
     func prepare() async throws {
-        lock.lock()
-        let current = engine
-        lock.unlock()
+        let current = lock.withLock { engine }
         try await current?.prepare()
     }
 
     func transcribe(_ samples: [Float]) async throws -> String {
-        lock.lock()
-        let current = engine
-        lock.unlock()
+        let current = lock.withLock { engine }
         // Unreachable in practice: `rebuild` swaps the engine under a single lock
         // hold, and `init` sets it before any caller runs — so a locked read
         // never sees nil. Fail loudly rather than silently drop a dictation.

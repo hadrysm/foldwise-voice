@@ -8,8 +8,18 @@ import Foundation
 import WhisperKit
 
 final class WhisperTranscriber: Transcribing {
+    /// WhisperKit isn't `Sendable` (unlike FluidAudio's `AsrManager`, which is
+    /// why the twin Parakeet `Transcriber` needs no such box), so the loaded
+    /// pipeline can't cross the load-`Task`'s concurrency boundary on its own.
+    /// This wrapper asserts that safety by hand: the dictation pipeline drives
+    /// one job at a time (`Pipeline` chains its jobs), so the pipe is only ever
+    /// touched from a single serial context.
+    private struct LoadedPipe: @unchecked Sendable {
+        let pipe: WhisperKit
+    }
+
     private let variant: String
-    private var loadTask: Task<WhisperKit, Error>?
+    private var loadTask: Task<LoadedPipe, Error>?
     /// True once the model is loaded and transcription is instant.
     private(set) var ready = false
 
@@ -44,14 +54,14 @@ final class WhisperTranscriber: Transcribing {
         }
     }
 
-    private func ensureLoaded() -> Task<WhisperKit, Error> {
+    private func ensureLoaded() -> Task<LoadedPipe, Error> {
         if let loadTask { return loadTask }
         let variant = variant
-        let task = Task<WhisperKit, Error> { [weak self] in
+        let task = Task<LoadedPipe, Error> { [weak self] in
             // Two phases so the HUD can distinguish them (#93): first fetch the
             // CoreML weights from Hugging Face, reporting a 0…1 fraction (a no-op
             // that resolves instantly once they're cached on disk)…
-            let folder = try await WhisperKit.download(variant: variant) { progress in
+            let folder = try await WhisperKit.download(variant: variant) { [weak self] progress in
                 self?.onDownloadProgress?(progress.fractionCompleted)
             }
             // …then compile and load them — the boolean spinner phase,
@@ -74,21 +84,21 @@ final class WhisperTranscriber: Transcribing {
                 )
             )
             self?.ready = true
-            return pipe
+            return LoadedPipe(pipe: pipe)
         }
         loadTask = task
         return task
     }
 
     func transcribe(_ samples: [Float]) async throws -> String {
-        let pipe: WhisperKit
+        let loaded: LoadedPipe
         do {
-            pipe = try await ensureLoaded().value
+            loaded = try await ensureLoaded().value
         } catch {
             loadTask = nil // allow a retry on the next dictation
             throw error
         }
-        let results = try await pipe.transcribe(audioArray: samples)
+        let results = try await loaded.pipe.transcribe(audioArray: samples)
         return results.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
