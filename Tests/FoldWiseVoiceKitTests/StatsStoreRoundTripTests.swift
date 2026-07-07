@@ -98,6 +98,43 @@ final class StatsStoreRoundTripTests: XCTestCase {
         XCTAssertNil(store.load())
     }
 
+    /// A wipe wins an advance that raced it: `clearHistory` erases two
+    /// independently-locked stores in sequence, so a dictation append can land its
+    /// `advance` after `reset` deleted `stats.json`. The `clearedThrough` guard
+    /// skips any advance whose entry predates the wipe, so the entry that `reset`
+    /// just erased is not resurrected — `load` stays nil (PRD #97). A fixed clock
+    /// makes the ordering deterministic: the wipe instant sits after the entry day.
+    func testAdvanceAfterResetDoesNotResurrectAPreResetEntry() throws {
+        let calendar = try calendar()
+        let resetInstant = try day(calendar, 2026, 6, 1)
+        let store = JSONStatsStore(url: storeURL, now: { resetInstant })
+        let earlyDay = try day(calendar, 2026, 1, 1)
+        store.advance(on: earlyDay, calendar: calendar) // seeds the run
+
+        store.reset() // stamps clearedThrough = resetInstant, deletes the file
+        store.advance(on: earlyDay, calendar: calendar) // the raced, pre-wipe append
+
+        XCTAssertNil(store.load())
+    }
+
+    /// A dictation recorded after the wipe still starts a fresh run: its entry day
+    /// sits at or after `clearedThrough`, so it clears the guard and re-seeds the
+    /// streak from nil → 1 exactly as a first-ever advance would (PRD #97).
+    func testAdvanceOnANewEntryAfterResetStartsAFreshRun() throws {
+        let calendar = try calendar()
+        let resetInstant = try day(calendar, 2026, 6, 1)
+        let store = JSONStatsStore(url: storeURL, now: { resetInstant })
+
+        store.reset() // clearedThrough = resetInstant
+        let laterDay = try day(calendar, 2026, 7, 1)
+        store.advance(on: laterDay, calendar: calendar)
+
+        XCTAssertEqual(
+            store.load(),
+            StreakRecord(currentStreak: 1, lastActiveDay: calendar.startOfDay(for: laterDay))
+        )
+    }
+
     /// An advance to an unwritable path (parent is a file, not a directory) must
     /// not throw — it degrades to a no-op, so a failing stats write can never
     /// break a dictation session (PRD #97).

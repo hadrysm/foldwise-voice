@@ -115,9 +115,29 @@ final class JSONStatsStore: StatsStore {
     /// thread (the record seam) while the Settings controller loads it on the main
     /// actor, so a load must never interleave with an advance's read-then-write.
     private let lock = NSLock()
+    /// The clock, injected for deterministic tests (mirrors how the rest of the
+    /// codebase injects Calendar/dates). Production defaults to the wall clock.
+    private let now: () -> Date
+    /// The instant of the most recent wipe, or `nil` until one happens. Guarded by
+    /// `lock` — the same critical section as `reset` and `advance` — so it settles
+    /// the race between a `Clear All` / delete-on-turn-off wipe and a dictation
+    /// append that finished just as the wipe ran (PRD #97). `clearHistory` erases
+    /// two independently-locked stores in sequence (history, then stats), so an
+    /// append that unlocked the history store before `clearAll` can still land its
+    /// `advance` after `reset` deleted `stats.json` — resurrecting a streak for
+    /// data that was just erased. Stamping the wipe instant here and skipping any
+    /// `advance` whose entry predates it makes the wipe win regardless of interleave:
+    /// if `advance` runs before `reset`, `reset` deletes the file it wrote (streak
+    /// gone); if `advance` runs after `reset`, the `day < clearedThrough` guard skips
+    /// it. A genuinely new dictation recorded after the wipe has an entry date at or
+    /// after `now()`, so it passes the guard and re-seeds the run from nil → 1 exactly
+    /// as before. No persisted state, no extra lock, and no behavior change for the
+    /// normal path — `clearedThrough` stays `nil` until the first `reset`.
+    private var clearedThrough: Date?
 
-    init(url: URL) {
+    init(url: URL, now: @escaping () -> Date = { Date() }) {
         self.url = url
+        self.now = now
     }
 
     /// `stats.json` alongside `history.jsonl` in Application Support.
@@ -137,6 +157,12 @@ final class JSONStatsStore: StatsStore {
     func advance(on day: Date, calendar: Calendar) {
         lock.lock()
         defer { lock.unlock() }
+        // A wipe wins any advance for an entry recorded before it: this append
+        // raced a `reset` that already erased the run, so re-seeding `stats.json`
+        // from its entry would resurrect a streak for data that was just deleted
+        // (PRD #97). A post-wipe dictation's entry is at or after the wipe instant,
+        // so it falls through and re-seeds normally.
+        if let clearedThrough, day < clearedThrough { return }
         let updated = StreakRules.advance(readRecord(), on: day, calendar: calendar)
         write(updated)
     }
@@ -144,6 +170,7 @@ final class JSONStatsStore: StatsStore {
     func reset() {
         lock.lock()
         defer { lock.unlock() }
+        clearedThrough = now()
         do {
             let fm = FileManager.default
             if fm.fileExists(atPath: url.path) {
