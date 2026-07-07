@@ -81,6 +81,8 @@ final class SettingsModel: ObservableObject {
     /// keeps the pane on the indeterminate spinner (#93).
     @Published var asrDownloadFraction: Double?
     @Published var asrDownloadError = ""
+    @Published var asrDeleting: String?
+    @Published var asrDeleteError = ""
     @Published var installed: [OllamaClient.InstalledModel]? // nil = checking, [] = Ollama down
     @Published var pullingModel: String?
     @Published var pullStatus = ""
@@ -120,6 +122,9 @@ final class SettingsModel: ObservableObject {
     /// available one's weights so it becomes selectable.
     var onSelectASRModel: ((String) -> Void)?
     var onDownloadASRModel: ((String) -> Void)?
+    /// Delete a downloaded model's on-disk weights to reclaim space (#95). If it
+    /// was active, dictation falls back to Parakeet until another is selected.
+    var onDeleteASRModel: ((String) -> Void)?
     var onEditFile: (() -> Void)?
     var onCheckUpdates: (() -> Void)?
     /// History pane row actions, mediated by SettingsController (which owns the

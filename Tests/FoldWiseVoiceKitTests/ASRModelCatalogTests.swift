@@ -98,4 +98,19 @@ final class ASRModelCatalogTests: XCTestCase {
         let message = ASRModelCatalog.downloadError(for: whisper, failure: "network down")
         XCTAssertEqual(message, "Couldn't download Whisper large-v3-turbo: network down")
     }
+
+    // MARK: - delete outcome (pure, mirrors OllamaDeleteOutcomeTests)
+
+    func testDeleteOutcomeForInactiveModelKeepsSelection() {
+        let outcome = ASRModelCatalog.deleteOutcome(for: whisper, isActive: false)
+        XCTAssertFalse(outcome.fallsBackToDefault)
+        XCTAssertTrue(outcome.message.contains("frees 632 MB"))
+        XCTAssertFalse(outcome.message.contains("falls back"))
+    }
+
+    func testDeleteOutcomeForActiveModelFallsBackToDefault() {
+        let outcome = ASRModelCatalog.deleteOutcome(for: whisper, isActive: true)
+        XCTAssertTrue(outcome.fallsBackToDefault)
+        XCTAssertTrue(outcome.message.contains("falls back to Parakeet"))
+    }
 }

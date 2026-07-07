@@ -20,14 +20,6 @@ final class Transcriber: Transcribing {
         self.version = version
     }
 
-    /// Bridge our catalog tag to FluidAudio's checkpoint enum.
-    private var fluidVersion: AsrModelVersion {
-        switch version {
-        case .v2: .v2
-        case .v3: .v3
-        }
-    }
-
     /// Fired when a (down)load starts/ends, for HUD feedback.
     var onLoading: ((Bool) -> Void)?
     /// FluidAudio surfaces no download fraction, so Parakeet never fires this
@@ -49,7 +41,7 @@ final class Transcriber: Transcribing {
 
     private func ensureLoaded() -> Task<AsrManager, Error> {
         if let loadTask { return loadTask }
-        let version = fluidVersion
+        let version = ASRModelStore.fluidAudioVersion(version)
         let task = Task<AsrManager, Error> { [weak self] in
             self?.onLoading?(true)
             defer { self?.onLoading?(false) }

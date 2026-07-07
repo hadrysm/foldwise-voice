@@ -455,6 +455,8 @@ struct SettingsView: View {
 /// persists via `setASRModel` and triggers the dispatcher's drop-before-load swap.
 struct SpeechPane: View {
     @ObservedObject var model: SettingsModel
+    /// Armed by a downloaded row's kebab; drives the delete confirmation alert.
+    @State private var pendingDelete: ASRModelCatalog.Entry?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -477,6 +479,27 @@ struct SpeechPane: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.red)
             }
+            if !model.asrDeleteError.isEmpty {
+                Label(model.asrDeleteError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+            }
+        }
+        .alert(
+            "Delete \(pendingDelete?.name ?? "")?",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            presenting: pendingDelete
+        ) { entry in
+            Button("Delete", role: .destructive) { model.onDeleteASRModel?(entry.id) }
+            Button("Cancel", role: .cancel) {}
+        } message: { entry in
+            Text(
+                ASRModelCatalog.deleteOutcome(for: entry, isActive: model.asrModel == entry.id)
+                    .message
+            )
         }
     }
 
@@ -500,6 +523,10 @@ struct SpeechPane: View {
         let downloaded = model.asrDownloaded.contains(entry.id)
         let selected = model.asrModel == entry.id
         let downloading = model.asrDownloading == entry.id
+        let deleting = model.asrDeleting == entry.id
+        // The built-in default (Parakeet v3) is the permanent fallback and
+        // re-downloads at launch, so it is never offered for deletion.
+        let deletable = downloaded && !deleting && entry.id != ASRModelCatalog.defaultID
         return HStack(alignment: .center, spacing: 12) {
             Button {
                 model.onSelectASRModel?(entry.id)
@@ -511,16 +538,23 @@ struct SpeechPane: View {
                         Text(entry.blurb).font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 16)
-                    ratings(entry)
-                    if downloaded {
-                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(selected ? .blue : .secondary)
+                    if deleting {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Deleting…").font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                    } else {
+                        ratings(entry)
+                        if downloaded {
+                            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(selected ? .blue : .secondary)
+                        }
                     }
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(!downloaded)
+            .disabled(!downloaded || deleting)
 
             if downloading {
                 downloadProgress
@@ -528,10 +562,33 @@ struct SpeechPane: View {
                 Button("Download") { model.onDownloadASRModel?(entry.id) }
                     .controlSize(.small)
                     .disabled(model.asrDownloading != nil)
+            } else if deletable {
+                deleteMenu(entry)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// The trailing kebab on a downloaded row: a borderless `ellipsis` whose one
+    /// item arms the delete confirmation. A sibling of the select `Button`, never
+    /// nested, so opening it can't also select the model (cf. `ModelsPane`).
+    private func deleteMenu(_ entry: ASRModelCatalog.Entry) -> some View {
+        Menu {
+            Button("Delete…", role: .destructive) { pendingDelete = entry }
+        } label: {
+            Image(systemName: "ellipsis")
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .controlSize(.small)
+        .fixedSize()
+        .disabled(model.asrDownloading != nil || model.asrDeleting != nil)
+        .accessibilityLabel("More actions for \(entry.name)")
     }
 
     /// A fractional bar mirroring the Ollama pull UX once the engine reports a

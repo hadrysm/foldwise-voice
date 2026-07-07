@@ -59,6 +59,7 @@ final class SettingsController {
         model.onRefreshModels = { [weak self] in self?.refreshModels() }
         model.onSelectASRModel = { [weak self] id in self?.selectASRModel(id) }
         model.onDownloadASRModel = { [weak self] id in self?.downloadASRModel(id) }
+        model.onDeleteASRModel = { [weak self] id in self?.deleteASRModel(id) }
         model.onEditFile = { [weak self] in
             guard let self else { return }
             NSWorkspace.shared.open(config.path)
@@ -107,6 +108,8 @@ final class SettingsController {
         model.asrDownloaded = downloaded
         model.asrDownloading = nil
         model.asrDownloadError = ""
+        model.asrDeleting = nil
+        model.asrDeleteError = ""
         model.pttKey = config.hotkey
         model.toggleKey = config.toggleHotkey ?? ""
         model.pauseAudio = config.pauseAudio
@@ -252,6 +255,34 @@ final class SettingsController {
             return nil
         } catch {
             return "\(error)"
+        }
+    }
+
+    /// Delete a downloaded model's on-disk weights (#95). Single-flight and
+    /// blocked while a download runs, so the app is only ever in one
+    /// ASR-mutating state at a time; the built-in default (Parakeet v3) is never
+    /// deletable — it re-downloads at launch and is the fallback. Deleting the
+    /// active model re-selects the default via `commit`, which fires the
+    /// dispatcher's drop-before-load swap so dictation falls back to Parakeet.
+    private func deleteASRModel(_ id: String) {
+        guard model.asrDeleting == nil, model.asrDownloading == nil,
+              id != ASRModelCatalog.defaultID,
+              let entry = ASRModelCatalog.entry(for: id) else { return }
+        model.asrDeleting = id
+        model.asrDeleteError = ""
+        Task { @MainActor in
+            let failure = await Task.detached { ASRModelStore.delete(entry.engine) }.value
+            self.model.asrDeleting = nil
+            if let failure {
+                self.model.asrDeleteError = "Couldn't delete \(entry.name): \(failure)"
+                return
+            }
+            self.model.asrDownloaded.remove(id)
+            if ASRModelCatalog.deleteOutcome(for: entry, isActive: self.model.asrModel == id)
+                .fallsBackToDefault {
+                self.model.asrModel = ASRModelCatalog.defaultID
+                self.commit()
+            }
         }
     }
 
