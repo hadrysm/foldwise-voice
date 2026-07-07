@@ -25,7 +25,7 @@ struct StatsPane: View {
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
 
-            if model.historyEntries.isEmpty {
+            if model.historyEntries.isEmpty && model.currentStreak == nil {
                 emptyState
             } else {
                 populated
@@ -118,9 +118,10 @@ struct StatsPane: View {
         return "~\(Int(minutes.rounded())) min"
     }
 
-    /// No kept dictations to project over. Adapts to *why*: when saving is off it
-    /// points at the switch that turns it back on; otherwise it invites the user
-    /// to dictate.
+    /// No kept dictations to project over *and* no live streak to keep showing —
+    /// so there is genuinely nothing to reflect. Adapts to *why*: when saving is
+    /// off it points at the switch that turns it back on; otherwise it invites the
+    /// user to dictate.
     private var emptyState: some View {
         Card {
             if model.saveHistory {
