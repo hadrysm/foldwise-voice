@@ -100,6 +100,28 @@ final class TranscriberDispatcherTests: XCTestCase {
         XCTAssertEqual(text, "from-engine-1", "transcription now runs on the swapped-in engine")
     }
 
+    func testReleasesTheOldEngineBeforeBuildingTheNext() throws {
+        // Drop-before-load (ADR-0005): the previously-loaded engine must be
+        // released before the next is constructed, so a switch never holds two
+        // models resident. Each fake logs its build (via the factory) and its
+        // deinit, so the interleaving pins the ordering with no real models.
+        let config = makeConfig()
+        let log = EngineLifecycleLog()
+        var built = 0
+        let dispatcher = TranscriberDispatcher(config: config) { _ in
+            let index = built
+            built += 1
+            log.append("build-\(index)")
+            return LifecycleFake(index: index, log: log)
+        }
+
+        config.setASRModel("whisper-large-v3-turbo")
+        try config.saveAndNotify()
+
+        XCTAssertEqual(log.events, ["build-0", "release-0", "build-1"])
+        _ = dispatcher // keep alive so engine-1 isn't released before the assert
+    }
+
     func testUnrelatedChangeDoesNotRebuildTheEngine() throws {
         let config = makeConfig()
         var buildCount = 0
@@ -113,5 +135,38 @@ final class TranscriberDispatcherTests: XCTestCase {
         try config.saveAndNotify()
 
         XCTAssertEqual(buildCount, 1, "a non-ASR change leaves the engine untouched")
+    }
+}
+
+/// Ordered log of engine build/release events, shared between the factory and
+/// the fakes it produces, so a test can assert drop-before-load interleaving.
+private final class EngineLifecycleLog {
+    private(set) var events: [String] = []
+    func append(_ event: String) {
+        events.append(event)
+    }
+}
+
+/// A `Transcribing` that records its own deallocation, so a test can prove the
+/// dispatcher released it (freeing its would-be model) before building the next.
+private final class LifecycleFake: Transcribing {
+    var ready = true
+    var onLoading: ((Bool) -> Void)?
+    private let index: Int
+    private let log: EngineLifecycleLog
+
+    init(index: Int, log: EngineLifecycleLog) {
+        self.index = index
+        self.log = log
+    }
+
+    deinit {
+        log.append("release-\(index)")
+    }
+
+    func warmup() {}
+    func prepare() async throws {}
+    func transcribe(_: [Float]) async throws -> String {
+        ""
     }
 }

@@ -8,6 +8,7 @@ final class SettingsModel: ObservableObject {
     enum Pane: String, CaseIterable, Identifiable {
         case home = "Home"
         case modes = "Modes"
+        case speech = "Speech"
         case models = "Models"
         case configuration = "Configuration"
         case sound = "Sound"
@@ -20,6 +21,7 @@ final class SettingsModel: ObservableObject {
             switch self {
             case .home: "house.fill"
             case .modes: "sparkles"
+            case .speech: "waveform"
             case .models: "shippingbox.fill"
             case .configuration: "gearshape.fill"
             case .sound: "speaker.wave.2.fill"
@@ -31,6 +33,7 @@ final class SettingsModel: ObservableObject {
             switch self {
             case .home: .orange
             case .modes: .blue
+            case .speech: .indigo
             case .models: .purple
             case .configuration: .gray
             case .sound: .teal
@@ -42,6 +45,7 @@ final class SettingsModel: ObservableObject {
             switch self {
             case .home: "FoldWise Voice"
             case .modes: "Modes"
+            case .speech: "Speech Recognition"
             case .models: "Ollama Models"
             case .configuration: "Keyboard Shortcuts"
             case .sound: "Sound"
@@ -66,6 +70,13 @@ final class SettingsModel: ObservableObject {
     @Published var updateState: UpdateState = .idle
     @Published var activeMode = ""
     @Published var selectedModel = ""
+    /// The active ASR model's catalog id (ADR-0006). Speech-pane state below.
+    @Published var asrModel = ASRModelCatalog.defaultID
+    /// Catalog ids whose weights are present and thus selectable. Parakeet (the
+    /// on-device default) is always in here; Whisper joins after a download.
+    @Published var asrDownloaded: Set<String> = [ASRModelCatalog.defaultID]
+    @Published var asrDownloading: String?
+    @Published var asrDownloadError = ""
     @Published var installed: [OllamaClient.InstalledModel]? // nil = checking, [] = Ollama down
     @Published var pullingModel: String?
     @Published var pullStatus = ""
@@ -100,6 +111,11 @@ final class SettingsModel: ObservableObject {
     var onInstallModel: ((String) -> Void)?
     var onDeleteModel: ((String) -> Void)?
     var onRefreshModels: (() -> Void)?
+    /// Speech pane, the ASR analogues of `onSelectModel` / `onInstallModel`
+    /// (ADR-0006): select an already-downloaded model as active; download an
+    /// available one's weights so it becomes selectable.
+    var onSelectASRModel: ((String) -> Void)?
+    var onDownloadASRModel: ((String) -> Void)?
     var onEditFile: (() -> Void)?
     var onCheckUpdates: (() -> Void)?
     /// History pane row actions, mediated by SettingsController (which owns the

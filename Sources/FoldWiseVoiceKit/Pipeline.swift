@@ -22,6 +22,10 @@ protocol Transcribing: AnyObject {
     var ready: Bool { get }
     var onLoading: ((Bool) -> Void)? { get set }
     func warmup()
+    /// Load (and, on first use, download) the model, throwing on failure.
+    /// The awaitable, error-reporting sibling of fire-and-forget `warmup()`,
+    /// used by the Speech pane's Download action to fetch weights up front.
+    func prepare() async throws
     func transcribe(_ samples: [Float]) async throws -> String
 }
 

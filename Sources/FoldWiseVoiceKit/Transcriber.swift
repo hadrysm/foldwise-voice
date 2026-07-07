@@ -19,6 +19,15 @@ final class Transcriber: Transcribing {
         _ = ensureLoaded()
     }
 
+    func prepare() async throws {
+        do {
+            _ = try await ensureLoaded().value
+        } catch {
+            loadTask = nil // allow a retry on the next download attempt
+            throw error
+        }
+    }
+
     private func ensureLoaded() -> Task<AsrManager, Error> {
         if let loadTask { return loadTask }
         let task = Task<AsrManager, Error> { [weak self] in

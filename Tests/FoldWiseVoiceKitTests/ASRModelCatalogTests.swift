@@ -31,4 +31,45 @@ final class ASRModelCatalogTests: XCTestCase {
     func testKnownIDResolvesToItsEngine() {
         XCTAssertEqual(ASRModelCatalog.engine(forSelected: "parakeet-v3"), .parakeet)
     }
+
+    func testResolvesWhisperTurboToItsEngineAndVariant() {
+        let entry = ASRModelCatalog.entry(for: "whisper-large-v3-turbo")
+        XCTAssertEqual(entry?.id, "whisper-large-v3-turbo")
+        XCTAssertEqual(
+            entry?.engine,
+            .whisper(variant: "openai_whisper-large-v3-v20240930_turbo_632MB")
+        )
+    }
+
+    func testWhisperEngineResolvesFromSelectedID() {
+        XCTAssertEqual(
+            ASRModelCatalog.engine(forSelected: "whisper-large-v3-turbo"),
+            .whisper(variant: "openai_whisper-large-v3-v20240930_turbo_632MB")
+        )
+    }
+
+    func testCatalogListsParakeetAndWhisperTurbo() {
+        XCTAssertEqual(ASRModelCatalog.entries.map(\.id), ["parakeet-v3", "whisper-large-v3-turbo"])
+    }
+
+    // MARK: - download outcome (pure, mirrors OllamaDeleteOutcomeTests)
+
+    private var whisper: ASRModelCatalog.Entry {
+        // Force-unwrap: the entry is a compile-time-constant catalog member.
+        // swiftlint:disable:next force_unwrapping
+        ASRModelCatalog.entry(for: "whisper-large-v3-turbo")!
+    }
+
+    func testDownloadSuccessMapsToNoError() {
+        XCTAssertNil(ASRModelCatalog.downloadError(for: whisper, failure: nil))
+    }
+
+    func testEmptyFailureMapsToNoError() {
+        XCTAssertNil(ASRModelCatalog.downloadError(for: whisper, failure: ""))
+    }
+
+    func testFailureMapsToNamedError() {
+        let message = ASRModelCatalog.downloadError(for: whisper, failure: "network down")
+        XCTAssertEqual(message, "Couldn't download Whisper large-v3-turbo: network down")
+    }
 }

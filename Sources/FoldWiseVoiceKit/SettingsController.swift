@@ -57,6 +57,8 @@ final class SettingsController {
         model.onInstallModel = { [weak self] name in self?.installModel(name) }
         model.onDeleteModel = { [weak self] name in self?.deleteModel(name) }
         model.onRefreshModels = { [weak self] in self?.refreshModels() }
+        model.onSelectASRModel = { [weak self] id in self?.selectASRModel(id) }
+        model.onDownloadASRModel = { [weak self] id in self?.downloadASRModel(id) }
         model.onEditFile = { [weak self] in
             guard let self else { return }
             NSWorkspace.shared.open(config.path)
@@ -96,6 +98,15 @@ final class SettingsController {
         model.llmModes = Set(config.modeOrder.filter { config.modes[$0]?.usesLLM == true })
         model.activeMode = config.activeMode
         model.selectedModel = config.llmModel ?? ""
+        model.asrModel = config.asrModel
+        // The active model must already be on disk (it's transcribing), so seed
+        // the downloaded set with the default plus the persisted choice; further
+        // downloads join it live. On-disk detection of past downloads is slice 5.
+        var downloaded: Set<String> = [ASRModelCatalog.defaultID]
+        if ASRModelCatalog.entry(for: config.asrModel) != nil { downloaded.insert(config.asrModel) }
+        model.asrDownloaded = downloaded
+        model.asrDownloading = nil
+        model.asrDownloadError = ""
         model.pttKey = config.hotkey
         model.toggleKey = config.toggleHotkey ?? ""
         model.pauseAudio = config.pauseAudio
@@ -191,6 +202,48 @@ final class SettingsController {
             } else {
                 self.refreshModels()
             }
+        }
+    }
+
+    // MARK: - ASR models (Speech pane)
+
+    /// Make an already-downloaded ASR model active (ADR-0006). `commit` writes
+    /// it across every mode via `setASRModel` and notifies the dispatcher, which
+    /// performs the drop-before-load swap.
+    private func selectASRModel(_ id: String) {
+        model.asrModel = id
+        commit()
+    }
+
+    /// Fetch an available model's weights so it becomes selectable. Single-flight
+    /// and config-untouched: on failure the previous selection is preserved and
+    /// an error is shown; on success the id joins the downloaded set (ADR-0005).
+    private func downloadASRModel(_ id: String) {
+        guard model.asrDownloading == nil, let entry = ASRModelCatalog.entry(for: id) else { return }
+        model.asrDownloading = id
+        model.asrDownloadError = ""
+        Task { @MainActor in
+            let failure = await Self.prepareASR(entry)
+            self.model.asrDownloading = nil
+            if let message = ASRModelCatalog.downloadError(for: entry, failure: failure) {
+                self.model.asrDownloadError = message
+            } else {
+                self.model.asrDownloaded.insert(id)
+            }
+        }
+    }
+
+    /// Build the entry's engine and load — downloading on first use — its
+    /// weights, returning a failure string or nil. The throwaway engine is
+    /// released when this returns, so selecting the model later reloads it from
+    /// the on-disk cache without ever holding two Whisper models resident.
+    private static func prepareASR(_ entry: ASRModelCatalog.Entry) async -> String? {
+        let engine = TranscriberDispatcher.buildEngine(entry.engine)
+        do {
+            try await engine.prepare()
+            return nil
+        } catch {
+            return "\(error)"
         }
     }
 
@@ -296,6 +349,9 @@ final class SettingsController {
 
         if !model.selectedModel.isEmpty {
             config.setLLMModel(model.selectedModel)
+        }
+        if !model.asrModel.isEmpty {
+            config.setASRModel(model.asrModel)
         }
         config.setActiveMode(model.activeMode)
         config.hotkey = ptt

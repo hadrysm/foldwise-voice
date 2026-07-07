@@ -127,6 +127,7 @@ struct SettingsView: View {
                     switch model.pane {
                     case .home: homePane
                     case .modes: modesPane
+                    case .speech: SpeechPane(model: model)
                     case .models: ModelsPane(model: model)
                     case .configuration: configurationPane
                     case .sound: soundPane
@@ -157,9 +158,10 @@ struct SettingsView: View {
             Card {
                 CardRow(
                     title: "Speech recognition",
-                    subtitle: "Parakeet TDT v3 — fully on-device (Apple Neural Engine)"
+                    subtitle: asrSubtitle
                 ) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    Button("Change…") { model.pane = .speech }
+                        .controlSize(.small)
                 }
                 Divider().padding(.leading, 14)
                 CardRow(
@@ -216,6 +218,18 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    /// The active ASR model, described for the Home card. An unknown/fossil id
+    /// (ADR-0006) resolves to the Parakeet default the app actually transcribes
+    /// with, so the card never claims a model that isn't running.
+    private var asrSubtitle: String {
+        let entry = ASRModelCatalog.entry(for: model.asrModel)
+            ?? ASRModelCatalog.entry(for: ASRModelCatalog.defaultID)
+        guard let entry else {
+            return "Parakeet TDT v3 — fully on-device (Apple Neural Engine)"
+        }
+        return "\(entry.name) — \(entry.languages), on-device (Apple Neural Engine)"
     }
 
     private var updateSubtitle: String {
@@ -427,6 +441,95 @@ struct SettingsView: View {
                 .toggleStyle(.switch)
                 .labelsHidden()
             }
+        }
+    }
+}
+
+// MARK: speech
+
+/// The Speech pane (ADR-0006): a curated ASR catalog with two-step
+/// Download-then-Select. Rows lead with language coverage; a downloaded model
+/// is a selectable row with a checkmark for the active one, an available model
+/// shows a Download button. Selection routes through `onSelectASRModel`, which
+/// persists via `setASRModel` and triggers the dispatcher's drop-before-load
+/// swap. The full sectioned roster and fractional progress arrive in later slices.
+struct SpeechPane: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(
+                "Choose which speech model transcribes your dictation — it applies to "
+                    + "every mode. Parakeet is built in; Whisper reaches ~99 languages and "
+                    + "downloads on first use, then runs on-device."
+            )
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+
+            Card {
+                ForEach(Array(ASRModelCatalog.entries.enumerated()), id: \.element.id) { i, entry in
+                    if i > 0 { Divider().padding(.leading, 14) }
+                    row(entry)
+                }
+            }
+
+            if !model.asrDownloadError.isEmpty {
+                Label(model.asrDownloadError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    /// The select `Button` (title, ratings, checkmark) and the trailing
+    /// Download/spinner are siblings, never nested — a disabled select row would
+    /// otherwise also disable a nested Download button (cf. `ModelsPane`).
+    private func row(_ entry: ASRModelCatalog.Entry) -> some View {
+        let downloaded = model.asrDownloaded.contains(entry.id)
+        let selected = model.asrModel == entry.id
+        let downloading = model.asrDownloading == entry.id
+        return HStack(alignment: .center, spacing: 12) {
+            Button {
+                model.onSelectASRModel?(entry.id)
+            } label: {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(entry.name)  ·  \(entry.languages)")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(entry.blurb).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 16)
+                    ratings(entry)
+                    if downloaded {
+                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(selected ? .blue : .secondary)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!downloaded)
+
+            if downloading {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Downloading…").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            } else if !downloaded {
+                Button("Download") { model.onDownloadASRModel?(entry.id) }
+                    .controlSize(.small)
+                    .disabled(model.asrDownloading != nil)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private func ratings(_ entry: ASRModelCatalog.Entry) -> some View {
+        VStack(alignment: .trailing, spacing: 3) {
+            Text(entry.size).font(.system(size: 10)).foregroundStyle(.secondary)
+            RatingDots(label: "Speed", value: entry.speed)
+            RatingDots(label: "Quality", value: entry.quality)
         }
     }
 }
