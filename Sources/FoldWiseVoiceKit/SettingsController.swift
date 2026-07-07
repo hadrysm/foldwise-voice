@@ -9,6 +9,7 @@ import SwiftUI
 final class SettingsController {
     private let config: Config
     private let historyStore: HistoryStore
+    private let statsStore: StatsStore
     private let reprocessor: HistoryReprocessor
     private let model = SettingsModel()
     private var window: NSWindow?
@@ -23,18 +24,24 @@ final class SettingsController {
     /// menu-bar "Update Available" item.
     var onUpdateAvailable: ((String) -> Void)?
 
-    init(config: Config, historyStore: HistoryStore) {
+    init(config: Config, historyStore: HistoryStore, statsStore: StatsStore) {
         self.config = config
         self.historyStore = historyStore
+        self.statsStore = statsStore
         reprocessor = HistoryReprocessor(store: historyStore)
         wire()
         // Live-prepend: the store owns change propagation (ADR-0003), so
         // subscribe once here — a dictation spoken while the pane is open appears
-        // at the top without a reload. Registered before the hotkey listener
-        // starts (AppMain order), so no append can race registration. The store
-        // fires this off the main thread from the pipeline's record seam.
+        // at the top without a reload, and the Stats pane's streak refreshes with
+        // it. Registered before the hotkey listener starts (AppMain order), so no
+        // append can race registration, and after AppMain's streak-advance
+        // observer, so the streak this re-reads reflects the just-appended entry.
+        // The store fires this off the main thread from the pipeline's record seam.
         historyStore.onAppend { [weak self] entry in
-            Task { @MainActor in self?.prependHistory(entry) }
+            Task { @MainActor in
+                self?.prependHistory(entry)
+                self?.refreshStreak()
+            }
         }
     }
 
@@ -122,6 +129,7 @@ final class SettingsController {
         model.hudStyle = (HUDStyle(rawValue: config.hudStyle) ?? .classic).rawValue
         model.axTrusted = TextInserter.accessibilityTrusted()
         model.historyEntries = historyStore.load()
+        refreshStreak()
         model.status = ""
         refreshModels()
         checkForUpdates()
@@ -367,9 +375,24 @@ final class SettingsController {
         model.historyEntries = historyStore.load()
     }
 
+    /// The single clear funnel behind both "Clear all history" and the
+    /// delete-on-turn-off prompt (PRD #97): a deliberate wipe resets the streak
+    /// too, so a bragging count can't outlive the data it counted. The retention
+    /// sweep and per-row delete deliberately do NOT reset it — that preserves the
+    /// one distinction that matters: a rolling window (streak survives) versus
+    /// erasing your data (streak goes too).
     private func clearHistory() {
         historyStore.clearAll()
+        statsStore.reset()
         model.historyEntries = historyStore.load()
+        refreshStreak()
+    }
+
+    /// Re-read the streak from the store through the pure display rule, so the
+    /// pane shows the current run (or "No active streak" when it has lapsed or
+    /// never started) as of now.
+    private func refreshStreak() {
+        model.currentStreak = StreakRules.display(statsStore.load(), now: Date(), calendar: .current)
     }
 
     // MARK: - key recording

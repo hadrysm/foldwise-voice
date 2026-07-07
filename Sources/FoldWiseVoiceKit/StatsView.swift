@@ -61,6 +61,14 @@ struct StatsPane: View {
                 }
                 Divider().padding(.leading, 14)
                 CardRow(
+                    title: "Current streak",
+                    subtitle: "Consecutive days you've dictated. Survives history pruning; "
+                        + "resets only if you clear your history."
+                ) {
+                    statValue(streak(model.currentStreak))
+                }
+                Divider().padding(.leading, 14)
+                CardRow(
                     title: "Time saved",
                     subtitle: "A conservative estimate versus typing at "
                         + "\(Int(UsageStatsAggregator.typingBaselineWordsPerMinute)) wpm — not a measured figure."
@@ -91,6 +99,14 @@ struct StatsPane: View {
     private func speakingSpeed(_ wordsPerMinute: Double?) -> String {
         guard let wordsPerMinute else { return "—" }
         return "\(Int(wordsPerMinute.rounded())) wpm"
+    }
+
+    /// The current streak for display: "N days" while the run is alive, or "No
+    /// active streak" when it has lapsed or never started — the pane never shows a
+    /// bare "0 days".
+    private func streak(_ days: Int?) -> String {
+        guard let days else { return "No active streak" }
+        return days == 1 ? "1 day" : "\(days) days"
     }
 
     /// Time saved for display: a rounded whole-minute estimate ("~X min"), or "—"

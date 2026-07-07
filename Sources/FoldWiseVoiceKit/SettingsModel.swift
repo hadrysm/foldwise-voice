@@ -118,6 +118,12 @@ final class SettingsModel: ObservableObject {
     /// Loaded from the HistoryStore when the window opens and re-read after a
     /// delete or clear-all, so the History pane reflects the store live.
     @Published var historyEntries: [HistoryEntry] = []
+    /// The lifetime streak to show, computed by the controller from the StatsStore
+    /// through `StreakRules.display`: the run's length while it is alive (last
+    /// active today or yesterday), `nil` — rendered "No active streak" — when it
+    /// has lapsed or never started. Refreshed on window open and as new dictations
+    /// append.
+    @Published var currentStreak: Int?
 
     // wired by SettingsController
     var onCommit: (() -> Void)?
