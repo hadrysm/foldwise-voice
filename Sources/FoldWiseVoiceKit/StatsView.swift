@@ -95,9 +95,11 @@ struct StatsPane: View {
     }
 
     /// Words-per-minute for display: rounded to a whole number with a unit, or
-    /// "—" when no dictation carried a duration to divide by.
+    /// "—" when no dictation carried a duration to divide by — or when the rate is
+    /// below ~0.5 wpm and would round to a misleading "0 wpm", mirroring the
+    /// honesty guard on `timeSaved`.
     private func speakingSpeed(_ wordsPerMinute: Double?) -> String {
-        guard let wordsPerMinute else { return "—" }
+        guard let wordsPerMinute, wordsPerMinute >= 0.5 else { return "—" }
         return "\(Int(wordsPerMinute.rounded())) wpm"
     }
 
