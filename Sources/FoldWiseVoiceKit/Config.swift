@@ -1,6 +1,8 @@
-// Load and save modes.json — same file and format as the Python app, so the
-// two implementations stay interchangeable. `asr_model` is preserved on save
-// but ignored here: this app always transcribes with Parakeet v3 (FluidAudio).
+// Load and save modes.json — same file and format as the retired Python app.
+// `asr_model` selects the ASR model globally (ADR-0006): `asrModel` reads the
+// first mode and `setASRModel` writes every mode, mirroring the LLM-model
+// convention. An unknown/fossil id is preserved on disk and resolved to
+// Parakeet at read time (ASRModelCatalog), not overwritten until the user picks.
 
 import Foundation
 import os
@@ -138,6 +140,26 @@ final class Config {
         }
     }
 
+    /// The globally-selected ASR model (ADR-0006): every mode carries one by
+    /// the `setASRModel` convention, so the first mode's value is the choice.
+    var asrModel: String {
+        for name in modeOrder {
+            if let m = modes[name] { return m.asrModel }
+        }
+        return ASRModelCatalog.defaultID
+    }
+
+    /// Point every mode at `id`, minting the user's explicit choice across the
+    /// schema's per-mode slots. Records `.asrModel` for the dispatcher only on a
+    /// genuine change, so re-selecting the current model notifies no one.
+    func setASRModel(_ id: String) {
+        guard asrModel != id else { return }
+        for name in modeOrder {
+            modes[name]?.asrModel = id
+        }
+        pendingChanges.insert(.asrModel)
+    }
+
     func setActiveMode(_ name: String) {
         guard modes[name] != nil else { return }
         activeMode = name
@@ -155,6 +177,7 @@ final class Config {
         static let activeMode = ChangeSet(rawValue: 1 << 0)
         static let hotkeys = ChangeSet(rawValue: 1 << 1)
         static let hudStyle = ChangeSet(rawValue: 1 << 2)
+        static let asrModel = ChangeSet(rawValue: 1 << 3)
     }
 
     /// Changed keys accumulated by the tracked properties' `didSet`s,
@@ -265,7 +288,7 @@ final class Config {
             let m = any as? [String: Any] ?? [:]
             modes[name] = Mode(
                 name: name,
-                asrModel: (m["asr_model"] as? String) ?? "mlx-community/whisper-large-v3-turbo",
+                asrModel: (m["asr_model"] as? String) ?? ASRModelCatalog.defaultID,
                 llmModel: m["llm_model"] as? String,
                 systemPrompt: m["system_prompt"] as? String,
                 vocab: (m["vocab"] as? [String]) ?? [],
@@ -347,7 +370,7 @@ final class Config {
     }
 
     static func defaultConfig(path: URL) -> Config {
-        let asr = "mlx-community/whisper-large-v3-turbo"
+        let asr = ASRModelCatalog.defaultID
         let clean = Mode(
             name: "Clean", asrModel: asr, llmModel: "qwen2.5:3b",
             systemPrompt: "You clean up dictated speech. Fix punctuation, capitalization, "
