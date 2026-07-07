@@ -302,6 +302,7 @@ final class SettingsController {
         config.toggleHotkey = toggle.isEmpty ? nil : toggle
         config.pauseAudio = model.pauseAudio
         config.saveHistory = model.saveHistory
+        let retentionChanged = config.historyRetention != model.retention
         config.historyRetention = model.retention
         config.hudStyle = model.hudStyle
         do {
@@ -309,6 +310,14 @@ final class SettingsController {
         } catch {
             setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
             return
+        }
+        // A tightened retention window must purge now, not wait for the next
+        // relaunch — the passive sweep runs only at startup (AppMain). Sweep
+        // only when the value actually changed so an unrelated save doesn't
+        // rewrite the file, then reload so an open pane drops the purged rows.
+        if retentionChanged {
+            historyStore.sweep(retention: config.historyRetention, now: Date())
+            model.historyEntries = historyStore.load()
         }
         setStatus("Saved ✓", isError: false, clearAfter: 2)
     }
