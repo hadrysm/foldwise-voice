@@ -31,9 +31,12 @@ struct StreakRecord: Codable, Equatable {
 /// stored run as of `now`.
 enum StreakRules {
     /// The run after a dictation on `day`: a first-ever entry starts at 1, the
-    /// same day is a no-op, the next consecutive day is +1, and any gap resets to
-    /// 1. Days are compared through the injected calendar's `startOfDay`, so a
-    /// spring-forward day (only 23 hours long) still counts as one step — a naive
+    /// same day is a no-op, the next consecutive day is +1, and a genuine forward
+    /// gap of two or more days resets to 1. A backwards step — a clock rollback or
+    /// a westward timezone move that lands `day` before the stored day — is a
+    /// no-op that preserves the stored run rather than corrupting it. Days are
+    /// compared through the injected calendar's `startOfDay`, so a spring-forward
+    /// day (only 23 hours long) still counts as one step — a naive
     /// divide-by-86400 would miss it.
     static func advance(_ record: StreakRecord?, on day: Date, calendar: Calendar) -> StreakRecord {
         let newDay = calendar.startOfDay(for: day)
@@ -47,9 +50,17 @@ enum StreakRules {
             return record // same day — no-op
         case 1:
             return StreakRecord(currentStreak: record.currentStreak + 1, lastActiveDay: newDay)
+        case ..<0:
+            // A backwards step — a clock rollback or a westward timezone move that
+            // lands `newDay` before the stored day — is ignored: we return the
+            // record untouched so a transient skew never wipes a live run or drags
+            // `lastActiveDay` into the past (which would then misread the real next
+            // day as a +1 and compound the corruption). Only a genuine forward gap
+            // restarts the run; going backwards can never be a legitimate advance.
+            return record
         default:
-            // Any gap of two or more days — and defensively any backwards step
-            // from clock skew — restarts the run at 1 on the new day.
+            // A genuine forward gap of two or more days restarts the run at 1 on
+            // the new day — a streak is consecutive or it is nothing.
             return StreakRecord(currentStreak: 1, lastActiveDay: newDay)
         }
     }

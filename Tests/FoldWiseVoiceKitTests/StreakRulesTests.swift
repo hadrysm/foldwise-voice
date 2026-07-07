@@ -71,6 +71,21 @@ final class StreakRulesTests: XCTestCase {
         XCTAssertEqual(advanced, StreakRecord(currentStreak: 1, lastActiveDay: calendar.startOfDay(for: afterGap)))
     }
 
+    /// A backwards day step (a clock rollback or a westward timezone move across
+    /// midnight) is a no-op: it must not wipe a live run or drag `lastActiveDay`
+    /// into the past. The stored record is returned unchanged, so a later dictation
+    /// on the real current day still reads as the correct forward step rather than
+    /// compounding the skew.
+    func testAdvanceBackwardsClockStepIsNoOp() throws {
+        let calendar = try calendar()
+        let existing = StreakRecord(currentStreak: 5, lastActiveDay: try at(calendar, 2026, 1, 10, 8))
+        let earlierDay = try at(calendar, 2026, 1, 8, 10) // two days before the stored day
+
+        let advanced = StreakRules.advance(existing, on: earlierDay, calendar: calendar)
+
+        XCTAssertEqual(advanced, existing)
+    }
+
     /// The spring-forward day is only 23 hours long, so a consecutive-day step
     /// across it spans under 24 hours; the rule must still read it as +1, which a
     /// naive divide-by-86400 would miss (it would look like the same day).
