@@ -13,6 +13,7 @@ final class SettingsModel: ObservableObject {
         case configuration = "Configuration"
         case sound = "Sound"
         case history = "History"
+        case stats = "Stats"
         var id: String {
             rawValue
         }
@@ -26,6 +27,7 @@ final class SettingsModel: ObservableObject {
             case .configuration: "gearshape.fill"
             case .sound: "speaker.wave.2.fill"
             case .history: "clock.fill"
+            case .stats: "chart.bar.fill"
             }
         }
 
@@ -38,6 +40,7 @@ final class SettingsModel: ObservableObject {
             case .configuration: .gray
             case .sound: .teal
             case .history: .pink
+            case .stats: .green
             }
         }
 
@@ -50,6 +53,7 @@ final class SettingsModel: ObservableObject {
             case .configuration: "Keyboard Shortcuts"
             case .sound: "Sound"
             case .history: "Dictation History"
+            case .stats: "Your Usage"
             }
         }
     }
