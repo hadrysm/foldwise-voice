@@ -80,6 +80,11 @@ final class SettingsModel: ObservableObject {
     /// fraction arrives or for an engine that can't report one (Parakeet), which
     /// keeps the pane on the indeterminate spinner (#93).
     @Published var asrDownloadFraction: Double?
+    /// True while a just-downloaded model compiles/loads onto the Neural Engine —
+    /// the phase after the 0…1 fraction reaches 100%, which WhisperKit reports no
+    /// further progress for. The pane shows "Preparing…" here rather than a bar
+    /// frozen at 100%.
+    @Published var asrPreparing = false
     @Published var asrDownloadError = ""
     @Published var asrDeleting: String?
     @Published var asrDeleteError = ""
@@ -122,6 +127,9 @@ final class SettingsModel: ObservableObject {
     /// available one's weights so it becomes selectable.
     var onSelectASRModel: ((String) -> Void)?
     var onDownloadASRModel: ((String) -> Void)?
+    /// Abort an in-flight download/prepare and return the row to its pre-download
+    /// state, so a slow or stalled fetch (or the post-100% compile) can be escaped.
+    var onCancelASRDownload: (() -> Void)?
     /// Delete a downloaded model's on-disk weights to reclaim space (#95). If it
     /// was active, dictation falls back to Parakeet until another is selected.
     var onDeleteASRModel: ((String) -> Void)?

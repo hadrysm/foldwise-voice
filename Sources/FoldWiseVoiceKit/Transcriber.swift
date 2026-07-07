@@ -31,8 +31,16 @@ final class Transcriber: Transcribing {
     }
 
     func prepare() async throws {
+        let task = ensureLoaded()
         do {
-            _ = try await ensureLoaded().value
+            // Propagate a caller's cancellation (the Speech pane's Cancel, for a
+            // downloadable Parakeet variant) into the in-flight download/load so
+            // it actually stops rather than running on in the background.
+            _ = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
         } catch {
             loadTask = nil // allow a retry on the next download attempt
             throw error

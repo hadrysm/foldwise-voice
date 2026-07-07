@@ -557,7 +557,17 @@ struct SpeechPane: View {
             .disabled(!downloaded || deleting)
 
             if downloading {
-                downloadProgress
+                HStack(spacing: 8) {
+                    downloadProgress
+                    Button {
+                        model.onCancelASRDownload?()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Cancel download")
+                    .accessibilityLabel("Cancel download for \(entry.name)")
+                }
             } else if !downloaded {
                 Button("Download") { model.onDownloadASRModel?(entry.id) }
                     .controlSize(.small)
@@ -593,10 +603,17 @@ struct SpeechPane: View {
 
     /// A fractional bar mirroring the Ollama pull UX once the engine reports a
     /// percentage; before the first fraction (or for Parakeet, which reports
-    /// none) it degrades to the existing indeterminate spinner (#93).
+    /// none) it degrades to the existing indeterminate spinner (#93). Once the
+    /// weights are fetched, the trailing compile-onto-the-ANE phase shows
+    /// "Preparing…" so the bar doesn't sit frozen at 100%.
     @ViewBuilder
     private var downloadProgress: some View {
-        if let fraction = model.asrDownloadFraction {
+        if model.asrPreparing {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Preparing…").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        } else if let fraction = model.asrDownloadFraction {
             VStack(alignment: .trailing, spacing: 2) {
                 ProgressView(value: fraction).frame(width: 110)
                 Text("\(Int(fraction * 100))%")
