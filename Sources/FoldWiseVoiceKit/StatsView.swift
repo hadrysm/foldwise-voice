@@ -59,6 +59,14 @@ struct StatsPane: View {
                 ) {
                     statValue(stats.activeDays.formatted())
                 }
+                Divider().padding(.leading, 14)
+                CardRow(
+                    title: "Time saved",
+                    subtitle: "A conservative estimate versus typing at "
+                        + "\(Int(UsageStatsAggregator.typingBaselineWordsPerMinute)) wpm — not a measured figure."
+                ) {
+                    statValue(timeSaved(stats.timeSavedMinutes))
+                }
             }
             if !model.saveHistory {
                 Label(
@@ -83,6 +91,15 @@ struct StatsPane: View {
     private func speakingSpeed(_ wordsPerMinute: Double?) -> String {
         guard let wordsPerMinute else { return "—" }
         return "\(Int(wordsPerMinute.rounded())) wpm"
+    }
+
+    /// Time saved for display: a rounded whole-minute estimate ("~X min"), or "—"
+    /// when there's nothing to claim — no timed dictation, dictation the baseline
+    /// would have out-typed, or a saving under a minute we won't round up into a
+    /// number.
+    private func timeSaved(_ minutes: Double?) -> String {
+        guard let minutes, minutes >= 0.5 else { return "—" }
+        return "~\(Int(minutes.rounded())) min"
     }
 
     /// No kept dictations to project over. Adapts to *why*: when saving is off it

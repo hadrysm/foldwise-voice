@@ -52,6 +52,12 @@ final class UsageStatsAggregatorTests: XCTestCase {
         return try XCTUnwrap(calendar.date(from: components))
     }
 
+    /// A raw transcript of exactly `count` spoken words, so time-saved fixtures
+    /// can pin the 52-wpm baseline without an unreadable hundred-word literal.
+    private func words(_ count: Int) -> String {
+        Array(repeating: "word", count: count).joined(separator: " ")
+    }
+
     // MARK: - Total words
 
     func testTotalWordsCountsSpokenWordsInRawText() {
@@ -186,5 +192,58 @@ final class UsageStatsAggregatorTests: XCTestCase {
 
     func testActiveDaysIsZeroForEmptyHistory() {
         XCTAssertEqual(UsageStatsAggregator.aggregate([]).activeDays, 0)
+    }
+
+    // MARK: - Time saved (estimate)
+
+    /// The formula on the production baseline: 104 spoken words in 1 timed minute
+    /// would take 104 ÷ 52 = 2 minutes to type, so dictation saved ~1 minute.
+    func testTimeSavedUsesFiftyTwoWpmBaselineByDefault() throws {
+        let stats = UsageStatsAggregator.aggregate([entry(rawText: words(104), durationMs: 60000)])
+
+        XCTAssertEqual(try XCTUnwrap(stats.timeSavedMinutes), 1.0, accuracy: 0.0001)
+    }
+
+    /// Like WPM, time saved is built only from timed entries — an untimed row's
+    /// words must not inflate the "words that would have been typed" side.
+    func testTimeSavedExcludesUntimedEntries() throws {
+        let entries = [
+            entry(rawText: words(104), durationMs: 60000), // typing 2 min − dictation 1 min = 1 saved
+            entry(rawText: words(1000)), // untimed — must not count
+        ]
+
+        XCTAssertEqual(try XCTUnwrap(UsageStatsAggregator.aggregate(entries).timeSavedMinutes), 1.0, accuracy: 0.0001)
+    }
+
+    /// A higher typing baseline is the conservative direction: the same words
+    /// would take less time to type, so the estimated saving shrinks.
+    func testTimeSavedShrinksWithAHigherTypingBaseline() throws {
+        let row = entry(rawText: words(104), durationMs: 60000)
+        let lenient = try XCTUnwrap(UsageStatsAggregator.aggregate([row], typingWordsPerMinute: 26).timeSavedMinutes)
+        let strict = try XCTUnwrap(UsageStatsAggregator.aggregate([row], typingWordsPerMinute: 52).timeSavedMinutes)
+
+        XCTAssertGreaterThan(lenient, strict)
+    }
+
+    /// When the baseline would have typed the words faster than they were spoken,
+    /// the raw difference is negative; it clamps to nothing (nil → "—"), never a
+    /// negative "time saved".
+    func testTimeSavedIsNilWhenTypingWouldBeatDictation() {
+        // 10 words but a full hour of hold-to-talk: typing beats it handily.
+        let stats = UsageStatsAggregator.aggregate([entry(rawText: tenWords, durationMs: 3_600_000)])
+
+        XCTAssertNil(stats.timeSavedMinutes)
+    }
+
+    /// No timed entry → time saved is nil (rendered "—"), never a fabricated
+    /// figure from untimed rows.
+    func testTimeSavedIsNilWhenNoTimedEntry() {
+        let entries = [entry(rawText: "one two three"), entry(rawText: "four five")]
+
+        XCTAssertNil(UsageStatsAggregator.aggregate(entries).timeSavedMinutes)
+    }
+
+    func testTimeSavedIsNilForEmptyHistory() {
+        XCTAssertNil(UsageStatsAggregator.aggregate([]).timeSavedMinutes)
     }
 }

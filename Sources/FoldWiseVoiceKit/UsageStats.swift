@@ -2,8 +2,8 @@
 // keeps (PRD #97). Four of the five stats are a lens, not a new ledger — they
 // retain nothing on disk, inherit the "Save dictation history" switch and the
 // retention window for free, and shrink honestly when history is turned off or
-// pruned. This aggregator ships total words, speaking speed, and active days;
-// the remaining time-saved estimate extends `UsageStats` in a later slice.
+// pruned. This aggregator ships total words, speaking speed, active days, and a
+// conservative time-saved estimate against a typing baseline.
 //
 // Every word count is taken from an entry's `rawText` — the pre-Polish
 // transcript, what was actually spoken — not the stored `wordCount` field, which
@@ -28,13 +28,30 @@ struct UsageStats: Equatable {
     let wordsPerMinute: Double?
     /// Distinct calendar days (`startOfDay`) on which a dictation was recorded.
     let activeDays: Int
+    /// A conservative estimate of the minutes dictation saved versus typing: the
+    /// timed spoken words retyped at the typing baseline, minus the real
+    /// pause-inclusive dictation minutes. `nil` — rendered "—" — when there is
+    /// nothing to claim (no timed entry, or a baseline that would have out-typed
+    /// the dictation), so it can only under-promise and never shows a negative or
+    /// fabricated figure. Always an estimate, never a measured fact.
+    let timeSavedMinutes: Double?
 }
 
 /// Computes `UsageStats` from the history entries already loaded into the
 /// Settings model. Pure and order-independent, so its rules are unit-tested
 /// apart from the (untested) SwiftUI pane — modeled on `HistoryFilter`.
 enum UsageStatsAggregator {
-    static func aggregate(_ entries: [HistoryEntry], calendar: Calendar = .current) -> UsageStats {
+    /// The typing speed the time-saved estimate is measured against — Wispr's
+    /// in-app "average keyboard typist" figure. Chosen over its 40-wpm marketing
+    /// number because a *higher* baseline shrinks the claim, biasing the estimate
+    /// conservative. The Stats pane labels the estimate with this same number.
+    static let typingBaselineWordsPerMinute: Double = 52
+
+    static func aggregate(
+        _ entries: [HistoryEntry],
+        calendar: Calendar = .current,
+        typingWordsPerMinute: Double = UsageStatsAggregator.typingBaselineWordsPerMinute
+    ) -> UsageStats {
         let totalWords = entries.reduce(0) { $0 + wordCount($1.rawText) }
 
         // WPM is an aggregate — Σ words ÷ Σ minutes — over only the entries that
@@ -51,7 +68,35 @@ enum UsageStatsAggregator {
         // injected calendar so time zone and DST day arithmetic are correct.
         let activeDays = Set(entries.map { calendar.startOfDay(for: $0.createdAt) }).count
 
-        return UsageStats(totalWords: totalWords, wordsPerMinute: wordsPerMinute, activeDays: activeDays)
+        // Time saved vs typing, over the same timed entries as WPM: the minutes
+        // those spoken words would have taken at the typing baseline, minus the
+        // real (pause-inclusive) dictation minutes. Clamped so a baseline that
+        // would out-type the dictation collapses to `nil` rather than a negative
+        // claim, and `nil` when nothing is timed — the estimate can only
+        // under-promise.
+        let timeSavedMinutes = timeSaved(
+            timedWords: timedWords,
+            timedMs: timedMs,
+            typingWordsPerMinute: typingWordsPerMinute
+        )
+
+        return UsageStats(
+            totalWords: totalWords,
+            wordsPerMinute: wordsPerMinute,
+            activeDays: activeDays,
+            timeSavedMinutes: timeSavedMinutes
+        )
+    }
+
+    /// The clamped time-saved estimate in minutes, or `nil` when there is nothing
+    /// honest to show — no timed dictation, or a baseline fast enough to have
+    /// out-typed it.
+    private static func timeSaved(timedWords: Int, timedMs: Int, typingWordsPerMinute: Double) -> Double? {
+        guard timedMs > 0 else { return nil }
+        let typingMinutes = Double(timedWords) / typingWordsPerMinute
+        let dictationMinutes = Double(timedMs) / 60000
+        let saved = typingMinutes - dictationMinutes
+        return saved > 0 ? saved : nil
     }
 
     /// Spoken-word count for one transcript, using the same whitespace split the
