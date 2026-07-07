@@ -95,8 +95,8 @@ struct StatsPane: View {
 
     /// Time saved for display: a rounded whole-minute estimate ("~X min"), or "—"
     /// when there's nothing to claim — no timed dictation, dictation the baseline
-    /// would have out-typed, or a saving under a minute we won't round up into a
-    /// number.
+    /// would have out-typed, or a saving that would round to zero minutes, so it
+    /// never shows "~0 min".
     private func timeSaved(_ minutes: Double?) -> String {
         guard let minutes, minutes >= 0.5 else { return "—" }
         return "~\(Int(minutes.rounded())) min"
