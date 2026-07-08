@@ -39,8 +39,8 @@ const MAX_ITERATIONS = 10;
 // Separate agents per phase, so the reviewer works from a fresh, independent
 // context rather than sharing the implementer's. Tune either one's model or
 // effort on its own line.
-const implementerAgent = sandcastle.claudeCode("claude-opus-4-8", { effort: "xhigh" });
-const reviewerAgent = sandcastle.claudeCode("claude-opus-4-8", { effort: "xhigh" });
+const implementerAgent = sandcastle.claudeCode("claude-fable-5", { effort: "high" });
+const reviewerAgent = sandcastle.claudeCode("claude-fable-5", { effort: "high" });
 
 // Hooks run on the host checkout before the agent starts each phase.
 // Pre-resolving Swift dependencies keeps the agent's first build fast; the
