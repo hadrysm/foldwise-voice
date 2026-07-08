@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.0](https://github.com/hadrysm/foldwise-voice/compare/v0.11.0...v0.12.0) (2026-07-07)
+
+
+### Features
+
+* **stats:** usage stats pane — words, WPM, active days, streak, time saved ([#102](https://github.com/hadrysm/foldwise-voice/issues/102)) ([d039a21](https://github.com/hadrysm/foldwise-voice/commit/d039a214335fb1f2a5ebb6b2ad72e6bab55afd2e))
+
+
+### Refactoring
+
+* extract shared Polish keep-or-fall-back decision into Polish.run ([#88](https://github.com/hadrysm/foldwise-voice/issues/88)) ([f246065](https://github.com/hadrysm/foldwise-voice/commit/f24606562808dc616886340f37d66dd38e0b0153))
+
 ## [0.11.0](https://github.com/hadrysm/foldwise-voice/compare/v0.10.0...v0.11.0) (2026-07-07)
 
 
