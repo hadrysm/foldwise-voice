@@ -32,7 +32,7 @@ final class MenuBarController: NSObject {
         self.onQuit = onQuit
         super.init()
         build()
-        // Wherever the active mode is changed — here, the HUD's mode menu,
+        // Wherever the active mode is changed — here, the Badge's mode menu,
         // or Settings — the checkmarks follow.
         config.onChange { [weak self] changes in
             if changes.contains(.activeMode) { self?.refreshModeChecks() }

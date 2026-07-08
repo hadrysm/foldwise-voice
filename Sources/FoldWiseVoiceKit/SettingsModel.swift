@@ -5,55 +5,28 @@ import SwiftUI
 
 @MainActor
 final class SettingsModel: ObservableObject {
+    /// The six destinations of the redesigned sidebar (PRD #103). The old
+    /// Speech pane lives inside Models; Configuration and Sound merged into
+    /// Settings.
     enum Pane: String, CaseIterable, Identifiable {
         case home = "Home"
         case modes = "Modes"
-        case speech = "Speech"
         case models = "Models"
-        case configuration = "Configuration"
-        case sound = "Sound"
         case history = "History"
         case stats = "Stats"
+        case settings = "Settings"
         var id: String {
             rawValue
         }
 
         var icon: String {
             switch self {
-            case .home: "house.fill"
+            case .home: "house"
             case .modes: "sparkles"
-            case .speech: "waveform"
-            case .models: "shippingbox.fill"
-            case .configuration: "gearshape.fill"
-            case .sound: "speaker.wave.2.fill"
-            case .history: "clock.fill"
-            case .stats: "chart.bar.fill"
-            }
-        }
-
-        var tint: Color {
-            switch self {
-            case .home: .orange
-            case .modes: .blue
-            case .speech: .indigo
-            case .models: .purple
-            case .configuration: .gray
-            case .sound: .teal
-            case .history: .pink
-            case .stats: .green
-            }
-        }
-
-        var title: String {
-            switch self {
-            case .home: "FoldWise Voice"
-            case .modes: "Modes"
-            case .speech: "Speech Recognition"
-            case .models: "Ollama Models"
-            case .configuration: "Keyboard Shortcuts"
-            case .sound: "Sound"
-            case .history: "Dictation History"
-            case .stats: "Your Usage"
+            case .models: "shippingbox"
+            case .history: "clock"
+            case .stats: "chart.bar"
+            case .settings: "slider.horizontal.3"
             }
         }
     }
@@ -107,7 +80,13 @@ final class SettingsModel: ObservableObject {
     @Published var saveHistory = true
     /// Auto-delete window for history, a control distinct from `saveHistory`.
     @Published var retention = RetentionWindow.default
-    @Published var hudStyle = HUDStyle.classic.rawValue
+    /// Sidebar rendering rule: seeded from Config's persisted preference when
+    /// the window opens; explicit toggles mutate it and commit the preference.
+    @Published var sidebar = SidebarPresentation(prefersCollapsed: false)
+    /// Live window width, feeding the sidebar's auto-collapse rule.
+    @Published var windowWidth: Double = 980
+    /// The rail tile currently under the pointer, driving its tooltip chip.
+    @Published var hoveredRailPane: Pane?
     @Published var axTrusted = false
     @Published var status = ""
     @Published var statusIsError = false

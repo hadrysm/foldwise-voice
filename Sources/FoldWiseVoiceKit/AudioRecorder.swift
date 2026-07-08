@@ -21,7 +21,8 @@ final class AudioRecorder: AudioRecording {
     private var recording = false
     private var _level: Float = 0
 
-    /// Peak of the latest frame, for UI metering.
+    /// RMS of the latest frame, feeding the Badge's ribbon amplitude through
+    /// `LevelSmoother` (PRD #103).
     var level: Float {
         lock.lock()
         defer { lock.unlock() }
@@ -116,15 +117,16 @@ final class AudioRecorder: AudioRecording {
         else { return }
 
         let frames = Int(out.frameLength)
-        var peak: Float = 0
+        var sumOfSquares: Float = 0
         for i in 0 ..< frames {
-            peak = max(peak, abs(channel[i]))
+            sumOfSquares += channel[i] * channel[i]
         }
+        let rms = frames > 0 ? sqrt(sumOfSquares / Float(frames)) : 0
 
         lock.lock()
         if recording {
             buffered.append(contentsOf: UnsafeBufferPointer(start: channel, count: frames))
-            _level = peak
+            _level = rms
         }
         lock.unlock()
     }

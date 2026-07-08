@@ -1,17 +1,15 @@
-// Owns the floating NSPanel that hosts HUDView.
-//
-// Lessons from the Python HUD baked in:
-//   * window resizes use the non-blocking animator (never a blocking
-//     animation that queues mouse events),
-//   * dragging is native (isMovableByWindowBackground) so it cannot fight a
-//     hover resize,
-//   * the anchor tracks the live frame during drags, and hover-exit has a
-//     short hysteresis so edge flicker can't loop the grow/shrink animation.
+// Owns the floating NSPanel that hosts BadgeView, and drives BadgeModel
+// through the pure BadgeReducer (PRD #103). The panel discipline is inherited
+// from the retired HUD: non-blocking animator resizes, native dragging, an
+// anchor that tracks live drags, and hover-exit hysteresis so edge flicker
+// can't loop the grow/shrink animation. The panel never becomes key or main,
+// so the Badge — hover, tooltips, and the mode menu included — can't steal
+// focus from the app being dictated into.
 
 import AppKit
 import SwiftUI
 
-final class HUDPanel: NSPanel {
+final class BadgePanel: NSPanel {
     override var canBecomeKey: Bool {
         false
     }
@@ -21,72 +19,45 @@ final class HUDPanel: NSPanel {
     }
 }
 
-/// Pill sizes per HUDStyle and phase.
-extension HUDStyle {
-    var miniSize: CGSize {
-        switch self {
-        case .classic: CGSize(width: 90, height: 16)
-        case .minimal: CGSize(width: 64, height: 30)
-        }
-    }
-
-    /// Idle pill while hovered (classic: gear; minimal: control panel).
-    var hoverSize: CGSize {
-        switch self {
-        case .classic: CGSize(width: 150, height: 26)
-        case .minimal: CGSize(width: 136, height: 36)
-        }
-    }
-
-    var fullSize: CGSize {
-        switch self {
-        case .classic: CGSize(width: 340, height: 64)
-        case .minimal: CGSize(width: 280, height: 36)
-        }
-    }
-
-    /// Recording pill is a single label-free row, so it can be slimmer.
-    var listeningSize: CGSize {
-        switch self {
-        case .classic: CGSize(width: 340, height: 44)
-        case .minimal: CGSize(width: 190, height: 36)
-        }
-    }
-}
-
 @MainActor
-final class HUDController: NSObject {
+final class BadgeController: NSObject {
     static let bottomMargin: CGFloat = 96
 
-    let model = HUDModel()
+    let model = BadgeModel()
     private let config: Config
-    private let onSettings: () -> Void
+    private let onOpenApp: () -> Void
     weak var recorder: AudioRecorder?
-    /// Invoked by the HUD's stop button; wired to Pipeline.stopRecording().
+    /// Wired to Pipeline.stopRecording(); issued by the reducer's
+    /// `.stopRecording` command (click anywhere on the recording pill).
     var onStop: (() -> Void)?
-    /// Invoked by the hover panel's record button; wired to toggleRecording().
+    /// Wired to Pipeline.toggleRecording(); the hover mic button.
     var onRecord: (() -> Void)?
 
-    private var panel: HUDPanel?
+    private var panel: BadgePanel?
     private var moveObserver: NSObjectProtocol?
     private var levelTimer: Timer?
-    private var hideTimer: Timer?
+    private var secondsTimer: Timer?
+    private var dwellTimer: Timer?
     private var unhoverWork: DispatchWorkItem?
     private var saveWork: DispatchWorkItem?
     private var programmaticMove = false
+    private var smoother = LevelSmoother()
     /// Pill anchor: (capsule center-x, bottom-y) in screen points.
     private var anchor: CGPoint?
 
-    init(config: Config, onSettings: @escaping () -> Void) {
+    init(config: Config, onOpenApp: @escaping () -> Void) {
         self.config = config
-        self.onSettings = onSettings
+        self.onOpenApp = onOpenApp
         super.init()
-        model.style = HUDStyle(rawValue: config.hudStyle) ?? .classic
-        if let pos = config.hudPosition, pos.count == 2 {
+        if let pos = config.badgePosition, pos.count == 2 {
             anchor = CGPoint(x: pos[0], y: pos[1])
         }
+        model.activeModeName = config.activeMode
+        model.hotkeyLabel = KeyMap.pretty(config.hotkey)
         config.onChange { [weak self] changes in
-            if changes.contains(.hudStyle) { self?.styleChanged() }
+            guard let self else { return }
+            if changes.contains(.activeMode) { model.activeModeName = config.activeMode }
+            if changes.contains(.hotkeys) { model.hotkeyLabel = KeyMap.pretty(config.hotkey) }
         }
     }
 
@@ -96,69 +67,62 @@ final class HUDController: NSObject {
 
     // MARK: - public API (main thread)
 
-    func idle() {
+    /// Put the idle pill on screen (launch).
+    func show() {
         ensurePanel()
-        cancelHide()
-        stopLevelTimer()
-        model.phase = .idle
-        model.label = ""
-        setSize(size(for: .idle))
+        enter(model.state)
         panel?.orderFrontRegardless()
     }
 
-    func show(_ phase: HUDModel.Phase, _ label: String) {
-        ensurePanel()
-        cancelHide()
-        model.phase = phase
-        model.label = label
-        if phase == .listening {
-            startLevelTimer()
-        } else {
-            stopLevelTimer()
-        }
-        setSize(size(for: phase))
-        panel?.orderFrontRegardless()
-    }
-
-    /// Re-read `config.hudStyle` (on a `.hudStyle` change) and re-fit the pill.
-    private func styleChanged() {
-        let style = HUDStyle(rawValue: config.hudStyle) ?? .classic
-        guard model.style != style else { return }
-        model.style = style
-        if panel != nil {
-            setSize(size(for: model.phase))
-        }
-    }
-
-    private func size(for phase: HUDModel.Phase) -> CGSize {
-        let style = model.style
-        switch phase {
-        case .idle: return model.hovering ? style.hoverSize : style.miniSize
-        case .listening: return style.listeningSize
-        default: return style.fullSize
-        }
-    }
-
-    func flash(_ phase: HUDModel.Phase, _ label: String, seconds: TimeInterval = 1.4) {
-        show(phase, label)
-        hideTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.idle() }
-        }
+    /// Fold a pipeline phase into the state machine.
+    func apply(_ phase: PipelineState) {
+        handle(.pipeline(phase))
     }
 
     func hide() {
-        cancelHide()
-        stopLevelTimer()
+        stopTimers()
         unhoverWork?.cancel()
         panel?.orderOut(nil)
+    }
+
+    // MARK: - reducer plumbing
+
+    private func handle(_ event: BadgeEvent) {
+        ensurePanel()
+        let transition = BadgeReducer.reduce(model.state, event)
+        if transition.command == .stopRecording { onStop?() }
+        guard transition.state != model.state else { return }
+        enter(transition.state)
+        panel?.orderFrontRegardless()
+    }
+
+    /// Make `state` current: swap the model, re-fit the pill, and start the
+    /// state's timers (recording seconds + mic level, or a dwell that returns
+    /// the pill to idle).
+    private func enter(_ state: BadgeState) {
+        let wasRecording = model.state == .recording
+        model.state = state
+        setSize(CGSize(width: state.width, height: Theme.badgeHeight))
+        if state == .recording, !wasRecording {
+            startRecordingTimers()
+        } else if state != .recording, wasRecording {
+            stopRecordingTimers()
+        }
+        dwellTimer?.invalidate()
+        dwellTimer = nil
+        if let dwell = state.dwell {
+            dwellTimer = Timer.scheduledTimer(withTimeInterval: dwell, repeats: false) { [weak self] _ in
+                Task { @MainActor in self?.handle(.dwellElapsed) }
+            }
+        }
     }
 
     // MARK: - panel
 
     private func ensurePanel() {
         guard panel == nil else { return }
-        let rect = NSRect(origin: .zero, size: model.style.miniSize)
-        let p = HUDPanel(
+        let rect = NSRect(origin: .zero, size: CGSize(width: BadgeState.idle.width, height: Theme.badgeHeight))
+        let p = BadgePanel(
             contentRect: rect,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false
@@ -172,13 +136,13 @@ final class HUDController: NSObject {
         p.isMovableByWindowBackground = true
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-        let view = HUDView(
+        let view = BadgeView(
             model: model,
             onHover: { [weak self] over in self?.setHover(over) },
-            onGear: { [weak self] in self?.onSettings() },
-            onStop: { [weak self] in self?.onStop?() },
+            onClick: { [weak self] in self?.handle(.clicked) },
             onChangeMode: { [weak self] in self?.popUpModeMenu() },
-            onRecord: { [weak self] in self?.onRecord?() }
+            onRecord: { [weak self] in self?.onRecord?() },
+            onOpenApp: { [weak self] in self?.onOpenApp() }
         )
         p.contentView = NSHostingView(rootView: view)
 
@@ -189,10 +153,12 @@ final class HUDController: NSObject {
         }
 
         panel = p
-        setSize(model.style.miniSize, animate: false)
+        setSize(rect.size, animate: false)
     }
 
-    /// Built fresh from config on every click so it can never go stale.
+    /// The sparkle button's mode picker: every Mode with the active one
+    /// checked, built fresh from config on every click so it can never go
+    /// stale. NSMenu never activates the app, so focus stays put.
     private func popUpModeMenu() {
         let menu = NSMenu()
         for name in config.modeOrder {
@@ -227,6 +193,7 @@ final class HUDController: NSObject {
     }
 
     /// Resize the pill around its anchor, clamped to the screen it sits on.
+    /// 300ms with the spec's cubic-bezier(.4, 0, .2, 1) easing.
     private func setSize(_ size: CGSize, animate: Bool = true) {
         guard let panel else { return }
         let a = anchor ?? defaultAnchor()
@@ -241,8 +208,8 @@ final class HUDController: NSObject {
         programmaticMove = true
         if animate {
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.22
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                ctx.duration = 0.3
+                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.2, 1)
                 panel.animator().setFrame(frame, display: true)
             } completionHandler: { [weak self] in
                 Task { @MainActor in self?.programmaticMove = false }
@@ -259,19 +226,11 @@ final class HUDController: NSObject {
         unhoverWork?.cancel()
         unhoverWork = nil
         if over {
-            applyHover(true)
+            handle(.hoverChanged(true))
         } else {
-            let work = DispatchWorkItem { [weak self] in self?.applyHover(false) }
+            let work = DispatchWorkItem { [weak self] in self?.handle(.hoverChanged(false)) }
             unhoverWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: work)
-        }
-    }
-
-    private func applyHover(_ over: Bool) {
-        guard model.hovering != over else { return }
-        model.hovering = over
-        if model.phase == .idle {
-            setSize(size(for: .idle))
         }
     }
 
@@ -293,36 +252,47 @@ final class HUDController: NSObject {
     private func persistAnchor() {
         guard let anchor else { return }
         let new = [Double(anchor.x), Double(anchor.y)]
-        if let old = config.hudPosition, old.count == 2,
+        if let old = config.badgePosition, old.count == 2,
            abs(old[0] - new[0]) < 0.5, abs(old[1] - new[1]) < 0.5 {
             return
         }
-        // hudPosition has no ChangeSet member, so this persists silently —
+        // badgePosition has no ChangeSet member, so this persists silently —
         // in particular it never rebuilds the TCC-sensitive hotkey tap.
-        config.hudPosition = new.map { ($0 * 10).rounded() / 10 }
+        config.badgePosition = new.map { ($0 * 10).rounded() / 10 }
         try? config.saveAndNotify()
     }
 
     // MARK: - timers
 
-    private func startLevelTimer() {
-        guard levelTimer == nil else { return }
+    private func startRecordingTimers() {
+        model.recordingSeconds = 0
+        smoother.reset()
+        model.amplitude = smoother.amplitude
+        secondsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.model.recordingSeconds += 1 }
+        }
         levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                self.model.pushLevel(self.recorder?.level ?? 0)
+                self.model.amplitude = self.smoother.add(
+                    rms: Double(self.recorder?.level ?? 0), dt: 1.0 / 30.0
+                )
             }
         }
     }
 
-    private func stopLevelTimer() {
+    private func stopRecordingTimers() {
+        secondsTimer?.invalidate()
+        secondsTimer = nil
         levelTimer?.invalidate()
         levelTimer = nil
-        model.levels = Array(repeating: 0, count: model.levels.count)
+        smoother.reset()
+        model.amplitude = smoother.amplitude
     }
 
-    private func cancelHide() {
-        hideTimer?.invalidate()
-        hideTimer = nil
+    private func stopTimers() {
+        stopRecordingTimers()
+        dwellTimer?.invalidate()
+        dwellTimer = nil
     }
 }

@@ -151,7 +151,7 @@ func makeTestConfig(
 ) -> Config {
     Config(
         activeMode: mode.name, hotkey: "alt_r", toggleHotkey: nil, pauseAudio: false,
-        hudPosition: nil, modeOrder: [mode.name], modes: [mode.name: mode],
+        badgePosition: nil, modeOrder: [mode.name], modes: [mode.name: mode],
         path: FileManager.default.temporaryDirectory
             .appendingPathComponent("foldwise-pipeline-tests-\(UUID().uuidString).json")
     )

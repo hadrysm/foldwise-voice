@@ -77,12 +77,41 @@ final class ConfigRoundTripTests: XCTestCase {
         XCTAssertEqual(reloaded.hotkey, "cmd_r")
         XCTAssertNil(reloaded.toggleHotkey)
         XCTAssertFalse(reloaded.pauseAudio)
-        XCTAssertEqual(reloaded.hudStyle, "minimal")
     }
 
-    func testIntegerHUDPositionNormalizesToDoubles() throws {
+    func testIntegerBadgePositionNormalizesToDoubles() throws {
+        // Still stored under the legacy "hud_position" key (PRD #103), so a
+        // pre-redesign config keeps its pill placement.
         let reloaded = try roundTrip(fixture)
-        XCTAssertEqual(reloaded.hudPosition, [100.0, 200.0])
+        XCTAssertEqual(reloaded.badgePosition, [100.0, 200.0])
+    }
+
+    func testSidebarCollapsedDefaultsToFalseWhenAbsent() throws {
+        // The fixture predates the sidebar preference (PRD #103): the sidebar
+        // opens expanded, and the retired "hud_style" key is ignored.
+        let reloaded = try roundTrip(fixture)
+        XCTAssertFalse(reloaded.sidebarCollapsed)
+    }
+
+    func testSidebarCollapsedRoundTripsWhenOn() throws {
+        let json = """
+        {
+          "active_mode": "Only",
+          "hotkey": "alt_r",
+          "pause_audio": true,
+          "sidebar_collapsed": true,
+          "modes": {
+            "Only": {
+              "asr_model": "m",
+              "llm_model": null,
+              "system_prompt": null,
+              "vocab": []
+            }
+          }
+        }
+        """
+        let reloaded = try roundTrip(json)
+        XCTAssertTrue(reloaded.sidebarCollapsed)
     }
 
     func testUnknownASRModelIsPreservedOnRoundTripUntilPicked() throws {

@@ -152,8 +152,8 @@ struct HistoryPane: View {
         HStack(spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(Theme.ui(12))
+                    .foregroundStyle(Theme.textSecondary)
                 TextField("Search dictations", text: $search)
                     .textFieldStyle(.plain)
                 if !search.isEmpty {
@@ -161,7 +161,7 @@ struct HistoryPane: View {
                         search = ""
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(Theme.textTertiary)
                     }
                     .buttonStyle(.plain)
                     .help("Clear search")
@@ -173,7 +173,7 @@ struct HistoryPane: View {
 
             Toggle(isOn: $flaggedOnly) {
                 Label("Flagged only", systemImage: "flag.fill")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(Theme.ui(12, .medium))
             }
             .toggleStyle(.button)
             .controlSize(.small)
@@ -224,7 +224,7 @@ struct HistoryPane: View {
                         model.onCopyHistory?(entry)
                     } label: {
                         Image(systemName: "doc.on.doc")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Theme.textSecondary)
                     }
                     .buttonStyle(.plain)
                     .help("Copy text")
@@ -294,7 +294,7 @@ struct HistoryPane: View {
             // comfortable 28pt without resizing the glyph; it fits inside the row's
             // height so it doesn't change row layout.
             Image(systemName: "ellipsis")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textSecondary)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }

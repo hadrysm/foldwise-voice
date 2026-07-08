@@ -41,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // swiftlint:disable implicitly_unwrapped_optional
     private var config: Config!
     private var pipeline: Pipeline!
-    private var hud: HUDController!
+    private var badge: BadgeController!
     private var settings: SettingsController!
     private var menuBar: MenuBarController!
     private var listener: HotkeyListener?
@@ -75,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let modeOverride { config.setActiveMode(modeOverride) }
 
         // Composition root: the one recorder is shared between the Pipeline
-        // and the HUD's level meter, and warmup is triggered here (below),
+        // and the Badge's level meter, and warmup is triggered here (below),
         // not inside Pipeline.
         let recorder = AudioRecorder()
         // The dispatcher fronts the ASR engines behind the `Transcribing` seam
@@ -107,12 +107,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             record: { historyStore.append($0) }
         )
         settings = SettingsController(config: config, historyStore: historyStore, statsStore: statsStore)
-        hud = HUDController(config: config) { [weak self] in
+        badge = BadgeController(config: config) { [weak self] in
             self?.settings.show()
         }
-        hud.recorder = recorder
-        hud.onStop = { [weak self] in self?.pipeline.stopRecording() }
-        hud.onRecord = { [weak self] in self?.pipeline.toggleRecording() }
+        badge.recorder = recorder
+        badge.onStop = { [weak self] in self?.pipeline.stopRecording() }
+        badge.onRecord = { [weak self] in self?.pipeline.toggleRecording() }
         menuBar = MenuBarController(
             config: config,
             onSettings: { [weak self] in self?.settings.show() },
@@ -144,11 +144,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startListener()
         transcriber.warmup()
 
-        hud.flash(
-            .done,
-            "FoldWise Voice ready — hold \(KeyMap.pretty(config.hotkey)) to dictate",
-            seconds: 4.0
-        )
+        // The living idle pill is the ready signal (PRD #103); the hotkey
+        // hint lives on Home, rendered from the live config.
+        badge.show()
     }
 
     private func startListener() {
@@ -209,41 +207,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func apply(_ state: PipelineState) {
+        // The Badge folds the phase into its own state machine (BadgeReducer);
+        // only the menu-bar icon mapping lives here.
+        badge.apply(state)
         switch state {
-        case let .listening(mode):
+        case .listening:
             menuBar.setIcon(.listening)
-            hud.show(.listening, "Listening…  (\(mode))")
-        case let .downloadingModel(fraction):
+        case .downloadingModel, .loadingModel, .transcribing, .polishing:
             menuBar.setIcon(.working)
-            hud.show(.working, "Downloading speech model… \(Int(fraction * 100))%")
-        case .loadingModel:
-            menuBar.setIcon(.working)
-            hud.show(.working, "Preparing speech model…")
-        case .transcribing:
-            menuBar.setIcon(.working)
-            hud.show(.working, "Transcribing…")
-        case let .polishing(model):
-            menuBar.setIcon(.working)
-            hud.show(.working, "Polishing with \(model)…")
-        case .inserted:
+        case .inserted, .clipboard, .error, .idle:
             menuBar.setIcon(.idle)
-            hud.flash(.done, "Inserted ✓")
-        case .clipboard:
-            menuBar.setIcon(.idle)
-            hud.flash(.done, "Copied — press ⌘V to paste", seconds: 2.5)
-        case .error:
-            menuBar.setIcon(.idle)
-            hud.flash(.error, "Something went wrong — see logs", seconds: 2.5)
-        case .idle:
-            menuBar.setIcon(.idle)
-            hud.idle()
         }
     }
 
     @objc private func quit() {
         listener?.stop()
         pipeline.shutdown()
-        hud.hide()
+        badge.hide()
         NSApp.terminate(nil)
     }
 
@@ -328,8 +308,8 @@ public enum FoldWiseVoiceApp {
                 activeMode: config.activeMode, hotkey: config.hotkey,
                 toggleHotkey: config.toggleHotkey, pauseAudio: config.pauseAudio,
                 saveHistory: config.saveHistory,
-                historyRetention: config.historyRetention, hudPosition: config.hudPosition,
-                hudStyle: config.hudStyle, modeOrder: config.modeOrder,
+                historyRetention: config.historyRetention, badgePosition: config.badgePosition,
+                sidebarCollapsed: config.sidebarCollapsed, modeOrder: config.modeOrder,
                 modes: config.modes, path: tmp
             )
             try? echo.save()
