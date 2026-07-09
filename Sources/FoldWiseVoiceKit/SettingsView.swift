@@ -37,7 +37,16 @@ struct SettingsView: View {
     var body: some View {
         GeometryReader { geo in
             VStack(spacing: 0) {
-                titlebar
+                // The top safe-area inset is AppKit's titlebar strip, where
+                // the traffic lights are vertically centered — a bar of
+                // exactly that height shares its center with them on any
+                // macOS. In fullscreen the inset is zero (the lights
+                // auto-hide), so fall back to a fixed height.
+                titlebar(
+                    height: geo.safeAreaInsets.top > 0
+                        ? geo.safeAreaInsets.top
+                        : Theme.titlebarHeight
+                )
                 hairline(.horizontal)
                 HStack(spacing: 0) {
                     sidebar
@@ -46,6 +55,10 @@ struct SettingsView: View {
                 }
             }
             .background(Theme.windowBackground)
+            // Draw the custom titlebar in the real titlebar strip, sharing
+            // its row with the traffic lights, instead of below the hosting
+            // view's safe-area inset.
+            .ignoresSafeArea(.container, edges: .top)
             .onAppear {
                 model.windowWidth = geo.size.width
                 model.sidebar.widthChanged(to: geo.size.width)
@@ -76,7 +89,7 @@ struct SettingsView: View {
 
     // MARK: - titlebar
 
-    private var titlebar: some View {
+    private func titlebar(height: CGFloat) -> some View {
         HStack(spacing: 12) {
             // Clear the traffic lights drawn by the fullSizeContentView window.
             Spacer().frame(width: 70)
@@ -94,22 +107,22 @@ struct SettingsView: View {
                 .foregroundStyle(Theme.textTertiary)
             Spacer()
         }
-        .frame(height: 44)
+        .frame(height: height)
         .background(Theme.sidebarBackground)
     }
 
     /// The standard macOS "toggle sidebar" glyph: a rounded rect with an
-    /// inner vertical divider.
+    /// inner vertical divider, sized as a peer of the traffic lights.
     private var sidebarToggleGlyph: some View {
-        RoundedRectangle(cornerRadius: 6)
+        RoundedRectangle(cornerRadius: 4.5)
             .strokeBorder(Theme.textFaint, lineWidth: 1.5)
-            .frame(width: 27, height: 22)
+            .frame(width: 21, height: 16)
             .overlay(alignment: .leading) {
                 Rectangle()
                     .fill(Theme.textFaint)
                     .frame(width: 1.5)
                     .padding(.vertical, 1.5)
-                    .offset(x: 8)
+                    .offset(x: 6)
             }
             .contentShape(Rectangle())
     }

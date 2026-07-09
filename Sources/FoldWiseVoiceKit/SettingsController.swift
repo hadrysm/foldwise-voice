@@ -88,7 +88,22 @@ final class SettingsController {
 
     private func build() {
         let hosting = NSHostingController(rootView: SettingsView(model: model))
-        let win = NSWindow(contentViewController: hosting)
+        let win = Self.makeMainWindow(contentViewController: hosting)
+        win.center()
+        win.setFrameAutosaveName("FoldWiseMainWindow")
+        closeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: win, queue: .main
+        ) { _ in
+            // Back to menu-bar-only once settings closes.
+            Task { @MainActor in NSApp.setActivationPolicy(.accessory) }
+        }
+        window = win
+    }
+
+    /// Main-window chrome, internal (not private) so the titlebar tests pin
+    /// the exact traffic-light geometry the app ships.
+    static func makeMainWindow(contentViewController: NSViewController) -> NSWindow {
+        let win = NSWindow(contentViewController: contentViewController)
         win.title = "FoldWise Voice"
         win.styleMask = [
             .titled, .closable, .miniaturizable, .resizable, .fullSizeContentView,
@@ -101,15 +116,7 @@ final class SettingsController {
         // restored by the standard frame autosave (PRD #103).
         win.setContentSize(NSSize(width: 980, height: 720))
         win.contentMinSize = NSSize(width: 880, height: 640)
-        win.center()
-        win.setFrameAutosaveName("FoldWiseMainWindow")
-        closeObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification, object: win, queue: .main
-        ) { _ in
-            // Back to menu-bar-only once settings closes.
-            Task { @MainActor in NSApp.setActivationPolicy(.accessory) }
-        }
-        window = win
+        return win
     }
 
     private func populate() {

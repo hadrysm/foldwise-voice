@@ -79,6 +79,10 @@ enum Theme {
 
     // MARK: - metrics
 
+    /// Custom titlebar height in fullscreen only; everywhere else the bar
+    /// adopts the window's real titlebar strip (the top safe-area inset) so
+    /// its content centers on the traffic lights.
+    static let titlebarHeight: CGFloat = 32
     static let sidebarWidth: CGFloat = 190
     static let railWidth: CGFloat = 52
     static let statsRailWidth: CGFloat = 212

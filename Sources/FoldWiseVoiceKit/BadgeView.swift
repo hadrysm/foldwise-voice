@@ -1,6 +1,6 @@
 // The floating Badge pill (PRD #103), drawn entirely in SwiftUI: a fixed
 // near-black capsule with its own palette (it floats over any wallpaper),
-// breathing idle glyph, hover action row, and the silk-ribbon recording
+// static idle glyph, hover action row, and the silk-ribbon recording
 // canvas. GPU-driven via TimelineView + Canvas — no main-thread drawing loop.
 // All state transitions come from `BadgeReducer` via the controller; this
 // file only renders `BadgeModel`.
@@ -160,41 +160,32 @@ private struct BadgeRoundButton: View {
     }
 }
 
-/// The idle "···|·|·" glyph: rounded dots and bars that breathe — scaleY
-/// 1→1.9, opacity 0.55→1 — on a 3.4s ease-in-out loop, staggered 0.35s apart.
+/// The idle "···|·|·" glyph: rounded dots and bars, drawn motionless. Idle
+/// must sit still — element-by-element height/opacity motion reads as
+/// "listening" — and a static Canvas spares the timeline redraw loop while
+/// the badge idles. Locked by BadgeIdleStaticTests.
 struct BadgeIdleGlyph: View {
     /// Element heights in points; 3.5pt-wide dots (3.5) and bars (12, 7).
     private static let heights: [CGFloat] = [3.5, 3.5, 3.5, 12, 3.5, 7, 3.5]
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            Canvas { ctx, size in
-                let count = Self.heights.count
-                let width: CGFloat = 3.5
-                let gap: CGFloat = 3.5
-                let total = CGFloat(count) * width + CGFloat(count - 1) * gap
-                let x0 = (size.width - total) / 2
-                for (i, base) in Self.heights.enumerated() {
-                    // Cosine ease-in-out loop, staggered per element.
-                    let cycle = (t - Double(i) * 0.35) / 3.4
-                    let breath = 0.5 - 0.5 * cos(cycle * 2 * .pi)
-                    let height = base * CGFloat(1 + 0.9 * breath)
-                    let alpha = 0.55 + 0.45 * breath
-                    let isBar = base > 3.5
-                    let rect = CGRect(
-                        x: x0 + CGFloat(i) * (width + gap),
-                        y: (size.height - height) / 2,
-                        width: width, height: height
-                    )
-                    ctx.fill(
-                        Path(roundedRect: rect, cornerRadius: width / 2),
-                        with: .color(
-                            (isBar ? Theme.Badge.iconEmphasized : Theme.Badge.iconIdle)
-                                .opacity(alpha)
-                        )
-                    )
-                }
+        Canvas { ctx, size in
+            let count = Self.heights.count
+            let width: CGFloat = 3.5
+            let gap: CGFloat = 3.5
+            let total = CGFloat(count) * width + CGFloat(count - 1) * gap
+            let x0 = (size.width - total) / 2
+            for (i, height) in Self.heights.enumerated() {
+                let isBar = height > 3.5
+                let rect = CGRect(
+                    x: x0 + CGFloat(i) * (width + gap),
+                    y: (size.height - height) / 2,
+                    width: width, height: height
+                )
+                ctx.fill(
+                    Path(roundedRect: rect, cornerRadius: width / 2),
+                    with: .color(isBar ? Theme.Badge.iconEmphasized : Theme.Badge.iconIdle)
+                )
             }
         }
         .allowsHitTesting(false)

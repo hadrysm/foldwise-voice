@@ -13,7 +13,6 @@ import SwiftUI
 
 struct HistoryPane: View {
     @ObservedObject var model: SettingsModel
-    @State private var hoveredRow: UUID?
     @State private var confirmingClearAll = false
     @State private var confirmingDeleteOnOff = false
     @State private var search = ""
@@ -199,27 +198,88 @@ struct HistoryPane: View {
     }
 
     private func groupedList(_ entries: [HistoryEntry]) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        LazyVStack(alignment: .leading, spacing: 16) {
             ForEach(HistoryPane.grouped(entries), id: \.header) { group in
                 sectionHeader(group.header)
                 Card {
-                    ForEach(Array(group.entries.enumerated()), id: \.element.id) { i, entry in
-                        if i > 0 { Divider().padding(.leading, 14) }
-                        row(entry)
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(group.entries.enumerated()), id: \.element.id) { i, entry in
+                            if i > 0 { Divider().padding(.leading, 14) }
+                            HistoryRow(model: model, entry: entry)
+                        }
                     }
                 }
             }
         }
     }
 
-    private func row(_ entry: HistoryEntry) -> some View {
+    // MARK: - grouping (display-only; the view is not unit-tested per PRD #78)
+
+    struct DayGroup {
+        let header: String
+        let entries: [HistoryEntry]
+    }
+
+    /// Newest entry first, bucketed by calendar day, each bucket labeled
+    /// TODAY / YESTERDAY / a medium date. Buckets are ordered newest day first.
+    static func grouped(_ entries: [HistoryEntry], calendar: Calendar = .current) -> [DayGroup] {
+        let sorted = entries.sorted { $0.createdAt > $1.createdAt }
+        var order: [Date] = []
+        var buckets: [Date: [HistoryEntry]] = [:]
+        for entry in sorted {
+            let day = calendar.startOfDay(for: entry.createdAt)
+            if buckets[day] == nil { order.append(day) }
+            buckets[day, default: []].append(entry)
+        }
+        return order.map { day in
+            DayGroup(header: header(for: day, calendar: calendar), entries: buckets[day] ?? [])
+        }
+    }
+
+    private static func header(for day: Date, calendar: Calendar) -> String {
+        if calendar.isDateInToday(day) { return "Today" }
+        if calendar.isDateInYesterday(day) { return "Yesterday" }
+        return dayFormatter.string(from: day)
+    }
+
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    static func time(_ date: Date) -> String {
+        timeFormatter.string(from: date)
+    }
+}
+
+/// One history row. A separate view so its hover state is row-local: hovering
+/// re-evaluates exactly this row, not the whole pane — with histories in the
+/// thousands, pane-wide hover invalidation re-filtered, re-grouped, and
+/// re-diffed the entire list on every pointer move. `model` is deliberately
+/// NOT `@ObservedObject`: the row reads callbacks and Mode names at action
+/// time, and list-shape changes reach it as new `entry` input from the pane.
+private struct HistoryRow: View {
+    let model: SettingsModel
+    let entry: HistoryEntry
+    @State private var hovered = false
+
+    var body: some View {
         CardRow(
             title: entry.text,
             subtitle: "\(entry.modeName) · \(PolishStatus(entry).label) · "
                 + HistoryPane.time(entry.createdAt)
         ) {
             HStack(spacing: 8) {
-                if hoveredRow == entry.id {
+                if hovered {
                     Button {
                         model.onCopyHistory?(entry)
                     } label: {
@@ -232,7 +292,7 @@ struct HistoryPane: View {
                 // A flagged row keeps its filled flag on show even off-hover, so
                 // the bookmark is visible at a glance; hovering reveals the flag
                 // affordance on unflagged rows.
-                if hoveredRow == entry.id || entry.flagged {
+                if hovered || entry.flagged {
                     Button {
                         model.onFlagHistory?(entry)
                     } label: {
@@ -249,11 +309,7 @@ struct HistoryPane: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering in
-            if hovering {
-                hoveredRow = entry.id
-            } else if hoveredRow == entry.id {
-                hoveredRow = nil
-            }
+            hovered = hovering
         }
     }
 
@@ -304,52 +360,5 @@ struct HistoryPane: View {
         .controlSize(.small)
         .fixedSize()
         .accessibilityLabel("More actions")
-    }
-
-    // MARK: - grouping (display-only; the view is not unit-tested per PRD #78)
-
-    struct DayGroup {
-        let header: String
-        let entries: [HistoryEntry]
-    }
-
-    /// Newest entry first, bucketed by calendar day, each bucket labeled
-    /// TODAY / YESTERDAY / a medium date. Buckets are ordered newest day first.
-    static func grouped(_ entries: [HistoryEntry], calendar: Calendar = .current) -> [DayGroup] {
-        let sorted = entries.sorted { $0.createdAt > $1.createdAt }
-        var order: [Date] = []
-        var buckets: [Date: [HistoryEntry]] = [:]
-        for entry in sorted {
-            let day = calendar.startOfDay(for: entry.createdAt)
-            if buckets[day] == nil { order.append(day) }
-            buckets[day, default: []].append(entry)
-        }
-        return order.map { day in
-            DayGroup(header: header(for: day, calendar: calendar), entries: buckets[day] ?? [])
-        }
-    }
-
-    private static func header(for day: Date, calendar: Calendar) -> String {
-        if calendar.isDateInToday(day) { return "Today" }
-        if calendar.isDateInYesterday(day) { return "Yesterday" }
-        return dayFormatter.string(from: day)
-    }
-
-    private static let dayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        return formatter
-    }()
-
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        return formatter
-    }()
-
-    static func time(_ date: Date) -> String {
-        timeFormatter.string(from: date)
     }
 }
