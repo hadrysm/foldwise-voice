@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/hadrysm/foldwise-voice/compare/v0.12.0...v0.13.0) (2026-07-09)
+
+
+### Features
+
+* **ui:** Editorial redesign — window shell, Home view, and floating Badge ([#111](https://github.com/hadrysm/foldwise-voice/issues/111)) ([4dd0b2e](https://github.com/hadrysm/foldwise-voice/commit/4dd0b2e4ffbdb885d62697feb4061a7d759a52f4))
+
 ## [0.12.0](https://github.com/hadrysm/foldwise-voice/compare/v0.11.0...v0.12.0) (2026-07-07)
 
 
