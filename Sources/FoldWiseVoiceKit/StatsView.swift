@@ -30,8 +30,8 @@ struct StatsPane: View {
                 "A look at how you dictate, drawn from the history you already keep. "
                     + "Nothing new is stored — turn history off or prune it and these shrink."
             )
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
+            .font(Theme.ui(12))
+            .foregroundStyle(Theme.textSecondary)
 
             if model.historyEntries.isEmpty && model.currentStreak == nil {
                 emptyState
@@ -95,8 +95,8 @@ struct StatsPane: View {
                     "Saving is off — these numbers have stopped updating.",
                     systemImage: "pause.circle"
                 )
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+                .font(Theme.ui(11))
+                .foregroundStyle(Theme.textSecondary)
             }
         }
     }
@@ -104,7 +104,7 @@ struct StatsPane: View {
     /// One stat's trailing figure, styled uniformly across the card.
     private func statValue(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 15, weight: .semibold))
+            .font(Theme.ui(15, .semibold))
             .monospacedDigit()
     }
 

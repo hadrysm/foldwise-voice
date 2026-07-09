@@ -1,150 +1,301 @@
-// Settings window content: SuperWhisper-style sidebar navigation with card
-// panes — Home (status), Modes, Models (pick/install Ollama models with speed
-// & quality guidance), Configuration (keyboard shortcuts), Sound.
+// Main window content (PRD #103, "Editorial"): a custom titlebar with a
+// sidebar toggle (button + ⌘\), a collapsible sidebar that animates between
+// the 190pt labeled list and the 52pt icon rail (tooltip chips on hover), and
+// six panes — Home, Modes, Models, History, Stats, Settings. The old Speech
+// pane lives inside Models; Configuration and Sound merged into Settings.
 // Every change saves straight to modes.json; there is no Save button.
 
 import AppKit
 import SwiftUI
 
-struct SettingsView: View {
-    @ObservedObject var model: SettingsModel
-
-    private static let accessibilitySettingsURL = URL(
-        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-    )
-
-    /// Set in Info.plist by scripts/build_swift_app.py from version.txt;
-    /// absent when running the bare binary (swift run).
-    private var appVersion: String {
+/// App version shared by the sidebar footer, the Settings pane, and Home's
+/// system summary. Set in Info.plist by scripts/build_swift_app.py from
+/// version.txt; absent when running the bare binary (swift run).
+enum AppInfo {
+    static var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
             ?? "dev"
     }
+}
+
+/// Rail-tile bounds, collected so the tooltip chip can be drawn at the window
+/// level — a chip drawn inside the 52pt rail would be covered by the content
+/// column rendered after it.
+struct RailTileBoundsKey: PreferenceKey {
+    static let defaultValue: [SettingsModel.Pane: Anchor<CGRect>] = [:]
+    static func reduce(
+        value: inout [SettingsModel.Pane: Anchor<CGRect>],
+        nextValue: () -> [SettingsModel.Pane: Anchor<CGRect>]
+    ) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+struct SettingsView: View {
+    @ObservedObject var model: SettingsModel
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-            Divider()
-            content
-        }
-        .frame(width: 780, height: 560)
-    }
-
-    // MARK: sidebar
-
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(SettingsModel.Pane.allCases) { pane in
-                sidebarRow(pane)
-            }
-            Spacer()
-            VStack(alignment: .leading, spacing: 1) {
-                Text("FoldWise Voice")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 5) {
-                    Text("Version \(appVersion)")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                    sidebarUpdateControl
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                // The top safe-area inset is AppKit's titlebar strip, where
+                // the traffic lights are vertically centered — a bar of
+                // exactly that height shares its center with them on any
+                // macOS. In fullscreen the inset is zero (the lights
+                // auto-hide), so fall back to a fixed height.
+                titlebar(
+                    height: geo.safeAreaInsets.top > 0
+                        ? geo.safeAreaInsets.top
+                        : Theme.titlebarHeight
+                )
+                hairline(.horizontal)
+                HStack(spacing: 0) {
+                    sidebar
+                    hairline(.vertical)
+                    content
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 10)
+            .background(Theme.windowBackground)
+            // Draw the custom titlebar in the real titlebar strip, sharing
+            // its row with the traffic lights, instead of below the hosting
+            // view's safe-area inset.
+            .ignoresSafeArea(.container, edges: .top)
+            .onAppear {
+                model.windowWidth = geo.size.width
+                model.sidebar.widthChanged(to: geo.size.width)
+            }
+            .onChange(of: geo.size.width) { _, width in
+                model.windowWidth = width
+                model.sidebar.widthChanged(to: width)
+            }
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 34) // clear the traffic lights
-        .frame(width: 192)
-        .background(VisualEffect(material: .sidebar))
+        .overlayPreferenceValue(RailTileBoundsKey.self) { anchors in
+            railTooltip(anchors)
+        }
+        .frame(minWidth: 880, minHeight: 640)
     }
 
-    /// Compact companion to the Updates row: a tiny refresh button next to
-    /// the sidebar version label, sharing the same updateState.
-    @ViewBuilder
-    private var sidebarUpdateControl: some View {
-        switch model.updateState {
-        case .checking:
-            ProgressView()
-                .controlSize(.small)
-                .scaleEffect(0.5)
-                .frame(width: 12, height: 12)
-        case let .available(version, downloadURL):
-            Button("Get v\(version)") {
-                NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(Color.accentColor)
-        case .unavailable:
-            EmptyView()
-        case .idle, .upToDate, .failed:
+    private var sidebarMode: SidebarMode {
+        model.sidebar.mode(forWidth: model.windowWidth)
+    }
+
+    private func hairline(_ axis: Axis) -> some View {
+        Rectangle()
+            .fill(Theme.hairline)
+            .frame(
+                width: axis == .vertical ? 1 : nil,
+                height: axis == .horizontal ? 1 : nil
+            )
+    }
+
+    // MARK: - titlebar
+
+    private func titlebar(height: CGFloat) -> some View {
+        HStack(spacing: 12) {
+            // Clear the traffic lights drawn by the fullSizeContentView window.
+            Spacer().frame(width: 70)
             Button {
-                model.onCheckUpdates?()
+                model.sidebar.toggle(width: model.windowWidth)
+                model.onCommit?()
             } label: {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 14, height: 14)
-                    .contentShape(Rectangle())
+                sidebarToggleGlyph
             }
             .buttonStyle(.plain)
-            .help("Check for updates")
+            .keyboardShortcut("\\", modifiers: .command)
+            .help("Toggle sidebar (⌘\\)")
+            Text("FoldWise Voice")
+                .font(Theme.ui(12.5, .semibold))
+                .foregroundStyle(Theme.textTertiary)
+            Spacer()
         }
+        .frame(height: height)
+        .background(Theme.sidebarBackground)
     }
 
-    private func sidebarRow(_ pane: SettingsModel.Pane) -> some View {
-        Button {
+    /// The standard macOS "toggle sidebar" glyph: a rounded rect with an
+    /// inner vertical divider, sized as a peer of the traffic lights.
+    private var sidebarToggleGlyph: some View {
+        RoundedRectangle(cornerRadius: 4.5)
+            .strokeBorder(Theme.textFaint, lineWidth: 1.5)
+            .frame(width: 21, height: 16)
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(Theme.textFaint)
+                    .frame(width: 1.5)
+                    .padding(.vertical, 1.5)
+                    .offset(x: 6)
+            }
+            .contentShape(Rectangle())
+    }
+
+    // MARK: - sidebar
+
+    private var sidebar: some View {
+        Group {
+            if sidebarMode == .expanded {
+                expandedSidebar.frame(width: Theme.sidebarWidth)
+            } else {
+                railSidebar.frame(width: Theme.railWidth)
+            }
+        }
+        .background(Theme.sidebarBackground)
+        .clipped()
+        .animation(Theme.sidebarAnimation, value: sidebarMode)
+    }
+
+    private var expandedSidebar: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(SettingsModel.Pane.allCases) { pane in
+                navRow(pane)
+            }
+            Spacer()
+            footer
+        }
+        .padding(10)
+    }
+
+    private func navRow(_ pane: SettingsModel.Pane) -> some View {
+        let active = model.pane == pane
+        return Button {
             model.pane = pane
         } label: {
-            HStack(spacing: 9) {
+            HStack(spacing: 10) {
                 Image(systemName: pane.icon)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 23, height: 23)
-                    .background(pane.tint.gradient, in: RoundedRectangle(cornerRadius: 6))
-                Text(pane.rawValue).font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(active ? Theme.accent : Theme.textTertiary)
+                    .frame(width: 18)
+                Text(pane.rawValue)
+                    .font(active ? Theme.navActive : Theme.nav)
+                    .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
                 Spacer()
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .background(
-            model.pane == pane ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
-            in: RoundedRectangle(cornerRadius: 8)
+            active ? Theme.activeNavBackground : Color.clear,
+            in: RoundedRectangle(cornerRadius: Theme.navRadius)
         )
+        .shadow(color: active ? Theme.activeNavShadow : .clear, radius: 3, y: 1)
     }
 
-    // MARK: content shell
+    private var railSidebar: some View {
+        VStack(spacing: 4) {
+            ForEach(SettingsModel.Pane.allCases) { pane in
+                railTile(pane)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 10)
+    }
+
+    private func railTile(_ pane: SettingsModel.Pane) -> some View {
+        let active = model.pane == pane
+        return Button {
+            model.pane = pane
+        } label: {
+            Image(systemName: pane.icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(active ? Theme.accent : Theme.textTertiary)
+                .frame(width: 36, height: 36)
+                .background(
+                    active ? Theme.activeNavBackground : Color.clear,
+                    in: RoundedRectangle(cornerRadius: Theme.railTileRadius)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .shadow(color: active ? Theme.activeNavShadow : .clear, radius: 3, y: 1)
+        .anchorPreference(key: RailTileBoundsKey.self, value: .bounds) { [pane: $0] }
+        .onHover { hovering in
+            if hovering {
+                model.hoveredRailPane = pane
+            } else if model.hoveredRailPane == pane {
+                model.hoveredRailPane = nil
+            }
+        }
+    }
+
+    /// The hovered rail tile's tooltip chip, 10pt to its right and vertically
+    /// centered, drawn over everything so the content column can't cover it.
+    private func railTooltip(_ anchors: [SettingsModel.Pane: Anchor<CGRect>]) -> some View {
+        GeometryReader { proxy in
+            if sidebarMode == .rail,
+               let pane = model.hoveredRailPane,
+               let anchor = anchors[pane] {
+                let rect = proxy[anchor]
+                Text(pane.rawValue)
+                    .font(Theme.tooltip)
+                    .foregroundStyle(Theme.tooltipText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Theme.tooltipBackground,
+                        in: RoundedRectangle(cornerRadius: Theme.tooltipRadius)
+                    )
+                    .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+                    .fixedSize()
+                    .offset(x: rect.maxX + 10, y: rect.midY - 12)
+                    .transition(.opacity.combined(with: .offset(x: -4)))
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: model.hoveredRailPane)
+    }
+
+    /// Version footer pinned to the sidebar's bottom, with the update state
+    /// folded into one faint line and an accent link when a release is out.
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if case let .available(version, downloadURL) = model.updateState {
+                Button("Get v\(version)") {
+                    NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
+                }
+                .buttonStyle(.plain)
+                .font(Theme.ui(11, .semibold))
+                .foregroundStyle(Theme.accent)
+            }
+            Text(footerText)
+                .font(Theme.ui(11))
+                .foregroundStyle(Theme.textFaint)
+        }
+        .padding(.horizontal, 11)
+        .padding(.bottom, 8)
+    }
+
+    private var footerText: String {
+        switch model.updateState {
+        case .checking: "v\(AppInfo.version) · checking…"
+        case .upToDate: "v\(AppInfo.version) · up to date"
+        case let .available(version, _): "v\(AppInfo.version) · v\(version) available"
+        case .idle, .failed, .unavailable: "v\(AppInfo.version)"
+        }
+    }
+
+    // MARK: - content shell
 
     private var content: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text(model.pane.title)
-                        .font(.system(size: 17, weight: .semibold))
-                        .padding(.bottom, 2)
-                    switch model.pane {
-                    case .home: homePane
-                    case .modes: modesPane
-                    case .speech: SpeechPane(model: model)
-                    case .models: ModelsPane(model: model)
-                    case .configuration: configurationPane
-                    case .sound: soundPane
-                    case .history: HistoryPane(model: model)
-                    case .stats: StatsPane(model: model)
-                    }
-                }
-                .padding(.horizontal, 28)
-                .padding(.top, 44)
-                .padding(.bottom, 24)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            switch model.pane {
+            case .home:
+                HomeView(model: model)
+            case .modes:
+                paneScroll("Modes") { modesPane }
+            case .models:
+                paneScroll("Models") { ModelsCombinedPane(model: model) }
+            case .history:
+                paneScroll("History") { HistoryPane(model: model) }
+            case .stats:
+                paneScroll("Stats") { StatsPane(model: model) }
+            case .settings:
+                paneScroll("Settings") { settingsPane }
             }
             if !model.status.isEmpty {
-                Divider()
+                hairline(.horizontal)
                 Text(model.status)
-                    .font(.callout)
-                    .foregroundStyle(model.statusIsError ? .red : .secondary)
+                    .font(Theme.ui(12))
+                    .foregroundStyle(model.statusIsError ? AnyShapeStyle(.red) : AnyShapeStyle(Theme.textSecondary))
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 6)
@@ -152,129 +303,30 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: home
-
-    private var homePane: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Card {
-                CardRow(
-                    title: "Speech recognition",
-                    subtitle: asrSubtitle
-                ) {
-                    Button("Change…") { model.pane = .speech }
-                        .controlSize(.small)
-                }
-                Divider().padding(.leading, 14)
-                CardRow(
-                    title: "Polish model",
-                    subtitle: model.selectedModel.isEmpty
-                        ? "No LLM mode configured"
-                        : model.selectedModel
-                ) {
-                    if model.ollamaDown {
-                        Label("Ollama offline", systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.orange)
-                    } else if !model.selectedModelInstalled {
-                        Button("Not installed — fix…") { model.pane = .models }
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    }
-                }
-                Divider().padding(.leading, 14)
-                CardRow(
-                    title: "Accessibility",
-                    subtitle: model.axTrusted
-                        ? "Granted — dictation is pasted into the focused app"
-                        : "Missing — text lands on the clipboard only"
-                ) {
-                    if model.axTrusted {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    } else {
-                        Button("Open Accessibility…") {
-                            if let url = Self.accessibilitySettingsURL {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
-                        .controlSize(.small)
-                    }
-                }
-                Divider().padding(.leading, 14)
-                CardRow(title: "Updates", subtitle: updateSubtitle) {
-                    updateTrailing
-                }
+    private func paneScroll(_ title: String, @ViewBuilder body: () -> some View) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(title)
+                    .font(Theme.pageTitle)
+                    .kerning(-0.56)
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.bottom, 4)
+                body()
             }
-
-            sectionHeader("Quick start")
-            Card {
-                CardRow(
-                    title: "Hold \(KeyMap.pretty(model.pttKey)) and speak",
-                    subtitle: "Release the key and the text is inserted where your cursor is. "
-                        + (model.toggleKey.isEmpty
-                            ? "Set a toggle key in Configuration for hands-free dictation."
-                            : "Or tap \(KeyMap.pretty(model.toggleKey)) to start and stop.")
-                ) {
-                    Keycap(text: keycapLabel(model.pttKey))
-                }
-            }
+            .padding(.horizontal, Theme.contentPadding)
+            .padding(.top, Theme.contentPadding)
+            .padding(.bottom, 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    /// The active ASR model, described for the Home card. An unknown/fossil id
-    /// (ADR-0006) resolves to the Parakeet default the app actually transcribes
-    /// with, so the card never claims a model that isn't running.
-    private var asrSubtitle: String {
-        let entry = ASRModelCatalog.entry(for: model.asrModel)
-            ?? ASRModelCatalog.entry(for: ASRModelCatalog.defaultID)
-        guard let entry else {
-            return "Parakeet TDT v3 — fully on-device (Apple Neural Engine)"
-        }
-        return "\(entry.name) — \(entry.languages), on-device (Apple Neural Engine)"
-    }
-
-    private var updateSubtitle: String {
-        switch model.updateState {
-        case .idle: "Version \(appVersion)"
-        case .checking: "Version \(appVersion) — checking for updates…"
-        case .upToDate: "Version \(appVersion) — you're up to date"
-        case let .available(version, _): "Version \(appVersion) — v\(version) is available"
-        case .failed: "Version \(appVersion) — couldn't reach GitHub, try again later"
-        case .unavailable: "Version \(appVersion) — update checks need a packaged build"
-        }
-    }
-
-    @ViewBuilder
-    private var updateTrailing: some View {
-        switch model.updateState {
-        case .checking:
-            ProgressView().controlSize(.small)
-        case let .available(version, downloadURL):
-            Button("Download v\(version)…") {
-                NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
-            }
-            .controlSize(.small)
-        case .unavailable:
-            EmptyView()
-        case .upToDate:
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                Button("Check for Updates") { model.onCheckUpdates?() }
-                    .controlSize(.small)
-            }
-        case .idle, .failed:
-            Button("Check for Updates") { model.onCheckUpdates?() }
-                .controlSize(.small)
-        }
-    }
-
-    // MARK: modes
+    // MARK: - modes
 
     private var modesPane: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("The active mode decides how your dictation is processed after transcription.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+                .font(Theme.ui(12))
+                .foregroundStyle(Theme.textSecondary)
             Card {
                 ForEach(Array(model.modeNames.enumerated()), id: \.element) { i, name in
                     if i > 0 { Divider().padding(.leading, 14) }
@@ -293,7 +345,11 @@ struct SettingsView: View {
                                     ? "checkmark.circle.fill"
                                     : "circle"
                             )
-                            .foregroundStyle(model.activeMode == name ? .blue : .secondary)
+                            .foregroundStyle(
+                                model.activeMode == name
+                                    ? AnyShapeStyle(Theme.accent)
+                                    : AnyShapeStyle(Theme.textTertiary)
+                            )
                         }
                         .contentShape(Rectangle())
                     }
@@ -303,16 +359,17 @@ struct SettingsView: View {
             HStack {
                 Button("Edit modes.json…") { model.onEditFile?() }
                 Text("Prompts and vocabulary live in the config file.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.textSecondary)
             }
         }
     }
 
-    // MARK: configuration (keyboard shortcuts)
+    // MARK: - settings (keyboard shortcuts + sound + updates)
 
-    private var configurationPane: some View {
+    private var settingsPane: some View {
         VStack(alignment: .leading, spacing: 16) {
+            sectionHeader("Keyboard shortcuts")
             Card {
                 CardRow(
                     title: "Push to Talk",
@@ -346,34 +403,71 @@ struct SettingsView: View {
                 "Click a shortcut, then press the key you want — a modifier "
                     + "(⌥ ⌘ ⌃ ⇧), a function key, or a single character."
             )
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
+            .font(Theme.ui(11))
+            .foregroundStyle(Theme.textSecondary)
 
-            sectionHeader("Recording bar")
+            sectionHeader("Sound")
             Card {
                 CardRow(
-                    title: "Style",
-                    subtitle: "How the floating dictation bar looks"
+                    title: "Pause other audio",
+                    subtitle: "Pause music and mute system audio while dictating"
                 ) {
-                    Picker(
+                    Toggle(
                         "",
-                        selection: Binding(
-                            get: { model.hudStyle },
+                        isOn: Binding(
+                            get: { model.pauseAudio },
                             set: {
-                                model.hudStyle = $0
+                                model.pauseAudio = $0
                                 model.onCommit?()
                             }
                         )
-                    ) {
-                        ForEach(HUDStyle.allCases) { style in
-                            Text(style.displayName).tag(style.rawValue)
-                        }
-                    }
-                    .pickerStyle(.menu)
+                    )
+                    .toggleStyle(.switch)
                     .labelsHidden()
-                    .fixedSize()
                 }
             }
+
+            sectionHeader("Updates")
+            Card {
+                CardRow(title: "Updates", subtitle: updateSubtitle) {
+                    updateTrailing
+                }
+            }
+        }
+    }
+
+    private var updateSubtitle: String {
+        switch model.updateState {
+        case .idle: "Version \(AppInfo.version)"
+        case .checking: "Version \(AppInfo.version) — checking for updates…"
+        case .upToDate: "Version \(AppInfo.version) — you're up to date"
+        case let .available(version, _): "Version \(AppInfo.version) — v\(version) is available"
+        case .failed: "Version \(AppInfo.version) — couldn't reach GitHub, try again later"
+        case .unavailable: "Version \(AppInfo.version) — update checks need a packaged build"
+        }
+    }
+
+    @ViewBuilder
+    private var updateTrailing: some View {
+        switch model.updateState {
+        case .checking:
+            ProgressView().controlSize(.small)
+        case let .available(version, downloadURL):
+            Button("Download v\(version)…") {
+                NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
+            }
+            .controlSize(.small)
+        case .unavailable:
+            EmptyView()
+        case .upToDate:
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Button("Check for Updates") { model.onCheckUpdates?() }
+                    .controlSize(.small)
+            }
+        case .idle, .failed:
+            Button("Check for Updates") { model.onCheckUpdates?() }
+                .controlSize(.small)
         }
     }
 
@@ -382,7 +476,7 @@ struct SettingsView: View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textSecondary)
         }
         .buttonStyle(.plain)
         .help(help)
@@ -395,15 +489,15 @@ struct SettingsView: View {
             Group {
                 if model.recordingField == field {
                     Text("Press a key…")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(Theme.ui(12, .medium))
                         .foregroundStyle(.orange)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 4)
                         .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
                 } else if key.isEmpty {
                     Text("Click to set")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                        .font(Theme.ui(12))
+                        .foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 4)
                         .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 5))
@@ -415,40 +509,38 @@ struct SettingsView: View {
         }
         .buttonStyle(.plain)
     }
+}
 
-    private func keycapLabel(_ name: String) -> String {
-        if name.count == 1 { return name.uppercased() }
-        return KeyMap.pretty(name) // "right ⌥", "f19", "esc", …
-    }
+func keycapLabel(_ name: String) -> String {
+    if name.count == 1 { return name.uppercased() }
+    return KeyMap.pretty(name) // "right ⌥", "f19", "esc", …
+}
 
-    // MARK: sound
+// MARK: - models (ASR + Ollama in one pane)
 
-    private var soundPane: some View {
-        Card {
-            CardRow(
-                title: "Pause other audio",
-                subtitle: "Pause music and mute system audio while dictating"
-            ) {
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { model.pauseAudio },
-                        set: {
-                            model.pauseAudio = $0
-                            model.onCommit?()
-                        }
-                    )
-                )
-                .toggleStyle(.switch)
-                .labelsHidden()
+/// The merged Models pane (PRD #103): everything model-shaped in one place —
+/// the speech (ASR) catalog on top, the Polish (Ollama) models below. Both
+/// sections are the previous panes unchanged in behavior.
+struct ModelsCombinedPane: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 16) {
+                sectionHeader("Speech recognition")
+                SpeechPane(model: model)
+            }
+            VStack(alignment: .leading, spacing: 16) {
+                sectionHeader("Polish (Ollama)")
+                ModelsPane(model: model)
             }
         }
     }
 }
 
-// MARK: speech
+// MARK: - speech
 
-/// The Speech pane (ADR-0006): a curated ASR catalog split into "Your Models"
+/// The ASR section (ADR-0006): a curated catalog split into "Your Models"
 /// (downloaded) and "Available", mirroring the Ollama `ModelsPane`. Rows lead
 /// with language coverage; a downloaded model is a selectable row with a
 /// checkmark for the active one, an available model shows a Download button with
@@ -466,8 +558,8 @@ struct SpeechPane: View {
                     + "every mode. Parakeet is built in; Whisper reaches ~99 languages and "
                     + "downloads on first use, then runs on-device."
             )
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
+            .font(Theme.ui(12))
+            .foregroundStyle(Theme.textSecondary)
 
             let downloaded = ASRModelCatalog.entries.filter { model.asrDownloaded.contains($0.id) }
             let available = ASRModelCatalog.entries.filter { !model.asrDownloaded.contains($0.id) }
@@ -477,12 +569,12 @@ struct SpeechPane: View {
 
             if !model.asrDownloadError.isEmpty {
                 Label(model.asrDownloadError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11))
+                    .font(Theme.ui(11))
                     .foregroundStyle(.red)
             }
             if !model.asrDeleteError.isEmpty {
                 Label(model.asrDeleteError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11))
+                    .font(Theme.ui(11))
                     .foregroundStyle(.red)
             }
         }
@@ -535,20 +627,25 @@ struct SpeechPane: View {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(entry.name)  ·  \(entry.languages)")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text(entry.blurb).font(.system(size: 11)).foregroundStyle(.secondary)
+                            .font(Theme.ui(13, .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text(entry.blurb).font(Theme.ui(11)).foregroundStyle(Theme.textSecondary)
                     }
                     Spacer(minLength: 16)
                     if deleting {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("Deleting…").font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text("Deleting…").font(Theme.ui(11)).foregroundStyle(Theme.textSecondary)
                         }
                     } else {
                         ratings(entry)
                         if downloaded {
                             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(selected ? .blue : .secondary)
+                                .foregroundStyle(
+                                    selected
+                                        ? AnyShapeStyle(Theme.accent)
+                                        : AnyShapeStyle(Theme.textTertiary)
+                                )
                         }
                     }
                 }
@@ -563,7 +660,7 @@ struct SpeechPane: View {
                     Button {
                         model.onCancelASRDownload?()
                     } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textSecondary)
                     }
                     .buttonStyle(.plain)
                     .help("Cancel download")
@@ -589,7 +686,7 @@ struct SpeechPane: View {
             Button("Delete…", role: .destructive) { pendingDelete = entry }
         } label: {
             Image(systemName: "ellipsis")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textSecondary)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
@@ -612,34 +709,34 @@ struct SpeechPane: View {
         if model.asrPreparing {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("Preparing…").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text("Preparing…").font(Theme.ui(11)).foregroundStyle(Theme.textSecondary)
             }
         } else if let fraction = model.asrDownloadFraction {
             VStack(alignment: .trailing, spacing: 2) {
                 ProgressView(value: fraction).frame(width: 110)
                 Text("\(Int(fraction * 100))%")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    .font(Theme.ui(10)).foregroundStyle(Theme.textSecondary)
             }
         } else {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("Downloading…").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text("Downloading…").font(Theme.ui(11)).foregroundStyle(Theme.textSecondary)
             }
         }
     }
 
     private func ratings(_ entry: ASRModelCatalog.Entry) -> some View {
         VStack(alignment: .trailing, spacing: 3) {
-            Text(entry.size).font(.system(size: 10)).foregroundStyle(.secondary)
+            Text(entry.size).font(Theme.ui(10)).foregroundStyle(Theme.textSecondary)
             RatingDots(label: "Speed", value: entry.speed)
             RatingDots(label: "Quality", value: entry.quality)
         }
     }
 }
 
-// MARK: models
+// MARK: - Ollama models
 
-/// The Models pane owns the pending-uninstall selection: the kebab overflow
+/// The Ollama section owns the pending-uninstall selection: the kebab overflow
 /// menu on an installed row arms `pendingUninstall`, which drives the
 /// confirmation alert. Removal itself is mediated by SettingsController via
 /// `onDeleteModel`.
@@ -654,8 +751,8 @@ struct ModelsPane: View {
                     + "It applies to every mode that uses an LLM. Speed and quality are "
                     + "rated for dictation on Apple Silicon."
             )
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
+            .font(Theme.ui(12))
+            .foregroundStyle(Theme.textSecondary)
 
             if model.installed == nil {
                 Card {
@@ -718,12 +815,12 @@ struct ModelsPane: View {
 
                 if !model.pullError.isEmpty {
                     Label(model.pullError, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
+                        .font(Theme.ui(11))
                         .foregroundStyle(.red)
                 }
                 if !model.deleteError.isEmpty {
                     Label(model.deleteError, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
+                        .font(Theme.ui(11))
                         .foregroundStyle(.red)
                 }
             }
@@ -784,9 +881,10 @@ struct ModelsPane: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(installed.name
                             + (installed.sizeText.isEmpty ? "" : "  ·  \(installed.sizeText)"))
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(Theme.ui(13, .semibold))
+                            .foregroundStyle(Theme.textPrimary)
                         if let blurb = entry?.blurb, !blurb.isEmpty {
-                            Text(blurb).font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text(blurb).font(Theme.ui(11)).foregroundStyle(Theme.textSecondary)
                         }
                     }
                     Spacer(minLength: 16)
@@ -794,13 +892,17 @@ struct ModelsPane: View {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
                             Text("Uninstalling…")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
+                                .font(Theme.ui(11))
+                                .foregroundStyle(Theme.textSecondary)
                         }
                     } else {
                         modelRatings(installed.name)
                         Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(selected ? .blue : .secondary)
+                            .foregroundStyle(
+                                selected
+                                    ? AnyShapeStyle(Theme.accent)
+                                    : AnyShapeStyle(Theme.textTertiary)
+                            )
                     }
                 }
                 .contentShape(Rectangle())
@@ -829,7 +931,7 @@ struct ModelsPane: View {
             // comfortable 28pt without resizing the glyph; it fits inside the row's
             // height so it doesn't change row layout.
             Image(systemName: "ellipsis")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textSecondary)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
@@ -871,8 +973,8 @@ struct ModelsPane: View {
                 ProgressView(value: model.pullFraction)
                     .frame(width: 110)
                 Text(pullProgressText)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                    .font(Theme.ui(10))
+                    .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
             }
         } else {

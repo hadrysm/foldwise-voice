@@ -57,15 +57,18 @@ final class ConfigChangePropagationTests: XCTestCase {
         XCTAssertEqual(received, [.hotkeys])
     }
 
-    func testHudStyleChangeNotifiesWithHudStyle() throws {
+    /// The sidebar preference is only read when the settings window opens, so
+    /// like the Badge position it persists without notifying anyone.
+    func testSidebarCollapsedChangePersistsWithoutNotifying() throws {
         let config = Config.defaultConfig(path: path)
         var received: [Config.ChangeSet] = []
         config.onChange { received.append($0) }
 
-        config.hudStyle = "minimal"
+        config.sidebarCollapsed = true
         try config.saveAndNotify()
 
-        XCTAssertEqual(received, [.hudStyle])
+        XCTAssertEqual(received, [])
+        XCTAssertTrue(try Config.load(from: path).sidebarCollapsed)
     }
 
     func testASRModelChangeNotifiesWithASRModel() throws {
@@ -91,17 +94,17 @@ final class ConfigChangePropagationTests: XCTestCase {
     }
 
     /// The guard that keeps the TCC-sensitive hotkey event tap alive across
-    /// HUD drags: repositioning the pill persists but must notify no one.
-    func testHudPositionChangePersistsWithoutNotifying() throws {
+    /// Badge drags: repositioning the pill persists but must notify no one.
+    func testBadgePositionChangePersistsWithoutNotifying() throws {
         let config = Config.defaultConfig(path: path)
         var received: [Config.ChangeSet] = []
         config.onChange { received.append($0) }
 
-        config.hudPosition = [123.4, 56.7]
+        config.badgePosition = [123.4, 56.7]
         try config.saveAndNotify()
 
         XCTAssertEqual(received, [])
-        XCTAssertEqual(try Config.load(from: path).hudPosition, [123.4, 56.7])
+        XCTAssertEqual(try Config.load(from: path).badgePosition, [123.4, 56.7])
     }
 
     func testNoOpReassignmentNotifiesNothing() throws {
@@ -113,7 +116,6 @@ final class ConfigChangePropagationTests: XCTestCase {
         config.setActiveMode("Clean")
         config.hotkey = "alt_r"
         config.toggleHotkey = nil
-        config.hudStyle = "classic"
         config.setASRModel("parakeet-v3")
         try config.saveAndNotify()
 
@@ -127,11 +129,10 @@ final class ConfigChangePropagationTests: XCTestCase {
 
         config.setActiveMode("Email")
         config.hotkey = "cmd_r"
-        config.hudStyle = "minimal"
         try config.saveAndNotify()
         try config.saveAndNotify()
 
-        XCTAssertEqual(received, [[.activeMode, .hotkeys, .hudStyle]])
+        XCTAssertEqual(received, [[.activeMode, .hotkeys]])
     }
 
     /// A failed persist must not propagate a half-applied change — and must
@@ -156,14 +157,12 @@ final class ConfigChangePropagationTests: XCTestCase {
         config.setActiveMode("Email")
         config.hotkey = "cmd_r"
         config.toggleHotkey = "f13"
-        config.hudStyle = "minimal"
         try config.saveAndNotify()
 
         let reloaded = try Config.load(from: path)
         XCTAssertEqual(reloaded.activeMode, "Email")
         XCTAssertEqual(reloaded.hotkey, "cmd_r")
         XCTAssertEqual(reloaded.toggleHotkey, "f13")
-        XCTAssertEqual(reloaded.hudStyle, "minimal")
     }
 
     /// Loading records nothing: property observers don't fire during init,

@@ -1,26 +1,19 @@
-// Shared SwiftUI building blocks for the settings panes.
+// Shared SwiftUI building blocks for the settings panes, all consuming the
+// Theme token layer (PRD #103) so every pane picks up the Editorial palette
+// in both appearances.
 
 import AppKit
 import SwiftUI
-
-struct VisualEffect: NSViewRepresentable {
-    let material: NSVisualEffectView.Material
-    func makeNSView(context _: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
-    }
-
-    func updateNSView(_: NSVisualEffectView, context _: Context) {}
-}
 
 struct Card<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
         VStack(alignment: .leading, spacing: 0) { content }
-            .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
+            .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardRadius)
+                    .strokeBorder(Theme.hairline, lineWidth: 1)
+            )
     }
 }
 
@@ -32,9 +25,13 @@ struct CardRow<Trailing: View>: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(title)
+                    .font(Theme.ui(13, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
                 if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(subtitle)
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
                 }
             }
             Spacer(minLength: 16)
@@ -45,15 +42,23 @@ struct CardRow<Trailing: View>: View {
     }
 }
 
+/// The design's keycap chip: mono label on a raised key with a heavier
+/// bottom edge.
 struct Keycap: View {
     let text: String
     var body: some View {
         Text(text)
-            .font(.system(size: 12, weight: .semibold))
+            .font(Theme.mono(11.5, .semibold))
+            .foregroundStyle(Theme.textPrimary)
             .frame(minWidth: 14)
             .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+            .padding(.vertical, 3)
+            .background(Theme.keycapBackground, in: RoundedRectangle(cornerRadius: Theme.keycapRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.keycapRadius)
+                    .strokeBorder(Theme.keycapBorder, lineWidth: 1)
+            )
+            .shadow(color: Theme.keycapBorder, radius: 0, y: 1.5)
     }
 }
 
@@ -62,11 +67,11 @@ struct RatingDots: View {
     let value: Int // of 5
     var body: some View {
         HStack(spacing: 4) {
-            Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
+            Text(label).font(Theme.ui(10)).foregroundStyle(Theme.textSecondary)
             HStack(spacing: 2.5) {
                 ForEach(0 ..< 5, id: \.self) { i in
                     Circle()
-                        .fill(i < value ? AnyShapeStyle(.primary) : AnyShapeStyle(.quaternary))
+                        .fill(i < value ? Theme.textSecondary : Theme.hairline)
                         .frame(width: 4.5, height: 4.5)
                 }
             }
@@ -76,8 +81,9 @@ struct RatingDots: View {
 
 func sectionHeader(_ text: String) -> some View {
     Text(text)
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.secondary)
+        .font(Theme.sectionLabel)
+        .kerning(1.1)
+        .foregroundStyle(Theme.textTertiary)
         .textCase(.uppercase)
         .padding(.leading, 4)
 }

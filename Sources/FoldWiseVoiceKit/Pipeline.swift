@@ -22,7 +22,7 @@ protocol Transcribing: AnyObject {
     var ready: Bool { get }
     var onLoading: ((Bool) -> Void)? { get set }
     /// Fired with a 0…1 fraction while a model's weights download on first use,
-    /// for a HUD/pane percentage (issue #93). An engine that can't report a
+    /// for a Badge/pane percentage (issue #93). An engine that can't report a
     /// fraction (FluidAudio/Parakeet) leaves this unset and degrades to the
     /// boolean `onLoading` spinner.
     var onDownloadProgress: ((Double) -> Void)? { get set }
@@ -48,7 +48,7 @@ enum PipelineState: Equatable {
 
     /// True while a model (down)load is on screen — downloading or loading — so
     /// the boolean load-done signal resolves back to transcribing/idle from
-    /// whichever preparing state the HUD is currently showing.
+    /// whichever preparing state the Badge is currently showing.
     var isPreparing: Bool {
         switch self {
         case .downloadingModel, .loadingModel: true
@@ -227,7 +227,7 @@ final class Pipeline {
         // Re-run Polish (ADR-0004): the candidate is already sanitized, so the
         // check judges the transform, not stripped scaffolding, and a fallback
         // keeps `text` at the raw transcript — extending the "model unreachable"
-        // fallback to "model answered the wrong question." No new HUD state. The
+        // fallback to "model answered the wrong question." No new Badge state. The
         // emit here matches `Polish.run`'s gate via `Mode.willPolish`.
         if mode.willPolish(text), let model = mode.llmModel {
             emit(.polishing(model: model))

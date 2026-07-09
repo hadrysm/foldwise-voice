@@ -63,7 +63,7 @@ final class SettingsControllerStreakResetTests: XCTestCase {
     private func makeConfig() -> Config {
         Config(
             activeMode: "Voice to Text", hotkey: "F5", toggleHotkey: nil, pauseAudio: false,
-            hudPosition: nil, modeOrder: ["Voice to Text"],
+            badgePosition: nil, modeOrder: ["Voice to Text"],
             modes: ["Voice to Text": Mode(
                 name: "Voice to Text", asrModel: "", llmModel: nil, systemPrompt: nil, vocab: []
             )],

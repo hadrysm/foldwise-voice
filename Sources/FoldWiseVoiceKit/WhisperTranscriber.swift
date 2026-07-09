@@ -23,10 +23,10 @@ final class WhisperTranscriber: Transcribing {
     /// True once the model is loaded and transcription is instant.
     private(set) var ready = false
 
-    /// Fired when a (down)load starts/ends, for HUD feedback.
+    /// Fired when a (down)load starts/ends, for Badge feedback.
     var onLoading: ((Bool) -> Void)?
     /// Fired with a 0…1 fraction while the CoreML weights download on first use,
-    /// so the HUD and Speech pane can show a real percentage (#93).
+    /// so the Badge and Speech pane can show a real percentage (#93).
     var onDownloadProgress: ((Double) -> Void)?
 
     init(variant: String) {
@@ -58,7 +58,7 @@ final class WhisperTranscriber: Transcribing {
         if let loadTask { return loadTask }
         let variant = variant
         let task = Task<LoadedPipe, Error> { [weak self] in
-            // Two phases so the HUD can distinguish them (#93): first fetch the
+            // Two phases so the Badge can distinguish them (#93): first fetch the
             // CoreML weights from Hugging Face, reporting a 0…1 fraction (a no-op
             // that resolves instantly once they're cached on disk)…
             let folder = try await WhisperKit.download(variant: variant) { [weak self] progress in

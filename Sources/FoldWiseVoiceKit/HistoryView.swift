@@ -13,7 +13,6 @@ import SwiftUI
 
 struct HistoryPane: View {
     @ObservedObject var model: SettingsModel
-    @State private var hoveredRow: UUID?
     @State private var confirmingClearAll = false
     @State private var confirmingDeleteOnOff = false
     @State private var search = ""
@@ -152,8 +151,8 @@ struct HistoryPane: View {
         HStack(spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(Theme.ui(12))
+                    .foregroundStyle(Theme.textSecondary)
                 TextField("Search dictations", text: $search)
                     .textFieldStyle(.plain)
                 if !search.isEmpty {
@@ -161,7 +160,7 @@ struct HistoryPane: View {
                         search = ""
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(Theme.textTertiary)
                     }
                     .buttonStyle(.plain)
                     .help("Clear search")
@@ -173,7 +172,7 @@ struct HistoryPane: View {
 
             Toggle(isOn: $flaggedOnly) {
                 Label("Flagged only", systemImage: "flag.fill")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(Theme.ui(12, .medium))
             }
             .toggleStyle(.button)
             .controlSize(.small)
@@ -199,111 +198,19 @@ struct HistoryPane: View {
     }
 
     private func groupedList(_ entries: [HistoryEntry]) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        LazyVStack(alignment: .leading, spacing: 16) {
             ForEach(HistoryPane.grouped(entries), id: \.header) { group in
                 sectionHeader(group.header)
                 Card {
-                    ForEach(Array(group.entries.enumerated()), id: \.element.id) { i, entry in
-                        if i > 0 { Divider().padding(.leading, 14) }
-                        row(entry)
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(group.entries.enumerated()), id: \.element.id) { i, entry in
+                            if i > 0 { Divider().padding(.leading, 14) }
+                            HistoryRow(model: model, entry: entry)
+                        }
                     }
                 }
             }
         }
-    }
-
-    private func row(_ entry: HistoryEntry) -> some View {
-        CardRow(
-            title: entry.text,
-            subtitle: "\(entry.modeName) · \(PolishStatus(entry).label) · "
-                + HistoryPane.time(entry.createdAt)
-        ) {
-            HStack(spacing: 8) {
-                if hoveredRow == entry.id {
-                    Button {
-                        model.onCopyHistory?(entry)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Copy text")
-                }
-                // A flagged row keeps its filled flag on show even off-hover, so
-                // the bookmark is visible at a glance; hovering reveals the flag
-                // affordance on unflagged rows.
-                if hoveredRow == entry.id || entry.flagged {
-                    Button {
-                        model.onFlagHistory?(entry)
-                    } label: {
-                        Image(systemName: entry.flagged ? "flag.fill" : "flag")
-                            .foregroundStyle(
-                                entry.flagged ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(entry.flagged ? "Remove flag" : "Flag for my review")
-                }
-                overflowMenu(entry)
-            }
-        }
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            if hovering {
-                hoveredRow = entry.id
-            } else if hoveredRow == entry.id {
-                hoveredRow = nil
-            }
-        }
-    }
-
-    /// The trailing kebab, mirroring the Models pane's overflow menu (kept a
-    /// sibling of the row so opening it never triggers a row action). Copy and
-    /// Flag mirror the hover buttons so they stay reachable without a pointer;
-    /// Copy raw recovers the pre-Polish transcript and is only meaningful when
-    /// the row is polished; Re-run Polish reshapes the stored raw text under a
-    /// Mode picked from the polishing Modes; Delete removes exactly this entry.
-    private func overflowMenu(_ entry: HistoryEntry) -> some View {
-        Menu {
-            // Copy and Flag also live behind hover on the row, but the menu is
-            // the always-present path so keyboard and VoiceOver users can still
-            // reach them without a pointer.
-            Button("Copy") { model.onCopyHistory?(entry) }
-            if entry.isPolished {
-                Button("Copy raw") { model.onCopyRawHistory?(entry) }
-            }
-            Button(entry.flagged ? "Remove flag" : "Flag for my review") {
-                model.onFlagHistory?(entry)
-            }
-            let polishModes = model.modeNames.filter { model.llmModes.contains($0) }
-            if !polishModes.isEmpty {
-                Menu("Re-run Polish") {
-                    ForEach(polishModes, id: \.self) { name in
-                        Button(name) { model.onRerunPolish?(entry, name) }
-                    }
-                }
-            }
-            // Copy and Flag are always present above, so Delete always earns a
-            // separator to keep the destructive action set apart.
-            Divider()
-            Button("Delete", role: .destructive) { model.onDeleteHistory?(entry) }
-        } label: {
-            // The bare `ellipsis` glyph is wide but only a few points tall, so on
-            // its own it gives a thin, hard-to-hit target under `.plain`. A square
-            // frame plus a rectangular content shape widens the click area to a
-            // comfortable 28pt without resizing the glyph; it fits inside the row's
-            // height so it doesn't change row layout.
-            Image(systemName: "ellipsis")
-                .foregroundStyle(.secondary)
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .controlSize(.small)
-        .fixedSize()
-        .accessibilityLabel("More actions")
     }
 
     // MARK: - grouping (display-only; the view is not unit-tested per PRD #78)
@@ -351,5 +258,107 @@ struct HistoryPane: View {
 
     static func time(_ date: Date) -> String {
         timeFormatter.string(from: date)
+    }
+}
+
+/// One history row. A separate view so its hover state is row-local: hovering
+/// re-evaluates exactly this row, not the whole pane — with histories in the
+/// thousands, pane-wide hover invalidation re-filtered, re-grouped, and
+/// re-diffed the entire list on every pointer move. `model` is deliberately
+/// NOT `@ObservedObject`: the row reads callbacks and Mode names at action
+/// time, and list-shape changes reach it as new `entry` input from the pane.
+private struct HistoryRow: View {
+    let model: SettingsModel
+    let entry: HistoryEntry
+    @State private var hovered = false
+
+    var body: some View {
+        CardRow(
+            title: entry.text,
+            subtitle: "\(entry.modeName) · \(PolishStatus(entry).label) · "
+                + HistoryPane.time(entry.createdAt)
+        ) {
+            HStack(spacing: 8) {
+                if hovered {
+                    Button {
+                        model.onCopyHistory?(entry)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy text")
+                }
+                // A flagged row keeps its filled flag on show even off-hover, so
+                // the bookmark is visible at a glance; hovering reveals the flag
+                // affordance on unflagged rows.
+                if hovered || entry.flagged {
+                    Button {
+                        model.onFlagHistory?(entry)
+                    } label: {
+                        Image(systemName: entry.flagged ? "flag.fill" : "flag")
+                            .foregroundStyle(
+                                entry.flagged ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(entry.flagged ? "Remove flag" : "Flag for my review")
+                }
+                overflowMenu(entry)
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            hovered = hovering
+        }
+    }
+
+    /// The trailing kebab, mirroring the Models pane's overflow menu (kept a
+    /// sibling of the row so opening it never triggers a row action). Copy and
+    /// Flag mirror the hover buttons so they stay reachable without a pointer;
+    /// Copy raw recovers the pre-Polish transcript and is only meaningful when
+    /// the row is polished; Re-run Polish reshapes the stored raw text under a
+    /// Mode picked from the polishing Modes; Delete removes exactly this entry.
+    private func overflowMenu(_ entry: HistoryEntry) -> some View {
+        Menu {
+            // Copy and Flag also live behind hover on the row, but the menu is
+            // the always-present path so keyboard and VoiceOver users can still
+            // reach them without a pointer.
+            Button("Copy") { model.onCopyHistory?(entry) }
+            if entry.isPolished {
+                Button("Copy raw") { model.onCopyRawHistory?(entry) }
+            }
+            Button(entry.flagged ? "Remove flag" : "Flag for my review") {
+                model.onFlagHistory?(entry)
+            }
+            let polishModes = model.modeNames.filter { model.llmModes.contains($0) }
+            if !polishModes.isEmpty {
+                Menu("Re-run Polish") {
+                    ForEach(polishModes, id: \.self) { name in
+                        Button(name) { model.onRerunPolish?(entry, name) }
+                    }
+                }
+            }
+            // Copy and Flag are always present above, so Delete always earns a
+            // separator to keep the destructive action set apart.
+            Divider()
+            Button("Delete", role: .destructive) { model.onDeleteHistory?(entry) }
+        } label: {
+            // The bare `ellipsis` glyph is wide but only a few points tall, so on
+            // its own it gives a thin, hard-to-hit target under `.plain`. A square
+            // frame plus a rectangular content shape widens the click area to a
+            // comfortable 28pt without resizing the glyph; it fits inside the row's
+            // height so it doesn't change row layout.
+            Image(systemName: "ellipsis")
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .controlSize(.small)
+        .fixedSize()
+        .accessibilityLabel("More actions")
     }
 }

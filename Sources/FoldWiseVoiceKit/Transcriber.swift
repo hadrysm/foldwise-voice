@@ -20,7 +20,7 @@ final class Transcriber: Transcribing {
         self.version = version
     }
 
-    /// Fired when a (down)load starts/ends, for HUD feedback.
+    /// Fired when a (down)load starts/ends, for Badge feedback.
     var onLoading: ((Bool) -> Void)?
     /// FluidAudio surfaces no download fraction, so Parakeet never fires this
     /// and its first-load degrades to the boolean `onLoading` spinner (#93).

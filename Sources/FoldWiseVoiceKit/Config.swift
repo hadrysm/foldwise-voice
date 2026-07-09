@@ -35,7 +35,7 @@ struct Mode {
 
     /// Whether the Polish stage actually runs for `transcript`: an LLM Mode
     /// whose transcript clears the minimum length. The single gate shared by the
-    /// live session's HUD `.polishing` emit and the Polish decision
+    /// live session's Badge `.polishing` emit and the Polish decision
     /// (`Polish.run`), so the two can never disagree about whether polishing
     /// happens — and the short-input skip is defined in exactly one place.
     func willPolish(_ transcript: String) -> Bool {
@@ -77,11 +77,14 @@ final class Config {
     /// re-reads it through change propagation, so it has no `ChangeSet` member —
     /// the launch sweep reads it once at startup.
     var historyRetention: RetentionWindow
-    var hudPosition: [Double]?
-    /// HUDStyle raw value; unknown values fall back to .classic at use sites.
-    var hudStyle: String {
-        didSet { if oldValue != hudStyle { pendingChanges.insert(.hudStyle) } }
-    }
+    /// The Badge's screen anchor. Persisted under the legacy "hud_position"
+    /// key so an existing config keeps its pill placement across the redesign
+    /// (PRD #103) — the JSON key is grandfathered, the vocabulary is not.
+    var badgePosition: [Double]?
+    /// The user's sidebar intent — collapsed to the icon rail or expanded
+    /// (PRD #103). Only the settings window reads it (at open), so like
+    /// `badgePosition` it persists silently with no ChangeSet member.
+    var sidebarCollapsed: Bool
 
     private(set) var modeOrder: [String]
     var modes: [String: Mode]
@@ -90,7 +93,7 @@ final class Config {
     init(
         activeMode: String, hotkey: String, toggleHotkey: String?, pauseAudio: Bool,
         saveHistory: Bool = true, historyRetention: RetentionWindow = .default,
-        hudPosition: [Double]?, hudStyle: String = "classic",
+        badgePosition: [Double]?, sidebarCollapsed: Bool = false,
         modeOrder: [String], modes: [String: Mode], path: URL
     ) {
         self.activeMode = activeMode
@@ -99,8 +102,8 @@ final class Config {
         self.pauseAudio = pauseAudio
         self.saveHistory = saveHistory
         self.historyRetention = historyRetention
-        self.hudPosition = hudPosition
-        self.hudStyle = hudStyle
+        self.badgePosition = badgePosition
+        self.sidebarCollapsed = sidebarCollapsed
         self.modeOrder = modeOrder
         self.modes = modes
         self.path = path
@@ -169,15 +172,15 @@ final class Config {
 
     /// One member per thing subscribers *act on*, not per property: both
     /// hotkeys share `.hotkeys` because the listener can only rebind both at
-    /// once, and properties nobody re-reads (`hudPosition`, `pauseAudio`)
-    /// have no member at all — persisting them notifies no one.
+    /// once, and properties nobody re-reads (`badgePosition`,
+    /// `sidebarCollapsed`, `pauseAudio`) have no member at all — persisting
+    /// them notifies no one.
     struct ChangeSet: OptionSet {
         let rawValue: Int
 
         static let activeMode = ChangeSet(rawValue: 1 << 0)
         static let hotkeys = ChangeSet(rawValue: 1 << 1)
-        static let hudStyle = ChangeSet(rawValue: 1 << 2)
-        static let asrModel = ChangeSet(rawValue: 1 << 3)
+        static let asrModel = ChangeSet(rawValue: 1 << 2)
     }
 
     /// Changed keys accumulated by the tracked properties' `didSet`s,
@@ -215,8 +218,8 @@ final class Config {
             ("pause_audio", pauseAudio),
             ("save_history", saveHistory),
             ("retention_days", historyRetention.days),
-            ("hud_position", hudPosition),
-            ("hud_style", hudStyle),
+            ("hud_position", badgePosition),
+            ("sidebar_collapsed", sidebarCollapsed),
         ]
         var modesJSON = "{\n"
         for (i, name) in modeOrder.enumerated() {
@@ -301,11 +304,11 @@ final class Config {
         var active = raw["active_mode"] as? String ?? ""
         if modes[active] == nil { active = order[0] }
 
-        var hudPosition: [Double]?
+        var badgePosition: [Double]?
         if let pos = raw["hud_position"] as? [Any], pos.count == 2,
            let x = pos[0] as? Double ?? (pos[0] as? Int).map(Double.init),
            let y = pos[1] as? Double ?? (pos[1] as? Int).map(Double.init) {
-            hudPosition = [x, y]
+            badgePosition = [x, y]
         }
 
         return Config(
@@ -317,8 +320,8 @@ final class Config {
             historyRetention: RetentionWindow(
                 days: (raw["retention_days"] as? Int) ?? RetentionWindow.default.days
             ),
-            hudPosition: hudPosition,
-            hudStyle: (raw["hud_style"] as? String) ?? "classic",
+            badgePosition: badgePosition,
+            sidebarCollapsed: (raw["sidebar_collapsed"] as? Bool) ?? false,
             modeOrder: order,
             modes: modes,
             path: url
@@ -398,7 +401,7 @@ final class Config {
         )
         return Config(
             activeMode: "Clean", hotkey: "alt_r", toggleHotkey: nil, pauseAudio: true,
-            hudPosition: nil,
+            badgePosition: nil,
             modeOrder: ["Voice to Text", "Clean", "Email", "Bullets"],
             modes: ["Voice to Text": raw, "Clean": clean, "Email": email, "Bullets": bullets],
             path: path

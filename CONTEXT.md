@@ -1,8 +1,17 @@
 # Context
 
-Glossaries for this repo: the **dictation pipeline** the app runs, and the
-**batch workflow** used across issues, prompts, and agent tooling. Terms
-only — for the decisions behind either, see `docs/adr/`.
+Glossaries for this repo: the **dictation pipeline** the app runs, the
+**app surfaces** it presents, and the **batch workflow** used across
+issues, prompts, and agent tooling. Terms only — for the decisions behind
+any of them, see `docs/adr/`.
+
+## App surfaces
+
+**Badge** — The always-on-top, non-activating floating pill that is the
+app's recording surface. A single living component that moves through
+idle ⇄ hover → recording → working → done/error and back; it never steals
+focus from the app being dictated into.
+_Avoid_: HUD, overlay, recording bar, floating window
 
 ## Dictation pipeline
 

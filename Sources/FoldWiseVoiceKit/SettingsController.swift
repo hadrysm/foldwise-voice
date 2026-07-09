@@ -88,14 +88,9 @@ final class SettingsController {
 
     private func build() {
         let hosting = NSHostingController(rootView: SettingsView(model: model))
-        let win = NSWindow(contentViewController: hosting)
-        win.title = "FoldWise Voice Settings"
-        win.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
-        win.titlebarAppearsTransparent = true
-        win.titleVisibility = .hidden
-        win.isMovableByWindowBackground = true
-        win.isReleasedWhenClosed = false
+        let win = Self.makeMainWindow(contentViewController: hosting)
         win.center()
+        win.setFrameAutosaveName("FoldWiseMainWindow")
         closeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: win, queue: .main
         ) { _ in
@@ -103,6 +98,25 @@ final class SettingsController {
             Task { @MainActor in NSApp.setActivationPolicy(.accessory) }
         }
         window = win
+    }
+
+    /// Main-window chrome, internal (not private) so the titlebar tests pin
+    /// the exact traffic-light geometry the app ships.
+    static func makeMainWindow(contentViewController: NSViewController) -> NSWindow {
+        let win = NSWindow(contentViewController: contentViewController)
+        win.title = "FoldWise Voice"
+        win.styleMask = [
+            .titled, .closable, .miniaturizable, .resizable, .fullSizeContentView,
+        ]
+        win.titlebarAppearsTransparent = true
+        win.titleVisibility = .hidden
+        win.isMovableByWindowBackground = true
+        win.isReleasedWhenClosed = false
+        // 980×720 on first launch, 880×640 minimum; the user's size is
+        // restored by the standard frame autosave (PRD #103).
+        win.setContentSize(NSSize(width: 980, height: 720))
+        win.contentMinSize = NSSize(width: 880, height: 640)
+        return win
     }
 
     private func populate() {
@@ -126,7 +140,7 @@ final class SettingsController {
         model.pauseAudio = config.pauseAudio
         model.saveHistory = config.saveHistory
         model.retention = config.historyRetention
-        model.hudStyle = (HUDStyle(rawValue: config.hudStyle) ?? .classic).rawValue
+        model.sidebar = SidebarPresentation(prefersCollapsed: config.sidebarCollapsed)
         model.axTrusted = TextInserter.accessibilityTrusted()
         model.historyEntries = historyStore.load()
         refreshStreak()
@@ -459,7 +473,9 @@ final class SettingsController {
         config.saveHistory = model.saveHistory
         let retentionChanged = config.historyRetention != model.retention
         config.historyRetention = model.retention
-        config.hudStyle = model.hudStyle
+        // Only the explicit toggle mutates `prefersCollapsed`; a transient
+        // auto-collapse never reaches here, so it can't overwrite the intent.
+        config.sidebarCollapsed = model.sidebar.prefersCollapsed
         do {
             try config.saveAndNotify()
         } catch {
