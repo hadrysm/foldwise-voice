@@ -130,7 +130,10 @@ final class BadgeController: NSObject {
         p.level = .statusBar
         p.isOpaque = false
         p.backgroundColor = .clear
-        p.hasShadow = true
+        // The pill draws flat — shadows smudge light wallpapers — and
+        // AppKit's window shadow would trace the panel's semi-transparent
+        // bounds and draw its 1px rim as a rectangle around the pill.
+        p.hasShadow = false
         p.ignoresMouseEvents = false
         p.hidesOnDeactivate = false
         p.isMovableByWindowBackground = true

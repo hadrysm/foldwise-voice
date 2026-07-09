@@ -33,37 +33,44 @@ final class BadgeReducerTests: XCTestCase {
         XCTAssertEqual(reduce(.hover, .pipeline(.listening(mode: "Clean"))).state, .recording)
     }
 
-    func testTranscribingEntersWorking() {
+    func testTranscribingEntersWorkingWithTheSpinner() {
         XCTAssertEqual(
             reduce(.recording, .pipeline(.transcribing)).state,
-            .working(status: "transcribing…")
+            .working(status: nil)
         )
     }
 
-    func testPolishingKeepsWorkingWithAStatusWord() {
+    func testPolishingKeepsTheSpinnerWorkingState() {
         XCTAssertEqual(
-            reduce(.working(status: "transcribing…"), .pipeline(.polishing(model: "qwen2.5:3b"))).state,
-            .working(status: "polishing…")
+            reduce(.working(status: nil), .pipeline(.polishing(model: "qwen2.5:3b"))).state,
+            .working(status: nil)
+        )
+    }
+
+    func testModelDownloadKeepsAProgressWordInsteadOfTheSpinner() {
+        XCTAssertEqual(
+            reduce(.working(status: nil), .pipeline(.downloadingModel(fraction: 0.45))).state,
+            .working(status: "downloading 45%")
         )
     }
 
     func testInsertedEntersTheDoneBeat() {
-        XCTAssertEqual(reduce(.working(status: "polishing…"), .pipeline(.inserted)).state, .done)
+        XCTAssertEqual(reduce(.working(status: nil), .pipeline(.inserted)).state, .done)
     }
 
     func testClipboardFallbackIsAVisibleErrorState() {
-        let state = reduce(.working(status: "transcribing…"), .pipeline(.clipboard)).state
+        let state = reduce(.working(status: nil), .pipeline(.clipboard)).state
         XCTAssertEqual(state, .error(message: "copied — press ⌘V"))
     }
 
     func testPipelineErrorShowsTheErrorState() {
-        let state = reduce(.working(status: "transcribing…"), .pipeline(.error("boom"))).state
+        let state = reduce(.working(status: nil), .pipeline(.error("boom"))).state
         XCTAssertEqual(state, .error(message: "something went wrong"))
     }
 
     func testPipelineIdleCollapsesRecordingToIdle() {
         // A session that captured nothing emits .idle straight from the stop.
-        XCTAssertEqual(reduce(.working(status: "transcribing…"), .pipeline(.idle)).state, .idle)
+        XCTAssertEqual(reduce(.working(status: nil), .pipeline(.idle)).state, .idle)
     }
 
     // MARK: - clicks
@@ -78,8 +85,8 @@ final class BadgeReducerTests: XCTestCase {
     }
 
     func testClickWhileWorkingDoesNothing() {
-        let transition = reduce(.working(status: "polishing…"), .clicked)
-        XCTAssertEqual(transition, BadgeTransition(state: .working(status: "polishing…"), command: nil))
+        let transition = reduce(.working(status: nil), .clicked)
+        XCTAssertEqual(transition, BadgeTransition(state: .working(status: nil), command: nil))
     }
 
     // MARK: - dwells
@@ -102,16 +109,16 @@ final class BadgeReducerTests: XCTestCase {
     // MARK: - content descriptor
 
     func testWidthsMatchTheSpec() {
-        XCTAssertEqual(BadgeState.idle.width, 104)
-        XCTAssertEqual(BadgeState.hover.width, 158)
-        XCTAssertEqual(BadgeState.recording.width, 248)
-        XCTAssertEqual(BadgeState.working(status: "polishing…").width, 248)
+        XCTAssertEqual(BadgeState.idle.width, 88)
+        XCTAssertEqual(BadgeState.hover.width, 132)
+        XCTAssertEqual(BadgeState.recording.width, 208)
+        XCTAssertEqual(BadgeState.working(status: nil).width, 208)
     }
 
     func testRibbonsFollowTheMicOnlyWhileRecording() {
         XCTAssertTrue(BadgeState.recording.ribbonsFollowMic)
-        XCTAssertTrue(BadgeState.working(status: "polishing…").showsRibbons)
-        XCTAssertFalse(BadgeState.working(status: "polishing…").ribbonsFollowMic)
+        XCTAssertTrue(BadgeState.working(status: nil).showsRibbons)
+        XCTAssertFalse(BadgeState.working(status: nil).ribbonsFollowMic)
         XCTAssertFalse(BadgeState.idle.showsRibbons)
     }
 }

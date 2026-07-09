@@ -32,9 +32,10 @@ struct BadgeView: View {
             content
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
         }
+        // No glow or drop shadow: blurs smudge light wallpapers, and the
+        // panel is exactly pill-sized so they'd clip anyway. The border and
+        // the ribbons carry the state, not a halo.
         .overlay(Capsule().strokeBorder(borderColor, lineWidth: 1))
-        .shadow(color: Theme.Badge.glow, radius: glowRadius)
-        .shadow(color: .black.opacity(0.6), radius: 20, y: 9)
         .contentShape(Capsule())
         .onHover(perform: onHover)
         .onTapGesture(perform: onClick)
@@ -49,10 +50,6 @@ struct BadgeView: View {
         }
     }
 
-    private var glowRadius: CGFloat {
-        model.state == .recording ? 22 : 12
-    }
-
     @ViewBuilder
     private var content: some View {
         switch model.state {
@@ -63,37 +60,41 @@ struct BadgeView: View {
         case .recording:
             HStack(spacing: 10) {
                 RibbonCanvas(live: true, amplitude: { model.amplitude })
-                    .frame(height: 26)
+                    .frame(height: 20)
                 Text(timerText)
-                    .font(Theme.mono(12, .medium))
+                    .font(Theme.mono(11, .medium))
                     .foregroundStyle(Theme.Badge.timerText)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 13)
         case .working:
             HStack(spacing: 10) {
                 RibbonCanvas(live: false, amplitude: { 0.18 })
-                    .frame(height: 26)
-                statusLine
+                    .frame(height: 20)
+                if model.state.statusText != nil {
+                    statusLine
+                } else {
+                    BadgeSpinner()
+                }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 13)
         case .done:
             HStack(spacing: 7) {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Theme.Badge.iconEmphasized)
                 Text("inserted")
-                    .font(Theme.mono(11.5, .medium))
+                    .font(Theme.mono(11, .medium))
                     .foregroundStyle(Theme.Badge.timerText)
             }
         case .error:
             statusLine
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 13)
         }
     }
 
     private var statusLine: some View {
         Text(model.state.statusText ?? "")
-            .font(Theme.mono(11.5, .medium))
+            .font(Theme.mono(11, .medium))
             .foregroundStyle(Theme.Badge.timerText)
             .lineLimit(1)
     }
@@ -108,22 +109,22 @@ struct BadgeView: View {
     /// `.help` tooltips keep the non-activating panel's focus discipline —
     /// they never make the panel key.
     private var hoverActions: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 8) {
             BadgeRoundButton(
-                symbol: "sparkles", diameter: 34, emphasized: false, action: onChangeMode
+                symbol: "sparkles", diameter: 28, emphasized: false, action: onChangeMode
             )
             .help("Mode: \(model.activeModeName)")
             BadgeRoundButton(
-                symbol: "mic.fill", diameter: 36, emphasized: true, action: onRecord
+                symbol: "mic.fill", diameter: 30, emphasized: true, action: onRecord
             )
             .help("Dictate — \(model.hotkeyLabel)")
             BadgeRoundButton(
-                symbol: "arrow.up.left.and.arrow.down.right", diameter: 34,
+                symbol: "arrow.up.left.and.arrow.down.right", diameter: 28,
                 emphasized: false, action: onOpenApp
             )
             .help("Open FoldWise")
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 6)
     }
 }
 
@@ -162,16 +163,16 @@ private struct BadgeRoundButton: View {
 /// The idle "···|·|·" glyph: rounded dots and bars that breathe — scaleY
 /// 1→1.9, opacity 0.55→1 — on a 3.4s ease-in-out loop, staggered 0.35s apart.
 struct BadgeIdleGlyph: View {
-    /// Element heights in points; 4pt-wide dots (4) and bars (15, 9).
-    private static let heights: [CGFloat] = [4, 4, 4, 15, 4, 9, 4]
+    /// Element heights in points; 3.5pt-wide dots (3.5) and bars (12, 7).
+    private static let heights: [CGFloat] = [3.5, 3.5, 3.5, 12, 3.5, 7, 3.5]
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             Canvas { ctx, size in
                 let count = Self.heights.count
-                let width: CGFloat = 4
-                let gap: CGFloat = 4
+                let width: CGFloat = 3.5
+                let gap: CGFloat = 3.5
                 let total = CGFloat(count) * width + CGFloat(count - 1) * gap
                 let x0 = (size.width - total) / 2
                 for (i, base) in Self.heights.enumerated() {
@@ -180,7 +181,7 @@ struct BadgeIdleGlyph: View {
                     let breath = 0.5 - 0.5 * cos(cycle * 2 * .pi)
                     let height = base * CGFloat(1 + 0.9 * breath)
                     let alpha = 0.55 + 0.45 * breath
-                    let isBar = base > 4
+                    let isBar = base > 3.5
                     let rect = CGRect(
                         x: x0 + CGFloat(i) * (width + gap),
                         y: (size.height - height) / 2,
@@ -195,6 +196,26 @@ struct BadgeIdleGlyph: View {
                     )
                 }
             }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// The small working spinner: a 12pt arc in the badge palette, rotated by
+/// the same TimelineView clock as the other badge animations — no implicit
+/// animations inside the non-activating panel.
+struct BadgeSpinner: View {
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            Circle()
+                .trim(from: 0, to: 0.72)
+                .stroke(
+                    Theme.Badge.timerText,
+                    style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
+                )
+                .frame(width: 12, height: 12)
+                .rotationEffect(.degrees(t.truncatingRemainder(dividingBy: 1) * 360))
         }
         .allowsHitTesting(false)
     }

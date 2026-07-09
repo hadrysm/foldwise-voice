@@ -41,7 +41,6 @@ enum Theme {
         static let border = Color(red: 167 / 255, green: 139 / 255, blue: 250 / 255, opacity: 0.22)
         static let borderRecording = Color(red: 167 / 255, green: 139 / 255, blue: 250 / 255, opacity: 0.45)
         static let borderError = Color(red: 250 / 255, green: 160 / 255, blue: 120 / 255, opacity: 0.55)
-        static let glow = Color(red: 124 / 255, green: 93 / 255, blue: 250 / 255, opacity: 0.22)
         static let iconIdle = Color(srgb: 0xB8AEDB)
         static let iconEmphasized = Color(srgb: 0xE8E2F7)
         static let timerText = Color(srgb: 0xCFC4EA)
@@ -89,7 +88,7 @@ enum Theme {
     static let cardRadius: CGFloat = 8
     static let keycapRadius: CGFloat = 6
     static let tooltipRadius: CGFloat = 6
-    static let badgeHeight: CGFloat = 46
+    static let badgeHeight: CGFloat = 38
     /// Sidebar collapse/expand and Badge width animation.
     static let sidebarAnimation = Animation.easeOut(duration: 0.3)
     static let badgeCrossFade = Animation.easeOut(duration: 0.22)

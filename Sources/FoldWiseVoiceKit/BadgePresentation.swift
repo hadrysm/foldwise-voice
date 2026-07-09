@@ -11,21 +11,23 @@ enum BadgeState: Equatable {
     case idle
     case hover
     case recording
-    /// The pipeline is still running after the hotkey was released; `status`
-    /// is the mono word shown in place of the timer ("polishing…").
-    case working(status: String)
+    /// The pipeline is still running after the hotkey was released. A nil
+    /// `status` shows the small spinner (transcribe/polish); model downloads
+    /// keep a mono progress word ("downloading 45%") because the wait is
+    /// long and the percentage is real information.
+    case working(status: String?)
     /// The brief confirmation beat after text lands.
     case done
     /// Something needs the user's eye — a failure, or text left on the
     /// clipboard. Auto-dismisses after `dwell`; a click dismisses it early.
     case error(message: String)
 
-    /// Pill width in points; height is a constant 46.
+    /// Pill width in points; height is a constant `Theme.badgeHeight`.
     var width: Double {
         switch self {
-        case .idle: 104
-        case .hover: 158
-        case .recording, .working, .done, .error: 248
+        case .idle: 88
+        case .hover: 132
+        case .recording, .working, .done, .error: 208
         }
     }
 
@@ -53,8 +55,9 @@ enum BadgeState: Equatable {
         self == .recording
     }
 
-    /// The mono line beside the ribbons: the working status word or the
-    /// error message. Recording shows the timer instead (view-owned).
+    /// The mono line beside the ribbons: the working progress word (nil →
+    /// the spinner) or the error message. Recording shows the timer instead
+    /// (view-owned).
     var statusText: String? {
         switch self {
         case let .working(status): status
@@ -114,10 +117,10 @@ enum BadgeReducer {
         switch phase {
         case .listening:
             .recording
-        case .transcribing:
-            .working(status: "transcribing…")
-        case .polishing:
-            .working(status: "polishing…")
+        case .transcribing, .polishing:
+            // The post-talk stages show the spinner, not a word — the user
+            // is waiting for their text, not watching stage names.
+            .working(status: nil)
         case let .downloadingModel(fraction):
             .working(status: "downloading \(Int(fraction * 100))%")
         case .loadingModel:
