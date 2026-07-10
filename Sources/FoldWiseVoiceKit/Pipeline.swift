@@ -71,6 +71,11 @@ final class Pipeline {
     /// Frontmost-app name at insert time. Injectable so tests stay AppKit-free.
     private let frontmostApp: () async -> String?
 
+    /// Recursive because state observers and injected effects may synchronously
+    /// call back into the Pipeline. State delivery stays inside the lock so a
+    /// callback accepted before shutdown cannot arrive after terminal idle.
+    private let stateLock = NSRecursiveLock()
+
     /// May fire from any thread — UIs must hop to the main thread themselves.
     var onState: ((PipelineState) -> Void)?
 
@@ -80,7 +85,7 @@ final class Pipeline {
     private var lastJob: Task<Void, Never>?
     private var jobActive = false
     private var lastEmitted: PipelineState = .idle
-    private var shutDown = false
+    private var isShutDown = false
 
     init(
         config: Config,
@@ -100,23 +105,25 @@ final class Pipeline {
         self.frontmostApp = frontmostApp
         self.transcriber.onLoading = { [weak self] loading in
             guard let self else { return }
-            guard !shutDown else { return }
-            if loading {
-                guard !recording else { return }
-                emit(.loadingModel)
-            } else if lastEmitted.isPreparing {
-                // Back to whatever the (down)load interrupted: a queued dictation
-                // continues transcribing; a launch warmup returns to idle.
-                emit(jobActive ? .transcribing : .idle)
+            withStateLock {
+                if loading {
+                    guard !self.recording else { return }
+                    self.emit(.loadingModel)
+                } else if self.lastEmitted.isPreparing {
+                    // Back to whatever the (down)load interrupted: a queued dictation
+                    // continues transcribing; a launch warmup returns to idle.
+                    self.emit(self.jobActive ? .transcribing : .idle)
+                }
             }
         }
         self.transcriber.onDownloadProgress = { [weak self] fraction in
             guard let self else { return }
-            guard !shutDown else { return }
-            // Suppressed while recording, like the loading spinner: the
-            // percentage would fight the live listening pill.
-            guard !recording else { return }
-            emit(.downloadingModel(fraction: fraction))
+            withStateLock {
+                // Suppressed while recording, like the loading spinner: the
+                // percentage would fight the live listening pill.
+                guard !self.recording else { return }
+                self.emit(.downloadingModel(fraction: fraction))
+            }
         }
     }
 
@@ -142,73 +149,104 @@ final class Pipeline {
         await MainActor.run { NSWorkspace.shared.frontmostApplication?.localizedName }
     }
 
-    private func emit(_ state: PipelineState) {
+    /// Delivers `state` unless shutdown is complete, then reports whether the
+    /// Pipeline remained active after the observer returned.
+    @discardableResult
+    private func emit(_ state: PipelineState) -> Bool {
+        withStateLock {
+            guard !isShutDown else { return false }
+            deliver(state)
+            return !isShutDown
+        }
+    }
+
+    private func deliver(_ state: PipelineState) {
         lastEmitted = state
         onState?(state)
+    }
+
+    private func withStateLock<T>(_ operation: () throws -> T) rethrows -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return try operation()
     }
 
     // MARK: - called from the hotkey listener (must be fast)
 
     func startRecording() {
-        guard !shutDown, !recording else { return }
-        recording = true
-        if config.pauseAudio { ducker.duck() }
-        recorder.start()
-        emit(.listening(mode: config.activeMode))
+        withStateLock {
+            guard !isShutDown, !recording else { return }
+            recording = true
+            if config.pauseAudio { ducker.duck() }
+            recorder.start()
+            emit(.listening(mode: config.activeMode))
+        }
     }
 
     func stopRecording() {
-        guard !shutDown, recording else { return }
-        recording = false
-        let samples = recorder.stop()
-        ducker.restore()
-        emit(.transcribing)
-        let mode = config.mode
-        // Frozen at stop time alongside `mode`: whether this session is saved is
-        // decided when the user stops speaking, not read later off the job task.
-        let saveHistory = config.saveHistory
-        let previous = lastJob
-        lastJob = Task {
-            await withTaskCancellationHandler {
-                await previous?.value
-                guard !Task.isCancelled else { return }
-                await self.process(samples, mode: mode, saveHistory: saveHistory)
-            } onCancel: {
-                previous?.cancel()
+        withStateLock {
+            guard !isShutDown, recording else { return }
+            recording = false
+            let samples = recorder.stop()
+            ducker.restore()
+            guard emit(.transcribing) else { return }
+            let mode = config.mode
+            // Frozen at stop time alongside `mode`: whether this session is saved is
+            // decided when the user stops speaking, not read later off the job task.
+            let saveHistory = config.saveHistory
+            let previous = lastJob
+            lastJob = Task {
+                await withTaskCancellationHandler {
+                    await previous?.value
+                    guard !Task.isCancelled else { return }
+                    await self.process(samples, mode: mode, saveHistory: saveHistory)
+                } onCancel: {
+                    previous?.cancel()
+                }
             }
         }
     }
 
     func toggleRecording() {
-        guard !shutDown else { return }
-        if recording {
-            stopRecording()
-        } else {
-            startRecording()
+        withStateLock {
+            guard !isShutDown else { return }
+            if recording {
+                stopRecording()
+            } else {
+                startRecording()
+            }
         }
     }
 
     /// Test hook: awaits the most recently queued session job. Each job
     /// awaits its predecessor, so this drains the whole chain.
     func awaitPendingJob() async {
-        await lastJob?.value
+        let pendingJob = withStateLock { lastJob }
+        await pendingJob?.value
     }
 
     func shutdown() {
-        guard !shutDown else { return }
-        shutDown = true
-        recording = false
-        lastJob?.cancel()
-        ducker.restore()
-        recorder.close()
-        emit(.idle)
+        withStateLock {
+            guard !isShutDown else { return }
+            isShutDown = true
+            recording = false
+            lastJob?.cancel()
+            ducker.restore()
+            recorder.close()
+            deliver(.idle)
+        }
     }
 
     // MARK: - worker
 
     private func process(_ samples: [Float], mode: Mode, saveHistory: Bool) async {
-        jobActive = true
-        defer { jobActive = false }
+        let started = withStateLock {
+            guard !isShutDown else { return false }
+            jobActive = true
+            return true
+        }
+        guard started else { return }
+        defer { withStateLock { jobActive = false } }
         guard samples.count >= 1600 else { // < 0.1 s — no real audio captured
             emit(.idle)
             return
@@ -221,7 +259,9 @@ final class Pipeline {
 
         var text: String
         do {
-            if !transcriber.ready { emit(.loadingModel) }
+            if !transcriber.ready {
+                guard emit(.loadingModel) else { return }
+            }
             text = try await transcriber.transcribe(samples)
             guard !Task.isCancelled else { return }
         } catch is CancellationError {
@@ -249,8 +289,9 @@ final class Pipeline {
         // fallback to "model answered the wrong question." No new Badge state. The
         // emit here matches `Polish.run`'s gate via `Mode.willPolish`.
         if mode.willPolish(text), let model = mode.llmModel {
-            emit(.polishing(model: model))
+            guard emit(.polishing(model: model)) else { return }
         }
+        guard !Task.isCancelled else { return }
         let polished = await Polish.run(rawText: text, mode: mode, polish: polish)
         guard !Task.isCancelled else { return }
         text = polished.text
@@ -267,14 +308,14 @@ final class Pipeline {
         // The insert effect cannot be rolled back once started, but shutdown is
         // terminal: do not publish completion or history after it returns.
         guard !Task.isCancelled else { return }
-        emit(pasted ? .inserted : .clipboard)
+        guard emit(pasted ? .inserted : .clipboard) else { return }
 
         // Recorded after insertion so a history write can never delay the
         // paste (PRD #78); `record` is best-effort and never breaks a session.
         // Gated on the master switch: with saving off the Pipeline assembles
         // and hands off no entry, so nothing is written to disk.
         guard saveHistory else { return }
-        record(HistoryEntry(
+        let entry = HistoryEntry(
             id: UUID(),
             createdAt: Date(),
             text: text,
@@ -286,7 +327,11 @@ final class Pipeline {
             durationMs: Int(Double(samples.count) / AudioRecorder.sampleRate * 1000),
             flagged: false,
             flagReason: nil
-        ))
+        )
+        withStateLock {
+            guard !isShutDown else { return }
+            record(entry)
+        }
     }
 
     /// One public-level line per off-task fallback, for tuning thresholds from
