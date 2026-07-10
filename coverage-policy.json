@@ -1,7 +1,7 @@
 {
   "production_source_root": "Sources/FoldWiseVoiceKit",
-  "overall_floor": 40.401728960081364,
-  "included_core_floor": 63.287873203096204,
+  "overall_floor": 41.791608920246944,
+  "included_core_floor": 68.18515797207935,
   "changed_line_floor": 90.0,
   "minimum_file_coverage": 0.0,
   "exemptions": [
@@ -32,6 +32,10 @@
     {
       "path": "Sources/FoldWiseVoiceKit/Log.swift",
       "reason": "Static Logger declarations produce no LLVM-instrumentable lines"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/OllamaTransport.swift",
+      "reason": "Thin URLSession data and streaming transport adapter"
     },
     {
       "path": "Sources/FoldWiseVoiceKit/MenuBarController.swift",
