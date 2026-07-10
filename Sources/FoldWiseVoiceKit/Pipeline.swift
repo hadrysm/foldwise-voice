@@ -80,6 +80,7 @@ final class Pipeline {
     private var lastJob: Task<Void, Never>?
     private var jobActive = false
     private var lastEmitted: PipelineState = .idle
+    private var shutDown = false
 
     init(
         config: Config,
@@ -99,6 +100,7 @@ final class Pipeline {
         self.frontmostApp = frontmostApp
         self.transcriber.onLoading = { [weak self] loading in
             guard let self else { return }
+            guard !shutDown else { return }
             if loading {
                 guard !recording else { return }
                 emit(.loadingModel)
@@ -110,6 +112,7 @@ final class Pipeline {
         }
         self.transcriber.onDownloadProgress = { [weak self] fraction in
             guard let self else { return }
+            guard !shutDown else { return }
             // Suppressed while recording, like the loading spinner: the
             // percentage would fight the live listening pill.
             guard !recording else { return }
@@ -147,7 +150,7 @@ final class Pipeline {
     // MARK: - called from the hotkey listener (must be fast)
 
     func startRecording() {
-        guard !recording else { return }
+        guard !shutDown, !recording else { return }
         recording = true
         if config.pauseAudio { ducker.duck() }
         recorder.start()
@@ -155,7 +158,7 @@ final class Pipeline {
     }
 
     func stopRecording() {
-        guard recording else { return }
+        guard !shutDown, recording else { return }
         recording = false
         let samples = recorder.stop()
         ducker.restore()
@@ -166,12 +169,18 @@ final class Pipeline {
         let saveHistory = config.saveHistory
         let previous = lastJob
         lastJob = Task {
-            await previous?.value
-            await self.process(samples, mode: mode, saveHistory: saveHistory)
+            await withTaskCancellationHandler {
+                await previous?.value
+                guard !Task.isCancelled else { return }
+                await self.process(samples, mode: mode, saveHistory: saveHistory)
+            } onCancel: {
+                previous?.cancel()
+            }
         }
     }
 
     func toggleRecording() {
+        guard !shutDown else { return }
         if recording {
             stopRecording()
         } else {
@@ -186,8 +195,13 @@ final class Pipeline {
     }
 
     func shutdown() {
+        guard !shutDown else { return }
+        shutDown = true
+        recording = false
+        lastJob?.cancel()
         ducker.restore()
         recorder.close()
+        emit(.idle)
     }
 
     // MARK: - worker
@@ -209,6 +223,11 @@ final class Pipeline {
         do {
             if !transcriber.ready { emit(.loadingModel) }
             text = try await transcriber.transcribe(samples)
+            guard !Task.isCancelled else { return }
+        } catch is CancellationError {
+            guard !Task.isCancelled else { return }
+            emit(.idle)
+            return
         } catch {
             Log.pipeline.error(
                 "Transcription failed: \(String(describing: error), privacy: .public)"
@@ -233,6 +252,7 @@ final class Pipeline {
             emit(.polishing(model: model))
         }
         let polished = await Polish.run(rawText: text, mode: mode, polish: polish)
+        guard !Task.isCancelled else { return }
         text = polished.text
         let isPolished = polished.isPolished
         if let verdict = polished.verdict {
@@ -242,7 +262,11 @@ final class Pipeline {
 
         // Frontmost app is the paste target, captured just before insertion.
         let sourceApp = await frontmostApp()
+        guard !Task.isCancelled else { return }
         let pasted = await insert(text)
+        // The insert effect cannot be rolled back once started, but shutdown is
+        // terminal: do not publish completion or history after it returns.
+        guard !Task.isCancelled else { return }
         emit(pasted ? .inserted : .clipboard)
 
         // Recorded after insertion so a history write can never delay the
