@@ -172,6 +172,28 @@ function clearRenderedLines(lineCount: number): void {
   }
 }
 
+function wrapText(text: string, width: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+
+  for (const word of text.split(/\s+/)) {
+    if (!word) continue;
+    if (!line) {
+      line = word;
+      continue;
+    }
+    if (line.length + word.length + 1 <= width) {
+      line += ` ${word}`;
+      continue;
+    }
+    lines.push(line);
+    line = word;
+  }
+
+  if (line) lines.push(line);
+  return lines;
+}
+
 async function selectOption<T>(
   prompt: string,
   options: readonly SelectOption<T>[],
@@ -182,18 +204,28 @@ async function selectOption<T>(
 
   const render = (): void => {
     clearRenderedLines(renderedLines);
-    const lines = [`${colors.white}${prompt}${colors.reset}`, ""];
+    const terminalWidth = Math.max(process.stdout.columns ?? 80, 24);
+    const lines = wrapText(prompt, terminalWidth).map(
+      (line) => `${colors.white}${line}${colors.reset}`,
+    );
+    lines.push("");
     for (const [index, option] of options.entries()) {
       const selected = index === selectedIndex;
       const marker = selected ? `${colors.cyan}❯${colors.reset}` : " ";
       const label = selected ? `${colors.white}${option.label}${colors.reset}` : option.label;
       lines.push(`${marker} ${label}`);
-      if (option.description) {
-        const indent = selected ? `${colors.cyan}│${colors.reset}` : " ";
-        lines.push(`${indent}   ${colors.dim}${option.description}${colors.reset}`);
+      if (selected && option.description) {
+        for (const descriptionLine of wrapText(option.description, terminalWidth - 4)) {
+          lines.push(
+            `${colors.cyan}│${colors.reset}   ${colors.dim}${descriptionLine}${colors.reset}`,
+          );
+        }
       }
     }
-    lines.push("", `${colors.dim}↑/↓ move  •  enter select  •  esc cancel${colors.reset}`);
+    lines.push("");
+    for (const footerLine of wrapText("↑↓ move  ·  enter select  ·  esc cancel", terminalWidth)) {
+      lines.push(`${colors.dim}${footerLine}${colors.reset}`);
+    }
     process.stdout.write(`${lines.join("\n")}\n`);
     renderedLines = lines.length;
   };
@@ -288,7 +320,7 @@ async function chooseRunConfiguration(): Promise<RunConfiguration | undefined> {
   try {
     process.stdout.write(
       `\n${colors.cyan}◆${colors.reset} ${colors.white}Sandcastle${colors.reset}\n` +
-        `${colors.dim}One model powers the complete implement → review workflow.${colors.reset}\n\n`,
+        `${colors.dim}One model for implement → review.${colors.reset}\n\n`,
     );
 
     const model = await selectOption(
