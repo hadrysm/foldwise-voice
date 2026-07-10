@@ -10,13 +10,8 @@ import Foundation
 import os
 
 final class HotkeyListener {
-    private let ptt: KeySpec
-    private let toggle: KeySpec?
-    private let onPress: () -> Void
-    private let onRelease: () -> Void
-    private let onToggle: () -> Void
+    private let dispatcher: HotkeyDispatcher
 
-    private var pttDown = false
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var monitors: [Any] = []
@@ -28,11 +23,13 @@ final class HotkeyListener {
         onRelease: @escaping () -> Void,
         onToggle: @escaping () -> Void
     ) throws {
-        ptt = try KeyMap.parse(pttKey)
-        toggle = try toggleKey.map { try KeyMap.parse($0) }
-        self.onPress = onPress
-        self.onRelease = onRelease
-        self.onToggle = onToggle
+        dispatcher = try HotkeyDispatcher(
+            pttKey: pttKey,
+            toggleKey: toggleKey,
+            onPress: onPress,
+            onRelease: onRelease,
+            onToggle: onToggle
+        )
     }
 
     func start() {
@@ -151,41 +148,22 @@ final class HotkeyListener {
 
     // MARK: - event handling
 
-    /// A keystroke normalized from either event source (CGEventTap or NSEvent
-    /// monitors), so the modifier and repeat logic exists exactly once.
-    /// Internal (not private) together with `process(_:)`: this is the seam
-    /// where the dispatch state machine is tested with synthetic events.
-    enum RawKeyEvent {
-        case flagsChanged(keycode: CGKeyCode, flags: CGEventFlags)
-        case key(keycode: CGKeyCode, character: String?, down: Bool, isRepeat: Bool)
-    }
-
-    func process(_ raw: RawKeyEvent) {
-        switch raw {
-        case let .flagsChanged(keycode, flags):
-            let down = KeyMap.isModifierDown(keycode: keycode, flags: flags) ?? false
-            dispatch(keycode: keycode, character: nil, down: down)
-        case .key(_, _, _, isRepeat: true):
-            break
-        case let .key(keycode, character, down, _):
-            dispatch(keycode: keycode, character: character, down: down)
-        }
-    }
-
     private func handle(type: CGEventType, event: CGEvent) {
         let keycode = { CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode)) }
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
         case .flagsChanged:
-            process(.flagsChanged(keycode: keycode(), flags: event.flags))
+            dispatcher.process(.flagsChanged(keycode: keycode(), flags: event.flags))
         case .keyDown:
-            process(.key(
+            dispatcher.process(.key(
                 keycode: keycode(), character: character(of: event), down: true,
                 isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
             ))
         case .keyUp:
-            process(.key(keycode: keycode(), character: character(of: event), down: false, isRepeat: false))
+            dispatcher.process(.key(
+                keycode: keycode(), character: character(of: event), down: false, isRepeat: false
+            ))
         default:
             break
         }
@@ -195,17 +173,17 @@ final class HotkeyListener {
         let character = { event.charactersIgnoringModifiers?.lowercased() }
         switch event.type {
         case .flagsChanged:
-            process(.flagsChanged(
+            dispatcher.process(.flagsChanged(
                 keycode: CGKeyCode(event.keyCode),
                 flags: CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))
             ))
         case .keyDown:
-            process(.key(
+            dispatcher.process(.key(
                 keycode: CGKeyCode(event.keyCode), character: character(), down: true,
                 isRepeat: event.isARepeat
             ))
         case .keyUp:
-            process(.key(
+            dispatcher.process(.key(
                 keycode: CGKeyCode(event.keyCode), character: character(), down: false,
                 isRepeat: false
             ))
@@ -220,26 +198,5 @@ final class HotkeyListener {
         event.keyboardGetUnicodeString(maxStringLength: 4, actualStringLength: &length, unicodeString: &chars)
         guard length > 0 else { return nil }
         return String(utf16CodeUnits: chars, count: length).lowercased()
-    }
-
-    private func matches(_ spec: KeySpec, keycode: CGKeyCode, character: String?) -> Bool {
-        switch spec {
-        case let .keycode(code): code == keycode
-        case let .character(c): c == character
-        }
-    }
-
-    private func dispatch(keycode: CGKeyCode, character: String?, down: Bool) {
-        if matches(ptt, keycode: keycode, character: character) {
-            if down, !pttDown {
-                pttDown = true
-                onPress()
-            } else if !down, pttDown {
-                pttDown = false
-                onRelease()
-            }
-        } else if down, let toggle, matches(toggle, keycode: keycode, character: character) {
-            onToggle()
-        }
     }
 }

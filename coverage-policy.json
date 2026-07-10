@@ -34,6 +34,10 @@
       "reason": "Declarative SwiftUI home composition"
     },
     {
+      "path": "Sources/FoldWiseVoiceKit/HotkeyListener.swift",
+      "reason": "Thin CGEventTap and NSEvent monitor adapter; matching and dispatch live in HotkeyDispatcher"
+    },
+    {
       "path": "Sources/FoldWiseVoiceKit/Log.swift",
       "reason": "Static Logger declarations produce no LLVM-instrumentable lines"
     },
