@@ -110,6 +110,22 @@ final class SettingsWorkflowTests: XCTestCase {
     }
 
     @MainActor
+    private final class SuspendedLLMLists {
+        private(set) var requestCount = 0
+        private var continuations: [Int: CheckedContinuation<[OllamaClient.InstalledModel], Never>] = [:]
+
+        func run() async -> [OllamaClient.InstalledModel] {
+            requestCount += 1
+            let request = requestCount
+            return await withCheckedContinuation { continuations[request] = $0 }
+        }
+
+        func finish(request: Int, with models: [OllamaClient.InstalledModel]) {
+            continuations.removeValue(forKey: request)?.resume(returning: models)
+        }
+    }
+
+    @MainActor
     private final class SuspendedASRPreparation {
         private(set) var started = false
         private var progress: ASRModelManaging.ASRProgress?
@@ -535,6 +551,29 @@ final class SettingsWorkflowTests: XCTestCase {
         await waitUntil { model.installed != nil }
 
         XCTAssertEqual(model.installed?.map(\.name), ["llama3.2:3b"])
+    }
+
+    func testRefreshingLLMModelsIgnoresAnOlderResult() async {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let lists = SuspendedLLMLists()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: makeModelEffects(list: lists.run)
+        )
+
+        workflow.refreshLLMModels()
+        await waitUntil { lists.requestCount == 1 }
+        workflow.refreshLLMModels()
+        await waitUntil { lists.requestCount == 2 }
+        lists.finish(request: 2, with: [.init(name: "newest", sizeBytes: 2)])
+        await waitUntil { model.installed?.first?.name == "newest" }
+
+        lists.finish(request: 1, with: [.init(name: "stale", sizeBytes: 1)])
+        await Task.yield()
+
+        XCTAssertEqual(model.installed?.map(\.name), ["newest"])
     }
 
     func testInstallingLLMModelSelectsAndRefreshesIt() async {

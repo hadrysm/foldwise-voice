@@ -19,7 +19,7 @@ extension TranscriberDispatcher {
     }
 }
 
-struct LiveLLMModelManager: LLMModelManaging {
+final class LiveLLMModelManager: LLMModelManaging {
     func list() async -> [OllamaClient.InstalledModel] {
         await OllamaClient.listModels()
     }
@@ -35,7 +35,7 @@ struct LiveLLMModelManager: LLMModelManaging {
     }
 }
 
-struct LiveASRModelManager: ASRModelManaging {
+final class LiveASRModelManager: ASRModelManaging {
     func prepare(
         _ entry: ASRModelCatalog.Entry,
         progress: @escaping ASRProgress,

@@ -36,7 +36,7 @@ final class SettingsWorkflow {
     private let scheduleStatusClear: ScheduleStatusClear
     private let llmModels: any LLMModelManaging
     private let asrModels: any ASRModelManaging
-    private var modelRefreshID: UUID?
+    private var llmRefreshID: UUID?
     private var llmMutationID: UUID?
     private var asrDownloadID: UUID?
     private var asrDownloadTask: Task<Void, Never>?
@@ -121,11 +121,11 @@ final class SettingsWorkflow {
 
     func refreshLLMModels() {
         let requestID = UUID()
-        modelRefreshID = requestID
+        llmRefreshID = requestID
         model.installed = nil
         Task { @MainActor in
             let installed = await llmModels.list()
-            guard modelRefreshID == requestID else { return }
+            guard llmRefreshID == requestID else { return }
             model.installed = installed
         }
     }
