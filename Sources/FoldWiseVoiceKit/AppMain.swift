@@ -19,6 +19,48 @@ extension TranscriberDispatcher {
     }
 }
 
+struct LiveLLMModelManager: LLMModelManaging {
+    func list() async -> [OllamaClient.InstalledModel] {
+        await OllamaClient.listModels()
+    }
+
+    func pull(_ name: String, progress: @escaping LLMProgress) async -> String? {
+        await OllamaClient.pull(model: name) { status, fraction in
+            Task { @MainActor in progress(status, fraction) }
+        }
+    }
+
+    func delete(_ name: String) async -> String? {
+        await OllamaClient.delete(model: name)
+    }
+}
+
+struct LiveASRModelManager: ASRModelManaging {
+    func prepare(
+        _ entry: ASRModelCatalog.Entry,
+        progress: @escaping ASRProgress,
+        loading: @escaping ASRLoading
+    ) async -> String? {
+        let engine = TranscriberDispatcher.buildEngine(entry.engine)
+        engine.onDownloadProgress = { fraction in
+            Task { @MainActor in progress(fraction) }
+        }
+        engine.onLoading = { isLoading in
+            Task { @MainActor in loading(isLoading) }
+        }
+        do {
+            try await engine.prepare()
+            return nil
+        } catch {
+            return "\(error)"
+        }
+    }
+
+    func delete(_ entry: ASRModelCatalog.Entry) async -> String? {
+        await Task.detached { ASRModelStore.delete(entry.engine) }.value
+    }
+}
+
 /// TCP port used as a single-instance mutex (shared with the Python app so
 /// only one dictation app runs at a time).
 private let lockPort: UInt16 = 47812

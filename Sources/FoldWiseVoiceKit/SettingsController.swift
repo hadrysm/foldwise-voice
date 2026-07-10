@@ -23,9 +23,6 @@ final class SettingsController {
     private var window: NSWindow?
     private var keyMonitor: Any?
     private var statusClearTask: Task<Void, Never>?
-    /// The in-flight ASR download/prepare, retained so the Speech pane's Cancel
-    /// can abort it; nil whenever no download is running.
-    private var asrDownloadTask: Task<Void, Never>?
     private var closeObserver: NSObjectProtocol?
 
     /// Wired by AppDelegate so a manual check here also lights up the
@@ -71,14 +68,14 @@ final class SettingsController {
     private func wire() {
         model.onCommit = { [weak self] in self?.workflow.commit() }
         model.onRecord = { [weak self] field in self?.startRecording(field) }
-        model.onSelectModel = { [weak self] name in self?.selectModel(name) }
-        model.onInstallModel = { [weak self] name in self?.installModel(name) }
-        model.onDeleteModel = { [weak self] name in self?.deleteModel(name) }
-        model.onRefreshModels = { [weak self] in self?.refreshModels() }
-        model.onSelectASRModel = { [weak self] id in self?.selectASRModel(id) }
-        model.onDownloadASRModel = { [weak self] id in self?.downloadASRModel(id) }
-        model.onCancelASRDownload = { [weak self] in self?.cancelASRDownload() }
-        model.onDeleteASRModel = { [weak self] id in self?.deleteASRModel(id) }
+        model.onSelectModel = { [weak self] name in self?.workflow.selectLLMModel(name) }
+        model.onInstallModel = { [weak self] name in self?.workflow.installLLMModel(name) }
+        model.onDeleteModel = { [weak self] name in self?.workflow.deleteLLMModel(name) }
+        model.onRefreshModels = { [weak self] in self?.workflow.refreshLLMModels() }
+        model.onSelectASRModel = { [weak self] id in self?.workflow.selectASRModel(id) }
+        model.onDownloadASRModel = { [weak self] id in self?.workflow.downloadASRModel(id) }
+        model.onCancelASRDownload = { [weak self] in self?.workflow.cancelASRDownload() }
+        model.onDeleteASRModel = { [weak self] id in self?.workflow.deleteASRModel(id) }
         model.onEditFile = { [weak self] in
             guard let self else { return }
             NSWorkspace.shared.open(config.path)
@@ -142,15 +139,8 @@ final class SettingsController {
         model.axTrusted = TextInserter.accessibilityTrusted()
         model.historyEntries = historyStore.load()
         refreshStreak()
-        refreshModels()
+        workflow.refreshLLMModels()
         checkForUpdates()
-    }
-
-    private func refreshModels() {
-        model.installed = nil
-        Task { @MainActor in
-            self.model.installed = await OllamaClient.listModels()
-        }
     }
 
     /// Runs whenever the window opens and on the "Check for Updates" button,
@@ -173,171 +163,6 @@ final class SettingsController {
                 self.onUpdateAvailable?(version)
             case .failed:
                 self.model.updateState = .failed
-            }
-        }
-    }
-
-    // MARK: - Ollama models
-
-    private func selectModel(_ name: String) {
-        model.selectedModel = name
-        workflow.commit()
-    }
-
-    /// Pull `name` from the Ollama library, then make it the polish model.
-    private func installModel(_ name: String) {
-        guard model.pullingModel == nil, !name.isEmpty else { return }
-        model.pullingModel = name
-        model.pullError = ""
-        model.pullStatus = "contacting Ollama…"
-        model.pullFraction = nil
-        Task { @MainActor in
-            let error = await OllamaClient.pull(model: name) { status, fraction in
-                Task { @MainActor in
-                    self.model.pullStatus = status
-                    self.model.pullFraction = fraction
-                }
-            }
-            self.model.pullingModel = nil
-            if let error {
-                self.model.pullError = "Couldn't install \(name): \(error)"
-            } else {
-                self.model.customModel = ""
-                self.model.selectedModel = name
-                self.workflow.commit()
-                self.refreshModels()
-            }
-        }
-    }
-
-    /// Remove `name` from the local Ollama, then refresh the installed list.
-    /// Single-flight and blocked while a download runs, so the app is only ever
-    /// in one Ollama-mutating state at a time. Removing the active Polish model
-    /// deliberately leaves Config untouched (ADR-0003: nothing re-reads it, so
-    /// nothing is signalled) — the existing "Not installed — fix…" affordance
-    /// picks up the missing model and Polish falls back to the raw transcript.
-    private func deleteModel(_ name: String) {
-        guard model.deletingModel == nil, model.pullingModel == nil, !name.isEmpty else { return }
-        model.deletingModel = name
-        model.deleteError = ""
-        Task { @MainActor in
-            let error = await OllamaClient.delete(model: name)
-            self.model.deletingModel = nil
-            if let error {
-                self.model.deleteError = "Couldn't uninstall \(name): \(error)"
-            } else {
-                self.refreshModels()
-            }
-        }
-    }
-
-    // MARK: - ASR models (Speech pane)
-
-    /// Make an already-downloaded ASR model active (ADR-0006). `commit` writes
-    /// it across every mode via `setASRModel` and notifies the dispatcher, which
-    /// performs the drop-before-load swap.
-    private func selectASRModel(_ id: String) {
-        model.asrModel = id
-        workflow.commit()
-    }
-
-    /// Fetch an available model's weights so it becomes selectable. Single-flight
-    /// and config-untouched: on failure the previous selection is preserved and
-    /// an error is shown; on success the id joins the downloaded set (ADR-0005).
-    private func downloadASRModel(_ id: String) {
-        // `asrDownloadTask` is the single-flight sentinel: it stays set from here
-        // until the task actually unwinds — including across a cancel of a
-        // possibly-uncooperative engine — so an instant re-click can't start a
-        // second concurrent download of the same weights.
-        guard asrDownloadTask == nil, let entry = ASRModelCatalog.entry(for: id) else { return }
-        model.asrDownloading = id
-        model.asrDownloadError = ""
-        model.asrDownloadFraction = nil
-        model.asrPreparing = false
-        asrDownloadTask = Task { @MainActor in
-            let failure = await Self.prepareASR(
-                entry,
-                onProgress: { fraction in Task { @MainActor in self.model.asrDownloadFraction = fraction } },
-                onLoading: { loading in Task { @MainActor in self.model.asrPreparing = loading } }
-            )
-            self.asrDownloadTask = nil
-            // A cancel already cleared the pane and released the throwaway engine,
-            // so don't resurrect an error or mark the model downloaded on the way out.
-            if Task.isCancelled { return }
-            self.clearASRDownloadUI()
-            if let message = ASRModelCatalog.downloadError(for: entry, failure: failure) {
-                self.model.asrDownloadError = message
-            } else {
-                self.model.asrDownloaded.insert(id)
-            }
-        }
-    }
-
-    /// Abort an in-flight ASR download/prepare and clear the pane at once, so a
-    /// slow or stalled fetch — or the post-100% compile phase — can be escaped
-    /// without waiting for it to unwind. Cancelling the task cooperatively cancels
-    /// the engine's load (see `WhisperTranscriber.prepare`); `asrDownloadTask` is
-    /// left set until that unwind completes so a re-click can't race a second
-    /// download, and the task's completion nils it and no-ops via `Task.isCancelled`.
-    private func cancelASRDownload() {
-        asrDownloadTask?.cancel()
-        clearASRDownloadUI()
-    }
-
-    /// Clear the Speech pane's downloading/fraction/preparing flags together,
-    /// returning the row to its pre-download look.
-    private func clearASRDownloadUI() {
-        model.asrDownloading = nil
-        model.asrDownloadFraction = nil
-        model.asrPreparing = false
-    }
-
-    /// Build the entry's engine and load — downloading on first use — its
-    /// weights, reporting a 0…1 fraction through `onProgress` (Whisper only; #93)
-    /// and the trailing compile-onto-the-ANE phase through `onLoading`, returning
-    /// a failure string or nil. The throwaway engine is released when this
-    /// returns, so selecting the model later reloads it from the on-disk cache
-    /// without ever holding two Whisper models resident.
-    private static func prepareASR(
-        _ entry: ASRModelCatalog.Entry,
-        onProgress: @escaping (Double) -> Void,
-        onLoading: @escaping (Bool) -> Void
-    ) async -> String? {
-        let engine = TranscriberDispatcher.buildEngine(entry.engine)
-        engine.onDownloadProgress = onProgress
-        engine.onLoading = onLoading
-        do {
-            try await engine.prepare()
-            return nil
-        } catch {
-            return "\(error)"
-        }
-    }
-
-    /// Delete a downloaded model's on-disk weights (#95). Single-flight and
-    /// blocked while a download runs, so the app is only ever in one
-    /// ASR-mutating state at a time; the built-in default (Parakeet v3) is never
-    /// deletable — it re-downloads at launch and is the fallback. Deleting the
-    /// active model re-selects the default via `commit`, which fires the
-    /// dispatcher's drop-before-load swap so dictation falls back to Parakeet.
-    private func deleteASRModel(_ id: String) {
-        guard model.asrDeleting == nil, model.asrDownloading == nil,
-              id != ASRModelCatalog.defaultID,
-              let entry = ASRModelCatalog.entry(for: id) else { return }
-        model.asrDeleting = id
-        model.asrDeleteError = ""
-        Task { @MainActor in
-            let failure = await Task.detached { ASRModelStore.delete(entry.engine) }.value
-            self.model.asrDeleting = nil
-            if let failure {
-                self.model.asrDeleteError = "Couldn't delete \(entry.name): \(failure)"
-                return
-            }
-            self.model.asrDownloaded.remove(id)
-            if ASRModelCatalog.deleteOutcome(for: entry, isActive: self.model.asrModel == id)
-                .fallsBackToDefault {
-                self.model.asrModel = ASRModelCatalog.defaultID
-                self.workflow.commit()
             }
         }
     }

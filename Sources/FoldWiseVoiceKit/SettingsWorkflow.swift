@@ -1,5 +1,27 @@
 import Foundation
 
+@MainActor
+protocol LLMModelManaging {
+    typealias LLMProgress = @MainActor (String, Double?) -> Void
+
+    func list() async -> [OllamaClient.InstalledModel]
+    func pull(_ name: String, progress: @escaping LLMProgress) async -> String?
+    func delete(_ name: String) async -> String?
+}
+
+@MainActor
+protocol ASRModelManaging {
+    typealias ASRProgress = @MainActor (Double) -> Void
+    typealias ASRLoading = @MainActor (Bool) -> Void
+
+    func prepare(
+        _ entry: ASRModelCatalog.Entry,
+        progress: @escaping ASRProgress,
+        loading: @escaping ASRLoading
+    ) async -> String?
+    func delete(_ entry: ASRModelCatalog.Entry) async -> String?
+}
+
 /// Deterministic settings decisions shared by the SwiftUI/AppKit shell.
 @MainActor
 final class SettingsWorkflow {
@@ -12,8 +34,15 @@ final class SettingsWorkflow {
     private let persist: Persist
     private let now: () -> Date
     private let scheduleStatusClear: ScheduleStatusClear
+    private let llmModels: any LLMModelManaging
+    private let asrModels: any ASRModelManaging
+    private var modelRefreshID: UUID?
+    private var llmMutationID: UUID?
+    private var asrDownloadID: UUID?
+    private var asrDownloadTask: Task<Void, Never>?
+    private var asrDeleteID: UUID?
 
-    init(
+    convenience init(
         config: Config,
         model: SettingsModel,
         historyStore: HistoryStore,
@@ -21,12 +50,36 @@ final class SettingsWorkflow {
         now: @escaping () -> Date,
         scheduleStatusClear: @escaping ScheduleStatusClear
     ) {
+        self.init(
+            config: config,
+            model: model,
+            historyStore: historyStore,
+            persist: persist,
+            now: now,
+            scheduleStatusClear: scheduleStatusClear,
+            llmModels: LiveLLMModelManager(),
+            asrModels: LiveASRModelManager()
+        )
+    }
+
+    init(
+        config: Config,
+        model: SettingsModel,
+        historyStore: HistoryStore,
+        persist: @escaping Persist,
+        now: @escaping () -> Date,
+        scheduleStatusClear: @escaping ScheduleStatusClear,
+        llmModels: any LLMModelManaging,
+        asrModels: any ASRModelManaging
+    ) {
         self.config = config
         self.model = model
         self.historyStore = historyStore
         self.persist = persist
         self.now = now
         self.scheduleStatusClear = scheduleStatusClear
+        self.llmModels = llmModels
+        self.asrModels = asrModels
     }
 
     func populatePreferences() {
@@ -59,6 +112,137 @@ final class SettingsWorkflow {
             model.toggleKey = key
         }
         commit()
+    }
+
+    func selectLLMModel(_ name: String) {
+        model.selectedModel = name
+        commit()
+    }
+
+    func refreshLLMModels() {
+        let requestID = UUID()
+        modelRefreshID = requestID
+        model.installed = nil
+        Task { @MainActor in
+            let installed = await llmModels.list()
+            guard modelRefreshID == requestID else { return }
+            model.installed = installed
+        }
+    }
+
+    func installLLMModel(_ name: String) {
+        guard model.pullingModel == nil, model.deletingModel == nil, !name.isEmpty else { return }
+        let operationID = UUID()
+        llmMutationID = operationID
+        model.pullingModel = name
+        model.pullError = ""
+        model.pullStatus = "contacting Ollama…"
+        model.pullFraction = nil
+        Task { @MainActor in
+            let error = await llmModels.pull(name) { [weak self] status, fraction in
+                guard let self, llmMutationID == operationID else { return }
+                model.pullStatus = status
+                model.pullFraction = fraction
+            }
+            guard llmMutationID == operationID else { return }
+            llmMutationID = nil
+            model.pullingModel = nil
+            if let error {
+                model.pullError = "Couldn't install \(name): \(error)"
+            } else {
+                model.customModel = ""
+                selectLLMModel(name)
+                refreshLLMModels()
+            }
+        }
+    }
+
+    func deleteLLMModel(_ name: String) {
+        guard model.deletingModel == nil, model.pullingModel == nil, !name.isEmpty else { return }
+        let operationID = UUID()
+        llmMutationID = operationID
+        model.deletingModel = name
+        model.deleteError = ""
+        Task { @MainActor in
+            let error = await llmModels.delete(name)
+            guard llmMutationID == operationID else { return }
+            llmMutationID = nil
+            model.deletingModel = nil
+            if let error {
+                model.deleteError = "Couldn't uninstall \(name): \(error)"
+            } else {
+                refreshLLMModels()
+            }
+        }
+    }
+
+    func selectASRModel(_ id: String) {
+        model.asrModel = id
+        commit()
+    }
+
+    func downloadASRModel(_ id: String) {
+        guard asrDownloadTask == nil, model.asrDeleting == nil,
+              let entry = ASRModelCatalog.entry(for: id) else { return }
+        let operationID = UUID()
+        asrDownloadID = operationID
+        model.asrDownloading = id
+        model.asrDownloadError = ""
+        model.asrDownloadFraction = nil
+        model.asrPreparing = false
+        asrDownloadTask = Task { @MainActor in
+            let failure = await asrModels.prepare(
+                entry,
+                progress: { [weak self] fraction in
+                    guard let self, asrDownloadID == operationID else { return }
+                    model.asrDownloadFraction = fraction
+                },
+                loading: { [weak self] loading in
+                    guard let self, asrDownloadID == operationID else { return }
+                    model.asrPreparing = loading
+                }
+            )
+            asrDownloadTask = nil
+            guard asrDownloadID == operationID else { return }
+            asrDownloadID = nil
+            clearASRDownloadUI()
+            if let message = ASRModelCatalog.downloadError(for: entry, failure: failure) {
+                model.asrDownloadError = message
+            } else {
+                model.asrDownloaded.insert(id)
+            }
+        }
+    }
+
+    func cancelASRDownload() {
+        asrDownloadID = nil
+        asrDownloadTask?.cancel()
+        clearASRDownloadUI()
+    }
+
+    func deleteASRModel(_ id: String) {
+        guard asrDeleteID == nil, asrDownloadTask == nil,
+              id != ASRModelCatalog.defaultID,
+              let entry = ASRModelCatalog.entry(for: id) else { return }
+        let operationID = UUID()
+        asrDeleteID = operationID
+        model.asrDeleting = id
+        model.asrDeleteError = ""
+        Task { @MainActor in
+            let failure = await asrModels.delete(entry)
+            guard asrDeleteID == operationID else { return }
+            asrDeleteID = nil
+            model.asrDeleting = nil
+            if let failure {
+                model.asrDeleteError = "Couldn't delete \(entry.name): \(failure)"
+                return
+            }
+            model.asrDownloaded.remove(id)
+            if ASRModelCatalog.deleteOutcome(for: entry, isActive: model.asrModel == id)
+                .fallsBackToDefault {
+                selectASRModel(ASRModelCatalog.defaultID)
+            }
+        }
     }
 
     func commit() {
@@ -115,5 +299,11 @@ final class SettingsWorkflow {
         scheduleStatusClear { [weak self] in
             self?.model.status = ""
         }
+    }
+
+    private func clearASRDownloadUI() {
+        model.asrDownloading = nil
+        model.asrDownloadFraction = nil
+        model.asrPreparing = false
     }
 }
