@@ -31,6 +31,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The coverage policy compares included production lines with the
+          # target branch, so the merge base must be available locally.
+          fetch-depth: 0
       # Compiled .swiftmodule artifacts in .build are toolchain-specific: a
       # module built by one Swift version cannot be imported by another. The
       # cache key must include the compiler version so a runner-image toolchain
@@ -45,7 +49,7 @@ jobs:
             ~/Library/Caches/org.swift.swiftpm
           key: spm-${{ runner.os }}-${{ steps.swift.outputs.hash }}-${{ hashFiles('Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-${{ steps.swift.outputs.hash }}-
-      - name: Build (including tests)
-        run: swift build --build-tests
-      - name: Test
-        run: swift test --skip-build
+      - name: Test and enforce coverage policy
+        env:
+          COVERAGE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/coverage.sh

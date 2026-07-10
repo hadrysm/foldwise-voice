@@ -1,0 +1,69 @@
+{
+  "production_source_root": "Sources/FoldWiseVoiceKit",
+  "overall_floor": 39.1711056255684,
+  "included_core_floor": 60.27928626842514,
+  "changed_line_floor": 90.0,
+  "minimum_file_coverage": 0.0,
+  "exemptions": [
+    {
+      "path": "Sources/FoldWiseVoiceKit/AppMain.swift",
+      "reason": "Application lifecycle and composition root"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/AudioRecorder.swift",
+      "reason": "AVFoundation microphone capture adapter"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/BadgeController.swift",
+      "reason": "AppKit window and event-composition shell"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/BadgeView.swift",
+      "reason": "Declarative SwiftUI Badge composition"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/HistoryView.swift",
+      "reason": "Declarative SwiftUI history composition"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/HomeView.swift",
+      "reason": "Declarative SwiftUI home composition"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/Log.swift",
+      "reason": "Static Logger declarations produce no LLVM-instrumentable lines"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/MenuBarController.swift",
+      "reason": "AppKit status-menu composition shell"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/Permissions.swift",
+      "reason": "macOS permission prompt adapter"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/SettingsComponents.swift",
+      "reason": "Declarative SwiftUI settings components"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/SettingsView.swift",
+      "reason": "Declarative SwiftUI settings composition"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/StatsView.swift",
+      "reason": "Declarative SwiftUI statistics composition"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/Theme.swift",
+      "reason": "Declarative SwiftUI styling primitives"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/Transcriber.swift",
+      "reason": "Real FluidAudio model-loading and inference adapter"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/WhisperTranscriber.swift",
+      "reason": "Real WhisperKit model-loading and inference adapter"
+    }
+  ]
+}
