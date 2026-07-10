@@ -22,7 +22,7 @@ struct URLSessionOllamaTransport: OllamaTransporting {
     func lines(for request: URLRequest) async throws -> (URLResponse, AsyncThrowingStream<String, Error>) {
         let (bytes, response) = try await session.bytes(for: request)
         let lines = AsyncThrowingStream { continuation in
-            Task {
+            let producer = Task {
                 do {
                     for try await line in bytes.lines {
                         continuation.yield(line)
@@ -31,6 +31,9 @@ struct URLSessionOllamaTransport: OllamaTransporting {
                 } catch {
                     continuation.finish(throwing: error)
                 }
+            }
+            continuation.onTermination = { _ in
+                producer.cancel()
             }
         }
         return (response, lines)
