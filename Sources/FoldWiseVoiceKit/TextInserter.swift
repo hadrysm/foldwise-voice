@@ -17,9 +17,6 @@ enum TextInserter {
 
     /// Copy `text` and paste it into the focused app. Returns true if a
     /// synthetic Cmd+V was posted, false for the clipboard-only fallback.
-    /// The pasteboard, permission check, and keystroke are parameters with
-    /// production defaults so tests can drive the restore logic against a
-    /// private named pasteboard.
     @MainActor
     static func insert(
         _ text: String,
