@@ -32,6 +32,22 @@ final class ASRModelCatalogTests: XCTestCase {
         XCTAssertNil(ASRModelCatalog.entry(for: "mlx-community/whisper-large-v3-turbo"))
     }
 
+    func testLookupNormalizesCanonicalIDWhitespaceAndCase() {
+        let entry = ASRModelCatalog.entry(for: "  WHISPER-SMALL\n")
+        XCTAssertEqual(entry?.id, "whisper-small")
+    }
+
+    func testLookupResolvesEngineCheckpointAlias() {
+        let entry = ASRModelCatalog.entry(
+            for: "openai_whisper-large-v3-v20240930_turbo_632MB"
+        )
+        XCTAssertEqual(entry?.id, "whisper-large-v3-turbo")
+    }
+
+    func testMalformedIdentifierResolvesToNoEntry() {
+        XCTAssertNil(ASRModelCatalog.entry(for: "whisper-small/../../"))
+    }
+
     func testUnknownIDFallsBackToParakeetEngine() {
         XCTAssertEqual(
             ASRModelCatalog.engine(forSelected: "mlx-community/whisper-large-v3-turbo"),

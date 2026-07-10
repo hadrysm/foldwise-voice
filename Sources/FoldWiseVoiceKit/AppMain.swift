@@ -7,6 +7,18 @@ import AppKit
 import Foundation
 import os
 
+extension TranscriberDispatcher {
+    /// Production-only construction for the real ASR adapters. Keeping it in
+    /// the composition root leaves the dispatcher's decisions testable without
+    /// initializing or downloading a CoreML model.
+    static func buildEngine(_ engine: ASRModelCatalog.Engine) -> Transcribing {
+        switch engine {
+        case let .parakeet(version): Transcriber(version: version)
+        case let .whisper(variant): WhisperTranscriber(variant: variant)
+        }
+    }
+}
+
 /// TCP port used as a single-instance mutex (shared with the Python app so
 /// only one dictation app runs at a time).
 private let lockPort: UInt16 = 47812
