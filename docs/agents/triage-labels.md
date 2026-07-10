@@ -18,7 +18,7 @@ Edit the right-hand column to match whatever vocabulary you actually use.
 
 | Label         | Applied by            | Meaning                                                                  |
 | ------------- | --------------------- | ------------------------------------------------------------------------ |
-| `prd`         | `/to-prd`             | Issue holds a product requirements document (generated PRD).            |
+| `prd`         | `/to-spec`             | Issue holds a product requirements document (generated SPEC).            |
 | `code-review` | the Sandcastle runner | PRD batch drained; awaiting the maintainer's code review and manual PR. |
 
 Apply `prd` when a skill publishes a PRD to the issue tracker. The Sandcastle runner adds `code-review` to a PRD when every released slice is closed. Add more rows here as new conventions emerge.
