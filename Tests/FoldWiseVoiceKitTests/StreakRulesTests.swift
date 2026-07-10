@@ -119,6 +119,39 @@ final class StreakRulesTests: XCTestCase {
         XCTAssertEqual(advanced, StreakRecord(currentStreak: Int.max, lastActiveDay: calendar.startOfDay(for: nextDay)))
     }
 
+    /// A hand-edited or corrupt record can decode with a nonpositive count. The
+    /// next real dictation must repair it to a valid one-day run rather than
+    /// perpetuating an impossible zero or negative streak.
+    func testAdvanceRepairsNegativeStoredCount() throws {
+        let calendar = try calendar()
+        let existing = StreakRecord(currentStreak: -1, lastActiveDay: try at(calendar, 2026, 1, 1, 8))
+        let nextDay = try at(calendar, 2026, 1, 2, 10)
+
+        let advanced = StreakRules.advance(existing, on: nextDay, calendar: calendar)
+
+        XCTAssertEqual(advanced, StreakRecord(currentStreak: 1, lastActiveDay: calendar.startOfDay(for: nextDay)))
+    }
+
+    func testAdvanceRepairsZeroStoredCount() throws {
+        let calendar = try calendar()
+        let existing = StreakRecord(currentStreak: 0, lastActiveDay: try at(calendar, 2026, 1, 1, 8))
+        let nextDay = try at(calendar, 2026, 1, 2, 10)
+
+        let advanced = StreakRules.advance(existing, on: nextDay, calendar: calendar)
+
+        XCTAssertEqual(advanced, StreakRecord(currentStreak: 1, lastActiveDay: calendar.startOfDay(for: nextDay)))
+    }
+
+    func testAdvancePreservesInvalidRecordDuringBackwardsClockStep() throws {
+        let calendar = try calendar()
+        let existing = StreakRecord(currentStreak: 0, lastActiveDay: try at(calendar, 2026, 1, 10, 8))
+        let earlierDay = try at(calendar, 2026, 1, 8, 10)
+
+        let advanced = StreakRules.advance(existing, on: earlierDay, calendar: calendar)
+
+        XCTAssertEqual(advanced, existing)
+    }
+
     // MARK: - display
 
     func testDisplayIsNilForNoRecord() throws {

@@ -45,6 +45,13 @@ enum StreakRules {
         }
         let lastDay = calendar.startOfDay(for: record.lastActiveDay)
         let dayDelta = calendar.dateComponents([.day], from: lastDay, to: newDay).day ?? 0
+        // A backwards step — a clock rollback or westward timezone move — is
+        // ignored before repairing invalid data so it cannot drag the stored
+        // day into the past and compound the corruption.
+        guard dayDelta >= 0 else { return record }
+        guard record.currentStreak > 0 else {
+            return StreakRecord(currentStreak: 1, lastActiveDay: newDay)
+        }
         switch dayDelta {
         case 0:
             return record // same day — no-op
@@ -57,14 +64,6 @@ enum StreakRules {
             // Clamp at `Int.max` instead so the advance can never crash the session.
             let (next, overflowed) = record.currentStreak.addingReportingOverflow(1)
             return StreakRecord(currentStreak: overflowed ? Int.max : next, lastActiveDay: newDay)
-        case ..<0:
-            // A backwards step — a clock rollback or a westward timezone move that
-            // lands `newDay` before the stored day — is ignored: we return the
-            // record untouched so a transient skew never wipes a live run or drags
-            // `lastActiveDay` into the past (which would then misread the real next
-            // day as a +1 and compound the corruption). Only a genuine forward gap
-            // restarts the run; going backwards can never be a legitimate advance.
-            return record
         default:
             // A genuine forward gap of two or more days restarts the run at 1 on
             // the new day — a streak is consecutive or it is nothing.

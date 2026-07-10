@@ -1,7 +1,7 @@
 {
   "production_source_root": "Sources/FoldWiseVoiceKit",
-  "overall_floor": 43.36305101535414,
-  "included_core_floor": 73.63075807036634,
+  "overall_floor": 43.80185758513932,
+  "included_core_floor": 74.92743105950653,
   "changed_line_floor": 90.0,
   "minimum_file_coverage": 0.0,
   "exemptions": [

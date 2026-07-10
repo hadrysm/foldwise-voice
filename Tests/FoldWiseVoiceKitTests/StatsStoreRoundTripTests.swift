@@ -44,6 +44,11 @@ final class StatsStoreRoundTripTests: XCTestCase {
         return try XCTUnwrap(calendar.date(from: components))
     }
 
+    func testDefaultURLKeepsStatsBesideOtherApplicationSupportData() {
+        XCTAssertEqual(JSONStatsStore.defaultURL.lastPathComponent, "stats.json")
+        XCTAssertEqual(JSONStatsStore.defaultURL.deletingLastPathComponent().lastPathComponent, "FoldWise Voice")
+    }
+
     func testLoadOnMissingFileReturnsNil() {
         XCTAssertNil(JSONStatsStore(url: storeURL).load())
     }
