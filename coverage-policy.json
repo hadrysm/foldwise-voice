@@ -1,7 +1,7 @@
 {
   "production_source_root": "Sources/FoldWiseVoiceKit",
-  "overall_floor": 39.61995863495346,
-  "included_core_floor": 61.29155521589607,
+  "overall_floor": 40.401728960081364,
+  "included_core_floor": 63.287873203096204,
   "changed_line_floor": 90.0,
   "minimum_file_coverage": 0.0,
   "exemptions": [
@@ -56,6 +56,10 @@
     {
       "path": "Sources/FoldWiseVoiceKit/Theme.swift",
       "reason": "Declarative SwiftUI styling primitives"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/TextInsertionSystem.swift",
+      "reason": "Thin macOS Accessibility, CGEvent, and main-queue scheduling adapter"
     },
     {
       "path": "Sources/FoldWiseVoiceKit/Transcriber.swift",

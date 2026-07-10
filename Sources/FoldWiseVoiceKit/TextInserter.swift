@@ -3,17 +3,17 @@
 // fall back to clipboard-only.
 
 import AppKit
-import ApplicationServices
 import Foundation
 import os
 
 enum TextInserter {
     /// Pending clipboard restore; canceled when a newer insert supersedes it.
-    @MainActor private static var restoreWork: DispatchWorkItem?
+    @MainActor private static var cancelRestore: (() -> Void)?
 
-    static func accessibilityTrusted() -> Bool {
-        AXIsProcessTrusted()
-    }
+    typealias RestoreScheduler = (
+        _ delay: TimeInterval,
+        _ action: @escaping () -> Void
+    ) -> () -> Void
 
     /// Copy `text` and paste it into the focused app. Returns true if a
     /// synthetic Cmd+V was posted, false for the clipboard-only fallback.
@@ -23,15 +23,16 @@ enum TextInserter {
     @MainActor
     static func insert(
         _ text: String,
-        pasteboard: NSPasteboard = .general,
-        trusted: () -> Bool = accessibilityTrusted,
-        postPaste: () -> Void = postCmdV,
-        restoreDelay: TimeInterval = 0.4
+        pasteboard: NSPasteboard,
+        trusted: () -> Bool,
+        postPaste: () -> Void,
+        restoreDelay: TimeInterval,
+        scheduleRestore: RestoreScheduler
     ) -> Bool {
         guard !text.isEmpty else { return false }
 
-        restoreWork?.cancel()
-        restoreWork = nil
+        cancelRestore?()
+        cancelRestore = nil
 
         let previous = pasteboard.string(forType: .string)
         pasteboard.clearContents()
@@ -49,28 +50,12 @@ enum TextInserter {
             // restoring — and only restore if nothing (a newer dictation, a
             // user copy) has written to the pasteboard since.
             let expectedChangeCount = pasteboard.changeCount
-            let work = DispatchWorkItem {
+            cancelRestore = scheduleRestore(restoreDelay) {
                 guard pasteboard.changeCount == expectedChangeCount else { return }
                 pasteboard.clearContents()
                 pasteboard.setString(previous, forType: .string)
             }
-            restoreWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay, execute: work)
         }
         return true
-    }
-
-    /// Synthesize Cmd+V into the focused app (needs Accessibility).
-    static func postCmdV() {
-        usleep(50000) // let the clipboard settle before pasting
-
-        let source = CGEventSource(stateID: .hidSystemState)
-        let vKey: CGKeyCode = 9
-        for down in [true, false] {
-            guard let event = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: down)
-            else { continue }
-            event.flags = .maskCommand
-            event.post(tap: .cghidEventTap)
-        }
     }
 }
