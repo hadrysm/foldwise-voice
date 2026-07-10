@@ -8,6 +8,8 @@ import Foundation
 
 @MainActor
 final class UpdateChecker {
+    typealias URLLoader = (URLRequest) async throws -> (Data, URLResponse)
+
     static let latestReleaseAPI =
         URL(string: "https://api.github.com/repos/hadrysm/foldwise-voice/releases/latest")!
     static let releasesPage =
@@ -26,29 +28,35 @@ final class UpdateChecker {
         case failed
     }
 
+    private let client: UpdateCheckClient
+    private let scheduler: UpdateCheckScheduler
     private let onUpdateAvailable: (String) -> Void
-    private var timer: Timer?
 
-    init(onUpdateAvailable: @escaping (String) -> Void) {
+    init(
+        client: UpdateCheckClient = .live,
+        scheduler: UpdateCheckScheduler = .live,
+        onUpdateAvailable: @escaping (String) -> Void
+    ) {
+        self.client = client
+        self.scheduler = scheduler
         self.onUpdateAvailable = onUpdateAvailable
     }
 
     /// Check now, then every 24 h for as long as the app runs.
     func start() {
         // Dev builds (`swift run`) have no Info.plist version — nothing to compare.
-        guard Self.currentVersion() != nil else { return }
+        guard client.currentVersion() != nil else { return }
         check()
-        let timer = Timer(timeInterval: 24 * 60 * 60, repeats: true) { [weak self] _ in
+        scheduler.scheduleDaily { [weak self] in
             Task { @MainActor in self?.check() }
         }
-        timer.tolerance = 60 * 60
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 
     private func check() {
         Task { @MainActor in
-            if case let .updateAvailable(version, _) = await Self.checkNow() {
+            if case let .updateAvailable(version, _) = await Self.checkNow(
+                client: client
+            ) {
                 onUpdateAvailable(version)
             }
         }
@@ -57,31 +65,39 @@ final class UpdateChecker {
     /// One immediate check with an explicit outcome, for user-initiated
     /// "Check for Updates" (the passive path reuses it and only acts on
     /// `.updateAvailable`).
-    static func checkNow() async -> CheckResult {
-        guard let current = currentVersion() else { return .failed }
-        guard let release = await fetchLatestRelease() else { return .failed }
+    static func checkNow(client: UpdateCheckClient = .live) async -> CheckResult {
+        guard let current = client.currentVersion() else { return .failed }
+        guard let release = await fetchLatestRelease(sendRequest: client.sendRequest) else {
+            return .failed
+        }
         return isNewer(release.version, than: current)
             ? .updateAvailable(version: release.version, downloadURL: release.dmgURL)
             : .upToDate(current: current)
     }
 
     static func currentVersion() -> String? {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        UpdateCheckClient.live.currentVersion()
     }
 
     /// Latest release ("0.4.0" plus its .dmg asset URL), or nil if offline /
     /// rate-limited / the tag doesn't look like a version.
-    static func fetchLatestRelease() async -> Release? {
+    static func fetchLatestRelease(sendRequest: URLLoader) async -> Release? {
         var request = URLRequest(url: latestReleaseAPI)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 10
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
+        guard let (data, response) = try? await sendRequest(request),
               let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tag = json["tag_name"] as? String
-        else { return nil }
+        else {
+            Log.app.warning("Update check skipped an unavailable or invalid GitHub release response")
+            return nil
+        }
         let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-        guard !version.isEmpty, parse(version) != nil else { return nil }
+        guard !version.isEmpty, parse(version) != nil else {
+            Log.app.warning("Update check skipped a GitHub release with a malformed version tag")
+            return nil
+        }
         let dmgURL = ((json["assets"] as? [[String: Any]]) ?? [])
             .compactMap { $0["browser_download_url"] as? String }
             .first { $0.hasSuffix(".dmg") }

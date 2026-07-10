@@ -1,7 +1,7 @@
 {
   "production_source_root": "Sources/FoldWiseVoiceKit",
-  "overall_floor": 41.791608920246944,
-  "included_core_floor": 68.18515797207935,
+  "overall_floor": 42.500313794401904,
+  "included_core_floor": 70.43541895353091,
   "changed_line_floor": 90.0,
   "minimum_file_coverage": 0.0,
   "exemptions": [
@@ -68,6 +68,10 @@
     {
       "path": "Sources/FoldWiseVoiceKit/Transcriber.swift",
       "reason": "Real FluidAudio model-loading and inference adapter"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/UpdateCheckEnvironment.swift",
+      "reason": "Thin application-bundle, URLSession, and recurring-timer configuration adapter"
     },
     {
       "path": "Sources/FoldWiseVoiceKit/WhisperTranscriber.swift",
