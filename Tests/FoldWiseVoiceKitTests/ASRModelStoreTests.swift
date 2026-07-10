@@ -1,8 +1,5 @@
-// Pins the on-disk cache-path resolution for the ASR engines (slice 5, #95) —
-// the one library-coupled seam. These assert the path *shape* each library
-// downloads into, without touching the filesystem, so a library changing its
-// storage layout is caught here rather than by a delete that silently frees
-// nothing. Deletion itself is I/O at the boundary and isn't unit-tested.
+// Pins the library-coupled cache paths and deletion behavior without accessing
+// downloaded model weights. Filesystem tests stay inside a throwaway directory.
 
 import XCTest
 @testable import FoldWiseVoiceKit
@@ -61,11 +58,6 @@ final class ASRModelStoreTests: XCTestCase {
         )
 
         XCTAssertNil(error)
-    }
-
-    func testDeleteResolvesEngineDirectoryByDefault() {
-        let uniqueVariant = "foldwise-test-missing-\(UUID().uuidString)"
-        XCTAssertNil(ASRModelStore.delete(.whisper(variant: uniqueVariant)))
     }
 
     func testDeleteRemovesDownloadedWeights() throws {
