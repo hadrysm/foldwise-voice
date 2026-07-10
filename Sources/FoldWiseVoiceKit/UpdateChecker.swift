@@ -8,8 +8,6 @@ import Foundation
 
 @MainActor
 final class UpdateChecker {
-    typealias URLLoader = (URLRequest) async throws -> (Data, URLResponse)
-
     static let latestReleaseAPI =
         URL(string: "https://api.github.com/repos/hadrysm/foldwise-voice/releases/latest")!
     static let releasesPage =
@@ -28,12 +26,12 @@ final class UpdateChecker {
         case failed
     }
 
-    private let client: UpdateCheckClient
+    private let client: any UpdateCheckClient
     private let scheduler: UpdateCheckScheduler
     private let onUpdateAvailable: (String) -> Void
 
     init(
-        client: UpdateCheckClient = .live,
+        client: any UpdateCheckClient = LiveUpdateCheckClient(),
         scheduler: UpdateCheckScheduler = .live,
         onUpdateAvailable: @escaping (String) -> Void
     ) {
@@ -65,7 +63,9 @@ final class UpdateChecker {
     /// One immediate check with an explicit outcome, for user-initiated
     /// "Check for Updates" (the passive path reuses it and only acts on
     /// `.updateAvailable`).
-    static func checkNow(client: UpdateCheckClient = .live) async -> CheckResult {
+    static func checkNow(
+        client: any UpdateCheckClient = LiveUpdateCheckClient()
+    ) async -> CheckResult {
         guard let current = client.currentVersion() else { return .failed }
         guard let release = await fetchLatestRelease(sendRequest: client.sendRequest) else {
             return .failed
@@ -76,7 +76,7 @@ final class UpdateChecker {
     }
 
     static func currentVersion() -> String? {
-        UpdateCheckClient.live.currentVersion()
+        LiveUpdateCheckClient().currentVersion()
     }
 
     /// Latest release ("0.4.0" plus its .dmg asset URL), or nil if offline /

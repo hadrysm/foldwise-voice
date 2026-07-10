@@ -1,15 +1,17 @@
 import Foundation
 
-struct UpdateCheckClient {
-    let currentVersion: () -> String?
-    let sendRequest: UpdateChecker.URLLoader
+typealias URLLoader = (URLRequest) async throws -> (Data, URLResponse)
 
-    static let live = UpdateCheckClient(
-        currentVersion: {
-            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        },
-        sendRequest: { request in try await URLSession.shared.data(for: request) }
-    )
+protocol UpdateCheckClient {
+    var currentVersion: () -> String? { get }
+    var sendRequest: URLLoader { get }
+}
+
+struct LiveUpdateCheckClient: UpdateCheckClient {
+    let currentVersion: () -> String? = { Bundle.main.object(
+        forInfoDictionaryKey: "CFBundleShortVersionString"
+    ) as? String }
+    let sendRequest: URLLoader = { request in try await URLSession.shared.data(for: request) }
 }
 
 struct UpdateCheckScheduler {

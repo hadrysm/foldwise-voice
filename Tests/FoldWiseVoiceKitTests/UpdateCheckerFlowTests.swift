@@ -9,7 +9,7 @@ final class UpdateCheckerFlowTests: XCTestCase {
         let reported = expectation(description: "available version reported")
         var reportedVersion: String?
         let checker = UpdateChecker(
-            client: UpdateCheckClient(
+            client: StubUpdateCheckClient(
                 currentVersion: { "1.2.3" },
                 sendRequest: { _ in (Data(#"{"tag_name":"v1.3.0"}"#.utf8), response) }
             ),
@@ -31,7 +31,7 @@ final class UpdateCheckerFlowTests: XCTestCase {
         reported.expectedFulfillmentCount = 2
         var scheduledCheck: (() -> Void)?
         let checker = UpdateChecker(
-            client: UpdateCheckClient(
+            client: StubUpdateCheckClient(
                 currentVersion: { "1.2.3" },
                 sendRequest: { _ in (Data(#"{"tag_name":"v1.3.0"}"#.utf8), response) }
             ),
@@ -46,7 +46,7 @@ final class UpdateCheckerFlowTests: XCTestCase {
     func testStartDoesNothingWithoutCurrentVersion() {
         var effects: [String] = []
         let checker = UpdateChecker(
-            client: UpdateCheckClient(
+            client: StubUpdateCheckClient(
                 currentVersion: { nil },
                 sendRequest: { _ in
                     effects.append("request")
@@ -201,13 +201,18 @@ final class UpdateCheckerFlowTests: XCTestCase {
 
     private func checkNow(
         currentVersion: String?,
-        sendRequest: @escaping UpdateChecker.URLLoader
+        sendRequest: @escaping URLLoader
     ) async -> UpdateChecker.CheckResult {
         await UpdateChecker.checkNow(
-            client: UpdateCheckClient(
+            client: StubUpdateCheckClient(
                 currentVersion: { currentVersion },
                 sendRequest: sendRequest
             )
         )
     }
+}
+
+private struct StubUpdateCheckClient: UpdateCheckClient {
+    let currentVersion: () -> String?
+    let sendRequest: URLLoader
 }
