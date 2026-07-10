@@ -86,6 +86,18 @@ the label.
 **Batch** — the set of issues one run works through: either a PRD's open,
 released slices (a *scoped* run) or the whole `ready-for-agent` queue.
 
+**Run model** — The single coding model selected interactively when a
+Sandcastle run starts. The implementer and reviewer use the same Run model for
+the entire run; providers are never mixed between phases. Selection comes from
+a closed, curated Anthropic/OpenAI catalog; arbitrary model ids are not accepted.
+_Avoid_: agent model, phase model, provider selection
+
+**Run effort** — The reasoning budget selected after the Run model when a
+Sandcastle run starts. The same effort applies to both the implementer and the
+reviewer for the entire run. The picker offers only efforts supported by the
+selected model; unsupported effort is never silently downgraded.
+_Avoid_: thinking level, phase effort
+
 **Implement→review loop** — the run's repeating cycle: an implementer
 agent picks one slice from the batch, implements it test-first, and
 commits; then a reviewer agent reviews exactly that slice's changes and
