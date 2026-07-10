@@ -12,6 +12,14 @@ final class SettingsController {
     private let statsStore: StatsStore
     private let reprocessor: HistoryReprocessor
     let model = SettingsModel() // internal (not private) so @testable tests can drive the wired closures
+    private lazy var workflow = SettingsWorkflow(
+        config: config,
+        model: model,
+        historyStore: historyStore,
+        persist: { [config] in try config.saveAndNotify() },
+        now: Date.init,
+        scheduleStatusClear: { [weak self] clear in self?.scheduleStatusClear(clear) }
+    )
     private var window: NSWindow?
     private var keyMonitor: Any?
     private var statusClearTask: Task<Void, Never>?
@@ -61,7 +69,7 @@ final class SettingsController {
     }
 
     private func wire() {
-        model.onCommit = { [weak self] in self?.commit() }
+        model.onCommit = { [weak self] in self?.workflow.commit() }
         model.onRecord = { [weak self] field in self?.startRecording(field) }
         model.onSelectModel = { [weak self] name in self?.selectModel(name) }
         model.onInstallModel = { [weak self] name in self?.installModel(name) }
@@ -120,11 +128,7 @@ final class SettingsController {
     }
 
     private func populate() {
-        model.modeNames = config.modeOrder
-        model.llmModes = Set(config.modeOrder.filter { config.modes[$0]?.usesLLM == true })
-        model.activeMode = config.activeMode
-        model.selectedModel = config.llmModel ?? ""
-        model.asrModel = config.asrModel
+        workflow.populatePreferences()
         // The active model must already be on disk (it's transcribing), so seed
         // the downloaded set with the default plus the persisted choice; further
         // downloads join it live. On-disk detection of past downloads is slice 5.
@@ -135,16 +139,9 @@ final class SettingsController {
         model.asrDownloadError = ""
         model.asrDeleting = nil
         model.asrDeleteError = ""
-        model.pttKey = config.hotkey
-        model.toggleKey = config.toggleHotkey ?? ""
-        model.pauseAudio = config.pauseAudio
-        model.saveHistory = config.saveHistory
-        model.retention = config.historyRetention
-        model.sidebar = SidebarPresentation(prefersCollapsed: config.sidebarCollapsed)
         model.axTrusted = TextInserter.accessibilityTrusted()
         model.historyEntries = historyStore.load()
         refreshStreak()
-        model.status = ""
         refreshModels()
         checkForUpdates()
     }
@@ -184,7 +181,7 @@ final class SettingsController {
 
     private func selectModel(_ name: String) {
         model.selectedModel = name
-        commit()
+        workflow.commit()
     }
 
     /// Pull `name` from the Ollama library, then make it the polish model.
@@ -207,7 +204,7 @@ final class SettingsController {
             } else {
                 self.model.customModel = ""
                 self.model.selectedModel = name
-                self.commit()
+                self.workflow.commit()
                 self.refreshModels()
             }
         }
@@ -241,7 +238,7 @@ final class SettingsController {
     /// performs the drop-before-load swap.
     private func selectASRModel(_ id: String) {
         model.asrModel = id
-        commit()
+        workflow.commit()
     }
 
     /// Fetch an available model's weights so it becomes selectable. Single-flight
@@ -340,7 +337,7 @@ final class SettingsController {
             if ASRModelCatalog.deleteOutcome(for: entry, isActive: self.model.asrModel == id)
                 .fallsBackToDefault {
                 self.model.asrModel = ASRModelCatalog.defaultID
-                self.commit()
+                self.workflow.commit()
             }
         }
     }
@@ -412,8 +409,8 @@ final class SettingsController {
     // MARK: - key recording
 
     private func startRecording(_ field: SettingsModel.RecordingField) {
-        stopRecording()
-        model.recordingField = field
+        stopKeyMonitor()
+        workflow.beginRecording(field)
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
             var name: String?
@@ -429,79 +426,24 @@ final class SettingsController {
                 name = KeyMap.codeToName[CGKeyCode(event.keyCode)]
                     ?? event.charactersIgnoringModifiers?.lowercased()
             }
-            if let name, !name.isEmpty {
-                switch field {
-                case .ptt: model.pttKey = name
-                case .toggle: model.toggleKey = name
-                }
-                commit()
-            }
-            stopRecording()
+            workflow.finishRecording(with: name)
+            stopKeyMonitor()
             return nil // swallow the keystroke
         }
     }
 
-    private func stopRecording() {
+    private func stopKeyMonitor() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
-        model.recordingField = nil
     }
 
-    // MARK: - save (called on every change — there is no Save button)
-
-    private func commit() {
-        let ptt = model.pttKey.trimmingCharacters(in: .whitespaces)
-        let toggle = model.toggleKey.trimmingCharacters(in: .whitespaces)
-        do {
-            _ = try KeyMap.parse(ptt)
-            if !toggle.isEmpty { _ = try KeyMap.parse(toggle) }
-        } catch {
-            setStatus("⚠️ \(error.localizedDescription)", isError: true)
-            return
-        }
-
-        if !model.selectedModel.isEmpty {
-            config.setLLMModel(model.selectedModel)
-        }
-        if !model.asrModel.isEmpty {
-            config.setASRModel(model.asrModel)
-        }
-        config.setActiveMode(model.activeMode)
-        config.hotkey = ptt
-        config.toggleHotkey = toggle.isEmpty ? nil : toggle
-        config.pauseAudio = model.pauseAudio
-        config.saveHistory = model.saveHistory
-        let retentionChanged = config.historyRetention != model.retention
-        config.historyRetention = model.retention
-        // Only the explicit toggle mutates `prefersCollapsed`; a transient
-        // auto-collapse never reaches here, so it can't overwrite the intent.
-        config.sidebarCollapsed = model.sidebar.prefersCollapsed
-        do {
-            try config.saveAndNotify()
-        } catch {
-            setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
-            return
-        }
-        // A tightened retention window must purge now, not wait for the next
-        // relaunch — the passive sweep runs only at startup (AppMain). Sweep
-        // only when the value actually changed so an unrelated save doesn't
-        // rewrite the file, then reload so an open pane drops the purged rows.
-        if retentionChanged {
-            historyStore.sweep(retention: config.historyRetention, now: Date())
-            model.historyEntries = historyStore.load()
-        }
-        setStatus("Saved ✓", isError: false, clearAfter: 2)
-    }
-
-    private func setStatus(_ text: String, isError: Bool, clearAfter seconds: Double? = nil) {
+    private func scheduleStatusClear(_ clear: (@MainActor () -> Void)?) {
         statusClearTask?.cancel()
-        model.status = text
-        model.statusIsError = isError
-        guard let seconds else { return }
+        guard let clear else { return }
         statusClearTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard !Task.isCancelled else { return }
-            self.model.status = ""
+            clear()
         }
     }
 }
