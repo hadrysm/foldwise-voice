@@ -302,7 +302,11 @@ function availableEfforts(model: RunModel): readonly RunEffort[] {
   if (model.provider !== "claude-code") return model.efforts;
 
   const advertised = help.match(/Effort level[^\n]*\n?[^\n]*\(([^)]+)\)/)?.[1];
-  if (!advertised) return model.efforts.filter((effort) => effort !== "max");
+  if (!advertised) {
+    throw new Error(
+      `Could not detect supported effort levels from ${model.providerLabel}. Update the CLI or choose another provider.`,
+    );
+  }
   const supported = new Set(advertised.split(",").map((effort) => effort.trim()));
   return model.efforts.filter((effort) => supported.has(effort));
 }
@@ -415,13 +419,6 @@ function validateRunConfiguration(configuration: RunConfiguration): void {
   }
 }
 
-function createRunAgent(configuration: RunConfiguration) {
-  return PROVIDERS[configuration.model.provider].createAgent(
-    configuration.model.id,
-    configuration.effort,
-  );
-}
-
 // Hooks run on the host checkout before the agent starts each phase.
 // Pre-resolving Swift dependencies keeps the agent's first build fast; the
 // command is idempotent, so running it once per phase is harmless.
@@ -441,7 +438,10 @@ async function main(): Promise<void> {
   }
 
   validateRunConfiguration(configuration);
-  const runAgent = createRunAgent(configuration);
+  const runAgent = PROVIDERS[configuration.model.provider].createAgent(
+    configuration.model.id,
+    configuration.effort,
+  );
   console.log(
     `${colors.green}◆${colors.reset} Starting ${configuration.model.label} · ${EFFORT_LABELS[configuration.effort]}\n`,
   );
