@@ -59,10 +59,10 @@ enum PipelineState: Equatable {
 
 final class Pipeline {
     let config: Config
-    let ducker = AudioDucker()
 
     private let recorder: AudioRecording
     private let transcriber: Transcribing
+    private let ducker: AudioDucking
     private let polish: (String, Mode) async -> String
     private let insert: (String) async -> Bool
     /// Best-effort history sink (PRD #78): handed the assembled entry after
@@ -91,6 +91,7 @@ final class Pipeline {
         config: Config,
         recorder: AudioRecording = AudioRecorder(),
         transcriber: Transcribing = Transcriber(),
+        ducker: AudioDucking = AudioDucker(),
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
         insert: @escaping (String) async -> Bool = Pipeline.pasteboardInsert,
         record: @escaping (HistoryEntry) -> Void = Pipeline.recordToHistory,
@@ -99,6 +100,7 @@ final class Pipeline {
         self.config = config
         self.recorder = recorder
         self.transcriber = transcriber
+        self.ducker = ducker
         self.polish = polish
         self.insert = insert
         self.record = record

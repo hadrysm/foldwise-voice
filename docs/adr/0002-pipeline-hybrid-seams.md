@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted (2026-07-03)
+Accepted (2026-07-03). Amended (2026-07-10): issue #123 extracted audio-duck
+coordination after an in-flight duck could outlive a superseding restore.
 
 ## Context
 
@@ -46,9 +47,10 @@ collaborator's actual shape:
   shares the single `AudioRecorder` instance between Pipeline and the HUD, and
   calls `warmup()` — so HUD level-metering and launch warmup are unchanged.
   Pipeline no longer news up its own collaborators.
-- **The audio ducker is deliberately not a seam.** It emits no observable
-  state; tests set `pauseAudio = false`, leaving it inert (it guards `ducked`
-  before any `osascript`, so it spawns nothing).
+- **Audio ducking uses a small command seam.** `Pipeline` injects `AudioDucking`,
+  while `AudioDuckCoordinator` injects the multi-operation system-effects
+  boundary. This keeps AppleScript execution in a thin adapter and makes the
+  ordering and restoration guarantee observable without changing real audio.
 
 ## Rejected alternative: a uniform protocol + two adapters per seam (issue #42 as written)
 

@@ -1,7 +1,7 @@
 {
   "production_source_root": "Sources/FoldWiseVoiceKit",
-  "overall_floor": 42.500313794401904,
-  "included_core_floor": 70.43541895353091,
+  "overall_floor": 42.98810703666997,
+  "included_core_floor": 72.41754258789416,
   "changed_line_floor": 90.0,
   "minimum_file_coverage": 0.0,
   "exemptions": [
@@ -12,6 +12,10 @@
     {
       "path": "Sources/FoldWiseVoiceKit/AudioRecorder.swift",
       "reason": "AVFoundation microphone capture adapter"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/AudioDucker.swift",
+      "reason": "Thin AppleScript system-command adapter; coordination lives in AudioDuckCoordinator"
     },
     {
       "path": "Sources/FoldWiseVoiceKit/BadgeController.swift",
