@@ -49,12 +49,6 @@ BASELINE_POLICY=$(mktemp "${TMPDIR:-/tmp}/foldwise-coverage-policy.XXXXXX")
 trap 'rm -f "$DIFF" "$BASELINE_POLICY"' EXIT
 git diff --unified=0 --no-ext-diff "$MERGE_BASE" -- Sources/FoldWiseVoiceKit > "$DIFF"
 
-BASELINE_ARGUMENTS=()
-if git cat-file -e "$BASE_REF:coverage-policy.json" 2>/dev/null; then
-    git show "$BASE_REF:coverage-policy.json" > "$BASELINE_POLICY"
-    BASELINE_ARGUMENTS=(--baseline-policy "$BASELINE_POLICY")
-fi
-
 BIN_PATH=$(swift build --show-bin-path)
 swift test --enable-code-coverage
 
@@ -64,9 +58,15 @@ if [[ ! -f "$REPORT" ]]; then
     exit 2
 fi
 
-python3 scripts/check_coverage.py \
-    --report "$REPORT" \
-    --policy coverage-policy.json \
-    --diff "$DIFF" \
-    --root "$ROOT" \
-    "${BASELINE_ARGUMENTS[@]}"
+CHECKER_ARGUMENTS=(
+    --report "$REPORT"
+    --policy coverage-policy.json
+    --diff "$DIFF"
+    --root "$ROOT"
+)
+if git cat-file -e "$BASE_REF:coverage-policy.json" 2>/dev/null; then
+    git show "$BASE_REF:coverage-policy.json" > "$BASELINE_POLICY"
+    CHECKER_ARGUMENTS+=(--baseline-policy "$BASELINE_POLICY")
+fi
+
+python3 scripts/check_coverage.py "${CHECKER_ARGUMENTS[@]}"

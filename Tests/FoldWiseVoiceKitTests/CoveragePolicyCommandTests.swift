@@ -115,6 +115,108 @@ final class CoveragePolicyCommandTests: XCTestCase {
         XCTAssertTrue(result.output.contains("overall production coverage 0.00% is below 50.00%"))
     }
 
+    func testCheckerRejectsIncludedCoreRegression() throws {
+        let sourceDirectory = directory.appendingPathComponent("Sources/FoldWiseVoiceKit")
+        let core = sourceDirectory.appendingPathComponent("Core.swift")
+        try "let uncovered = 1\n".write(to: core, atomically: true, encoding: .utf8)
+
+        let policy = directory.appendingPathComponent("coverage-policy.json")
+        try writeJSON([
+            "production_source_root": "Sources/FoldWiseVoiceKit",
+            "overall_floor": 0.0,
+            "included_core_floor": 50.0,
+            "changed_line_floor": 90.0,
+            "minimum_file_coverage": 0.0,
+            "exemptions": [],
+        ], to: policy)
+        let report = directory.appendingPathComponent("coverage.json")
+        try writeJSON([
+            "data": [[
+                "files": [
+                    coverageFile(core.path, count: 1, covered: 0, segments: [
+                        [1, 1, 0, true, true, false],
+                        [1, 18, 0, false, false, false],
+                    ]),
+                ],
+            ]],
+        ], to: report)
+        let diff = directory.appendingPathComponent("changes.diff")
+        try "".write(to: diff, atomically: true, encoding: .utf8)
+
+        let result = try runChecker(report: report, policy: policy, diff: diff)
+
+        XCTAssertEqual(result.status, 1)
+        XCTAssertTrue(result.output.contains("included core coverage 0.00% is below 50.00%"))
+    }
+
+    func testCheckerRejectsPerFileRegression() throws {
+        let sourceDirectory = directory.appendingPathComponent("Sources/FoldWiseVoiceKit")
+        let core = sourceDirectory.appendingPathComponent("Core.swift")
+        try "let uncovered = 1\n".write(to: core, atomically: true, encoding: .utf8)
+
+        let policy = directory.appendingPathComponent("coverage-policy.json")
+        try writeJSON([
+            "production_source_root": "Sources/FoldWiseVoiceKit",
+            "overall_floor": 0.0,
+            "included_core_floor": 0.0,
+            "changed_line_floor": 90.0,
+            "minimum_file_coverage": 50.0,
+            "exemptions": [],
+        ], to: policy)
+        let report = directory.appendingPathComponent("coverage.json")
+        try writeJSON([
+            "data": [[
+                "files": [
+                    coverageFile(core.path, count: 1, covered: 0, segments: [
+                        [1, 1, 0, true, true, false],
+                        [1, 18, 0, false, false, false],
+                    ]),
+                ],
+            ]],
+        ], to: report)
+        let diff = directory.appendingPathComponent("changes.diff")
+        try "".write(to: diff, atomically: true, encoding: .utf8)
+
+        let result = try runChecker(report: report, policy: policy, diff: diff)
+
+        XCTAssertEqual(result.status, 1)
+        XCTAssertTrue(result.output.contains("Core.swift coverage 0.00% is below 50.00%"))
+    }
+
+    func testCheckerAcceptsSatisfiedPolicy() throws {
+        let sourceDirectory = directory.appendingPathComponent("Sources/FoldWiseVoiceKit")
+        let core = sourceDirectory.appendingPathComponent("Core.swift")
+        try "let covered = 1\n".write(to: core, atomically: true, encoding: .utf8)
+
+        let policy = directory.appendingPathComponent("coverage-policy.json")
+        try writeJSON([
+            "production_source_root": "Sources/FoldWiseVoiceKit",
+            "overall_floor": 100.0,
+            "included_core_floor": 100.0,
+            "changed_line_floor": 90.0,
+            "minimum_file_coverage": 100.0,
+            "exemptions": [],
+        ], to: policy)
+        let report = directory.appendingPathComponent("coverage.json")
+        try writeJSON([
+            "data": [[
+                "files": [
+                    coverageFile(core.path, count: 1, covered: 1, segments: [
+                        [1, 1, 1, true, true, false],
+                        [1, 16, 0, false, false, false],
+                    ]),
+                ],
+            ]],
+        ], to: report)
+        let diff = directory.appendingPathComponent("changes.diff")
+        try "".write(to: diff, atomically: true, encoding: .utf8)
+
+        let result = try runChecker(report: report, policy: policy, diff: diff)
+
+        XCTAssertEqual(result.status, 0)
+        XCTAssertTrue(result.output.contains("Coverage policy PASSED"))
+    }
+
     func testCheckerIncludesNewProductionFilesByDefault() throws {
         let sourceDirectory = directory.appendingPathComponent("Sources/FoldWiseVoiceKit")
         let core = sourceDirectory.appendingPathComponent("Core.swift")
