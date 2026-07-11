@@ -51,5 +51,5 @@ jobs:
           restore-keys: spm-${{ runner.os }}-${{ steps.swift.outputs.hash }}-
       - name: Test and enforce coverage policy
         env:
-          COVERAGE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          COVERAGE_BASE_REF: ${{ github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || '' }}
         run: ./scripts/coverage.sh
