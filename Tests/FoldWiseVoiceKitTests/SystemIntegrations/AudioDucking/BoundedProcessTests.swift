@@ -20,6 +20,19 @@ final class BoundedProcessTests: XCTestCase {
         )
     }
 
+    func testDiscardsErrorOutputWhileProcessRuns() throws {
+        let result = try BoundedProcess.run(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "/usr/bin/head -c 131072 /dev/zero >&2"],
+            timeout: 2
+        )
+
+        XCTAssertEqual(
+            result,
+            BoundedProcess.Outcome(status: 0, output: Data(), timedOut: false)
+        )
+    }
+
     func testTerminatesProcessAtDeadline() throws {
         let result = try BoundedProcess.run(
             executableURL: URL(fileURLWithPath: "/bin/sleep"),

@@ -10,9 +10,18 @@ final class SharedTaskValueTests: XCTestCase {
             }
             throw CancellationError()
         }
-        let cancelledWaiter = Task { try await SharedTaskValue.wait(for: shared) }
+        let (registrationEvents, registrationContinuation) = AsyncStream.makeStream(of: Void.self)
+        let cancelledWaiter = Task {
+            try await SharedTaskValue.wait(for: shared) {
+                registrationContinuation.yield()
+            }
+        }
         let remainingWaiter = Task { try await SharedTaskValue.wait(for: shared) }
 
+        for await _ in registrationEvents {
+            break
+        }
+        registrationContinuation.finish()
         cancelledWaiter.cancel()
         let cancelledResult = await cancelledWaiter.result
         continuation.yield(42)

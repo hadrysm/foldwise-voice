@@ -35,7 +35,7 @@ enum BoundedProcess {
         process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
         try process.run()
 
         let timeoutState = TimeoutState()

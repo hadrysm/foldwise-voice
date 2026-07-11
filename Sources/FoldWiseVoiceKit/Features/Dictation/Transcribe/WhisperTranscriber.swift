@@ -17,13 +17,17 @@ enum SharedTaskValue {
         private var continuation: CheckedContinuation<Value, Error>?
         private var cancelled = false
 
-        func install(_ continuation: CheckedContinuation<Value, Error>) {
+        func registerIfActive(_ continuation: CheckedContinuation<Value, Error>) -> Bool {
             let wasCancelled = lock.withLock {
                 guard !cancelled else { return true }
                 self.continuation = continuation
                 return false
             }
-            if wasCancelled { continuation.resume(throwing: WaitError.waiterCancelled) }
+            if wasCancelled {
+                continuation.resume(throwing: WaitError.waiterCancelled)
+                return false
+            }
+            return true
         }
 
         func cancel() {
@@ -45,11 +49,14 @@ enum SharedTaskValue {
         }
     }
 
-    static func wait<Value: Sendable>(for task: Task<Value, Error>) async throws -> Value {
+    static func wait<Value: Sendable>(
+        for task: Task<Value, Error>,
+        onWaiterRegistered: @Sendable () -> Void = {}
+    ) async throws -> Value {
         let waiter = Waiter<Value>()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                waiter.install(continuation)
+                if waiter.registerIfActive(continuation) { onWaiterRegistered() }
                 Task { waiter.resolve(await task.result) }
             }
         } onCancel: {
