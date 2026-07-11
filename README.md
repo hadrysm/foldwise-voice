@@ -44,6 +44,39 @@ While running:
   switch modes, record hotkeys, choose the HUD style. Every change saves
   straight to `modes.json`.
 
+## Visual tokens
+
+[`Theme.swift`](Sources/FoldWiseVoiceKit/Theme.swift) is the source of truth
+for shared visual tokens. The values below are a compact reference to the
+implemented UI; new code should use `Theme` instead of copying these values.
+
+The window palette adapts to the system appearance:
+
+| Token | Light | Dark |
+|---|---:|---:|
+| Window / active navigation | `#FCFBF8` | `#161411` / `#26221C` |
+| Sidebar / card | `#F7F5F0` | `#1B1815` |
+| Hairline | `#E9E5DC` | `#2C2822` |
+| Primary text | `#1B1813` | `#F2EFE8` |
+| Secondary / tertiary / faint text | `#6E675A` / `#8F887A` / `#B0A995` | `#9B9482` / `#87816F` / `#6B655A` |
+| Accent | `#C24A22` | `#E06A3E` |
+| Keycap fill / border | `#FFFFFF` / `#D8D2C4` | `#211E19` / `#4A453B` |
+
+The fixed Badge palette uses a 96%-opaque `#100D16` pill, violet borders
+(`#A78BFA` at 22%, or 45% while active), a coral error border (`#FAA078` at
+55%), `#B8AEDB` idle icons, `#E8E2F7` emphasized icons, and `#CFC4EA` timer
+text. Its ribbon strands are `#C484FC`, `#7C5DFA`, `#5ED6FF`, and `#F49EFF`.
+
+Typography uses the system UI and monospaced families through `Theme.ui` and
+`Theme.mono`: page title 28 pt semibold; stat number 27 pt semibold; body and
+navigation 13.5 pt (regular/medium/semibold); section label 11 pt bold;
+timestamp 11 pt mono; Mode tag 10.5 pt mono; tooltip 11.5 pt semibold.
+
+Structural metrics are a 32 pt titlebar, 190 pt sidebar, 52 pt navigation
+rail, 212 pt statistics rail, 36 pt content padding, and 38 pt Badge height.
+Radii are 8 pt for navigation and cards, 9 pt for rail tiles, and 6 pt for
+keycaps and tooltips.
+
 ## How it works
 
 ```

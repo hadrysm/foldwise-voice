@@ -13,7 +13,7 @@ coverage from Parakeet's 25 to Whisper's ~99 and make that breadth a visible
 selling point (see `CONTEXT.md`: *ASR engine*, *ASR model*). FluidAudio has no
 Whisper backend and no engine abstraction to ride — it is Parakeet-only — so a
 second engine means a second conformer plus the machinery to choose, load, and
-provision it. Research: `docs/research/whisper-and-multi-engine-asr.md`.
+provision it.
 
 Three questions had to be answered together: which Whisper library, who owns the
 now-plural model lifecycle, and how the `Pipeline` stays ignorant of all of it.
