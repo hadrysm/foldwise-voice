@@ -1,9 +1,29 @@
+import AppKit
 import XCTest
 @testable import FoldWiseVoiceKit
 
 @MainActor
 final class SettingsWorkflowTests: XCTestCase {
     private enum TestFailure: Error { case save }
+
+    private final class NonPersistingHistoryStore: HistoryStore {
+        private let entries: [HistoryEntry]
+
+        init(entries: [HistoryEntry]) {
+            self.entries = entries
+        }
+
+        func append(_: HistoryEntry) {}
+        func load() -> [HistoryEntry] {
+            entries
+        }
+
+        func update(_: HistoryEntry) {}
+        func delete(id _: UUID) {}
+        func clearAll() {}
+        func sweep(retention _: RetentionWindow, now _: Date) {}
+        func onAppend(_: @escaping (HistoryEntry) -> Void) {}
+    }
 
     private struct PreferenceState: Equatable {
         let pttKey: String
@@ -107,6 +127,14 @@ final class SettingsWorkflowTests: XCTestCase {
         let selected: String
         let persisted: String
         let error: String
+    }
+
+    private struct ASRPopulationState: Equatable {
+        let downloading: String?
+        let downloaded: Set<String>
+        let downloadError: String
+        let deleting: String?
+        let deleteError: String
     }
 
     @MainActor
@@ -213,6 +241,21 @@ final class SettingsWorkflowTests: XCTestCase {
         }
     }
 
+    @MainActor
+    private final class CannedUpdateChecker: SettingsUpdateChecking {
+        let isAvailable: Bool
+        let result: UpdateChecker.CheckResult
+
+        init(isAvailable: Bool = true, result: UpdateChecker.CheckResult) {
+            self.isAvailable = isAvailable
+            self.result = result
+        }
+
+        func check() async -> UpdateChecker.CheckResult {
+            result
+        }
+    }
+
     private let dir = FileManager.default.temporaryDirectory
         .appendingPathComponent("foldwise-settings-workflow-tests-\(UUID().uuidString)")
 
@@ -233,7 +276,8 @@ final class SettingsWorkflowTests: XCTestCase {
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
             persist: {},
             now: { Date(timeIntervalSince1970: 1_700_000_000) },
-            scheduleStatusClear: { _ in }
+            scheduleStatusClear: { _ in },
+            copy: { _ in }
         )
 
         workflow.populatePreferences()
@@ -251,6 +295,92 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
+    func testPopulateMakesPersistedASRModelAvailableAndClearsTransientState() {
+        let config = makeConfig()
+        config.setASRModel("whisper-small")
+        let model = SettingsModel()
+        model.asrDownloading = "whisper-large-v3-turbo"
+        model.asrDownloadError = "old download error"
+        model.asrDeleting = "whisper-small"
+        model.asrDeleteError = "old delete error"
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.populatePreferences()
+
+        XCTAssertEqual(
+            ASRPopulationState(
+                downloading: model.asrDownloading,
+                downloaded: model.asrDownloaded,
+                downloadError: model.asrDownloadError,
+                deleting: model.asrDeleting,
+                deleteError: model.asrDeleteError
+            ),
+            ASRPopulationState(
+                downloading: nil,
+                downloaded: [ASRModelCatalog.defaultID, "whisper-small"],
+                downloadError: "",
+                deleting: nil,
+                deleteError: ""
+            )
+        )
+    }
+
+    func testUnavailableUpdateCheckPublishesUnavailableState() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let updates = CannedUpdateChecker(isAvailable: false, result: .failed)
+        let workflow = makeWorkflow(config: config, model: model, updates: updates)
+
+        workflow.checkForUpdates()
+
+        guard case .unavailable = model.updateState else {
+            return XCTFail("expected unavailable update state")
+        }
+    }
+
+    func testAvailableUpdatePublishesStateAndReportsVersion() async {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let updates = CannedUpdateChecker(
+            result: .updateAvailable(version: "2.0.0", downloadURL: nil)
+        )
+        var reported: String?
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            updates: updates,
+            reportUpdate: { reported = $0 }
+        )
+
+        workflow.checkForUpdates()
+        await waitUntil {
+            if case .available = model.updateState { return true }
+            return false
+        }
+
+        XCTAssertEqual(reported, "2.0.0")
+    }
+
+    func testFailedUpdateCheckPublishesFailureState() async {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            updates: CannedUpdateChecker(result: .failed)
+        )
+
+        workflow.checkForUpdates()
+        await waitUntil {
+            if case .failed = model.updateState { return true }
+            return false
+        }
+
+        guard case .failed = model.updateState else {
+            return XCTFail("expected failed update state")
+        }
+    }
+
     func testCommitPersistsEditedPreferences() throws {
         let config = makeConfig()
         let model = SettingsModel()
@@ -260,7 +390,8 @@ final class SettingsWorkflowTests: XCTestCase {
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
             persist: { try config.saveAndNotify() },
             now: { Date(timeIntervalSince1970: 1_700_000_000) },
-            scheduleStatusClear: { _ in }
+            scheduleStatusClear: { _ in },
+            copy: { _ in }
         )
         workflow.populatePreferences()
         model.activeMode = "Voice to Text"
@@ -298,7 +429,8 @@ final class SettingsWorkflowTests: XCTestCase {
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
             persist: {},
             now: Date.init,
-            scheduleStatusClear: { scheduledClear = $0 }
+            scheduleStatusClear: { scheduledClear = $0 },
+            copy: { _ in }
         )
         workflow.populatePreferences()
 
@@ -384,7 +516,8 @@ final class SettingsWorkflowTests: XCTestCase {
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
             persist: { persistCount += 1 },
             now: Date.init,
-            scheduleStatusClear: { scheduledClear = $0 }
+            scheduleStatusClear: { scheduledClear = $0 },
+            copy: { _ in }
         )
         workflow.populatePreferences()
         model.pttKey = "not_a_key"
@@ -416,7 +549,8 @@ final class SettingsWorkflowTests: XCTestCase {
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
             persist: { persistCount += 1 },
             now: Date.init,
-            scheduleStatusClear: { scheduledClear = $0 }
+            scheduleStatusClear: { scheduledClear = $0 },
+            copy: { _ in }
         )
         workflow.populatePreferences()
         model.toggleKey = "not_a_key"
@@ -447,7 +581,8 @@ final class SettingsWorkflowTests: XCTestCase {
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
             persist: { throw TestFailure.save },
             now: Date.init,
-            scheduleStatusClear: { scheduledClear = $0 }
+            scheduleStatusClear: { scheduledClear = $0 },
+            copy: { _ in }
         )
         workflow.populatePreferences()
         model.pttKey = "F8"
@@ -474,7 +609,8 @@ final class SettingsWorkflowTests: XCTestCase {
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
             persist: { throw TestFailure.save },
             now: Date.init,
-            scheduleStatusClear: { _ in }
+            scheduleStatusClear: { _ in },
+            copy: { _ in }
         )
         workflow.populatePreferences()
         model.pttKey = "F8"
@@ -495,7 +631,8 @@ final class SettingsWorkflowTests: XCTestCase {
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
             persist: { try config.saveAndNotify() },
             now: Date.init,
-            scheduleStatusClear: { _ in }
+            scheduleStatusClear: { _ in },
+            copy: { _ in }
         )
         workflow.populatePreferences()
 
@@ -518,7 +655,8 @@ final class SettingsWorkflowTests: XCTestCase {
             historyStore: historyStore,
             persist: {},
             now: { now },
-            scheduleStatusClear: { _ in }
+            scheduleStatusClear: { _ in },
+            copy: { _ in }
         )
         workflow.populatePreferences()
         model.retention = .sevenDays
@@ -526,6 +664,303 @@ final class SettingsWorkflowTests: XCTestCase {
         workflow.commit()
 
         XCTAssertEqual(model.historyEntries.map(\.text), ["new"])
+    }
+
+    func testTightenedRetentionPreservesStreak() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let config = makeConfig()
+        config.historyRetention = .ninetyDays
+        let model = SettingsModel()
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("retention-streak-history.jsonl"))
+        let stats = JSONStatsStore(url: dir.appendingPathComponent("retention-streak-stats.json"))
+        stats.advance(on: now, calendar: utcCalendar())
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            statsStore: stats,
+            now: { now },
+            calendar: utcCalendar()
+        )
+        workflow.populatePreferences()
+        workflow.populateHistory()
+        model.retention = .sevenDays
+
+        workflow.commit()
+
+        XCTAssertEqual(model.currentStreak, 1)
+    }
+
+    func testCopyHistoryWritesDisplayedTextToIsolatedPasteboard() {
+        let pasteboard = NSPasteboard(name: .init("SettingsWorkflowTests.copy.\(UUID())"))
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model, pasteboard: pasteboard)
+        let row = entry(createdAt: Date(), text: "polished words")
+
+        workflow.copyHistory(row)
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "polished words")
+    }
+
+    func testCopyRawHistoryWritesTranscriptToIsolatedPasteboard() {
+        let pasteboard = NSPasteboard(name: .init("SettingsWorkflowTests.copyRaw.\(UUID())"))
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model, pasteboard: pasteboard)
+        let row = entry(createdAt: Date(), text: "polished words")
+
+        workflow.copyRawHistory(row)
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "polished words raw")
+    }
+
+    func testFlagHistoryTogglesAndPublishesPersistedEntry() {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("flag-history.jsonl"))
+        let row = entry(createdAt: Date(), text: "remember this")
+        store.append(row)
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model, historyStore: store)
+
+        workflow.flagHistory(row)
+
+        XCTAssertEqual(model.historyEntries.map(\.flagged), [true])
+    }
+
+    func testFlagHistoryPublishesStoredEntryWhenPersistenceFails() {
+        let row = entry(createdAt: Date(), text: "unchanged")
+        let store = NonPersistingHistoryStore(entries: [row])
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model, historyStore: store)
+
+        workflow.flagHistory(row)
+
+        XCTAssertEqual(model.historyEntries.map(\.flagged), [false])
+    }
+
+    func testObservedAppendPrependsHistoryAndRefreshesStreak() async {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("observed-history.jsonl"))
+        let stats = JSONStatsStore(url: dir.appendingPathComponent("observed-stats.json"))
+        stats.advance(on: now, calendar: utcCalendar())
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            statsStore: stats,
+            now: { now },
+            calendar: utcCalendar()
+        )
+        workflow.observeHistoryAppends()
+
+        store.append(entry(createdAt: now, text: "just spoken"))
+        await waitUntil { model.historyEntries.count == 1 }
+
+        XCTAssertEqual([model.historyEntries.first?.text, model.currentStreak.map(String.init)], ["just spoken", "1"])
+    }
+
+    func testObservedAppendDoesNotDuplicateReloadedEntry() async {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("duplicate-history.jsonl"))
+        let stats = JSONStatsStore(url: dir.appendingPathComponent("duplicate-stats.json"))
+        stats.advance(on: now, calendar: utcCalendar())
+        let row = entry(createdAt: now, text: "already loaded")
+        let config = makeConfig()
+        let model = SettingsModel()
+        model.historyEntries = [row]
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            statsStore: stats,
+            now: { now },
+            calendar: utcCalendar()
+        )
+        workflow.observeHistoryAppends()
+
+        store.append(row)
+        await waitUntil { model.currentStreak == 1 }
+
+        XCTAssertEqual(model.historyEntries.map(\.id), [row.id])
+    }
+
+    func testFailedAppendDoesNotPopulateUnpersistedHistory() throws {
+        let blocker = dir.appendingPathComponent("not-a-directory")
+        try Data().write(to: blocker)
+        let store = JSONLHistoryStore(url: blocker.appendingPathComponent("history.jsonl"))
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model, historyStore: store)
+
+        store.append(entry(createdAt: Date(), text: "cannot persist"))
+        workflow.populateHistory()
+
+        XCTAssertTrue(model.historyEntries.isEmpty)
+    }
+
+    func testRerunPolishPublishesPersistedCompletion() async {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("rerun-history.jsonl"))
+        var row = entry(createdAt: Date(), text: "earlier words")
+        row.rawText = "hey can you send the quarterly numbers over to the finance team when you get a chance"
+        store.append(row)
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            polish: { _, _ in
+                "Hey, can you send the quarterly numbers over to the finance team when you get a chance?"
+            }
+        )
+
+        await workflow.rerunPolish(row, modeName: "Clean")
+
+        XCTAssertEqual(
+            model.historyEntries.first?.text,
+            "Hey, can you send the quarterly numbers over to the finance team when you get a chance?"
+        )
+    }
+
+    func testRerunPolishPublishesFallbackCompletion() async {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("rerun-fallback.jsonl"))
+        var row = entry(createdAt: Date(), text: "earlier words")
+        row.rawText = "hey can you send the quarterly numbers over to the finance team when you get a chance"
+        store.append(row)
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            polish: { _, _ in
+                "I'm sorry, I can't help with that."
+            }
+        )
+
+        await workflow.rerunPolish(row, modeName: "Clean")
+
+        XCTAssertEqual(model.historyEntries.first?.text, row.rawText)
+    }
+
+    func testRerunPolishMissingEntryKeepsPersistedHistory() async {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("rerun-missing.jsonl"))
+        let kept = entry(createdAt: Date(), text: "kept words")
+        store.append(kept)
+        var missing = entry(createdAt: Date(), text: "missing words")
+        missing.rawText = "please summarize the quarterly revenue figures for the board report"
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            polish: { _, _ in "Please summarize the quarterly revenue figures for the board report." }
+        )
+
+        await workflow.rerunPolish(missing, modeName: "Clean")
+
+        XCTAssertEqual(model.historyEntries.map(\.id), [kept.id])
+    }
+
+    func testDeleteHistoryPublishesRemainingPersistedEntries() {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("delete-history.jsonl"))
+        let removed = entry(createdAt: Date(), text: "remove me")
+        let kept = entry(createdAt: Date(), text: "keep me")
+        store.append(removed)
+        store.append(kept)
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model, historyStore: store)
+
+        workflow.deleteHistory(removed)
+
+        XCTAssertEqual(model.historyEntries.map(\.text), ["keep me"])
+    }
+
+    func testDeletingMissingHistoryEntryKeepsPersistedEntries() {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("missing-history.jsonl"))
+        let kept = entry(createdAt: Date(), text: "keep me")
+        store.append(kept)
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model, historyStore: store)
+
+        workflow.deleteHistory(entry(createdAt: Date(), text: "not stored"))
+
+        XCTAssertEqual(model.historyEntries.map(\.text), ["keep me"])
+    }
+
+    func testDeleteHistoryPreservesStreak() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("delete-streak-history.jsonl"))
+        let row = entry(createdAt: now, text: "remove me")
+        store.append(row)
+        let stats = JSONStatsStore(url: dir.appendingPathComponent("delete-streak-stats.json"))
+        stats.advance(on: now, calendar: utcCalendar())
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            statsStore: stats,
+            now: { now },
+            calendar: utcCalendar()
+        )
+        workflow.populateHistory()
+
+        workflow.deleteHistory(row)
+
+        XCTAssertEqual(model.currentStreak, 1)
+    }
+
+    func testClearHistoryClearsEntriesAndResetsStreak() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("clear-history.jsonl"))
+        store.append(entry(createdAt: now, text: "erase me"))
+        let stats = JSONStatsStore(url: dir.appendingPathComponent("clear-stats.json"), now: { now })
+        stats.advance(on: now, calendar: utcCalendar())
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            statsStore: stats,
+            now: { now },
+            calendar: utcCalendar()
+        )
+
+        workflow.clearHistory()
+
+        XCTAssertEqual([model.historyEntries.count, model.currentStreak ?? 0], [0, 0])
+    }
+
+    func testPopulateHistoryLoadsEntriesAndCurrentStreak() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("populate-history.jsonl"))
+        store.append(entry(createdAt: now, text: "stored words"))
+        let stats = JSONStatsStore(url: dir.appendingPathComponent("populate-stats.json"))
+        stats.advance(on: now, calendar: utcCalendar())
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            statsStore: stats,
+            now: { now },
+            calendar: utcCalendar()
+        )
+
+        workflow.populateHistory()
+
+        XCTAssertEqual([model.historyEntries.first?.text, model.currentStreak.map(String.init)], ["stored words", "1"])
     }
 
     func testSelectingLLMModelPersistsTheChoice() {
@@ -906,27 +1341,57 @@ final class SettingsWorkflowTests: XCTestCase {
     private func makeWorkflow(
         config: Config,
         model: SettingsModel,
-        effects: CannedModelManagers? = nil
+        effects: CannedModelManagers? = nil,
+        pasteboard: NSPasteboard = NSPasteboard(name: .init("SettingsWorkflowTests.\(UUID())")),
+        historyStore: HistoryStore? = nil,
+        statsStore: StatsStore? = nil,
+        now: @escaping () -> Date = { Date(timeIntervalSince1970: 1_700_000_000) },
+        calendar: Calendar = .current,
+        polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
+        updates: (any SettingsUpdateChecking)? = nil,
+        reportUpdate: @escaping (String) -> Void = { _ in }
     ) -> SettingsWorkflow {
+        let historyStore = historyStore
+            ?? JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl"))
+        let statsStore = statsStore
+            ?? JSONStatsStore(url: dir.appendingPathComponent("stats.json"))
         if let effects {
             return SettingsWorkflow(
                 config: config,
                 model: model,
-                historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
+                historyStore: historyStore,
                 persist: {},
-                now: { Date(timeIntervalSince1970: 1_700_000_000) },
+                now: now,
                 scheduleStatusClear: { _ in },
                 llmModels: effects,
-                asrModels: effects
+                asrModels: effects,
+                copy: { text in
+                    pasteboard.clearContents()
+                    pasteboard.setString(text, forType: .string)
+                },
+                statsStore: statsStore,
+                calendar: calendar,
+                polish: polish,
+                updates: updates ?? CannedUpdateChecker(result: .failed),
+                reportUpdate: reportUpdate
             )
         }
         return SettingsWorkflow(
             config: config,
             model: model,
-            historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
+            historyStore: historyStore,
             persist: {},
-            now: { Date(timeIntervalSince1970: 1_700_000_000) },
-            scheduleStatusClear: { _ in }
+            now: now,
+            scheduleStatusClear: { _ in },
+            copy: { text in
+                pasteboard.clearContents()
+                pasteboard.setString(text, forType: .string)
+            },
+            statsStore: statsStore,
+            calendar: calendar,
+            polish: polish,
+            updates: updates ?? CannedUpdateChecker(result: .failed),
+            reportUpdate: reportUpdate
         )
     }
 
@@ -971,7 +1436,7 @@ final class SettingsWorkflowTests: XCTestCase {
             ),
             "Clean": Mode(
                 name: "Clean", asrModel: ASRModelCatalog.defaultID,
-                llmModel: "qwen2.5:3b", systemPrompt: "Polish", vocab: []
+                llmModel: "qwen2.5:3b", systemPrompt: "Polish", vocab: [], expands: false
             ),
         ]
         return Config(
@@ -984,9 +1449,15 @@ final class SettingsWorkflowTests: XCTestCase {
 
     private func entry(createdAt: Date, text: String) -> HistoryEntry {
         HistoryEntry(
-            id: UUID(), createdAt: createdAt, text: text, rawText: text,
+            id: UUID(), createdAt: createdAt, text: text, rawText: text + " raw",
             isPolished: false, modeName: "Voice to Text", wordCount: 1,
             sourceApp: nil, durationMs: nil, flagged: false, flagReason: nil
         )
+    }
+
+    private func utcCalendar() -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        return calendar
     }
 }

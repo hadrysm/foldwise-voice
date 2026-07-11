@@ -61,6 +61,16 @@ final class LiveASRModelManager: ASRModelManaging {
     }
 }
 
+final class LiveSettingsUpdateChecker: SettingsUpdateChecking {
+    var isAvailable: Bool {
+        UpdateChecker.currentVersion() != nil
+    }
+
+    func check() async -> UpdateChecker.CheckResult {
+        await UpdateChecker.checkNow()
+    }
+}
+
 /// TCP port used as a single-instance mutex (shared with the Python app so
 /// only one dictation app runs at a time).
 private let lockPort: UInt16 = 47812

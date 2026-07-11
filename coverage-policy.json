@@ -1,7 +1,7 @@
 {
   "production_source_root": "Sources/FoldWiseVoiceKit",
-  "overall_floor": 46.844867569876726,
-  "included_core_floor": 88.90566037735849,
+  "overall_floor": 47.64684421743889,
+  "included_core_floor": 94.94949494949495,
   "changed_line_floor": 90.0,
   "minimum_file_coverage": 0.0,
   "exemptions": [
@@ -56,6 +56,10 @@
     {
       "path": "Sources/FoldWiseVoiceKit/SettingsComponents.swift",
       "reason": "Declarative SwiftUI settings components"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/SettingsController.swift",
+      "reason": "AppKit settings window, pasteboard, and keyboard-event adapter; decisions live in SettingsWorkflow"
     },
     {
       "path": "Sources/FoldWiseVoiceKit/SettingsView.swift",

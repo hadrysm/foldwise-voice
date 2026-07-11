@@ -10,15 +10,17 @@ final class SettingsController {
     private let config: Config
     private let historyStore: HistoryStore
     private let statsStore: StatsStore
-    private let reprocessor: HistoryReprocessor
-    let model = SettingsModel() // internal (not private) so @testable tests can drive the wired closures
+    let model = SettingsModel()
     private lazy var workflow = SettingsWorkflow(
         config: config,
         model: model,
         historyStore: historyStore,
         persist: { [config] in try config.saveAndNotify() },
         now: Date.init,
-        scheduleStatusClear: { [weak self] clear in self?.scheduleStatusClear(clear) }
+        scheduleStatusClear: { [weak self] clear in self?.scheduleStatusClear(clear) },
+        copy: Self.copyToPasteboard,
+        statsStore: statsStore,
+        reportUpdate: { [weak self] version in self?.onUpdateAvailable?(version) }
     )
     private var window: NSWindow?
     private var keyMonitor: Any?
@@ -33,21 +35,8 @@ final class SettingsController {
         self.config = config
         self.historyStore = historyStore
         self.statsStore = statsStore
-        reprocessor = HistoryReprocessor(store: historyStore)
         wire()
-        // Live-prepend: the store owns change propagation (ADR-0003), so
-        // subscribe once here — a dictation spoken while the pane is open appears
-        // at the top without a reload, and the Stats pane's streak refreshes with
-        // it. Registered before the hotkey listener starts (AppMain order), so no
-        // append can race registration, and after AppMain's streak-advance
-        // observer, so the streak this re-reads reflects the just-appended entry.
-        // The store fires this off the main thread from the pipeline's record seam.
-        historyStore.onAppend { [weak self] entry in
-            Task { @MainActor in
-                self?.prependHistory(entry)
-                self?.refreshStreak()
-            }
-        }
+        workflow.observeHistoryAppends()
     }
 
     deinit {
@@ -80,15 +69,17 @@ final class SettingsController {
             guard let self else { return }
             NSWorkspace.shared.open(config.path)
         }
-        model.onCheckUpdates = { [weak self] in self?.checkForUpdates() }
-        model.onCopyHistory = { [weak self] entry in self?.copyToPasteboard(entry.text) }
-        model.onCopyRawHistory = { [weak self] entry in self?.copyToPasteboard(entry.rawText) }
-        model.onFlagHistory = { [weak self] entry in self?.flagHistory(entry) }
+        model.onCheckUpdates = { [weak self] in self?.workflow.checkForUpdates() }
+        model.onCopyHistory = { [weak self] entry in self?.workflow.copyHistory(entry) }
+        model.onCopyRawHistory = { [weak self] entry in self?.workflow.copyRawHistory(entry) }
+        model.onFlagHistory = { [weak self] entry in self?.workflow.flagHistory(entry) }
         model.onRerunPolish = { [weak self] entry, modeName in
-            self?.rerunPolish(entry, modeName: modeName)
+            Task { @MainActor in
+                await self?.workflow.rerunPolish(entry, modeName: modeName)
+            }
         }
-        model.onDeleteHistory = { [weak self] entry in self?.deleteHistory(entry) }
-        model.onClearHistory = { [weak self] in self?.clearHistory() }
+        model.onDeleteHistory = { [weak self] entry in self?.workflow.deleteHistory(entry) }
+        model.onClearHistory = { [weak self] in self?.workflow.clearHistory() }
     }
 
     private func build() {
@@ -126,109 +117,16 @@ final class SettingsController {
 
     private func populate() {
         workflow.populatePreferences()
-        // The active model must already be on disk (it's transcribing), so seed
-        // the downloaded set with the default plus the persisted choice; further
-        // downloads join it live. On-disk detection of past downloads is slice 5.
-        var downloaded: Set<String> = [ASRModelCatalog.defaultID]
-        if ASRModelCatalog.entry(for: config.asrModel) != nil { downloaded.insert(config.asrModel) }
-        model.asrDownloaded = downloaded
-        model.asrDownloading = nil
-        model.asrDownloadError = ""
-        model.asrDeleting = nil
-        model.asrDeleteError = ""
         model.axTrusted = TextInserter.accessibilityTrusted()
-        model.historyEntries = historyStore.load()
-        refreshStreak()
+        workflow.populateHistory()
         workflow.refreshLLMModels()
-        checkForUpdates()
+        workflow.checkForUpdates()
     }
 
-    /// Runs whenever the window opens and on the "Check for Updates" button,
-    /// so a pending update can't hide behind the 24-hour passive timer.
-    private func checkForUpdates() {
-        guard UpdateChecker.currentVersion() != nil else {
-            model.updateState = .unavailable
-            return
-        }
-        if case .checking = model.updateState { return }
-        model.updateState = .checking
-        Task { @MainActor in
-            switch await UpdateChecker.checkNow() {
-            case .upToDate:
-                self.model.updateState = .upToDate
-            case let .updateAvailable(version, downloadURL):
-                self.model.updateState = .available(
-                    version: version, downloadURL: downloadURL
-                )
-                self.onUpdateAvailable?(version)
-            case .failed:
-                self.model.updateState = .failed
-            }
-        }
-    }
-
-    // MARK: - history row actions
-
-    /// Prepend a just-appended dictation while the pane is open (PRD #78). A
-    /// full reload (`populate`, flag/delete/re-run) replaces the whole list, so
-    /// this guards by id to stay idempotent if a reload and this callback race.
-    private func prependHistory(_ entry: HistoryEntry) {
-        guard !model.historyEntries.contains(where: { $0.id == entry.id }) else { return }
-        model.historyEntries.insert(entry, at: 0)
-    }
-
-    private func copyToPasteboard(_ text: String) {
+    private static func copyToPasteboard(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-    }
-
-    /// Toggle the row's local bookmark and persist it. Purely local — no
-    /// network activity — then re-read so the pane reflects what persisted.
-    private func flagHistory(_ entry: HistoryEntry) {
-        var toggled = entry
-        toggled.flagged.toggle()
-        historyStore.update(toggled)
-        model.historyEntries = historyStore.load()
-    }
-
-    /// Re-run Polish on a stored dictation under the Mode the user picked, then
-    /// re-read so the row shows the reshaped text. The reprocessor works on the
-    /// entry's stored `rawText` — no audio — and overwrites text/isPolished/
-    /// modeName, persisting the change before we reload.
-    private func rerunPolish(_ entry: HistoryEntry, modeName: String) {
-        guard let mode = config.modes[modeName] else { return }
-        Task { @MainActor in
-            await self.reprocessor.rerunPolish(entry, mode: mode)
-            self.model.historyEntries = self.historyStore.load()
-        }
-    }
-
-    /// Delete and clear-all go through the store, then re-read it so the pane's
-    /// list reflects what actually persisted.
-    private func deleteHistory(_ entry: HistoryEntry) {
-        historyStore.delete(id: entry.id)
-        model.historyEntries = historyStore.load()
-    }
-
-    /// The single clear funnel behind both "Clear all history" and the
-    /// delete-on-turn-off prompt (PRD #97): a deliberate wipe resets the streak
-    /// too, so a bragging count can't outlive the data it counted. The retention
-    /// sweep and per-row delete deliberately do NOT reset it — that preserves the
-    /// one distinction that matters: a rolling window (streak survives) versus
-    /// erasing your data (streak goes too).
-    private func clearHistory() {
-        historyStore.clearAll()
-        statsStore.reset()
-        model.historyEntries = historyStore.load()
-        refreshStreak()
-    }
-
-    /// Re-read the streak from the store through the pure display rule, so the
-    /// pane shows the current run (or "No active streak" when it has lapsed or
-    /// never started) as of now.
-    private func refreshStreak() {
-        model.currentStreak = StreakRules.display(statsStore.load(), now: Date(), calendar: .current)
     }
 
     // MARK: - key recording

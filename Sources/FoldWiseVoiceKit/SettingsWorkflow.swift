@@ -22,11 +22,18 @@ protocol ASRModelManaging {
     func delete(_ entry: ASRModelCatalog.Entry) async -> String?
 }
 
+@MainActor
+protocol SettingsUpdateChecking {
+    var isAvailable: Bool { get }
+    func check() async -> UpdateChecker.CheckResult
+}
+
 /// Deterministic settings decisions shared by the SwiftUI/AppKit shell.
 @MainActor
 final class SettingsWorkflow {
     typealias Persist = @MainActor () throws -> Void
     typealias ScheduleStatusClear = @MainActor ((@MainActor () -> Void)?) -> Void
+    typealias Copy = @MainActor (String) -> Void
 
     private let config: Config
     private let model: SettingsModel
@@ -36,6 +43,12 @@ final class SettingsWorkflow {
     private let scheduleStatusClear: ScheduleStatusClear
     private let llmModels: any LLMModelManaging
     private let asrModels: any ASRModelManaging
+    private let copy: Copy
+    private let statsStore: StatsStore
+    private let calendar: Calendar
+    private let reprocessor: HistoryReprocessor
+    private let updates: any SettingsUpdateChecking
+    private let reportUpdate: (String) -> Void
     private var llmRefreshID: UUID?
     private var llmMutationID: UUID?
     private var asrDownloadID: UUID?
@@ -48,7 +61,13 @@ final class SettingsWorkflow {
         historyStore: HistoryStore,
         persist: @escaping Persist,
         now: @escaping () -> Date,
-        scheduleStatusClear: @escaping ScheduleStatusClear
+        scheduleStatusClear: @escaping ScheduleStatusClear,
+        copy: @escaping Copy,
+        statsStore: StatsStore = JSONStatsStore(url: JSONStatsStore.defaultURL),
+        calendar: Calendar = .current,
+        polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
+        updates: (any SettingsUpdateChecking)? = nil,
+        reportUpdate: @escaping (String) -> Void = { _ in }
     ) {
         self.init(
             config: config,
@@ -58,7 +77,13 @@ final class SettingsWorkflow {
             now: now,
             scheduleStatusClear: scheduleStatusClear,
             llmModels: LiveLLMModelManager(),
-            asrModels: LiveASRModelManager()
+            asrModels: LiveASRModelManager(),
+            copy: copy,
+            statsStore: statsStore,
+            calendar: calendar,
+            polish: polish,
+            updates: updates,
+            reportUpdate: reportUpdate
         )
     }
 
@@ -70,7 +95,13 @@ final class SettingsWorkflow {
         now: @escaping () -> Date,
         scheduleStatusClear: @escaping ScheduleStatusClear,
         llmModels: any LLMModelManaging,
-        asrModels: any ASRModelManaging
+        asrModels: any ASRModelManaging,
+        copy: @escaping Copy,
+        statsStore: StatsStore = JSONStatsStore(url: JSONStatsStore.defaultURL),
+        calendar: Calendar = .current,
+        polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
+        updates: (any SettingsUpdateChecking)? = nil,
+        reportUpdate: @escaping (String) -> Void = { _ in }
     ) {
         self.config = config
         self.model = model
@@ -80,6 +111,12 @@ final class SettingsWorkflow {
         self.scheduleStatusClear = scheduleStatusClear
         self.llmModels = llmModels
         self.asrModels = asrModels
+        self.copy = copy
+        self.statsStore = statsStore
+        self.calendar = calendar
+        reprocessor = HistoryReprocessor(store: historyStore, polish: polish)
+        self.updates = updates ?? LiveSettingsUpdateChecker()
+        self.reportUpdate = reportUpdate
     }
 
     func populatePreferences() {
@@ -88,6 +125,14 @@ final class SettingsWorkflow {
         model.activeMode = config.activeMode
         model.selectedModel = config.llmModel ?? ""
         model.asrModel = config.asrModel
+        model.asrDownloaded = [ASRModelCatalog.defaultID]
+        if ASRModelCatalog.entry(for: config.asrModel) != nil {
+            model.asrDownloaded.insert(config.asrModel)
+        }
+        model.asrDownloading = nil
+        model.asrDownloadError = ""
+        model.asrDeleting = nil
+        model.asrDeleteError = ""
         model.pttKey = config.hotkey
         model.toggleKey = config.toggleHotkey ?? ""
         model.pauseAudio = config.pauseAudio
@@ -95,6 +140,41 @@ final class SettingsWorkflow {
         model.retention = config.historyRetention
         model.sidebar = SidebarPresentation(prefersCollapsed: config.sidebarCollapsed)
         model.status = ""
+    }
+
+    func populateHistory() {
+        model.historyEntries = historyStore.load()
+        refreshStreak()
+    }
+
+    func observeHistoryAppends() {
+        historyStore.onAppend { [weak self] entry in
+            Task { @MainActor in
+                guard let self else { return }
+                self.prependHistory(entry)
+                self.refreshStreak()
+            }
+        }
+    }
+
+    func checkForUpdates() {
+        guard updates.isAvailable else {
+            model.updateState = .unavailable
+            return
+        }
+        if case .checking = model.updateState { return }
+        model.updateState = .checking
+        Task { @MainActor in
+            switch await updates.check() {
+            case .upToDate:
+                model.updateState = .upToDate
+            case let .updateAvailable(version, downloadURL):
+                model.updateState = .available(version: version, downloadURL: downloadURL)
+                reportUpdate(version)
+            case .failed:
+                model.updateState = .failed
+            }
+        }
     }
 
     func beginRecording(_ field: SettingsModel.RecordingField) {
@@ -117,6 +197,48 @@ final class SettingsWorkflow {
     func selectLLMModel(_ name: String) {
         model.selectedModel = name
         commit()
+    }
+
+    func copyHistory(_ entry: HistoryEntry) {
+        copy(entry.text)
+    }
+
+    func copyRawHistory(_ entry: HistoryEntry) {
+        copy(entry.rawText)
+    }
+
+    func flagHistory(_ entry: HistoryEntry) {
+        var toggled = entry
+        toggled.flagged.toggle()
+        historyStore.update(toggled)
+        model.historyEntries = historyStore.load()
+    }
+
+    func rerunPolish(_ entry: HistoryEntry, modeName: String) async {
+        guard let mode = config.modes[modeName] else { return }
+        await reprocessor.rerunPolish(entry, mode: mode)
+        model.historyEntries = historyStore.load()
+    }
+
+    func deleteHistory(_ entry: HistoryEntry) {
+        historyStore.delete(id: entry.id)
+        model.historyEntries = historyStore.load()
+    }
+
+    func clearHistory() {
+        historyStore.clearAll()
+        statsStore.reset()
+        model.historyEntries = historyStore.load()
+        refreshStreak()
+    }
+
+    private func prependHistory(_ entry: HistoryEntry) {
+        guard !model.historyEntries.contains(where: { $0.id == entry.id }) else { return }
+        model.historyEntries.insert(entry, at: 0)
+    }
+
+    private func refreshStreak() {
+        model.currentStreak = StreakRules.display(statsStore.load(), now: now(), calendar: calendar)
     }
 
     func refreshLLMModels() {
