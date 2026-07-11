@@ -46,7 +46,7 @@ While running:
 
 ## Visual tokens
 
-[`Theme.swift`](Sources/FoldWiseVoiceKit/Theme.swift) is the source of truth
+[`Theme.swift`](Sources/FoldWiseVoiceKit/DesignSystem/Theme.swift) is the source of truth
 for shared visual tokens. The values below are a compact reference to the
 implemented UI; new code should use `Theme` instead of copying these values.
 

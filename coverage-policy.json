@@ -6,88 +6,88 @@
   "minimum_file_coverage": 90.0,
   "exemptions": [
     {
-      "path": "Sources/FoldWiseVoiceKit/AppMain.swift",
+      "path": "Sources/FoldWiseVoiceKit/Application/AppMain.swift",
       "reason": "Application lifecycle and composition root"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/AudioRecorder.swift",
+      "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Record/AudioRecorder.swift",
       "reason": "AVFoundation microphone capture adapter"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/AudioDucker.swift",
+      "path": "Sources/FoldWiseVoiceKit/SystemIntegrations/AudioDucking/AudioDucker.swift",
       "reason": "Thin AppleScript system-command adapter; coordination lives in AudioDuckCoordinator"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/BadgeController.swift",
+      "path": "Sources/FoldWiseVoiceKit/Features/Badge/BadgeController.swift",
       "reason": "AppKit window and event-composition shell"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/BadgeView.swift",
+      "path": "Sources/FoldWiseVoiceKit/Features/Badge/BadgeView.swift",
       "reason": "Declarative SwiftUI Badge composition"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/HistoryView.swift",
+      "path": "Sources/FoldWiseVoiceKit/Features/History/HistoryView.swift",
       "reason": "Declarative SwiftUI history composition"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/HomeView.swift",
+      "path": "Sources/FoldWiseVoiceKit/Features/Home/HomeView.swift",
       "reason": "Declarative SwiftUI home composition"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/HotkeyListener.swift",
+      "path": "Sources/FoldWiseVoiceKit/SystemIntegrations/Hotkeys/HotkeyListener.swift",
       "reason": "Thin CGEventTap and NSEvent monitor adapter; matching and dispatch live in HotkeyDispatcher"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/Log.swift",
+      "path": "Sources/FoldWiseVoiceKit/Application/Log.swift",
       "reason": "Static Logger declarations produce no LLVM-instrumentable lines",
       "allows_missing_coverage_data": true
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/OllamaTransport.swift",
+      "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Polish/OllamaTransport.swift",
       "reason": "Thin URLSession data and streaming transport adapter"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/MenuBarController.swift",
+      "path": "Sources/FoldWiseVoiceKit/Application/MenuBarController.swift",
       "reason": "AppKit status-menu composition shell"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/Permissions.swift",
+      "path": "Sources/FoldWiseVoiceKit/SystemIntegrations/Permissions/Permissions.swift",
       "reason": "macOS permission prompt adapter"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/SettingsComponents.swift",
+      "path": "Sources/FoldWiseVoiceKit/Features/Settings/SettingsComponents.swift",
       "reason": "Declarative SwiftUI settings components"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/SettingsController.swift",
+      "path": "Sources/FoldWiseVoiceKit/Features/Settings/SettingsController.swift",
       "reason": "AppKit settings window, pasteboard, and keyboard-event adapter; decisions live in SettingsWorkflow"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/SettingsView.swift",
+      "path": "Sources/FoldWiseVoiceKit/Features/Settings/SettingsView.swift",
       "reason": "Declarative SwiftUI settings composition"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/StatsView.swift",
+      "path": "Sources/FoldWiseVoiceKit/Features/Statistics/StatsView.swift",
       "reason": "Declarative SwiftUI statistics composition"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/Theme.swift",
+      "path": "Sources/FoldWiseVoiceKit/DesignSystem/Theme.swift",
       "reason": "Declarative SwiftUI styling primitives"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/TextInsertionSystem.swift",
+      "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Insert/TextInsertionSystem.swift",
       "reason": "Thin macOS Accessibility, CGEvent, and main-queue scheduling adapter"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/Transcriber.swift",
+      "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Transcribe/Transcriber.swift",
       "reason": "Real FluidAudio model-loading and inference adapter"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/UpdateCheckEnvironment.swift",
+      "path": "Sources/FoldWiseVoiceKit/SystemIntegrations/Updates/UpdateCheckEnvironment.swift",
       "reason": "Thin application-bundle, URLSession, and recurring-timer configuration adapter"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/WhisperTranscriber.swift",
+      "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Transcribe/WhisperTranscriber.swift",
       "reason": "Real WhisperKit model-loading and inference adapter"
     }
   ]

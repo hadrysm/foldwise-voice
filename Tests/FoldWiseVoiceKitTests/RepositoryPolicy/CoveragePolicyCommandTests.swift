@@ -9,6 +9,7 @@ final class CoveragePolicyCommandTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+            .deletingLastPathComponent()
     }
 
     override func setUpWithError() throws {
