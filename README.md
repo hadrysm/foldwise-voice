@@ -156,6 +156,8 @@ for changed included lines. Exact file exemptions and their reasons live in
 `coverage-policy.json`; every other current or future production Swift file is
 included by default. To compare with a target other than `origin/main`, run
 `COVERAGE_BASE_REF=<ref> ./scripts/coverage.sh` or pass the ref as its argument.
+The [testing guide](docs/TESTING.md) describes the focused platform-component
+checks and the manual macOS smoke procedure required before every release.
 
 Install the tools with `brew install swiftformat swiftlint`, then enable the
 pre-commit hook (formats and lints staged Swift files, like lint-staged):

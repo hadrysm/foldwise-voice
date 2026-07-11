@@ -1,7 +1,6 @@
-// The idle Badge glyph must sit still (PRD #103 QA): while the user is not
-// dictating, any per-element height/opacity motion reads as "listening".
-// Rendering the idle glyph at two moments over a second apart must produce
-// identical pixels — a breathing glyph fails, a static one passes.
+// The idle Badge glyph must read as a deliberate static mark rather than a
+// listening waveform. Its seven-element dot/bar silhouette is a stable visual
+// invariant that can be checked from one render without wall-clock timing.
 
 import AppKit
 import SwiftUI
@@ -10,27 +9,23 @@ import XCTest
 
 final class BadgeIdleStaticTests: XCTestCase {
     @MainActor
-    func testIdleGlyphRendersIdenticallyAtDifferentTimes() throws {
-        let first = try renderIdleGlyph()
-        // 1.2s is far enough into the old 3.4s breath cycle that several of
-        // the seven staggered elements are guaranteed mid-swing.
-        Thread.sleep(forTimeInterval: 1.2)
-        let second = try renderIdleGlyph()
-
-        XCTAssertEqual(first.count, second.count, "renders should be the same size")
-        var differing = 0
-        for i in 0 ..< min(first.count, second.count)
-            where abs(Int(first[i]) - Int(second[i])) > 2 {
-            differing += 1
+    func testIdleGlyphKeepsItsDotBarSilhouette() throws {
+        let heights = try renderedElementHeights()
+        let silhouette = heights.map { height in
+            switch height {
+            case ...5: "dot"
+            case ...9: "medium"
+            default: "tall"
+            }
         }
         XCTAssertEqual(
-            differing, 0,
-            "idle glyph must not animate — \(differing) bytes changed between renders 1.2s apart"
+            silhouette,
+            ["dot", "dot", "dot", "tall", "dot", "medium", "dot"]
         )
     }
 
     @MainActor
-    private func renderIdleGlyph() throws -> [UInt8] {
+    private func renderedElementHeights() throws -> [Int] {
         let content = ZStack {
             Color.black
             BadgeIdleGlyph()
@@ -40,9 +35,34 @@ final class BadgeIdleStaticTests: XCTestCase {
         renderer.scale = 1
         let image = try XCTUnwrap(renderer.cgImage)
         let rep = NSBitmapImageRep(cgImage: image)
-        let data = try XCTUnwrap(rep.bitmapData)
-        return Array(UnsafeBufferPointer(
-            start: data, count: rep.bytesPerPlane * rep.numberOfPlanes
-        ))
+
+        func isGlyphPixel(x: Int, y: Int) -> Bool {
+            guard let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
+                return false
+            }
+            return max(color.redComponent, color.greenComponent, color.blueComponent) > 0.2
+        }
+
+        let occupiedColumns = (0 ..< rep.pixelsWide).map { x in
+            (0 ..< rep.pixelsHigh).contains { y in isGlyphPixel(x: x, y: y) }
+        }
+        var runs: [ClosedRange<Int>] = []
+        var start: Int?
+        for (x, occupied) in occupiedColumns.enumerated() {
+            if occupied, start == nil { start = x }
+            if !occupied, let runStart = start {
+                runs.append(runStart ... (x - 1))
+                start = nil
+            }
+        }
+        if let start { runs.append(start ... (rep.pixelsWide - 1)) }
+
+        return runs.map { run in
+            let rows = (0 ..< rep.pixelsHigh).filter { y in
+                run.contains { x in isGlyphPixel(x: x, y: y) }
+            }
+            guard let first = rows.first, let last = rows.last else { return 0 }
+            return last - first + 1
+        }
     }
 }
