@@ -41,8 +41,8 @@ While running:
 - **Audio ducking** — Spotify / Apple Music pause and other audio mutes
   while you dictate; everything resumes when you stop. Toggle in Settings.
 - **Settings** — pick/install Ollama models with speed & quality guidance,
-  switch modes, record hotkeys, choose the HUD style. Every change saves
-  straight to `modes.json`.
+  pick/install the speech-recognition model, switch modes, and record hotkeys.
+  Every change saves straight to `modes.json`.
 
 ## Visual tokens
 
@@ -80,12 +80,12 @@ keycaps and tooltips.
 ## How it works
 
 ```
-🎤 audio ──▶ [ Stage 1: Parakeet ASR ] ──▶ raw text ──▶ [ Stage 2: Ollama LLM ] ──▶ clean text ──▶ ⌘V paste
-                (always, on-device)                       (optional, per mode)
+🎤 audio ──▶ [ Stage 1: selected ASR ] ──▶ raw text ──▶ [ Stage 2: Ollama LLM ] ──▶ clean text ──▶ ⌘V paste
+                 (always, on-device)                       (optional, per mode)
 ```
 
-- **Stage 1 (ASR)** — Parakeet TDT v3 on the Neural Engine turns audio into
-  text. Always runs, fully offline after the one-time model download.
+- **Stage 1 (ASR)** — the globally selected Parakeet or Whisper model turns
+  audio into text. Always runs, fully offline after the one-time model download.
 - **Stage 2 (LLM)** — Ollama receives the *text* transcript (never audio) via
   its OpenAI-compatible API and rewrites it per the active mode's system
   prompt. Optional: modes with `"llm_model": null` skip it entirely.
