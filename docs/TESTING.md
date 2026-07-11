@@ -10,13 +10,13 @@ hardware, other applications, and real ASR engines without adding XCUITest.
 Run the focused rendered checks with:
 
 ```sh
-swift test --filter 'BadgeHaloTests|BadgeIdleStaticTests|TitlebarAlignmentTests'
+swift test --filter 'BadgeHaloTests|BadgeIdleSilhouetteTests|TitlebarAlignmentTests'
 ```
 
 These tests intentionally protect only three visible invariants:
 
 - the idle Badge has no glow or shadow bleeding onto a light background;
-- the idle Badge glyph keeps its intentional static dot/bar silhouette; and
+- the idle Badge glyph keeps its intentional dot/bar silhouette; and
 - the sidebar toggle stays aligned and proportionate to the traffic lights in a
   real AppKit window.
 

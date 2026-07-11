@@ -163,7 +163,8 @@ private struct BadgeRoundButton: View {
 /// The idle "···|·|·" glyph: rounded dots and bars, drawn motionless. Idle
 /// must sit still — element-by-element height/opacity motion reads as
 /// "listening" — and a static Canvas spares the timeline redraw loop while
-/// the badge idles. Locked by BadgeIdleStaticTests.
+/// the badge idles. Geometry is locked by BadgeIdleSilhouetteTests;
+/// motionlessness is covered by the manual macOS smoke procedure.
 struct BadgeIdleGlyph: View {
     /// Element heights in points; 3.5pt-wide dots (3.5) and bars (12, 7).
     private static let heights: [CGFloat] = [3.5, 3.5, 3.5, 12, 3.5, 7, 3.5]

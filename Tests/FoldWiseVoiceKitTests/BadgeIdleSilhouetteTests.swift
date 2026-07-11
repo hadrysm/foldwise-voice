@@ -1,13 +1,13 @@
-// The idle Badge glyph must read as a deliberate static mark rather than a
-// listening waveform. Its seven-element dot/bar silhouette is a stable visual
-// invariant that can be checked from one render without wall-clock timing.
+// The idle Badge glyph has a deliberate seven-element dot/bar silhouette.
+// Its geometry is a stable visual invariant that can be checked from one
+// render; motionlessness is covered by the manual macOS smoke procedure.
 
 import AppKit
 import SwiftUI
 import XCTest
 @testable import FoldWiseVoiceKit
 
-final class BadgeIdleStaticTests: XCTestCase {
+final class BadgeIdleSilhouetteTests: XCTestCase {
     @MainActor
     func testIdleGlyphKeepsItsDotBarSilhouette() throws {
         let heights = try renderedElementHeights()
