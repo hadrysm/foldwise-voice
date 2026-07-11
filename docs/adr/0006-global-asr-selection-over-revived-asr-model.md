@@ -9,9 +9,10 @@ Accepted (2026-07-07)
 ADR-0005 adds a second ASR engine; users need to choose one, and the choice must
 persist in `modes.json`. Two shaping facts:
 
-- The schema already reserves a **per-mode** slot, `Mode.asrModel` (`Config.swift:16`),
-  parsed from `asr_model`. It is preserved on save but ignored — "this app always
-  transcribes with Parakeet" (`Config.swift:1-3`) — and its default value is a
+- The schema already reserves a **per-mode** slot, `Mode.asrModel`
+  (`Sources/FoldWiseVoiceKit/Configuration/Config.swift`), parsed from
+  `asr_model`. It is preserved on save but ignored — "this app always transcribes
+  with Parakeet" — and its default value is a
   fossil from the app's Python/MLX era (`mlx-community/whisper-large-v3-turbo`),
   an id namespace meaningless to WhisperKit and FluidAudio. A round-trip test
   locks in that we don't clobber it
@@ -19,7 +20,8 @@ persist in `modes.json`. Two shaping facts:
   kept compatible with is a **retired predecessor**, not a live co-target.
 - The app already treats *model choice as global-by-convention* for the LLM:
   `setLLMModel` points every mode at one model and `Config.llmModel` reads the
-  first (`Config.swift:127-139`), even though `llm_model` is a per-mode field.
+  first (also in `Sources/FoldWiseVoiceKit/Configuration/Config.swift`), even
+  though `llm_model` is a per-mode field.
 
 Whether you need Whisper's languages is a property of *the language you speak* —
 constant across Modes — whereas a Mode governs *output formatting/polish*. So ASR

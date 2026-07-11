@@ -8,7 +8,8 @@ Accepted (2026-07-07)
 
 Today the app transcribes with exactly one engine — Parakeet TDT v3 (FluidAudio)
 on the Neural Engine — behind the `Transcribing` protocol introduced by ADR-0002
-(`Pipeline.swift:21`). We want a second engine, Whisper, to widen language
+(`Sources/FoldWiseVoiceKit/Features/Dictation/Pipeline.swift`). We want a second
+engine, Whisper, to widen language
 coverage from Parakeet's 25 to Whisper's ~99 and make that breadth a visible
 selling point (see `CONTEXT.md`: *ASR engine*, *ASR model*). FluidAudio has no
 Whisper backend and no engine abstraction to ride — it is Parakeet-only — so a
@@ -28,8 +29,9 @@ own conformers.
 **Keep the `Transcribing` protocol; add a second conformer; front both with a
 dispatching composite that is itself a `Transcribing`.** The `Pipeline` keeps
 calling `transcriber.transcribe(_:)` and never learns there is more than one
-engine — the composition root (`AppMain.swift:81`) constructs the dispatcher in
-the one place ADR-0002 already put engine construction.
+engine — the composition root
+(`Sources/FoldWiseVoiceKit/Application/AppMain.swift`) constructs the dispatcher
+in the one place ADR-0002 already put engine construction.
 
 - **Whisper backend → WhisperKit** (`argmaxinc/argmax-oss-swift`, product
   `WhisperKit`, pinned `from: "1.0.0"`; the repo was renamed from

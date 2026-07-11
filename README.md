@@ -114,7 +114,6 @@ Top-level settings:
 - `hud_position` — saved HUD anchor (`[center_x, bottom_y]` in screen
   points); written automatically when you drag the pill. `null` = default
   bottom-center.
-- `hud_style` — `classic` or `minimal` recording bar.
 
 Per-mode fields:
 
@@ -122,8 +121,12 @@ Per-mode fields:
   for raw transcription.
 - `system_prompt` — instruction the LLM applies to your transcript.
 - `vocab` — names/terms the LLM must preserve (e.g. product names).
-- `asr_model` — kept for compatibility with older configs; the app always
-  transcribes with Parakeet and ignores it.
+- `asr_model` — speech-recognition model catalog id. Selection is global, so
+  Settings writes the chosen id to every mode. Unknown ids from older configs
+  remain stored and safely fall back to Parakeet until a model is selected.
+
+The retired `hud_style` key is accepted in older files but ignored; the current
+Badge presentation is fixed by the implemented design system.
 
 Add a mode by copying an existing block under `"modes"` and restarting.
 
