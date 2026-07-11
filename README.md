@@ -151,13 +151,15 @@ swiftlint                # lint (ESLint equivalent)
 
 The coverage command evaluates only production files in
 `Sources/FoldWiseVoiceKit`: dependencies and tests never improve the result.
-It enforces the accepted overall and included-core baselines plus 90% coverage
-for changed included lines. Exact file exemptions and their reasons live in
-`coverage-policy.json`; every other current or future production Swift file is
-included by default. To compare with a target other than `origin/main`, run
+It enforces at least 90% coverage for every included file, the included core
+aggregate, and changed included lines, plus the accepted no-regression floors
+for included-core and overall production coverage. Exact file exemptions and
+their reasons live in `coverage-policy.json`; every other current or future
+production Swift file is included by default. To compare with a target other than `origin/main`, run
 `COVERAGE_BASE_REF=<ref> ./scripts/coverage.sh` or pass the ref as its argument.
-The [testing guide](docs/TESTING.md) describes the focused platform-component
-checks and the manual macOS smoke procedure required before every release.
+The [testing guide](docs/TESTING.md) documents the test layers, coverage
+calculation, exemption register, failure diagnostics, and manual macOS smoke
+procedure required before every release.
 
 Install the tools with `brew install swiftformat swiftlint`, then enable the
 pre-commit hook (formats and lints staged Swift files, like lint-staged):

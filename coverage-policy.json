@@ -3,7 +3,7 @@
   "overall_floor": 47.817098382585435,
   "included_core_floor": 95.51515151515152,
   "changed_line_floor": 90.0,
-  "minimum_file_coverage": 0.0,
+  "minimum_file_coverage": 90.0,
   "exemptions": [
     {
       "path": "Sources/FoldWiseVoiceKit/AppMain.swift",
@@ -39,7 +39,8 @@
     },
     {
       "path": "Sources/FoldWiseVoiceKit/Log.swift",
-      "reason": "Static Logger declarations produce no LLVM-instrumentable lines"
+      "reason": "Static Logger declarations produce no LLVM-instrumentable lines",
+      "allows_missing_coverage_data": true
     },
     {
       "path": "Sources/FoldWiseVoiceKit/OllamaTransport.swift",

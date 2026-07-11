@@ -35,6 +35,12 @@ class ChangedLineCoverage:
         return self.count > 0
 
 
+@dataclass(frozen=True)
+class Exemption:
+    reason: str
+    allows_missing_coverage_data: bool
+
+
 def percentage(covered: int, count: int) -> float:
     return 100.0 if count == 0 else covered / count * 100.0
 
@@ -131,28 +137,34 @@ def load_coverage(
     return result
 
 
-def load_exemptions(policy: dict[str, Any], production_files: set[str]) -> dict[str, str]:
+def load_exemptions(policy: dict[str, Any], production_files: set[str]) -> dict[str, Exemption]:
     entries = policy.get("exemptions")
     if not isinstance(entries, list):
         raise ValueError("policy exemptions must be an array")
 
-    exemptions: dict[str, str] = {}
+    exemptions: dict[str, Exemption] = {}
     for entry in entries:
         if not isinstance(entry, dict):
             raise ValueError("each exemption must be an object")
         path = entry.get("path")
         reason = entry.get("reason")
+        allows_missing_coverage_data = entry.get("allows_missing_coverage_data", False)
         if not isinstance(path, str) or not path.endswith(".swift"):
             raise ValueError("each exemption must name one Swift source file")
         if any(character in path for character in "*?["):
             raise ValueError(f"exemption must name an exact file, not a pattern: {path}")
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError(f"exemption requires a reason: {path}")
+        if not isinstance(allows_missing_coverage_data, bool):
+            raise ValueError(f"exemption allows_missing_coverage_data must be a boolean: {path}")
         if path in exemptions:
             raise ValueError(f"duplicate exemption: {path}")
         if path not in production_files:
             raise ValueError(f"exemption does not name a production file: {path}")
-        exemptions[path] = reason.strip()
+        exemptions[path] = Exemption(
+            reason=reason.strip(),
+            allows_missing_coverage_data=allows_missing_coverage_data,
+        )
     return exemptions
 
 
@@ -197,9 +209,9 @@ def policy_number(policy: dict[str, Any], name: str) -> float:
 
 
 def validate_policy_ratchet(policy: dict[str, Any], baseline_policy: dict[str, Any] | None) -> None:
-    changed_floor = policy_number(policy, "changed_line_floor")
-    if changed_floor < 90.0:
-        raise ValueError("policy changed_line_floor must remain at least 90.00%")
+    for name in ("included_core_floor", "changed_line_floor", "minimum_file_coverage"):
+        if policy_number(policy, name) < 90.0:
+            raise ValueError(f"policy {name} must remain at least 90.00%")
 
     if baseline_policy is None:
         return
@@ -238,7 +250,10 @@ def evaluate(args: argparse.Namespace) -> int:
     }
     exemptions = load_exemptions(policy, production_files)
     report = load_coverage(load_json(args.report), root, source_root_value)
-    missing = sorted(production_files - exemptions.keys() - report.keys())
+    allowed_missing = {
+        path for path, exemption in exemptions.items() if exemption.allows_missing_coverage_data
+    }
+    missing = sorted(production_files - report.keys() - allowed_missing)
     if missing:
         raise ValueError("coverage report is missing production files: " + ", ".join(missing))
 

@@ -5,6 +5,115 @@ cross real macOS boundaries. XCTest protects decisions and a few stable rendered
 invariants. The manual smoke procedure protects permissions, global input, audio
 hardware, other applications, and real ASR engines without adding XCUITest.
 
+## Test layers and local commands
+
+The automated suite has three practical layers:
+
+1. Pure behavior tests cover reducers, projections, parsing, catalogs,
+   persistence, and workflow decisions through non-private interfaces.
+2. Boundary-fake tests cover the dictation Pipeline and external-service
+   fallbacks with injected recorders, transcribers, transports, pasteboards,
+   clocks, and system-effect closures. They never use live internet services,
+   microphones, permissions, models, or the user's general pasteboard.
+3. A small platform-component layer renders stable SwiftUI/AppKit invariants in
+   process. Real system integration belongs to the manual smoke procedure.
+
+Use these commands from the repository root:
+
+```sh
+swift test
+./scripts/coverage.sh
+COVERAGE_BASE_REF=<target-ref> ./scripts/coverage.sh
+./scripts/coverage.sh <target-ref>
+```
+
+`swift test` is the fast full-suite command. `./scripts/coverage.sh` is the
+required local gate: it runs that XCTest suite exactly once with SwiftPM code
+coverage, exports LLVM's report, calculates the target-branch diff, and invokes
+`scripts/check_coverage.py`. CI calls the same script without a retry wrapper.
+The default target is `origin/main`, then local `main`, then `HEAD`; use either
+override form above when the review target differs.
+
+## Coverage calculation and gates
+
+Only LLVM executable lines in `Sources/FoldWiseVoiceKit` count as production
+coverage. Dependency, executable-wrapper, test, generated-runner, and test-support
+lines neither help nor hurt the result. A production file is included unless its
+exact path appears in the exemption register below; glob and line-level
+exemptions are rejected.
+
+LLVM omits `Log.swift` from its JSON because that file contains only static
+Logger declarations and has no instrumentable lines. Its reviewed exemption is
+the sole policy entry allowed to have missing coverage data. Every other
+production file, including every other exempt boundary, must appear in the
+report so the overall denominator cannot silently shrink.
+
+The command enforces all four gates in one pass:
+
+- **Per-file core:** each included file must be at least 90% covered.
+- **Aggregate core:** included files together must be at least 90% covered. The
+  current accepted floor is the higher `95.51515151515152%`, so it cannot
+  regress merely because the permanent minimum is 90%.
+- **Changed lines:** at least 90% of added executable lines in included files,
+  relative to the target merge base, must be covered. Exempt and non-executable
+  added lines do not enter the denominator.
+- **Overall production:** all reported production files, including exemptions,
+  must remain at or above the accepted `47.817098382585435%` floor.
+
+The exact accepted values live in `coverage-policy.json`. The checker rejects a
+core, changed-line, or per-file policy below 90%, rejects a decrease from the
+target branch's accepted floors, and includes new production files by default.
+No source or coverage artifact is uploaded to a hosted coverage service.
+
+On success, output includes the overall, aggregate, and changed-line fractions,
+the number of included and exempt files, and the ten lowest-covered included
+files. A failure exits nonzero and names every failed threshold. Changed-line
+failures also print actionable `path:line` locations, for example:
+
+```text
+Coverage policy FAILED
+- Sources/FoldWiseVoiceKit/Example.swift coverage 87.50% is below 90.00%
+- changed included coverage 50.00% is below 90.00%
+- uncovered changed lines: Sources/FoldWiseVoiceKit/Example.swift:42
+```
+
+A policy/configuration error exits separately and explains the malformed policy,
+missing production report, invalid exemption, or unavailable merge base.
+
+## Final exemption register
+
+These are the only production files excluded from the per-file, aggregate-core,
+and changed-line gates. They remain part of overall production coverage. Adding
+or broadening an exemption is a reviewed policy change; mixed modules first move
+their meaningful decisions into covered collaborators.
+
+| File | Reviewed reason |
+|---|---|
+| `AppMain.swift` | Application lifecycle and composition root |
+| `AudioRecorder.swift` | AVFoundation microphone capture adapter |
+| `AudioDucker.swift` | Thin AppleScript system-command adapter; coordination lives in `AudioDuckCoordinator` |
+| `BadgeController.swift` | AppKit window and event-composition shell |
+| `BadgeView.swift` | Declarative SwiftUI Badge composition |
+| `HistoryView.swift` | Declarative SwiftUI history composition |
+| `HomeView.swift` | Declarative SwiftUI home composition |
+| `HotkeyListener.swift` | Thin CGEventTap and NSEvent monitor adapter; matching and dispatch live in `HotkeyDispatcher` |
+| `Log.swift` | Static Logger declarations produce no LLVM-instrumentable lines; the policy explicitly permits its absent LLVM entry |
+| `OllamaTransport.swift` | Thin URLSession data and streaming transport adapter |
+| `MenuBarController.swift` | AppKit status-menu composition shell |
+| `Permissions.swift` | macOS permission prompt adapter |
+| `SettingsComponents.swift` | Declarative SwiftUI settings components |
+| `SettingsController.swift` | AppKit settings window, pasteboard, and keyboard-event adapter; decisions live in `SettingsWorkflow` |
+| `SettingsView.swift` | Declarative SwiftUI settings composition |
+| `StatsView.swift` | Declarative SwiftUI statistics composition |
+| `Theme.swift` | Declarative SwiftUI styling primitives |
+| `TextInsertionSystem.swift` | Thin macOS Accessibility, CGEvent, and main-queue scheduling adapter |
+| `Transcriber.swift` | Real FluidAudio model-loading and inference adapter |
+| `UpdateCheckEnvironment.swift` | Thin application-bundle, URLSession, and recurring-timer configuration adapter |
+| `WhisperTranscriber.swift` | Real WhisperKit model-loading and inference adapter |
+
+There are no line suppression annotations, temporary sub-90 core floors, Swift
+Testing targets, XCUITest targets, automatic retries, or dynamic exclusions.
+
 ## Automated platform-component checks
 
 Run the focused rendered checks with:
