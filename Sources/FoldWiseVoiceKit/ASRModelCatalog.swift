@@ -91,10 +91,16 @@ enum ASRModelCatalog {
         ),
     ]
 
+    private static let aliases = [
+        "openai_whisper-large-v3-v20240930_turbo_632mb": "whisper-large-v3-turbo",
+    ]
+
     /// Resolve a stored id to its catalog entry, or `nil` for an unknown id —
     /// e.g. an old `mlx-community/...` fossil from the app's Python/MLX era.
     static func entry(for id: String) -> Entry? {
-        entries.first { $0.id == id }
+        let normalized = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let canonical = aliases[normalized] ?? normalized
+        return entries.first { $0.id == canonical }
     }
 
     /// The engine that should transcribe for a stored id. An unknown or fossil

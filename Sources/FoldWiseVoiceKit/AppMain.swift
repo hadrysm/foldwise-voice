@@ -7,6 +7,70 @@ import AppKit
 import Foundation
 import os
 
+extension TranscriberDispatcher {
+    /// Production-only construction for the real ASR adapters. Keeping it in
+    /// the composition root leaves the dispatcher's decisions testable without
+    /// initializing or downloading a CoreML model.
+    static func buildEngine(_ engine: ASRModelCatalog.Engine) -> Transcribing {
+        switch engine {
+        case let .parakeet(version): Transcriber(version: version)
+        case let .whisper(variant): WhisperTranscriber(variant: variant)
+        }
+    }
+}
+
+final class LiveLLMModelManager: LLMModelManaging {
+    func list() async -> [OllamaClient.InstalledModel] {
+        await OllamaClient.listModels()
+    }
+
+    func pull(_ name: String, progress: @escaping LLMProgress) async -> String? {
+        await OllamaClient.pull(model: name) { status, fraction in
+            Task { @MainActor in progress(status, fraction) }
+        }
+    }
+
+    func delete(_ name: String) async -> String? {
+        await OllamaClient.delete(model: name)
+    }
+}
+
+final class LiveASRModelManager: ASRModelManaging {
+    func prepare(
+        _ entry: ASRModelCatalog.Entry,
+        progress: @escaping ASRProgress,
+        loading: @escaping ASRLoading
+    ) async -> String? {
+        let engine = TranscriberDispatcher.buildEngine(entry.engine)
+        engine.onDownloadProgress = { fraction in
+            Task { @MainActor in progress(fraction) }
+        }
+        engine.onLoading = { isLoading in
+            Task { @MainActor in loading(isLoading) }
+        }
+        do {
+            try await engine.prepare()
+            return nil
+        } catch {
+            return "\(error)"
+        }
+    }
+
+    func delete(_ entry: ASRModelCatalog.Entry) async -> String? {
+        await Task.detached { ASRModelStore.delete(entry.engine) }.value
+    }
+}
+
+final class LiveSettingsUpdateChecker: SettingsUpdateChecking {
+    var isAvailable: Bool {
+        UpdateChecker.currentVersion() != nil
+    }
+
+    func check() async -> UpdateChecker.CheckResult {
+        await UpdateChecker.checkNow()
+    }
+}
+
 /// TCP port used as a single-instance mutex (shared with the Python app so
 /// only one dictation app runs at a time).
 private let lockPort: UInt16 = 47812

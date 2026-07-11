@@ -124,6 +124,33 @@ rather than a horizontal layer ("all the models, no callers") that nothing exerc
 If new behavior can't be reached from a public interface, that is a design smell —
 fix the interface, don't reach around it.
 
+### Binding coverage policy
+
+Run `./scripts/coverage.sh` before review. It is the same executable policy CI
+uses and runs XCTest once with SwiftPM/LLVM coverage. The permanent gates are:
+
+- every included production Swift file has at least 90% line coverage;
+- the included core aggregate has at least 90% line coverage and may not fall
+  below the higher accepted floor recorded in `coverage-policy.json`;
+- changed executable lines in included production files have at least 90%
+  coverage relative to the target branch; and
+- overall `FoldWiseVoiceKit` production coverage, including exempt files, may
+  not fall below its accepted floor.
+
+Production files are included by default. An exemption must name one complete
+file in `coverage-policy.json`, explain why it is a declarative or thin system
+boundary (or contains no LLVM-instrumentable production lines), and receive
+explicit review. Only a zero-instrumentation exemption may explicitly permit a
+missing LLVM report entry. Extract meaningful decisions into an included
+collaborator before exempting a mixed file. There are no line-level waivers or
+suppression comments, and coverage is never uploaded to a hosted service.
+
+Tests must be deterministic: use unique temporary storage and explicit signals,
+expectations, continuations, or injected scheduling instead of shared state,
+real services, or fixed sleeps where a deterministic signal is practical. CI
+does not retry tests. A flaky test is fixed immediately or the introducing
+change is reverted; it is not retried, quarantined, or silently excluded.
+
 ## Interface Design
 
 ### Deep modules

@@ -78,6 +78,23 @@ final class ConfigBehaviorTests: XCTestCase {
         XCTAssertEqual(config.activeMode, "Email")
     }
 
+    func testModeFallsBackToFirstOrderedModeAfterLiveMutation() {
+        let config = Config.defaultConfig(path: path)
+        config.modes.removeValue(forKey: config.activeMode)
+
+        XCTAssertEqual(config.mode.name, "Voice to Text")
+    }
+
+    func testModeFallsBackToRawDictationWhenLiveModesBecomeEmpty() {
+        let config = Config.defaultConfig(path: path)
+        config.modes.removeAll()
+
+        let mode = config.mode
+
+        XCTAssertEqual(mode.name, "Voice to Text")
+        XCTAssertFalse(mode.usesLLM)
+    }
+
     func testSetLLMModelOnlyTouchesLLMEnabledModes() {
         let config = Config.defaultConfig(path: path)
         config.setLLMModel("gemma3:1b")
@@ -86,6 +103,17 @@ final class ConfigBehaviorTests: XCTestCase {
         XCTAssertEqual(config.modes["Email"]?.llmModel, "gemma3:1b")
         XCTAssertEqual(config.modes["Bullets"]?.llmModel, "gemma3:1b")
         XCTAssertEqual(config.llmModel, "gemma3:1b")
+    }
+
+    func testLLMModelIsNilWhenNoModeUsesLLM() {
+        let config = Config.defaultConfig(path: path)
+        config.modes = config.modes.mapValues { mode in
+            var mode = mode
+            mode.llmModel = nil
+            return mode
+        }
+
+        XCTAssertNil(config.llmModel)
     }
 
     func testDefaultConfigUsesParakeetV3ForASRModel() {
@@ -110,6 +138,13 @@ final class ConfigBehaviorTests: XCTestCase {
         try Data(json.utf8).write(to: path)
         let config = try Config.load(from: path)
         XCTAssertEqual(config.asrModel, "id-first")
+    }
+
+    func testASRModelFallsBackToDefaultWhenLiveModesBecomeEmpty() {
+        let config = Config.defaultConfig(path: path)
+        config.modes.removeAll()
+
+        XCTAssertEqual(config.asrModel, ASRModelCatalog.defaultID)
     }
 
     func testSetASRModelWritesEveryMode() {
@@ -187,5 +222,9 @@ final class ConfigBehaviorTests: XCTestCase {
         try Config.defaultConfig(path: path).save()
         let written = try String(contentsOf: path, encoding: .utf8)
         XCTAssertFalse(written.contains("expands"))
+    }
+
+    func testResolvePathPrefersExplicitCLIPath() {
+        XCTAssertEqual(Config.resolvePath(cliPath: path.path), path)
     }
 }

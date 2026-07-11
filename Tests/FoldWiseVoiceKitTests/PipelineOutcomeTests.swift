@@ -69,6 +69,11 @@ final class PipelineOutcomeTests: XCTestCase {
         )
     }
 
+    func testSessionEndsIdleWhenTranscriptionIsCancelled() async {
+        let states = await runSession(transcript: .failure(CancellationError()))
+        XCTAssertEqual(states, [.listening(mode: "Voice to Text"), .transcribing, .idle])
+    }
+
     // MARK: - polish gating
 
     func testPolishSkippedWhenTranscriptBelowLengthThreshold() async {
@@ -197,5 +202,50 @@ final class PipelineOutcomeTests: XCTestCase {
         pipeline.stopRecording()
 
         XCTAssertTrue(collector.states.isEmpty)
+    }
+
+    func testToggleStartsAndStopsCompleteSession() async {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success("hello world")
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: FakeRecorder(),
+            transcriber: transcriber,
+            polish: { text, _ in text },
+            insert: { _ in true },
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+        let collector = StateCollector()
+        pipeline.onState = { collector.append($0) }
+
+        pipeline.toggleRecording()
+        pipeline.toggleRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(
+            collector.states,
+            [.listening(mode: "Voice to Text"), .transcribing, .inserted]
+        )
+    }
+
+    func testDefaultPolishSkipsRawModeWithoutExternalService() async {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success(longTranscript)
+        let insert = InsertSpy()
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: FakeRecorder(),
+            transcriber: transcriber,
+            insert: { insert.insert($0) },
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(insert.texts, [longTranscript])
     }
 }

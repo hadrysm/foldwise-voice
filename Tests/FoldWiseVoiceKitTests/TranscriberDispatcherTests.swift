@@ -46,6 +46,28 @@ final class TranscriberDispatcherTests: XCTestCase {
         XCTAssertEqual(fake.warmupCount, 1)
     }
 
+    func testPrepareForwardsToTheEngine() async throws {
+        let fake = FakeTranscriber()
+        let dispatcher = TranscriberDispatcher(config: makeConfig()) { _ in fake }
+
+        try await dispatcher.prepare()
+
+        XCTAssertEqual(fake.prepareCount, 1)
+    }
+
+    func testPrepareForwardsTheEngineFailure() async {
+        let fake = FakeTranscriber()
+        fake.prepareError = PreparationError.unavailable
+        let dispatcher = TranscriberDispatcher(config: makeConfig()) { _ in fake }
+
+        do {
+            try await dispatcher.prepare()
+            XCTFail("Expected engine preparation to fail")
+        } catch {
+            XCTAssertEqual(error as? PreparationError, .unavailable)
+        }
+    }
+
     func testReadyReflectsTheEngine() {
         let fake = FakeTranscriber()
         fake.ready = false
@@ -68,6 +90,30 @@ final class TranscriberDispatcherTests: XCTestCase {
         XCTAssertEqual(loadings, [true, false])
     }
 
+    func testLoadingSinkIsRewiredOntoTheSwappedEngine() throws {
+        let config = makeConfig()
+        var built: [FakeTranscriber] = []
+        let dispatcher = TranscriberDispatcher(config: config) { _ in
+            let fake = FakeTranscriber()
+            built.append(fake)
+            return fake
+        }
+        var loadings: [Bool] = []
+        dispatcher.onLoading = { loadings.append($0) }
+
+        config.setASRModel("whisper-large-v3-turbo")
+        try config.saveAndNotify()
+        built.last?.onLoading?(true)
+
+        XCTAssertEqual(loadings, [true])
+    }
+
+    func testLoadingSinkCanBeReadBackThroughTheSeam() {
+        let dispatcher = TranscriberDispatcher(config: makeConfig()) { _ in FakeTranscriber() }
+        dispatcher.onLoading = { _ in }
+        XCTAssertNotNil(dispatcher.onLoading)
+    }
+
     func testOnDownloadProgressFromTheEngineReachesTheDispatchersSink() {
         let fake = FakeTranscriber()
         let dispatcher = TranscriberDispatcher(config: makeConfig()) { _ in fake }
@@ -78,6 +124,12 @@ final class TranscriberDispatcherTests: XCTestCase {
         fake.onDownloadProgress?(1.0)
 
         XCTAssertEqual(fractions, [0.25, 1.0])
+    }
+
+    func testDownloadProgressSinkCanBeReadBackThroughTheSeam() {
+        let dispatcher = TranscriberDispatcher(config: makeConfig()) { _ in FakeTranscriber() }
+        dispatcher.onDownloadProgress = { _ in }
+        XCTAssertNotNil(dispatcher.onDownloadProgress)
     }
 
     func testDownloadProgressSinkIsRewiredOntoTheSwappedEngine() throws {
@@ -109,6 +161,19 @@ final class TranscriberDispatcherTests: XCTestCase {
         }
 
         XCTAssertEqual(engines, [.parakeet(version: .v3)])
+    }
+
+    func testSelectsTheConfiguredWhisperEngine() {
+        let config = makeConfig()
+        config.setASRModel("whisper-small")
+        var engines: [ASRModelCatalog.Engine] = []
+
+        _ = TranscriberDispatcher(config: config) { engine in
+            engines.append(engine)
+            return FakeTranscriber()
+        }
+
+        XCTAssertEqual(engines, [.whisper(variant: "openai_whisper-small")])
     }
 
     func testSelectionChangeRebuildsAndSwapsTheEngine() async throws {
@@ -166,6 +231,10 @@ final class TranscriberDispatcherTests: XCTestCase {
 
         XCTAssertEqual(buildCount, 1, "a non-ASR change leaves the engine untouched")
     }
+}
+
+private enum PreparationError: Error, Equatable {
+    case unavailable
 }
 
 /// Ordered log of engine build/release events, shared between the factory and

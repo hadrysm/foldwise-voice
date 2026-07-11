@@ -1,13 +1,21 @@
-// Pins the on-disk cache-path resolution for the ASR engines (slice 5, #95) —
-// the one library-coupled seam. These assert the path *shape* each library
-// downloads into, without touching the filesystem, so a library changing its
-// storage layout is caught here rather than by a delete that silently frees
-// nothing. Deletion itself is I/O at the boundary and isn't unit-tested.
+// Pins the library-coupled cache paths and deletion behavior without accessing
+// downloaded model weights. Filesystem tests stay inside a throwaway directory.
 
 import XCTest
 @testable import FoldWiseVoiceKit
 
 final class ASRModelStoreTests: XCTestCase {
+    private let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("foldwise-tests-\(UUID().uuidString)")
+
+    override func setUpWithError() throws {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try FileManager.default.removeItem(at: dir)
+    }
+
     func testWhisperResolvesToTheHuggingFaceHubCache() throws {
         let dir = try XCTUnwrap(
             ASRModelStore.modelDirectory(for: .whisper(variant: "openai_whisper-small"))
@@ -32,5 +40,67 @@ final class ASRModelStoreTests: XCTestCase {
         let v2 = try XCTUnwrap(ASRModelStore.modelDirectory(for: .parakeet(version: .v2)))
         let v3 = try XCTUnwrap(ASRModelStore.modelDirectory(for: .parakeet(version: .v3)))
         XCTAssertNotEqual(v2, v3)
+    }
+
+    func testDeleteReportsUnresolvableModelDirectory() {
+        let error = ASRModelStore.delete(
+            .whisper(variant: "missing"),
+            userDocumentsDirectory: nil
+        )
+
+        XCTAssertEqual(error, "Couldn't locate the model files to delete.")
+    }
+
+    func testDeleteTreatsAlreadyAbsentWeightsAsSuccess() {
+        let error = ASRModelStore.delete(
+            .whisper(variant: "missing"),
+            userDocumentsDirectory: dir
+        )
+
+        XCTAssertNil(error)
+    }
+
+    func testDeleteRemovesDownloadedWeights() throws {
+        let downloaded = try XCTUnwrap(
+            ASRModelStore.modelDirectory(
+                for: .whisper(variant: "downloaded"),
+                userDocumentsDirectory: dir
+            )
+        )
+        try FileManager.default.createDirectory(at: downloaded, withIntermediateDirectories: true)
+
+        let error = ASRModelStore.delete(
+            .whisper(variant: "downloaded"),
+            userDocumentsDirectory: dir
+        )
+
+        XCTAssertNil(error)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: downloaded.path))
+    }
+
+    func testDeleteReportsFilesystemFailure() throws {
+        let downloaded = try XCTUnwrap(
+            ASRModelStore.modelDirectory(
+                for: .whisper(variant: "downloaded"),
+                userDocumentsDirectory: dir
+            )
+        )
+        try FileManager.default.createDirectory(at: downloaded, withIntermediateDirectories: true)
+
+        let error = ASRModelStore.delete(
+            .whisper(variant: "downloaded"),
+            userDocumentsDirectory: dir,
+            removeItem: { _ in throw RemovalError.denied }
+        )
+
+        XCTAssertEqual(error, RemovalError.denied.localizedDescription)
+    }
+}
+
+private enum RemovalError: LocalizedError {
+    case denied
+
+    var errorDescription: String? {
+        "permission denied"
     }
 }

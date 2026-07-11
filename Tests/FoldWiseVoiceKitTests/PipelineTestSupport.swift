@@ -64,6 +64,23 @@ final class FakeTranscriber: Transcribing {
     }
 }
 
+final class FakeAudioDucker: AudioDucking {
+    private(set) var events: [AudioDuckingEvent] = []
+
+    func duck() {
+        events.append(.duck)
+    }
+
+    func restore() {
+        events.append(.restore)
+    }
+}
+
+enum AudioDuckingEvent: Equatable {
+    case duck
+    case restore
+}
+
 /// A one-shot async gate: `wait()` suspends until `open()`, which releases
 /// every current and future waiter. Lets a test hold the first session in
 /// its transcribe stage while it queues a second one behind it.
@@ -147,10 +164,11 @@ final class StateCollector {
 func makeTestConfig(
     mode: Mode = Mode(
         name: "Voice to Text", asrModel: "", llmModel: nil, systemPrompt: nil, vocab: []
-    )
+    ),
+    pauseAudio: Bool = false
 ) -> Config {
     Config(
-        activeMode: mode.name, hotkey: "alt_r", toggleHotkey: nil, pauseAudio: false,
+        activeMode: mode.name, hotkey: "alt_r", toggleHotkey: nil, pauseAudio: pauseAudio,
         badgePosition: nil, modeOrder: [mode.name], modes: [mode.name: mode],
         path: FileManager.default.temporaryDirectory
             .appendingPathComponent("foldwise-pipeline-tests-\(UUID().uuidString).json")

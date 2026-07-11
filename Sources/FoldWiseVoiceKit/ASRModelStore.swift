@@ -24,15 +24,18 @@ enum ASRModelStore {
     /// can't be resolved. Parakeet uses FluidAudio's public cache accessor;
     /// Whisper follows WhisperKit's Hugging Face Hub default,
     /// `~/Documents/huggingface/models/argmaxinc/whisperkit-coreml/<variant>`.
-    static func modelDirectory(for engine: ASRModelCatalog.Engine) -> URL? {
+    static func modelDirectory(
+        for engine: ASRModelCatalog.Engine,
+        userDocumentsDirectory: URL? = FileManager.default.urls(
+            for: .documentDirectory, in: .userDomainMask
+        ).first
+    ) -> URL? {
         switch engine {
         case let .parakeet(version):
             return AsrModels.defaultCacheDirectory(for: fluidAudioVersion(version))
         case let .whisper(variant):
-            guard let documents = FileManager.default.urls(
-                for: .documentDirectory, in: .userDomainMask
-            ).first else { return nil }
-            return documents
+            guard let userDocumentsDirectory else { return nil }
+            return userDocumentsDirectory
                 .appendingPathComponent("huggingface/models/argmaxinc/whisperkit-coreml")
                 .appendingPathComponent(variant)
         }
@@ -41,14 +44,22 @@ enum ASRModelStore {
     /// Remove a downloaded model's weights, returning a user-facing error string
     /// or nil on success. Already-absent weights are the goal state, so they map
     /// to success — mirroring Ollama's "404 on delete is success" rule.
-    static func delete(_ engine: ASRModelCatalog.Engine) -> String? {
-        guard let dir = modelDirectory(for: engine) else {
+    static func delete(
+        _ engine: ASRModelCatalog.Engine,
+        userDocumentsDirectory: URL? = FileManager.default.urls(
+            for: .documentDirectory, in: .userDomainMask
+        ).first,
+        removeItem: (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }
+    ) -> String? {
+        guard let dir = modelDirectory(
+            for: engine, userDocumentsDirectory: userDocumentsDirectory
+        ) else {
             return "Couldn't locate the model files to delete."
         }
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: dir.path) else { return nil }
         do {
-            try fileManager.removeItem(at: dir)
+            try removeItem(dir)
             return nil
         } catch {
             return error.localizedDescription

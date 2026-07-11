@@ -7,19 +7,26 @@
 import XCTest
 @testable import FoldWiseVoiceKit
 
+private struct StubTranscriptionError: Error {}
+
 final class PipelineAsyncBehaviorTests: XCTestCase {
     private func makePipeline(
+        config: Config = makeTestConfig(),
         recorder: FakeRecorder = FakeRecorder(),
-        transcriber: FakeTranscriber
+        transcriber: FakeTranscriber,
+        polish: @escaping (String, Mode) async -> String = { text, _ in text },
+        insert: @escaping (String) async -> Bool = { _ in true },
+        record: @escaping (HistoryEntry) -> Void = { _ in },
+        frontmostApp: @escaping () async -> String? = { nil }
     ) -> (Pipeline, StateCollector) {
         let pipeline = Pipeline(
-            config: makeTestConfig(),
+            config: config,
             recorder: recorder,
             transcriber: transcriber,
-            polish: { text, _ in text },
-            insert: { _ in true },
-            record: { _ in },
-            frontmostApp: { nil }
+            polish: polish,
+            insert: insert,
+            record: record,
+            frontmostApp: frontmostApp
         )
         let collector = StateCollector()
         pipeline.onState = { collector.append($0) }
@@ -165,6 +172,303 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         )
         XCTAssertEqual(
             transcriber.received.map(\.count), [firstCapture.count, secondCapture.count]
+        )
+    }
+
+    func testQueuedSessionsContinueAfterTranscriptionFailure() async {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .failure(StubTranscriptionError())
+        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(
+            collector.states,
+            [
+                .listening(mode: "Voice to Text"), .transcribing,
+                .listening(mode: "Voice to Text"), .transcribing,
+                .error("StubTranscriptionError()"), .error("StubTranscriptionError()"),
+            ]
+        )
+    }
+
+    // MARK: - callback lifetime
+
+    func testTranscriberCallbacksDoNothingAfterPipelineDeallocation() {
+        let transcriber = FakeTranscriber()
+        var pipeline: Pipeline? = makePipeline(transcriber: transcriber).0
+        let collector = StateCollector()
+        pipeline?.onState = { collector.append($0) }
+
+        pipeline = nil
+        transcriber.onLoading?(true)
+        transcriber.onDownloadProgress?(0.5)
+
+        XCTAssertTrue(collector.states.isEmpty)
+    }
+
+    // MARK: - shutdown cancellation
+
+    func testShutdownCancelsSessionBeforeInsertion() async {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success("text that must not be inserted")
+        let transcribing = expectation(description: "transcription started")
+        let finishTranscribing = Latch()
+        transcriber.onTranscribe = {
+            transcribing.fulfill()
+            await finishTranscribing.wait()
+        }
+        let (pipeline, collector) = makePipeline(
+            transcriber: transcriber,
+            insert: { _ in true }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await fulfillment(of: [transcribing])
+        pipeline.shutdown()
+        await finishTranscribing.open()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(
+            collector.states,
+            [.listening(mode: "Voice to Text"), .transcribing, .idle]
+        )
+    }
+
+    func testShutdownCancelsEveryQueuedSession() async {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success("text that must not be inserted")
+        let firstTranscription = expectation(description: "first transcription started")
+        firstTranscription.assertForOverFulfill = false
+        let finishTranscribing = Latch()
+        transcriber.onTranscribe = {
+            firstTranscription.fulfill()
+            await finishTranscribing.wait()
+        }
+        let insert = InsertSpy()
+        let (pipeline, _) = makePipeline(
+            transcriber: transcriber,
+            insert: { insert.insert($0) }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await fulfillment(of: [firstTranscription])
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        pipeline.shutdown()
+        await finishTranscribing.open()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertTrue(insert.texts.isEmpty)
+    }
+
+    func testShutdownDuringPolishCancelsSessionBeforeInsertion() async {
+        let mode = Mode(
+            name: "Clean", asrModel: "", llmModel: "llama3", systemPrompt: nil, vocab: []
+        )
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success(
+            "this transcript is unquestionably longer than the forty character polish threshold"
+        )
+        let polishing = expectation(description: "polish started")
+        let finishPolishing = Latch()
+        let insert = InsertSpy()
+        let (pipeline, _) = makePipeline(
+            config: makeTestConfig(mode: mode),
+            transcriber: transcriber,
+            polish: { text, _ in
+                polishing.fulfill()
+                await finishPolishing.wait()
+                return text
+            },
+            insert: { insert.insert($0) }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await fulfillment(of: [polishing])
+        pipeline.shutdown()
+        await finishPolishing.open()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertTrue(insert.texts.isEmpty)
+    }
+
+    func testShutdownWhileResolvingPasteTargetCancelsInsertion() async {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success("text that must not be inserted")
+        let resolvingTarget = expectation(description: "paste target lookup started")
+        let finishResolvingTarget = Latch()
+        let insert = InsertSpy()
+        let (pipeline, _) = makePipeline(
+            transcriber: transcriber,
+            insert: { insert.insert($0) },
+            frontmostApp: {
+                resolvingTarget.fulfill()
+                await finishResolvingTarget.wait()
+                return "TextEdit"
+            }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await fulfillment(of: [resolvingTarget])
+        pipeline.shutdown()
+        await finishResolvingTarget.open()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertTrue(insert.texts.isEmpty)
+    }
+
+    func testShutdownClosesRecorder() {
+        let recorder = FakeRecorder()
+        let transcriber = FakeTranscriber()
+        let (pipeline, _) = makePipeline(recorder: recorder, transcriber: transcriber)
+
+        pipeline.shutdown()
+        pipeline.shutdown()
+
+        XCTAssertEqual(recorder.closeCount, 1)
+    }
+
+    func testTranscriberCallbacksDoNothingAfterShutdown() {
+        let transcriber = FakeTranscriber()
+        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+
+        pipeline.shutdown()
+        transcriber.onLoading?(true)
+        transcriber.onDownloadProgress?(0.5)
+
+        XCTAssertEqual(collector.states, [.idle])
+    }
+
+    func testStateCallbackCanShutDownPipelineWithoutDeadlocking() {
+        let transcriber = FakeTranscriber()
+        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+        pipeline.onState = { state in
+            collector.append(state)
+            if state == .loadingModel {
+                pipeline.shutdown()
+            }
+        }
+
+        transcriber.onLoading?(true)
+
+        XCTAssertEqual(collector.states, [.loadingModel, .idle])
+    }
+
+    func testShutdownFromTranscribingDoesNotStartSession() async {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success("text that must not be inserted")
+        let (pipeline, _) = makePipeline(transcriber: transcriber)
+        pipeline.onState = { state in
+            if state == .transcribing {
+                pipeline.shutdown()
+            }
+        }
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertTrue(transcriber.received.isEmpty)
+    }
+
+    func testShutdownFromInsertedDoesNotRecordHistory() async {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success("inserted text")
+        let record = RecordSpy()
+        let (pipeline, _) = makePipeline(
+            transcriber: transcriber,
+            record: { record.record($0) }
+        )
+        pipeline.onState = { state in
+            if state == .inserted {
+                pipeline.shutdown()
+            }
+        }
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertTrue(record.entries.isEmpty)
+    }
+
+    func testShutdownDuringInsertionKeepsIdleAsTerminalState() async {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success("insertion already started")
+        let inserting = expectation(description: "insert started")
+        let finishInserting = Latch()
+        let (pipeline, collector) = makePipeline(
+            transcriber: transcriber,
+            insert: { _ in
+                inserting.fulfill()
+                await finishInserting.wait()
+                return true
+            }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await fulfillment(of: [inserting])
+        pipeline.shutdown()
+        await finishInserting.open()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(
+            collector.states,
+            [.listening(mode: "Voice to Text"), .transcribing, .idle]
+        )
+    }
+
+    func testShutdownDuringInsertionDoesNotRecordHistory() async {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success("insertion already started")
+        let inserting = expectation(description: "insert started")
+        let finishInserting = Latch()
+        let record = RecordSpy()
+        let (pipeline, _) = makePipeline(
+            transcriber: transcriber,
+            insert: { _ in
+                inserting.fulfill()
+                await finishInserting.wait()
+                return true
+            },
+            record: { record.record($0) }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await fulfillment(of: [inserting])
+        pipeline.shutdown()
+        await finishInserting.open()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertTrue(record.entries.isEmpty)
+    }
+
+    func testShutdownDuringCaptureIgnoresLaterInputAndEndsIdle() async {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success("text that must not be inserted")
+        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+
+        pipeline.startRecording()
+        pipeline.shutdown()
+        pipeline.stopRecording()
+        pipeline.startRecording()
+        pipeline.toggleRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(
+            collector.states,
+            [.listening(mode: "Voice to Text"), .idle]
         )
     }
 }

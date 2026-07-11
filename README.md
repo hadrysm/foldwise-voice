@@ -143,10 +143,23 @@ in `Sources/FoldWiseVoiceKit` (a library, so it's testable), a thin
 ```sh
 swift build              # debug build
 swift test               # run the test suite
+./scripts/coverage.sh     # run tests once and enforce the same coverage policy as CI
 swift run -c release     # run the app from the repo
 swiftformat .            # format (Prettier equivalent)
 swiftlint                # lint (ESLint equivalent)
 ```
+
+The coverage command evaluates only production files in
+`Sources/FoldWiseVoiceKit`: dependencies and tests never improve the result.
+It enforces at least 90% coverage for every included file, the included core
+aggregate, and changed included lines, plus the accepted no-regression floors
+for included-core and overall production coverage. Exact file exemptions and
+their reasons live in `coverage-policy.json`; every other current or future
+production Swift file is included by default. To compare with a target other than `origin/main`, run
+`COVERAGE_BASE_REF=<ref> ./scripts/coverage.sh` or pass the ref as its argument.
+The [testing guide](docs/TESTING.md) documents the test layers, coverage
+calculation, exemption register, failure diagnostics, and manual macOS smoke
+procedure required before every release.
 
 Install the tools with `brew install swiftformat swiftlint`, then enable the
 pre-commit hook (formats and lints staged Swift files, like lint-staged):
@@ -155,8 +168,8 @@ pre-commit hook (formats and lints staged Swift files, like lint-staged):
 git config core.hooksPath .githooks
 ```
 
-CI runs `swiftformat --lint`, `swiftlint --strict`, and `swift test` on every
-pull request (`.github/workflows/ci.yml`). Releases are automated with
+CI runs `swiftformat --lint`, `swiftlint --strict`, and the repository coverage
+command on every pull request (`.github/workflows/ci.yml`). Releases are automated with
 release-please: conventional-commit messages on `main` drive the version, and
 each release gets a .dmg built and attached automatically
 (`.github/workflows/release-please.yml`).

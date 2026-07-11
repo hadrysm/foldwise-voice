@@ -39,15 +39,6 @@ final class TranscriberDispatcher: Transcribing {
         }
     }
 
-    /// Production factory: map a catalog engine to its concrete conformer. The
-    /// default `makeEngine`; tests inject fakes instead.
-    static func buildEngine(_ engine: ASRModelCatalog.Engine) -> Transcribing {
-        switch engine {
-        case let .parakeet(version): Transcriber(version: version)
-        case let .whisper(variant): WhisperTranscriber(variant: variant)
-        }
-    }
-
     var ready: Bool {
         lock.lock()
         defer { lock.unlock() }
