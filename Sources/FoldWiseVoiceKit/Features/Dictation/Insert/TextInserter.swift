@@ -22,10 +22,10 @@ enum TextInserter {
         _ text: String,
         pasteboard: NSPasteboard,
         trusted: () -> Bool,
-        postPaste: () -> Void,
+        postPaste: () async -> Void,
         restoreDelay: TimeInterval,
         scheduleRestore: RestoreScheduler
-    ) -> Bool {
+    ) async -> Bool {
         guard !text.isEmpty else { return false }
 
         cancelRestore?()
@@ -40,7 +40,7 @@ enum TextInserter {
             return false
         }
 
-        postPaste()
+        await postPaste()
 
         if let previous {
             // Give the focused app time to read the clipboard before

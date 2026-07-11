@@ -89,9 +89,12 @@ final class SettingsController {
         win.setFrameAutosaveName("FoldWiseMainWindow")
         closeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: win, queue: .main
-        ) { _ in
-            // Back to menu-bar-only once settings closes.
-            Task { @MainActor in NSApp.setActivationPolicy(.accessory) }
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.stopKeyMonitor()
+                // Back to menu-bar-only once settings closes.
+                NSApp.setActivationPolicy(.accessory)
+            }
         }
         window = win
     }

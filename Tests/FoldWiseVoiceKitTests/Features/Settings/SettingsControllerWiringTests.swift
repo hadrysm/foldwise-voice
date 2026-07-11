@@ -83,6 +83,35 @@ final class SettingsControllerWiringTests: XCTestCase {
         XCTAssertEqual(config.hotkey, "F8")
     }
 
+    func testClosingWindowStopsShortcutRecordingMonitor() {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("close-monitor-history.jsonl"))
+        let config = makeConfig()
+        let controller = SettingsController(
+            config: config, historyStore: store, statsStore: WiringStatsStore()
+        )
+        let app = NSApplication.shared
+        let existingWindows = Set(app.windows.map(ObjectIdentifier.init))
+        controller.show()
+        controller.model.onRecord?(.ptt)
+
+        guard let window = app.windows.first(where: {
+            !existingWindows.contains(ObjectIdentifier($0))
+        }) else {
+            return XCTFail("Settings window was not built")
+        }
+        window.close()
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "a",
+            charactersIgnoringModifiers: "a", isARepeat: false, keyCode: 0
+        ) else {
+            return XCTFail("Key event could not be created")
+        }
+        app.sendEvent(event)
+
+        XCTAssertEqual(config.hotkey, "F5")
+    }
+
     private func makeConfig() -> Config {
         Config(
             activeMode: "Voice to Text", hotkey: "F5", toggleHotkey: nil, pauseAudio: false,

@@ -140,7 +140,7 @@ final class Pipeline {
     }
 
     static func pasteboardInsert(_ text: String) async -> Bool {
-        await MainActor.run { TextInserter.insert(text) }
+        await TextInserter.insert(text)
     }
 
     static func recordToHistory(_ entry: HistoryEntry) {

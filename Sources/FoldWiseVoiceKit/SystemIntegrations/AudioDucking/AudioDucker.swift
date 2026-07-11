@@ -1,8 +1,67 @@
 // Thin system-command adapter for audio ducking. Coordination and restoration
 // decisions live in AudioDuckCoordinator; this shell only executes AppleScript.
 
+import Darwin
 import Foundation
 import os
+
+enum BoundedProcess {
+    struct Outcome: Equatable {
+        let status: Int32
+        let output: Data
+        let timedOut: Bool
+    }
+
+    private final class TimeoutState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+
+        func mark() {
+            lock.withLock { value = true }
+        }
+
+        var occurred: Bool {
+            lock.withLock { value }
+        }
+    }
+
+    static func run(
+        executableURL: URL,
+        arguments: [String],
+        timeout: TimeInterval
+    ) throws -> Outcome {
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        try process.run()
+
+        let timeoutState = TimeoutState()
+        let forceKill = DispatchWorkItem {
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        }
+        let terminate = DispatchWorkItem {
+            guard process.isRunning else { return }
+            timeoutState.mark()
+            process.terminate()
+            DispatchQueue.global().asyncAfter(deadline: .now() + 1, execute: forceKill)
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: terminate)
+
+        // Drain while the child is running so a full pipe cannot block its exit.
+        let output = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        terminate.cancel()
+        forceKill.cancel()
+        return Outcome(
+            status: process.terminationStatus,
+            output: output,
+            timedOut: timeoutState.occurred
+        )
+    }
+}
 
 final class AudioDucker: AudioDucking {
     private let queue = DispatchQueue(label: "ducker", qos: .userInitiated)
@@ -69,25 +128,28 @@ private final class AppleScriptAudioDuckSystemEffects: AudioDuckSystemEffects {
         _ script: String,
         operation: String
     ) -> (succeeded: Bool, output: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
+        let result: BoundedProcess.Outcome
         do {
-            try process.run()
-            process.waitUntilExit()
+            result = try BoundedProcess.run(
+                executableURL: URL(fileURLWithPath: "/usr/bin/osascript"),
+                arguments: ["-e", script],
+                timeout: 5
+            )
         } catch {
             Log.audio.error(
                 "Audio duck command could not launch; skipped \(operation, privacy: .public)"
             )
             return (false, "")
         }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8)?
+        let output = String(data: result.output, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard process.terminationStatus == 0 else {
+        guard !result.timedOut else {
+            Log.audio.error(
+                "Audio duck command timed out; skipped \(operation, privacy: .public)"
+            )
+            return (false, output)
+        }
+        guard result.status == 0 else {
             Log.audio.error(
                 "Audio duck command failed; skipped \(operation, privacy: .public)"
             )

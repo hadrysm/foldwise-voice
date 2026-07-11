@@ -208,6 +208,7 @@ struct SettingsView: View {
         .buttonStyle(.plain)
         .shadow(color: active ? Theme.activeNavShadow : .clear, radius: 3, y: 1)
         .anchorPreference(key: RailTileBoundsKey.self, value: .bounds) { [pane: $0] }
+        .accessibilityLabel(pane.rawValue)
         .onHover { hovering in
             if hovering {
                 model.hoveredRailPane = pane

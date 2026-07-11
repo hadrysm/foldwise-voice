@@ -68,14 +68,23 @@ enum ModelCatalog {
         ),
     ]
 
-    /// Exact match first, then match on the part before ':' so
+    /// Exact match first, then match the family and size tier so
     /// "llama3.2:3b-instruct-q4_K_M" still gets guidance.
     static func entry(for name: String) -> Entry? {
         entries.first { $0.name == name }
-            ?? entries.first { base($0.name) == base(name) }
+            ?? entries.first { guidanceKey($0.name) == guidanceKey(name) }
+            ?? entries.first { family($0.name) == family(name) }
     }
 
-    private static func base(_ name: String) -> String {
-        name.split(separator: ":").first.map(String.init) ?? name
+    private static func guidanceKey(_ name: String) -> String {
+        let components = name.split(separator: ":", maxSplits: 1).map(String.init)
+        guard components.count == 2 else { return name }
+        let family = components[0]
+        let tag = components[1].split(separator: "-", maxSplits: 1).first.map(String.init) ?? ""
+        return tag.contains(where: \.isNumber) ? "\(family):\(tag)" : family
+    }
+
+    private static func family(_ name: String) -> String {
+        name.split(separator: ":", maxSplits: 1).first.map(String.init) ?? name
     }
 }

@@ -20,17 +20,17 @@ final class TextInserterRestoreTests: XCTestCase {
     }
 
     @MainActor
-    private func insert(_ text: String, trusted: Bool = true) -> Bool {
-        insert(text, trusted: trusted, postPaste: {})
+    private func insert(_ text: String, trusted: Bool = true) async -> Bool {
+        await insert(text, trusted: trusted, postPaste: {})
     }
 
     @MainActor
     private func insert(
         _ text: String,
         trusted: Bool = true,
-        postPaste: @escaping () -> Void
-    ) -> Bool {
-        TextInserter.insert(
+        postPaste: @escaping () async -> Void
+    ) async -> Bool {
+        await TextInserter.insert(
             text, pasteboard: pasteboard,
             trusted: { trusted }, postPaste: postPaste,
             restoreDelay: 0.4,
@@ -39,19 +39,19 @@ final class TextInserterRestoreTests: XCTestCase {
     }
 
     @MainActor
-    func testRestoresPreviousClipboardAfterPasteWindow() {
+    func testRestoresPreviousClipboardAfterPasteWindow() async {
         pasteboard.clearContents()
         pasteboard.setString("previous", forType: .string)
-        _ = insert("dictated")
+        _ = await insert("dictated")
         scheduler.scheduled.last?()
         XCTAssertEqual(pasteboard.string(forType: .string), "previous")
     }
 
     @MainActor
-    func testUserCopyDuringPasteWindowIsNotClobbered() {
+    func testUserCopyDuringPasteWindowIsNotClobbered() async {
         pasteboard.clearContents()
         pasteboard.setString("previous", forType: .string)
-        _ = insert("dictated")
+        _ = await insert("dictated")
         pasteboard.clearContents()
         pasteboard.setString("user copy", forType: .string)
         scheduler.scheduled.last?()
@@ -59,69 +59,72 @@ final class TextInserterRestoreTests: XCTestCase {
     }
 
     @MainActor
-    func testNewerInsertSupersedesPendingRestore() {
+    func testNewerInsertSupersedesPendingRestore() async {
         // Even if the first insert's canceled work is delivered late, the
         // second insert restores what it found on the pasteboard: "first".
         pasteboard.clearContents()
         pasteboard.setString("previous", forType: .string)
-        _ = insert("first")
-        _ = insert("second")
+        _ = await insert("first")
+        _ = await insert("second")
         scheduler.scheduled.forEach { $0() }
         XCTAssertEqual(pasteboard.string(forType: .string), "first")
     }
 
     @MainActor
-    func testNewerInsertCancelsPendingRestore() {
+    func testNewerInsertCancelsPendingRestore() async {
         pasteboard.setString("previous", forType: .string)
-        _ = insert("first")
-        _ = insert("second")
+        _ = await insert("first")
+        _ = await insert("second")
         XCTAssertTrue(scheduler.cancelled)
     }
 
     @MainActor
-    func testWithoutAccessibilityReturnsClipboardFallback() {
-        XCTAssertFalse(insert("dictated", trusted: false))
+    func testWithoutAccessibilityReturnsClipboardFallback() async {
+        let inserted = await insert("dictated", trusted: false)
+        XCTAssertFalse(inserted)
     }
 
     @MainActor
-    func testWithoutAccessibilityLeavesTranscriptOnClipboardForGood() {
+    func testWithoutAccessibilityLeavesTranscriptOnClipboardForGood() async {
         pasteboard.clearContents()
         pasteboard.setString("previous", forType: .string)
-        _ = insert("dictated", trusted: false)
+        _ = await insert("dictated", trusted: false)
         XCTAssertEqual(pasteboard.string(forType: .string), "dictated")
     }
 
     @MainActor
-    func testEmptyTextIsRejected() {
+    func testEmptyTextIsRejected() async {
         pasteboard.clearContents()
         pasteboard.setString("previous", forType: .string)
-        XCTAssertFalse(insert(""))
+        let inserted = await insert("")
+        XCTAssertFalse(inserted)
     }
 
     @MainActor
-    func testEmptyTextLeavesPasteboardUntouched() {
+    func testEmptyTextLeavesPasteboardUntouched() async {
         pasteboard.clearContents()
         pasteboard.setString("previous", forType: .string)
-        _ = insert("")
+        _ = await insert("")
         XCTAssertEqual(pasteboard.string(forType: .string), "previous")
     }
 
     @MainActor
-    func testEmptyPasteboardMeansNothingToRestore() {
+    func testEmptyPasteboardMeansNothingToRestore() async {
         pasteboard.clearContents()
-        _ = insert("dictated")
+        _ = await insert("dictated")
         XCTAssertEqual(pasteboard.string(forType: .string), "dictated")
     }
 
     @MainActor
-    func testSuccessfulInsertionReturnsTrue() {
-        XCTAssertTrue(insert("dictated"))
+    func testSuccessfulInsertionReturnsTrue() async {
+        let inserted = await insert("dictated")
+        XCTAssertTrue(inserted)
     }
 
     @MainActor
-    func testSuccessfulInsertionPostsPaste() {
+    func testSuccessfulInsertionPostsPaste() async {
         var posted = false
-        _ = insert("dictated", postPaste: { posted = true })
+        _ = await insert("dictated", postPaste: { posted = true })
         XCTAssertTrue(posted)
     }
 }

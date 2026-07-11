@@ -47,7 +47,11 @@ final class AudioRecorder: AudioRecording {
             commonFormat: .pcmFormatFloat32, sampleRate: Self.sampleRate,
             channels: 1, interleaved: false
         )!
-        converter = AVAudioConverter(from: inputFormat, to: outputFormat)
+        guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+            Log.audio.error("Audio input format cannot be converted to 16 kHz mono")
+            return
+        }
+        self.converter = converter
 
         input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             self?.consume(buffer, outputFormat: outputFormat)

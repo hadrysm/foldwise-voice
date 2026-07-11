@@ -18,6 +18,12 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertEqual(entry?.name, "llama3.2:3b")
     }
 
+    func testVariantModelNamePreservesSizeTier() {
+        let entry = ModelCatalog.entry(for: "llama3.2:3b-instruct-q4_K_M")
+
+        XCTAssertEqual(entry?.name, "llama3.2:3b")
+    }
+
     func testUnrecognizedVariantUsesFamilyGuidance() {
         let entry = ModelCatalog.entry(for: "mistral:instruct")
 

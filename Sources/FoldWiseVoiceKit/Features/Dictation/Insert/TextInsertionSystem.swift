@@ -13,8 +13,8 @@ enum TextInsertionSystem {
     }
 
     /// Synthesize Cmd+V into the focused app (needs Accessibility).
-    static func postPaste() {
-        usleep(50000) // let the clipboard settle before pasting
+    static func postPaste() async {
+        try? await Task.sleep(for: .milliseconds(50)) // let the clipboard settle before pasting
 
         let source = CGEventSource(stateID: .hidSystemState)
         let vKey: CGKeyCode = 9
@@ -33,8 +33,8 @@ extension TextInserter {
     }
 
     @MainActor
-    static func insert(_ text: String) -> Bool {
-        insert(
+    static func insert(_ text: String) async -> Bool {
+        await insert(
             text,
             pasteboard: .general,
             trusted: accessibilityTrusted,
