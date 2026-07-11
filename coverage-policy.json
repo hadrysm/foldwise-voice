@@ -67,6 +67,18 @@
       "reason": "Declarative SwiftUI settings composition"
     },
     {
+      "path": "Sources/FoldWiseVoiceKit/Features/Settings/ModelsCombinedPane.swift",
+      "reason": "Declarative SwiftUI settings composition extracted from SettingsView"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/Features/Settings/ModelsPane.swift",
+      "reason": "Declarative SwiftUI Ollama settings composition extracted from SettingsView"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/Features/Settings/SpeechPane.swift",
+      "reason": "Declarative SwiftUI ASR settings composition extracted from SettingsView"
+    },
+    {
       "path": "Sources/FoldWiseVoiceKit/Features/Statistics/StatsView.swift",
       "reason": "Declarative SwiftUI statistics composition"
     },

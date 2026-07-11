@@ -75,7 +75,7 @@ final class OllamaClientHTTPBehaviorTests: XCTestCase {
 
         let models = await client(using: transport).listModels()
 
-        XCTAssertEqual(models.map(\.name), ["alpha:latest", "zeta:latest"])
+        XCTAssertEqual(models.map(\.id), ["alpha:latest", "zeta:latest"])
     }
 
     func testListModelsReturnsEmptyWhenTransportFails() async {
