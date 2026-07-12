@@ -90,7 +90,7 @@ enum Theme {
     static let sidebarRowHeight: CGFloat = 36
     static let sidebarRowSpacing: CGFloat = 4
     static let sidebarLabelOffset: CGFloat = 6
-    static let statsRailWidth: CGFloat = 212
+    static let homeCompactBreakpoint: Double = 940
     static let contentPadding: CGFloat = 36
     static let navRadius: CGFloat = 8
     static let railTileRadius: CGFloat = 9

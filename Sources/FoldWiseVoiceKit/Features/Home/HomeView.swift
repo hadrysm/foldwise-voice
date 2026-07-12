@@ -1,13 +1,23 @@
-// The Home view (PRD #103): a greeting with the live hotkey rendered as a
-// keycap, the last ten dictation sessions grouped by day (click → History),
-// and a 212pt stats rail — total words, wpm, day streak, minutes saved — with
-// an at-a-glance system summary. A thin render over `HomeProjection` and
-// `UsageStatsAggregator`; the rules live (and are tested) there.
+// The Home view (PRDs #103 and #143): a greeting with the live hotkey rendered
+// as a keycap, a full-width adaptive usage overview, a separate system-status
+// card, and the last ten dictation sessions grouped by day. A thin render over
+// `HomeProjection` and `UsageStatsAggregator`; the rules live (and are tested)
+// there.
 
 import AppKit
 import SwiftUI
 
 struct HomeView: View {
+    private struct Metric: Identifiable {
+        let label: String
+        let value: String?
+        let unit: String?
+
+        var id: String {
+            label
+        }
+    }
+
     @ObservedObject var model: SettingsModel
 
     /// Both projections are memoized off `historyEntries` — SettingsModel has
@@ -21,15 +31,11 @@ struct HomeView: View {
     )
 
     var body: some View {
-        HStack(spacing: 0) {
-            main
-            Rectangle().fill(Theme.hairline).frame(width: 1)
-            statsRail
-        }
-        .onChange(of: model.historyEntries, initial: true) { _, entries in
-            stats = UsageStatsAggregator.aggregate(entries)
-            projection = HomeProjection.project(entries, now: Date())
-        }
+        main
+            .onChange(of: model.historyEntries, initial: true) { _, entries in
+                stats = UsageStatsAggregator.aggregate(entries)
+                projection = HomeProjection.project(entries, now: Date())
+            }
     }
 
     // MARK: - main column
@@ -43,6 +49,10 @@ struct HomeView: View {
                     .foregroundStyle(Theme.textPrimary)
                 hotkeyHint
                     .padding(.top, 10)
+                overviewFolio
+                    .padding(.top, 30)
+                systemStatusCard
+                    .padding(.top, 14)
                 if projection.isEmpty {
                     Text("Your dictations will appear here after you speak.")
                         .font(Theme.body)
@@ -129,80 +139,131 @@ struct HomeView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - stats rail
+    // MARK: - overview
 
-    private var statsRail: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                statLine(stats.totalWords.formatted(), "total words")
-                railDivider
-                statLine(wordsPerMinuteText, "wpm")
-                railDivider
-                statLine(streakText, "day streak")
-                railDivider
-                statLine(timeSavedText, "min saved")
-                railDivider
-                systemSummary
-                    .padding(.top, 18)
+    @ViewBuilder
+    private var overviewFolio: some View {
+        let layout = HomeOverviewLayout.forWindowWidth(model.windowWidth)
+        let metrics = overviewMetrics
+        Group {
+            if layout == .wide {
+                HStack(spacing: 0) {
+                    ForEach(Array(metrics.enumerated()), id: \.element.id) { index, metric in
+                        statCell(metric)
+                        if index < metrics.count - 1 {
+                            verticalRule
+                        }
+                    }
+                }
+            } else {
+                VStack(spacing: 0) {
+                    metricRow(Array(metrics.prefix(2)))
+                    horizontalRule
+                    metricRow(Array(metrics.suffix(2)))
+                }
             }
-            .padding(.horizontal, 22)
-            .padding(.top, Theme.contentPadding)
-            .padding(.bottom, 24)
         }
-        .frame(width: Theme.statsRailWidth)
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.cardRadius)
+                .strokeBorder(Theme.hairline, lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: Theme.cardRadius))
     }
 
-    private var railDivider: some View {
+    private var horizontalRule: some View {
         Rectangle().fill(Theme.hairline).frame(height: 1)
     }
 
-    private func statLine(_ number: String, _ label: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(number)
-                .font(Theme.statNumber)
-                .foregroundStyle(Theme.textPrimary)
-                .monospacedDigit()
-            Text(label)
+    private var verticalRule: some View {
+        Rectangle().fill(Theme.hairline).frame(width: 1)
+    }
+
+    private func metricRow(_ metrics: [Metric]) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(metrics.enumerated()), id: \.element.id) { index, metric in
+                statCell(metric)
+                if index < metrics.count - 1 {
+                    verticalRule
+                }
+            }
+        }
+    }
+
+    private func statCell(_ metric: Metric) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(metric.value ?? "—")
+                    .font(Theme.statNumber)
+                    .foregroundStyle(Theme.textPrimary)
+                    .monospacedDigit()
+                if metric.value != nil, let unit = metric.unit {
+                    Text(unit)
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+            }
+            Text(metric.label)
                 .font(Theme.ui(12))
                 .foregroundStyle(Theme.textTertiary)
         }
-        .padding(.vertical, 13)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity, minHeight: 86, alignment: .leading)
     }
 
-    private var wordsPerMinuteText: String {
-        guard let wpm = stats.wordsPerMinute, wpm >= 0.5 else { return "—" }
+    private var overviewMetrics: [Metric] {
+        [
+            Metric(label: "total words", value: stats.totalWords.formatted(), unit: nil),
+            Metric(label: "speaking speed", value: wordsPerMinuteText, unit: "wpm"),
+            Metric(label: "current streak", value: streakText, unit: streakUnit),
+            Metric(label: "time saved", value: timeSavedText, unit: "min"),
+        ]
+    }
+
+    private var wordsPerMinuteText: String? {
+        guard let wpm = stats.wordsPerMinute, wpm >= 0.5 else { return nil }
         return "\(Int(wpm.rounded()))"
     }
 
-    private var streakText: String {
-        guard let days = model.currentStreak else { return "—" }
+    private var streakText: String? {
+        guard let days = model.currentStreak else { return nil }
         return "\(days)"
     }
 
-    private var timeSavedText: String {
-        guard let minutes = stats.timeSavedMinutes, minutes >= 0.5 else { return "—" }
+    private var streakUnit: String {
+        model.currentStreak == 1 ? "day" : "days"
+    }
+
+    private var timeSavedText: String? {
+        guard let minutes = stats.timeSavedMinutes, minutes >= 0.5 else { return nil }
         return "~\(Int(minutes.rounded()))"
     }
 
     /// The at-a-glance system summary: active ASR model, Polish model,
     /// accessibility, version — plus a link into Stats.
-    private var systemSummary: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(model.axTrusted ? "All systems go" : "Needs attention")
-                .font(Theme.ui(12.5, .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            Text(summaryLine)
-                .font(Theme.ui(11.5))
-                .foregroundStyle(Theme.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-            if !model.axTrusted {
-                Button("Open Accessibility…") {
-                    if let url = Self.accessibilitySettingsURL {
-                        NSWorkspace.shared.open(url)
+    private var systemStatusCard: some View {
+        HStack(spacing: 14) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(Theme.accent)
+                .frame(width: 3, height: 36)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(model.axTrusted ? "All systems go" : "Needs attention")
+                    .font(Theme.ui(12.5, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(summaryLine)
+                    .font(Theme.ui(11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !model.axTrusted {
+                    Button("Open Accessibility…") {
+                        if let url = Self.accessibilitySettingsURL {
+                            NSWorkspace.shared.open(url)
+                        }
                     }
+                    .controlSize(.small)
                 }
-                .controlSize(.small)
             }
+            Spacer(minLength: 12)
             Button {
                 model.pane = .stats
             } label: {
@@ -211,8 +272,13 @@ struct HomeView: View {
                     .foregroundStyle(Theme.accent)
             }
             .buttonStyle(.plain)
-            .padding(.top, 6)
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(
+            Theme.cardBackground,
+            in: RoundedRectangle(cornerRadius: Theme.cardRadius)
+        )
     }
 
     private var summaryLine: String {
