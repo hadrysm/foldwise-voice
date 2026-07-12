@@ -98,7 +98,7 @@ struct HomeView: View {
                     .padding(.top, i == 0 ? 0 : 22)
                     .padding(.bottom, 4)
                 ForEach(section.rows) { row in
-                    dictationRow(row)
+                    HomeDictationRow(model: model, row: row)
                 }
             }
         }
@@ -109,34 +109,6 @@ struct HomeView: View {
             .font(Theme.sectionLabel)
             .kerning(1.1)
             .foregroundStyle(Theme.textTertiary)
-    }
-
-    private func dictationRow(_ row: HomeProjection.Row) -> some View {
-        Button {
-            model.pane = .history
-        } label: {
-            VStack(spacing: 0) {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text(row.time)
-                        .font(Theme.timestamp)
-                        .foregroundStyle(Theme.textTertiary)
-                        .frame(width: 44, alignment: .leading)
-                    Text(row.preview)
-                        .font(Theme.body)
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 16)
-                    Text(row.tag)
-                        .font(Theme.modeTag)
-                        .foregroundStyle(Theme.textFaint)
-                }
-                .padding(.vertical, 11)
-                Rectangle().fill(Theme.hairline).frame(height: 1)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - overview
@@ -298,5 +270,153 @@ struct HomeView: View {
         let entry = ASRModelCatalog.entry(for: model.asrModel)
             ?? ASRModelCatalog.entry(for: ASRModelCatalog.defaultID)
         return entry?.name ?? "Parakeet TDT v3"
+    }
+}
+
+/// One inert recent-dictation row. Its transient pointer, focus, and copy
+/// confirmation state stays local so Home's projection remains a pure view of
+/// history and the existing History workflow continues to own side effects.
+private struct HomeDictationRow: View {
+    private enum FocusTarget: Hashable {
+        case row
+        case copy
+        case flag
+    }
+
+    let model: SettingsModel
+    let row: HomeProjection.Row
+
+    @State private var hovered = false
+    @State private var copied = false
+    @State private var copyResetTask: Task<Void, Never>?
+    @FocusState private var focusedTarget: FocusTarget?
+
+    private var actionsRevealed: Bool {
+        hovered || focusedTarget != nil || copied
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text(row.time)
+                    .font(Theme.timestamp)
+                    .foregroundStyle(Theme.textTertiary)
+                    .frame(width: 44, alignment: .leading)
+                Text(row.preview)
+                    .font(Theme.body)
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 16)
+                trailingRegion
+            }
+            .padding(.horizontal, 6)
+            .frame(height: 44)
+            .background(actionsRevealed && hovered ? Theme.accent.opacity(0.055) : .clear)
+            .overlay {
+                if focusedTarget != nil {
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.accentColor, lineWidth: 2)
+                }
+            }
+            .contentShape(Rectangle())
+            .focusable()
+            .focused($focusedTarget, equals: .row)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("\(row.time), \(row.preview), Mode \(row.tag)")
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+        }
+        .onHover { hovering in
+            hovered = hovering
+        }
+        .onDisappear {
+            copyResetTask?.cancel()
+        }
+    }
+
+    private var trailingRegion: some View {
+        ZStack(alignment: .trailing) {
+            HStack(spacing: 7) {
+                Text(row.tag)
+                    .font(Theme.modeTag)
+                    .foregroundStyle(Theme.textFaint)
+                    .lineLimit(1)
+                if row.entry.flagged {
+                    Image(systemName: "flag.fill")
+                        .font(Theme.ui(11, .semibold))
+                        .foregroundStyle(.orange)
+                        .accessibilityHidden(true)
+                }
+            }
+            .opacity(actionsRevealed ? 0 : 1)
+            .allowsHitTesting(false)
+
+            HStack(spacing: 4) {
+                copyButton
+                flagButton
+            }
+            .allowsHitTesting(actionsRevealed)
+        }
+        .frame(width: 118, alignment: .trailing)
+    }
+
+    private var copyButton: some View {
+        Button(action: copyDisplayedText) {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .font(Theme.ui(12, .semibold))
+                .foregroundStyle(copied ? AnyShapeStyle(.green) : AnyShapeStyle(Theme.textSecondary))
+                .opacity(actionsRevealed ? 1 : 0)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable()
+        .focused($focusedTarget, equals: .copy)
+        .accessibilityLabel("Copy text")
+        .accessibilityHint("Copies the displayed dictation text.")
+        .help("Copy text")
+    }
+
+    private var flagButton: some View {
+        let flagged = row.entry.flagged
+        return Button {
+            model.onFlagHistory?(row.entry)
+        } label: {
+            Image(systemName: flagged ? "flag.fill" : "flag")
+                .font(Theme.ui(12, .semibold))
+                .foregroundStyle(flagged ? AnyShapeStyle(.orange) : AnyShapeStyle(Theme.textSecondary))
+                .opacity(actionsRevealed ? 1 : 0)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable()
+        .focused($focusedTarget, equals: .flag)
+        .accessibilityLabel(flagged ? "Remove flag" : "Flag for my review")
+        .accessibilityHint(
+            flagged
+                ? "Removes this dictation from your flagged items."
+                : "Flags this dictation for later review."
+        )
+        .help(flagged ? "Remove flag" : "Flag for my review")
+    }
+
+    private func copyDisplayedText() {
+        model.onCopyHistory?(row.entry)
+        copied = true
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: "Copied",
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+            ]
+        )
+        copyResetTask?.cancel()
+        copyResetTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1400))
+            guard !Task.isCancelled else { return }
+            copied = false
+        }
     }
 }
