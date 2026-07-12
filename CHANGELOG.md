@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.0](https://github.com/hadrysm/foldwise-voice/compare/v0.13.0...v0.14.0) (2026-07-12)
+
+
+### Features
+
+* improve Home overview and sidebar interactions ([#147](https://github.com/hadrysm/foldwise-voice/issues/147)) ([dc7b64b](https://github.com/hadrysm/foldwise-voice/commit/dc7b64bc8cd6daf50c0ca3bc70a76f6a9405b058))
+
+
+### Refactoring
+
+* organize Swift project by feature ([#136](https://github.com/hadrysm/foldwise-voice/issues/136)) ([2b9be7b](https://github.com/hadrysm/foldwise-voice/commit/2b9be7b3a552139875052c07bb9fae870e8cdece))
+
 ## [0.13.0](https://github.com/hadrysm/foldwise-voice/compare/v0.12.0...v0.13.0) (2026-07-09)
 
 
