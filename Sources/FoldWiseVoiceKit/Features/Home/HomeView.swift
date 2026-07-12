@@ -1,13 +1,20 @@
-// The Home view (PRD #103): a greeting with the live hotkey rendered as a
-// keycap, the last ten dictation sessions grouped by day (click → History),
-// and a 212pt stats rail — total words, wpm, day streak, minutes saved — with
-// an at-a-glance system summary. A thin render over `HomeProjection` and
-// `UsageStatsAggregator`; the rules live (and are tested) there.
+// Keep history grouping and usage calculations outside the SwiftUI render path
+// so their behavior can be tested without view inspection.
 
 import AppKit
 import SwiftUI
 
 struct HomeView: View {
+    private struct Metric: Identifiable {
+        let label: String
+        let value: String?
+        let unit: String?
+
+        var id: String {
+            label
+        }
+    }
+
     @ObservedObject var model: SettingsModel
 
     /// Both projections are memoized off `historyEntries` — SettingsModel has
@@ -21,15 +28,11 @@ struct HomeView: View {
     )
 
     var body: some View {
-        HStack(spacing: 0) {
-            main
-            Rectangle().fill(Theme.hairline).frame(width: 1)
-            statsRail
-        }
-        .onChange(of: model.historyEntries, initial: true) { _, entries in
-            stats = UsageStatsAggregator.aggregate(entries)
-            projection = HomeProjection.project(entries, now: Date())
-        }
+        main
+            .onChange(of: model.historyEntries, initial: true) { _, entries in
+                stats = UsageStatsAggregator.aggregate(entries)
+                projection = HomeProjection.project(entries, now: Date())
+            }
     }
 
     // MARK: - main column
@@ -43,6 +46,10 @@ struct HomeView: View {
                     .foregroundStyle(Theme.textPrimary)
                 hotkeyHint
                     .padding(.top, 10)
+                usageOverview
+                    .padding(.top, 30)
+                systemStatusCard
+                    .padding(.top, 14)
                 if projection.isEmpty {
                     Text("Your dictations will appear here after you speak.")
                         .font(Theme.body)
@@ -88,7 +95,7 @@ struct HomeView: View {
                     .padding(.top, i == 0 ? 0 : 22)
                     .padding(.bottom, 4)
                 ForEach(section.rows) { row in
-                    dictationRow(row)
+                    HomeDictationRow(model: model, row: row)
                 }
             }
         }
@@ -101,108 +108,124 @@ struct HomeView: View {
             .foregroundStyle(Theme.textTertiary)
     }
 
-    private func dictationRow(_ row: HomeProjection.Row) -> some View {
-        Button {
-            model.pane = .history
-        } label: {
-            VStack(spacing: 0) {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text(row.time)
-                        .font(Theme.timestamp)
-                        .foregroundStyle(Theme.textTertiary)
-                        .frame(width: 44, alignment: .leading)
-                    Text(row.preview)
-                        .font(Theme.body)
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 16)
-                    Text(row.tag)
-                        .font(Theme.modeTag)
-                        .foregroundStyle(Theme.textFaint)
+    // MARK: - overview
+
+    @ViewBuilder
+    private var usageOverview: some View {
+        let layout = HomeOverviewLayout.forWindowWidth(model.windowWidth)
+        let metrics = overviewMetrics
+        Group {
+            if layout == .wide {
+                metricRow(metrics)
+            } else {
+                VStack(spacing: 0) {
+                    metricRow(Array(metrics.prefix(2)))
+                    horizontalRule
+                    metricRow(Array(metrics.suffix(2)))
                 }
-                .padding(.vertical, 11)
-                Rectangle().fill(Theme.hairline).frame(height: 1)
             }
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.cardRadius)
+                .strokeBorder(Theme.hairline, lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: Theme.cardRadius))
     }
 
-    // MARK: - stats rail
-
-    private var statsRail: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                statLine(stats.totalWords.formatted(), "total words")
-                railDivider
-                statLine(wordsPerMinuteText, "wpm")
-                railDivider
-                statLine(streakText, "day streak")
-                railDivider
-                statLine(timeSavedText, "min saved")
-                railDivider
-                systemSummary
-                    .padding(.top, 18)
-            }
-            .padding(.horizontal, 22)
-            .padding(.top, Theme.contentPadding)
-            .padding(.bottom, 24)
-        }
-        .frame(width: Theme.statsRailWidth)
-    }
-
-    private var railDivider: some View {
+    private var horizontalRule: some View {
         Rectangle().fill(Theme.hairline).frame(height: 1)
     }
 
-    private func statLine(_ number: String, _ label: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(number)
-                .font(Theme.statNumber)
-                .foregroundStyle(Theme.textPrimary)
-                .monospacedDigit()
-            Text(label)
+    private var verticalRule: some View {
+        Rectangle().fill(Theme.hairline).frame(width: 1)
+    }
+
+    private func metricRow(_ metrics: [Metric]) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(metrics.enumerated()), id: \.element.id) { index, metric in
+                statCell(metric)
+                if index < metrics.count - 1 {
+                    verticalRule
+                }
+            }
+        }
+    }
+
+    private func statCell(_ metric: Metric) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(metric.value ?? "—")
+                    .font(Theme.statNumber)
+                    .foregroundStyle(Theme.textPrimary)
+                    .monospacedDigit()
+                if metric.value != nil, let unit = metric.unit {
+                    Text(unit)
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+            }
+            Text(metric.label)
                 .font(Theme.ui(12))
                 .foregroundStyle(Theme.textTertiary)
         }
-        .padding(.vertical, 13)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity, minHeight: 86, alignment: .leading)
     }
 
-    private var wordsPerMinuteText: String {
-        guard let wpm = stats.wordsPerMinute, wpm >= 0.5 else { return "—" }
+    private var overviewMetrics: [Metric] {
+        [
+            Metric(label: "total words", value: stats.totalWords.formatted(), unit: nil),
+            Metric(label: "speaking speed", value: wordsPerMinuteText, unit: "wpm"),
+            Metric(label: "current streak", value: streakText, unit: streakUnit),
+            Metric(label: "time saved", value: timeSavedText, unit: "min"),
+        ]
+    }
+
+    private var wordsPerMinuteText: String? {
+        guard let wpm = stats.wordsPerMinute, wpm >= 0.5 else { return nil }
         return "\(Int(wpm.rounded()))"
     }
 
-    private var streakText: String {
-        guard let days = model.currentStreak else { return "—" }
+    private var streakText: String? {
+        guard let days = model.currentStreak else { return nil }
         return "\(days)"
     }
 
-    private var timeSavedText: String {
-        guard let minutes = stats.timeSavedMinutes, minutes >= 0.5 else { return "—" }
+    private var streakUnit: String {
+        model.currentStreak == 1 ? "day" : "days"
+    }
+
+    private var timeSavedText: String? {
+        guard let minutes = stats.timeSavedMinutes, minutes >= 0.5 else { return nil }
         return "~\(Int(minutes.rounded()))"
     }
 
     /// The at-a-glance system summary: active ASR model, Polish model,
     /// accessibility, version — plus a link into Stats.
-    private var systemSummary: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(model.axTrusted ? "All systems go" : "Needs attention")
-                .font(Theme.ui(12.5, .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            Text(summaryLine)
-                .font(Theme.ui(11.5))
-                .foregroundStyle(Theme.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-            if !model.axTrusted {
-                Button("Open Accessibility…") {
-                    if let url = Self.accessibilitySettingsURL {
-                        NSWorkspace.shared.open(url)
+    private var systemStatusCard: some View {
+        HStack(spacing: 14) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(Theme.accent)
+                .frame(width: 3, height: 36)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(model.axTrusted ? "All systems go" : "Needs attention")
+                    .font(Theme.ui(12.5, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(summaryLine)
+                    .font(Theme.ui(11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !model.axTrusted {
+                    Button("Open Accessibility…") {
+                        if let url = Self.accessibilitySettingsURL {
+                            NSWorkspace.shared.open(url)
+                        }
                     }
+                    .controlSize(.small)
                 }
-                .controlSize(.small)
             }
+            Spacer(minLength: 12)
             Button {
                 model.pane = .stats
             } label: {
@@ -211,8 +234,13 @@ struct HomeView: View {
                     .foregroundStyle(Theme.accent)
             }
             .buttonStyle(.plain)
-            .padding(.top, 6)
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(
+            Theme.cardBackground,
+            in: RoundedRectangle(cornerRadius: Theme.cardRadius)
+        )
     }
 
     private var summaryLine: String {
@@ -232,5 +260,153 @@ struct HomeView: View {
         let entry = ASRModelCatalog.entry(for: model.asrModel)
             ?? ASRModelCatalog.entry(for: ASRModelCatalog.defaultID)
         return entry?.name ?? "Parakeet TDT v3"
+    }
+}
+
+/// One inert recent-dictation row. Its transient pointer, focus, and copy
+/// confirmation state stays local so Home's projection remains a pure view of
+/// history and the existing History workflow continues to own side effects.
+private struct HomeDictationRow: View {
+    private enum FocusTarget: Hashable {
+        case row
+        case copy
+        case flag
+    }
+
+    let model: SettingsModel
+    let row: HomeProjection.Row
+
+    @State private var hovered = false
+    @State private var copied = false
+    @State private var copyResetTask: Task<Void, Never>?
+    @FocusState private var focusedTarget: FocusTarget?
+
+    private var actionsRevealed: Bool {
+        hovered || focusedTarget != nil || copied
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text(row.time)
+                    .font(Theme.timestamp)
+                    .foregroundStyle(Theme.textTertiary)
+                    .frame(width: 44, alignment: .leading)
+                Text(row.preview)
+                    .font(Theme.body)
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 16)
+                trailingRegion
+            }
+            .padding(.horizontal, 6)
+            .frame(height: 44)
+            .background(actionsRevealed && hovered ? Theme.accent.opacity(0.055) : .clear)
+            .overlay {
+                if focusedTarget != nil {
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.accentColor, lineWidth: 2)
+                }
+            }
+            .contentShape(Rectangle())
+            .focusable(interactions: .activate)
+            .focused($focusedTarget, equals: .row)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("\(row.time), \(row.preview), Mode \(row.tag)")
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+        }
+        .onHover { hovering in
+            hovered = hovering
+        }
+        .onDisappear {
+            copyResetTask?.cancel()
+        }
+    }
+
+    private var trailingRegion: some View {
+        ZStack(alignment: .trailing) {
+            HStack(spacing: 7) {
+                Text(row.tag)
+                    .font(Theme.modeTag)
+                    .foregroundStyle(Theme.textFaint)
+                    .lineLimit(1)
+                if row.entry.flagged {
+                    Image(systemName: "flag.fill")
+                        .font(Theme.ui(11, .semibold))
+                        .foregroundStyle(.orange)
+                        .accessibilityHidden(true)
+                }
+            }
+            .opacity(actionsRevealed ? 0 : 1)
+            .allowsHitTesting(false)
+
+            HStack(spacing: 4) {
+                copyButton
+                flagButton
+            }
+            .allowsHitTesting(actionsRevealed)
+        }
+        .frame(width: 118, alignment: .trailing)
+    }
+
+    private var copyButton: some View {
+        Button(action: copyDisplayedText) {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .font(Theme.ui(12, .semibold))
+                .foregroundStyle(copied ? AnyShapeStyle(.green) : AnyShapeStyle(Theme.textSecondary))
+                .opacity(actionsRevealed ? 1 : 0)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(interactions: .activate)
+        .focused($focusedTarget, equals: .copy)
+        .accessibilityLabel("Copy text")
+        .accessibilityHint("Copies the displayed dictation text.")
+        .help("Copy text")
+    }
+
+    private var flagButton: some View {
+        let flagged = row.entry.flagged
+        return Button {
+            model.onFlagHistory?(row.entry)
+        } label: {
+            Image(systemName: flagged ? "flag.fill" : "flag")
+                .font(Theme.ui(12, .semibold))
+                .foregroundStyle(flagged ? AnyShapeStyle(.orange) : AnyShapeStyle(Theme.textSecondary))
+                .opacity(actionsRevealed ? 1 : 0)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(interactions: .activate)
+        .focused($focusedTarget, equals: .flag)
+        .accessibilityLabel(flagged ? "Remove flag" : "Flag for my review")
+        .accessibilityHint(
+            flagged
+                ? "Removes this dictation from your flagged items."
+                : "Flags this dictation for later review."
+        )
+        .help(flagged ? "Remove flag" : "Flag for my review")
+    }
+
+    private func copyDisplayedText() {
+        model.onCopyHistory?(row.entry)
+        copied = true
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: "Copied",
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+            ]
+        )
+        copyResetTask?.cancel()
+        copyResetTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1400))
+            guard !Task.isCancelled else { return }
+            copied = false
+        }
     }
 }

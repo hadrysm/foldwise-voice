@@ -1,15 +1,22 @@
 // The Home view's dictation list, as a pure projection over the history the
 // app already keeps (PRD #103): the newest ten entries, grouped by calendar
 // day (Today / Yesterday / absolute day labels), each row reduced to a mono
-// timestamp, a single-line transcript preview, and a lowercased Mode tag.
-// Value-in/value-out like `UsageStatsAggregator`, so the grouping, labeling,
-// and truncation rules are unit-tested apart from the SwiftUI view.
+// timestamp, a single-line transcript preview, and a lowercased Mode tag while
+// retaining the exact source entry for direct actions. Value-in/value-out like
+// `UsageStatsAggregator`, so the grouping, labeling, and truncation rules are
+// unit-tested apart from the SwiftUI view.
 
 import Foundation
 
 struct HomeProjection: Equatable {
     struct Row: Equatable, Identifiable {
-        let id: UUID
+        /// Exact source identity and current persisted state for Home's direct
+        /// Copy and Flag actions; the view never looks the entry up by id.
+        let entry: HistoryEntry
+        var id: UUID {
+            entry.id
+        }
+
         /// 24-hour mono timestamp ("20:37"), matching the design's fixed-width
         /// 44pt column — deliberately not locale-shaped, which would overflow it.
         let time: String
@@ -49,7 +56,7 @@ struct HomeProjection: Equatable {
             let day = calendar.startOfDay(for: entry.createdAt)
             if buckets[day] == nil { order.append(day) }
             buckets[day, default: []].append(Row(
-                id: entry.id,
+                entry: entry,
                 time: timeFormatter.string(from: entry.createdAt),
                 preview: singleLine(entry.text),
                 tag: tag(for: entry.modeName)

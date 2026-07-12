@@ -85,7 +85,12 @@ enum Theme {
     static let titlebarHeight: CGFloat = 32
     static let sidebarWidth: CGFloat = 190
     static let railWidth: CGFloat = 52
-    static let statsRailWidth: CGFloat = 212
+    static let sidebarHorizontalInset: CGFloat = 8
+    static let sidebarVerticalInset: CGFloat = 10
+    static let sidebarRowHeight: CGFloat = 36
+    static let sidebarRowSpacing: CGFloat = 4
+    static let sidebarLabelOffset: CGFloat = 6
+    static let homeCompactBreakpoint: Double = 940
     static let contentPadding: CGFloat = 36
     static let navRadius: CGFloat = 8
     static let railTileRadius: CGFloat = 9
@@ -93,8 +98,7 @@ enum Theme {
     static let keycapRadius: CGFloat = 6
     static let tooltipRadius: CGFloat = 6
     static let badgeHeight: CGFloat = 38
-    /// Sidebar collapse/expand and Badge width animation.
-    static let sidebarAnimation = Animation.easeOut(duration: 0.3)
+    static let sidebarAnimation = Animation.easeOut(duration: 0.22)
     static let badgeCrossFade = Animation.easeOut(duration: 0.22)
 
     // MARK: - helpers

@@ -21,12 +21,12 @@ final class HomeProjectionTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_783_512_000)
 
     private func entry(
-        _ text: String, mode: String = "Clean", minutesAgo: Double
+        _ text: String, mode: String = "Clean", minutesAgo: Double, flagged: Bool = false
     ) -> HistoryEntry {
         HistoryEntry(
             id: UUID(), createdAt: now.addingTimeInterval(-minutesAgo * 60),
             text: text, rawText: text, isPolished: false, modeName: mode,
-            wordCount: nil, sourceApp: nil, durationMs: nil, flagged: false,
+            wordCount: nil, sourceApp: nil, durationMs: nil, flagged: flagged,
             flagReason: nil
         )
     }
@@ -85,5 +85,17 @@ final class HomeProjectionTests: XCTestCase {
         ]
         let previews = project(entries).sections.first?.rows.map(\.preview)
         XCTAssertEqual(previews, ["newest", "older"])
+    }
+
+    func testRowPreservesExactFlaggedSourceEntry() {
+        let source = entry("remember this", minutesAgo: 1, flagged: true)
+        let row = project([source]).sections.first?.rows.first
+        XCTAssertEqual(row?.entry, source)
+    }
+
+    func testRowIdentityMatchesSourceEntry() {
+        let source = entry("same identity", minutesAgo: 1)
+        let row = project([source]).sections.first?.rows.first
+        XCTAssertEqual(row?.id, source.id)
     }
 }
