@@ -2,6 +2,11 @@ dist/
 .DS_Store
 .build/
 
+# Python interpreter caches and compiled bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
 # Runtime user config: the app rewrites it (HUD position, model picks, hotkey)
 # and generates it on first run. Defaults live in Config.swift, not this file.
 modes.json

@@ -41,18 +41,51 @@ While running:
 - **Audio ducking** — Spotify / Apple Music pause and other audio mutes
   while you dictate; everything resumes when you stop. Toggle in Settings.
 - **Settings** — pick/install Ollama models with speed & quality guidance,
-  switch modes, record hotkeys, choose the HUD style. Every change saves
-  straight to `modes.json`.
+  pick/install the speech-recognition model, switch modes, and record hotkeys.
+  Every change saves straight to `modes.json`.
+
+## Visual tokens
+
+[`Theme.swift`](Sources/FoldWiseVoiceKit/DesignSystem/Theme.swift) is the source of truth
+for shared visual tokens. The values below are a compact reference to the
+implemented UI; new code should use `Theme` instead of copying these values.
+
+The window palette adapts to the system appearance:
+
+| Token | Light | Dark |
+|---|---:|---:|
+| Window / active navigation | `#FCFBF8` | `#161411` / `#26221C` |
+| Sidebar / card | `#F7F5F0` | `#1B1815` |
+| Hairline | `#E9E5DC` | `#2C2822` |
+| Primary text | `#1B1813` | `#F2EFE8` |
+| Secondary / tertiary / faint text | `#6E675A` / `#8F887A` / `#B0A995` | `#9B9482` / `#87816F` / `#6B655A` |
+| Accent | `#C24A22` | `#E06A3E` |
+| Keycap fill / border | `#FFFFFF` / `#D8D2C4` | `#211E19` / `#4A453B` |
+
+The fixed Badge palette uses a 96%-opaque `#100D16` pill, violet borders
+(`#A78BFA` at 22%, or 45% while active), a coral error border (`#FAA078` at
+55%), `#B8AEDB` idle icons, `#E8E2F7` emphasized icons, and `#CFC4EA` timer
+text. Its ribbon strands are `#C484FC`, `#7C5DFA`, `#5ED6FF`, and `#F49EFF`.
+
+Typography uses the system UI and monospaced families through `Theme.ui` and
+`Theme.mono`: page title 28 pt semibold; stat number 27 pt semibold; body and
+navigation 13.5 pt (regular/medium/semibold); section label 11 pt bold;
+timestamp 11 pt mono; Mode tag 10.5 pt mono; tooltip 11.5 pt semibold.
+
+Structural metrics are a 32 pt titlebar, 190 pt sidebar, 52 pt navigation
+rail, 212 pt statistics rail, 36 pt content padding, and 38 pt Badge height.
+Radii are 8 pt for navigation and cards, 9 pt for rail tiles, and 6 pt for
+keycaps and tooltips.
 
 ## How it works
 
 ```
-🎤 audio ──▶ [ Stage 1: Parakeet ASR ] ──▶ raw text ──▶ [ Stage 2: Ollama LLM ] ──▶ clean text ──▶ ⌘V paste
-                (always, on-device)                       (optional, per mode)
+🎤 audio ──▶ [ Stage 1: selected ASR ] ──▶ raw text ──▶ [ Stage 2: Ollama LLM ] ──▶ clean text ──▶ ⌘V paste
+                 (always, on-device)                       (optional, per mode)
 ```
 
-- **Stage 1 (ASR)** — Parakeet TDT v3 on the Neural Engine turns audio into
-  text. Always runs, fully offline after the one-time model download.
+- **Stage 1 (ASR)** — the globally selected Parakeet or Whisper model turns
+  audio into text. Always runs, fully offline after the one-time model download.
 - **Stage 2 (LLM)** — Ollama receives the *text* transcript (never audio) via
   its OpenAI-compatible API and rewrites it per the active mode's system
   prompt. Optional: modes with `"llm_model": null` skip it entirely.
@@ -81,7 +114,6 @@ Top-level settings:
 - `hud_position` — saved HUD anchor (`[center_x, bottom_y]` in screen
   points); written automatically when you drag the pill. `null` = default
   bottom-center.
-- `hud_style` — `classic` or `minimal` recording bar.
 
 Per-mode fields:
 
@@ -89,8 +121,12 @@ Per-mode fields:
   for raw transcription.
 - `system_prompt` — instruction the LLM applies to your transcript.
 - `vocab` — names/terms the LLM must preserve (e.g. product names).
-- `asr_model` — kept for compatibility with older configs; the app always
-  transcribes with Parakeet and ignores it.
+- `asr_model` — speech-recognition model catalog id. Selection is global, so
+  Settings writes the chosen id to every mode. Unknown ids from older configs
+  remain stored and safely fall back to Parakeet until a model is selected.
+
+The retired `hud_style` key is accepted in older files but ignored; the current
+Badge presentation is fixed by the implemented design system.
 
 Add a mode by copying an existing block under `"modes"` and restarting.
 

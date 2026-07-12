@@ -63,8 +63,7 @@ must be revisited before doing so:**
 
 - The prioritized mitigations for the current app are output-side and
   decoding-side (detect-and-fallback, `num_predict` cap, structured outputs),
-  not input-side. See `docs/research/prompt-injection-mitigation.md` for the
-  full menu and sourcing.
+  not input-side.
 - The two invariants above are the explicit "no"s a future contributor must
   cross deliberately. This ADR is what a "let Polish do X" PR has to argue past.
 - The output-side off-task check is **token-overlap based, and assumes the
