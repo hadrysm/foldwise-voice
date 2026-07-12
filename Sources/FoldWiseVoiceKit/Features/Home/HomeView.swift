@@ -4,6 +4,10 @@
 import AppKit
 import SwiftUI
 
+enum HomeDictationFocusPolicy {
+    static let interactions: FocusInteractions = .activate
+}
+
 struct HomeView: View {
     private struct Metric: Identifiable {
         let label: String
@@ -310,7 +314,7 @@ private struct HomeDictationRow: View {
                 }
             }
             .contentShape(Rectangle())
-            .focusable()
+            .focusable(interactions: HomeDictationFocusPolicy.interactions)
             .focused($focusedTarget, equals: .row)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("\(row.time), \(row.preview), Mode \(row.tag)")
@@ -360,7 +364,7 @@ private struct HomeDictationRow: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .focusable()
+        .focusable(interactions: HomeDictationFocusPolicy.interactions)
         .focused($focusedTarget, equals: .copy)
         .accessibilityLabel("Copy text")
         .accessibilityHint("Copies the displayed dictation text.")
@@ -380,7 +384,7 @@ private struct HomeDictationRow: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .focusable()
+        .focusable(interactions: HomeDictationFocusPolicy.interactions)
         .focused($focusedTarget, equals: .flag)
         .accessibilityLabel(flagged ? "Remove flag" : "Flag for my review")
         .accessibilityHint(
