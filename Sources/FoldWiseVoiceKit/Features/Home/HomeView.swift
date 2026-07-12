@@ -1,8 +1,5 @@
-// The Home view (PRDs #103 and #143): a greeting with the live hotkey rendered
-// as a keycap, a full-width adaptive usage overview, a separate system-status
-// card, and the last ten dictation sessions grouped by day. A thin render over
-// `HomeProjection` and `UsageStatsAggregator`; the rules live (and are tested)
-// there.
+// Keep history grouping and usage calculations outside the SwiftUI render path
+// so their behavior can be tested without view inspection.
 
 import AppKit
 import SwiftUI
@@ -49,7 +46,7 @@ struct HomeView: View {
                     .foregroundStyle(Theme.textPrimary)
                 hotkeyHint
                     .padding(.top, 10)
-                overviewFolio
+                usageOverview
                     .padding(.top, 30)
                 systemStatusCard
                     .padding(.top, 14)
@@ -114,19 +111,12 @@ struct HomeView: View {
     // MARK: - overview
 
     @ViewBuilder
-    private var overviewFolio: some View {
+    private var usageOverview: some View {
         let layout = HomeOverviewLayout.forWindowWidth(model.windowWidth)
         let metrics = overviewMetrics
         Group {
             if layout == .wide {
-                HStack(spacing: 0) {
-                    ForEach(Array(metrics.enumerated()), id: \.element.id) { index, metric in
-                        statCell(metric)
-                        if index < metrics.count - 1 {
-                            verticalRule
-                        }
-                    }
-                }
+                metricRow(metrics)
             } else {
                 VStack(spacing: 0) {
                     metricRow(Array(metrics.prefix(2)))
