@@ -33,6 +33,8 @@ struct RailTileBoundsKey: PreferenceKey {
 
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @State private var presentationResetGeneration = 0
 
     var body: some View {
         GeometryReader { geo in
@@ -60,16 +62,24 @@ struct SettingsView: View {
             // view's safe-area inset.
             .ignoresSafeArea(.container, edges: .top)
             .onAppear {
-                model.windowWidth = geo.size.width
-                model.sidebar.widthChanged(to: geo.size.width)
+                updateWindowWidth(geo.size.width)
             }
             .onChange(of: geo.size.width) { _, width in
-                model.windowWidth = width
-                model.sidebar.widthChanged(to: width)
+                updateWindowWidth(width)
             }
         }
         .overlayPreferenceValue(RailTileBoundsKey.self) { anchors in
             railTooltip(anchors)
+        }
+        .onChange(of: sidebarMode) { _, mode in
+            if mode == .expanded {
+                model.hoveredRailPane = nil
+            }
+        }
+        .onChange(of: accessibilityReduceMotion) { _, reduceMotion in
+            if reduceMotion {
+                resetAnimatedPresentations()
+            }
         }
         .frame(minWidth: 880, minHeight: 640)
     }
@@ -94,8 +104,7 @@ struct SettingsView: View {
             // Clear the traffic lights drawn by the fullSizeContentView window.
             Spacer().frame(width: 70)
             Button {
-                model.sidebar.toggle(width: model.windowWidth)
-                model.onCommit?()
+                toggleSidebar()
             } label: {
                 sidebarToggleGlyph
             }
@@ -130,27 +139,38 @@ struct SettingsView: View {
     // MARK: - sidebar
 
     private var sidebar: some View {
-        Group {
-            if sidebarMode == .expanded {
-                expandedSidebar.frame(width: Theme.sidebarWidth)
-            } else {
-                railSidebar.frame(width: Theme.railWidth)
-            }
+        ZStack(alignment: .topLeading) {
+            expandedSidebar
+                .frame(width: Theme.sidebarWidth)
+                .opacity(sidebarMode == .expanded ? 1 : 0)
+                .allowsHitTesting(sidebarMode == .expanded)
+                .accessibilityHidden(sidebarMode != .expanded)
+            railSidebar
+                .frame(width: Theme.railWidth)
+                .opacity(sidebarMode == .rail ? 1 : 0)
+                .allowsHitTesting(sidebarMode == .rail)
+                .accessibilityHidden(sidebarMode != .rail)
         }
+        .frame(
+            width: sidebarMode == .expanded ? Theme.sidebarWidth : Theme.railWidth,
+            alignment: .topLeading
+        )
         .background(Theme.sidebarBackground)
         .clipped()
-        .animation(Theme.sidebarAnimation, value: sidebarMode)
+        .id(presentationResetGeneration)
     }
 
     private var expandedSidebar: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: Theme.sidebarRowSpacing) {
             ForEach(SettingsModel.Pane.allCases) { pane in
                 navRow(pane)
             }
             Spacer()
             footer
+                .offset(x: sidebarMode == .expanded ? 0 : -Theme.sidebarLabelOffset)
         }
-        .padding(10)
+        .padding(.horizontal, Theme.sidebarHorizontalInset)
+        .padding(.vertical, Theme.sidebarVerticalInset)
     }
 
     private func navRow(_ pane: SettingsModel.Pane) -> some View {
@@ -166,10 +186,11 @@ struct SettingsView: View {
                 Text(pane.rawValue)
                     .font(active ? Theme.navActive : Theme.nav)
                     .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
+                    .offset(x: sidebarMode == .expanded ? 0 : -Theme.sidebarLabelOffset)
                 Spacer()
             }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 9)
+            .frame(height: Theme.sidebarRowHeight)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -181,13 +202,14 @@ struct SettingsView: View {
     }
 
     private var railSidebar: some View {
-        VStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: Theme.sidebarRowSpacing) {
             ForEach(SettingsModel.Pane.allCases) { pane in
                 railTile(pane)
             }
             Spacer()
         }
-        .padding(.vertical, 10)
+        .padding(.horizontal, Theme.sidebarHorizontalInset)
+        .padding(.vertical, Theme.sidebarVerticalInset)
     }
 
     private func railTile(_ pane: SettingsModel.Pane) -> some View {
@@ -198,7 +220,7 @@ struct SettingsView: View {
             Image(systemName: pane.icon)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(active ? Theme.accent : Theme.textTertiary)
-                .frame(width: 36, height: 36)
+                .frame(width: Theme.sidebarRowHeight, height: Theme.sidebarRowHeight)
                 .background(
                     active ? Theme.activeNavBackground : Color.clear,
                     in: RoundedRectangle(cornerRadius: Theme.railTileRadius)
@@ -242,7 +264,41 @@ struct SettingsView: View {
                     .allowsHitTesting(false)
             }
         }
-        .animation(.easeOut(duration: 0.15), value: model.hoveredRailPane)
+        .animation(
+            accessibilityReduceMotion ? nil : .easeOut(duration: 0.15),
+            value: model.hoveredRailPane
+        )
+        .id(presentationResetGeneration)
+    }
+
+    private func toggleSidebar() {
+        if accessibilityReduceMotion {
+            model.sidebar.toggle(width: model.windowWidth)
+        } else {
+            withAnimation(Theme.sidebarAnimation) {
+                model.sidebar.toggle(width: model.windowWidth)
+            }
+        }
+        model.onCommit?()
+    }
+
+    private func updateWindowWidth(_ width: CGFloat) {
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            model.windowWidth = width
+            model.sidebar.widthChanged(to: width)
+        }
+    }
+
+    private func resetAnimatedPresentations() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            // Rebuilding these two subtrees cancels any transition that was
+            // already in flight when Reduce Motion became active.
+            presentationResetGeneration += 1
+        }
     }
 
     /// Version footer pinned to the sidebar's bottom, with the update state
