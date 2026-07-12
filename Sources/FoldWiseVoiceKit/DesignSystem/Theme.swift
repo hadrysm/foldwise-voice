@@ -98,7 +98,6 @@ enum Theme {
     static let keycapRadius: CGFloat = 6
     static let tooltipRadius: CGFloat = 6
     static let badgeHeight: CGFloat = 38
-    /// Explicit sidebar collapse/expand transition.
     static let sidebarAnimation = Animation.easeOut(duration: 0.22)
     static let badgeCrossFade = Animation.easeOut(duration: 0.22)
 

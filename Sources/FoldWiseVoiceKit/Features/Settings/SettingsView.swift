@@ -73,7 +73,7 @@ struct SettingsView: View {
         }
         .onChange(of: sidebarMode) { _, mode in
             if mode == .expanded {
-                model.hoveredRailPane = nil
+                clearRailHover()
             }
         }
         .onChange(of: accessibilityReduceMotion) { _, reduceMotion in
@@ -272,6 +272,9 @@ struct SettingsView: View {
     }
 
     private func toggleSidebar() {
+        if sidebarMode == .rail {
+            clearRailHover()
+        }
         if accessibilityReduceMotion {
             model.sidebar.toggle(width: model.windowWidth)
         } else {
@@ -280,6 +283,14 @@ struct SettingsView: View {
             }
         }
         model.onCommit?()
+    }
+
+    private func clearRailHover() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            model.hoveredRailPane = nil
+        }
     }
 
     private func updateWindowWidth(_ width: CGFloat) {
