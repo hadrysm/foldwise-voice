@@ -136,6 +136,7 @@ final class SettingsWorkflow {
         model.pttKey = config.hotkey
         model.toggleKey = config.toggleHotkey ?? ""
         model.pauseAudio = config.pauseAudio
+        model.appearance = config.appearance
         model.saveHistory = config.saveHistory
         model.retention = config.historyRetention
         model.sidebar = SidebarPresentation(prefersCollapsed: config.sidebarCollapsed)
@@ -398,6 +399,7 @@ final class SettingsWorkflow {
         config.hotkey = ptt
         config.toggleHotkey = toggle.isEmpty ? nil : toggle
         config.pauseAudio = model.pauseAudio
+        config.appearance = model.appearance
         config.saveHistory = model.saveHistory
         let retentionChanged = config.historyRetention != model.retention
         config.historyRetention = model.retention

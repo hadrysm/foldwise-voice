@@ -1,5 +1,5 @@
 // The floating Badge pill (PRD #103), drawn entirely in SwiftUI: a fixed
-// near-black capsule with its own palette (it floats over any wallpaper),
+// adaptive capsule with a violet/ribbon identity that survives both appearances,
 // static idle glyph, hover action row, and the silk-ribbon recording
 // canvas. GPU-driven via TimelineView + Canvas — no main-thread drawing loop.
 // All state transitions come from `BadgeReducer` via the controller; this

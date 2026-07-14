@@ -18,6 +18,38 @@ enum AppInfo {
     }
 }
 
+struct AppearanceTilePresentation: Identifiable, Equatable {
+    let preference: AppearancePreference
+    let title: String
+    let symbolName: String
+    let detail: String
+
+    var id: AppearancePreference {
+        preference
+    }
+
+    static let all = [
+        AppearanceTilePresentation(
+            preference: .system,
+            title: "System",
+            symbolName: "circle.lefthalf.filled",
+            detail: "Follows macOS as it changes"
+        ),
+        AppearanceTilePresentation(
+            preference: .light,
+            title: "Light",
+            symbolName: "sun.max",
+            detail: "Always uses the light appearance"
+        ),
+        AppearanceTilePresentation(
+            preference: .dark,
+            title: "Dark",
+            symbolName: "moon",
+            detail: "Always uses the dark appearance"
+        ),
+    ]
+}
+
 /// Rail-tile bounds, collected so the tooltip chip can be drawn at the window
 /// level — a chip drawn inside the 52pt rail would be covered by the content
 /// column rendered after it.
@@ -32,6 +64,8 @@ struct RailTileBoundsKey: PreferenceKey {
 }
 
 struct SettingsView: View {
+    private static let appearanceHorizontalBreakpoint = 650.0
+
     @ObservedObject var model: SettingsModel
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var presentationResetGeneration = 0
@@ -433,7 +467,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - settings (keyboard shortcuts + input + sound + updates)
+    // MARK: - settings (keyboard shortcuts + input + sound + appearance + updates)
 
     private var settingsPane: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -504,6 +538,9 @@ struct SettingsView: View {
                 }
             }
 
+            sectionHeader("Appearance")
+            appearanceChoices
+
             sectionHeader("Updates")
             Card {
                 CardRow(title: "Updates", subtitle: updateSubtitle) {
@@ -511,6 +548,74 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var appearanceChoices: some View {
+        if settingsContentWidth >= Self.appearanceHorizontalBreakpoint {
+            HStack(spacing: 8) {
+                appearanceChoiceButtons
+            }
+        } else {
+            VStack(spacing: 8) {
+                appearanceChoiceButtons
+            }
+        }
+    }
+
+    private var appearanceChoiceButtons: some View {
+        ForEach(AppearanceTilePresentation.all) { tile in
+            Button {
+                model.appearance = tile.preference
+                model.onCommit?()
+            } label: {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: tile.symbolName)
+                            .font(.system(size: 16, weight: .medium))
+                        Spacer()
+                        Image(
+                            systemName: model.appearance == tile.preference
+                                ? "checkmark.circle.fill"
+                                : "circle"
+                        )
+                    }
+                    Text(tile.title)
+                        .font(Theme.ui(13, .semibold))
+                    Text(tile.detail)
+                        .font(Theme.ui(10.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Theme.textPrimary)
+                .padding(12)
+                .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+                .background(
+                    model.appearance == tile.preference
+                        ? Theme.activeNavBackground
+                        : Theme.cardBackground,
+                    in: RoundedRectangle(cornerRadius: Theme.cardRadius)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.cardRadius)
+                        .strokeBorder(
+                            model.appearance == tile.preference ? Theme.accent : Theme.hairline,
+                            lineWidth: 1
+                        )
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(tile.title)
+            .accessibilityHint(tile.detail)
+        }
+    }
+
+    private var settingsContentWidth: Double {
+        let sidebarWidth = sidebarMode == .expanded
+            ? Double(Theme.sidebarWidth)
+            : Double(Theme.railWidth)
+        return model.windowWidth - sidebarWidth - 1 - Double(Theme.contentPadding * 2)
     }
 
     private var inputDeviceRoster: some View {

@@ -102,6 +102,32 @@ final class ConfigRoundTripTests: XCTestCase {
         XCTAssertTrue(object["input_device"] is NSNull)
     }
 
+    func testAppearanceValuesSurviveRoundTrip() throws {
+        for appearance in AppearancePreference.allCases {
+            let json = fixture.replacingOccurrences(
+                of: #""pause_audio": false,"#,
+                with: #""pause_audio": false, "appearance": "\#(appearance.rawValue)","#
+            )
+
+            XCTAssertEqual(try roundTrip(json).appearance, appearance)
+        }
+    }
+
+    func testInvalidAppearanceNormalizesToSystemOnSave() throws {
+        let url = try write(fixture.replacingOccurrences(
+            of: #""pause_audio": false,"#,
+            with: #""pause_audio": false, "appearance": "sepia","#
+        ))
+        let config = try Config.load(from: url)
+
+        try config.save()
+
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        XCTAssertEqual(object["appearance"] as? String, "system")
+    }
+
     func testIntegerBadgePositionNormalizesToDoubles() throws {
         // Still stored under the legacy "hud_position" key (PRD #103), so a
         // pre-redesign config keeps its pill placement.

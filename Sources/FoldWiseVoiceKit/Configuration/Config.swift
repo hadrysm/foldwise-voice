@@ -13,6 +13,12 @@ let OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
 let OLLAMA_PULL_URL = "http://localhost:11434/api/pull"
 let OLLAMA_DELETE_URL = "http://localhost:11434/api/delete"
 
+enum AppearancePreference: String, CaseIterable {
+    case system
+    case light
+    case dark
+}
+
 struct Mode {
     var name: String
     var asrModel: String
@@ -72,6 +78,18 @@ final class Config {
         didSet { if oldValue != inputDevice { pendingChanges.insert(.inputDevice) } }
     }
 
+    /// Last successfully persisted value, used to publish only a net change.
+    private var committedAppearance: AppearancePreference
+    var appearance: AppearancePreference {
+        didSet {
+            if appearance == committedAppearance {
+                pendingChanges.remove(.appearance)
+            } else {
+                pendingChanges.insert(.appearance)
+            }
+        }
+    }
+
     /// Master "Save dictation history" switch (PRD #78). When false the
     /// Pipeline records nothing and no `history.jsonl` is written. Persisted in
     /// modes.json; like `pauseAudio` nobody re-reads it through change
@@ -100,6 +118,7 @@ final class Config {
     init(
         activeMode: String, hotkey: String, toggleHotkey: String?, pauseAudio: Bool,
         inputDevice: String? = nil,
+        appearance: AppearancePreference = .system,
         saveHistory: Bool = true, historyRetention: RetentionWindow = .default,
         badgePosition: [Double]?, sidebarCollapsed: Bool = false,
         modeOrder: [String], modes: [String: Mode], path: URL
@@ -109,6 +128,8 @@ final class Config {
         self.toggleHotkey = toggleHotkey
         self.pauseAudio = pauseAudio
         self.inputDevice = inputDevice
+        committedAppearance = appearance
+        self.appearance = appearance
         self.saveHistory = saveHistory
         self.historyRetention = historyRetention
         self.badgePosition = badgePosition
@@ -191,6 +212,7 @@ final class Config {
         static let hotkeys = ChangeSet(rawValue: 1 << 1)
         static let asrModel = ChangeSet(rawValue: 1 << 2)
         static let inputDevice = ChangeSet(rawValue: 1 << 3)
+        static let appearance = ChangeSet(rawValue: 1 << 4)
     }
 
     /// Changed keys accumulated by the tracked properties' `didSet`s,
@@ -211,6 +233,7 @@ final class Config {
     func saveAndNotify() throws {
         try save()
         let changes = pendingChanges
+        committedAppearance = appearance
         pendingChanges = []
         guard !changes.isEmpty else { return }
         for observer in observers {
@@ -227,6 +250,7 @@ final class Config {
             ("toggle_hotkey", toggleHotkey),
             ("pause_audio", pauseAudio),
             ("input_device", inputDevice),
+            ("appearance", appearance.rawValue),
             ("save_history", saveHistory),
             ("retention_days", historyRetention.days),
             ("hud_position", badgePosition),
@@ -328,6 +352,8 @@ final class Config {
             toggleHotkey: raw["toggle_hotkey"] as? String,
             pauseAudio: (raw["pause_audio"] as? Bool) ?? true,
             inputDevice: raw["input_device"] as? String,
+            appearance: AppearancePreference(rawValue: raw["appearance"] as? String ?? "")
+                ?? .system,
             saveHistory: (raw["save_history"] as? Bool) ?? true,
             historyRetention: RetentionWindow(
                 days: (raw["retention_days"] as? Int) ?? RetentionWindow.default.days

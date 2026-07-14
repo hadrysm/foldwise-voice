@@ -76,6 +76,7 @@ final class SettingsModel: ObservableObject {
     @Published var pttKey = ""
     @Published var toggleKey = ""
     @Published var pauseAudio = true
+    @Published var appearance: AppearancePreference = .system
     @Published var inputState = AudioInputState(
         devices: [], systemDefault: nil, preferredUID: nil, preferredName: nil,
         effectiveDevice: nil, pendingDevice: nil,
