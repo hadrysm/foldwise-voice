@@ -6,7 +6,6 @@
 import AppKit
 import Foundation
 import os
-import SwiftUI
 
 extension TranscriberDispatcher {
     /// Production-only construction for the real ASR adapters. Keeping it in
@@ -113,11 +112,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var updateChecker: UpdateChecker!
     // swiftlint:enable implicitly_unwrapped_optional
 
-    #if DEBUG
-        /// Throwaway Settings prototype window (#151). Kept out of release builds.
-        private var settingsPrototypeWindow: NSWindow?
-    #endif
-
     init(configPath: String?, modeOverride: String?) {
         self.configPath = configPath
         self.modeOverride = modeOverride
@@ -139,21 +133,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Only visible while the settings window has promoted the app to
         // .regular, but needed then so Edit shortcuts work in text fields.
         NSApp.mainMenu = buildMainMenu()
-
-        #if DEBUG
-            if SettingsPrototypeEnvironment.isEnabled {
-                let model = SettingsModel()
-                model.pane = .settings
-                let hosting = NSHostingController(rootView: SettingsView(model: model))
-                let window = SettingsController.makeMainWindow(contentViewController: hosting)
-                window.center()
-                settingsPrototypeWindow = window
-                NSApp.setActivationPolicy(.regular)
-                NSApp.activate(ignoringOtherApps: true)
-                window.makeKeyAndOrderFront(nil)
-                return
-            }
-        #endif
 
         let url = Config.resolvePath(cliPath: configPath)
         config = Config.loadOrCreate(at: url)
