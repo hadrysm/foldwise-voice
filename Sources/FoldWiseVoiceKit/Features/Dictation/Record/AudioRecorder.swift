@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 final class AudioRecorder: AudioRecording, AudioInputStateProviding {
     static let sampleRate = 16000.0
@@ -15,6 +16,8 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
     private var statusGeneration = 0
     private var capture: (any AudioCaptureSession)?
     private var isStarting = false
+    private var isStopping = false
+    private var isClosed = false
     private var startingFailure: AudioCaptureError?
     private var observationInstalled = false
 
@@ -98,7 +101,10 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
     }
 
     func setPreferredInputUID(_ uid: String?) {
-        let update = lock.withLock {
+        let update = lock.withLock { () -> (
+            state: AudioInputState, resetGeneration: Int?
+        )? in
+            guard !isClosed else { return nil }
             preferredUID = uid
             if let device = snapshot.device(uid: uid) {
                 rememberedPreferredName = device.name
@@ -108,8 +114,9 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
             let resetGeneration = reduceRoute(restored: false)
             return (makeState(), resetGeneration)
         }
-        onInputStateChange?(update.0)
-        scheduleReset(generation: update.1)
+        guard let update else { return }
+        onInputStateChange?(update.state)
+        scheduleReset(generation: update.resetGeneration)
     }
 
     func start() throws {
@@ -166,7 +173,7 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
             throw AudioCaptureError.engineStartFailed(message: error.localizedDescription)
         }
 
-        let outcome: (AudioInputState?, AudioCaptureError?) = lock.withLock {
+        let outcome: (state: AudioInputState?, failure: AudioCaptureError?) = lock.withLock {
             isStarting = false
             if let failure = startingFailure {
                 startingFailure = nil
@@ -183,49 +190,62 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
             ))
             return (makeState(), nil)
         }
-        if let failure = outcome.1 {
+        if let failure = outcome.failure {
             session.close()
             throw failure
         }
-        if let state = outcome.0 { onInputStateChange?(state) }
+        if let state = outcome.state { onInputStateChange?(state) }
     }
 
     func stop() -> [Float] {
-        guard let session = lock.withLock({ () -> (any AudioCaptureSession)? in
-            let session = capture
-            capture = nil
-            return session
-        }) else { return [] }
+        let outcome = lock.withLock { () -> (
+            samples: [Float], state: AudioInputState?, resetGeneration: Int?
+        ) in
+            guard let session = capture else { return ([], nil, nil) }
+            isStopping = true
+            defer { isStopping = false }
 
-        let samples = session.stop()
-        let freshSnapshot = try? hardware.snapshot()
-        let update = lock.withLock {
-            if let freshSnapshot { snapshot = freshSnapshot }
+            // Keep `capture` visible until the session freezes its samples so
+            // concurrent preference and HAL changes remain deferred.
+            let samples = session.stop()
+            capture = nil
+            do {
+                snapshot = try hardware.snapshot()
+            } catch {
+                Log.audio.error(
+                    "Input refresh after stop failed: \(error.localizedDescription, privacy: .public)"
+                )
+            }
             let resetGeneration = reduceRoute(restored: false)
-            return (makeState(), resetGeneration)
+            return (samples, makeState(), resetGeneration)
         }
-        onInputStateChange?(update.0)
-        scheduleReset(generation: update.1)
-        return samples
+        if let state = outcome.state { onInputStateChange?(state) }
+        scheduleReset(generation: outcome.resetGeneration)
+        return outcome.samples
     }
 
     func close() {
-        let update = lock.withLock { () -> ((any AudioCaptureSession)?, AudioInputState) in
+        let update = lock.withLock { () -> (
+            session: (any AudioCaptureSession)?, state: AudioInputState
+        ) in
             let session = capture
             capture = nil
             isStarting = false
+            isStopping = false
+            isClosed = true
             startingFailure = nil
             pending = nil
             observationInstalled = false
             statusGeneration += 1
             return (session, makeState())
         }
-        update.0?.close()
+        update.session?.close()
         hardware.stopObserving()
-        onInputStateChange?(update.1)
+        onInputStateChange?(update.state)
     }
 
     private func hardwareChanged(_ change: AudioHardwareChange) {
+        guard lock.withLock({ !isClosed }) else { return }
         switch change {
         case .topologyChanged:
             refreshHardware()
@@ -235,62 +255,63 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
     }
 
     private func refreshHardware() {
-        let freshSnapshot: AudioHardwareSnapshot
         do {
-            freshSnapshot = try hardware.snapshot()
+            let update = try lock.withLock { () -> (
+                session: (any AudioCaptureSession)?, state: AudioInputState,
+                failure: AudioCaptureError?, resetGeneration: Int?
+            )? in
+                guard !isClosed else { return nil }
+                let freshSnapshot = try hardware.snapshot()
+                let oldSnapshot = snapshot
+                snapshot = freshSnapshot
+                if let preferred = snapshot.device(uid: preferredUID) {
+                    rememberedPreferredName = preferred.name
+                }
+                if capture != nil, let effective, snapshot.device(uid: effective.uid) == nil {
+                    let failedSession = capture
+                    capture = nil
+                    pending = nil
+                    let failedName = effective.name
+                    self.effective = Self.resolve(preferredUID: preferredUID, snapshot: snapshot)
+                    setStatus(Self.routeStatus(
+                        preferredUID: preferredUID,
+                        preferredName: rememberedPreferredName,
+                        effective: self.effective,
+                        snapshot: snapshot
+                    ))
+                    return (
+                        failedSession, makeState(),
+                        .activeDeviceDisconnected(device: failedName), nil
+                    )
+                }
+                let restored = preferredUID != nil
+                    && oldSnapshot.device(uid: preferredUID) == nil
+                    && snapshot.device(uid: preferredUID) != nil
+                let resetGeneration = reduceRoute(restored: restored)
+                return (nil, makeState(), nil, resetGeneration)
+            }
+            guard let update else { return }
+            update.session?.close()
+            onInputStateChange?(update.state)
+            scheduleReset(generation: update.resetGeneration)
+            if let failure = update.failure { onFailure?(failure) }
         } catch {
-            let state = lock.withLock {
+            let state: AudioInputState? = lock.withLock {
+                guard !isClosed else { return nil }
                 setStatus(.unavailable(
                     message: AudioCaptureError.unreadableDevice.localizedDescription
                 ))
                 return makeState()
             }
-            onInputStateChange?(state)
-            return
+            if let state { onInputStateChange?(state) }
         }
-
-        let update = lock.withLock { () -> (
-            session: (any AudioCaptureSession)?, state: AudioInputState,
-            failure: AudioCaptureError?, resetGeneration: Int?
-        ) in
-            let oldSnapshot = snapshot
-            snapshot = freshSnapshot
-            if let preferred = snapshot.device(uid: preferredUID) {
-                rememberedPreferredName = preferred.name
-            }
-            if capture != nil, let effective, snapshot.device(uid: effective.uid) == nil {
-                let failedSession = capture
-                capture = nil
-                pending = nil
-                let failedName = effective.name
-                self.effective = Self.resolve(preferredUID: preferredUID, snapshot: snapshot)
-                setStatus(Self.routeStatus(
-                    preferredUID: preferredUID,
-                    preferredName: rememberedPreferredName,
-                    effective: self.effective,
-                    snapshot: snapshot
-                ))
-                return (
-                    failedSession, makeState(),
-                    .activeDeviceDisconnected(device: failedName), nil
-                )
-            }
-            let restored = preferredUID != nil
-                && oldSnapshot.device(uid: preferredUID) == nil
-                && snapshot.device(uid: preferredUID) != nil
-            let resetGeneration = reduceRoute(restored: restored)
-            return (nil, makeState(), nil, resetGeneration)
-        }
-        update.session?.close()
-        onInputStateChange?(update.state)
-        scheduleReset(generation: update.resetGeneration)
-        if let failure = update.failure { onFailure?(failure) }
     }
 
     private func captureFailed(_ error: AudioCaptureError) {
         let update = lock.withLock { () -> (
             session: (any AudioCaptureSession)?, state: AudioInputState?
         ) in
+            guard !isStopping, !isClosed else { return (nil, nil) }
             if isStarting {
                 startingFailure = error
                 return (nil, nil)
@@ -298,7 +319,13 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
             guard let session = capture else { return (nil, nil) }
             capture = nil
             pending = nil
-            if let fresh = try? hardware.snapshot() { snapshot = fresh }
+            do {
+                snapshot = try hardware.snapshot()
+            } catch {
+                Log.audio.error(
+                    "Input refresh after failure failed: \(error.localizedDescription, privacy: .public)"
+                )
+            }
             effective = Self.resolve(preferredUID: preferredUID, snapshot: snapshot)
             setStatus(.unavailable(message: error.localizedDescription))
             return (session, makeState())
@@ -310,14 +337,24 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
     }
 
     private func installObservation() throws {
+        guard lock.withLock({ !isClosed }) else {
+            throw AudioCaptureError.hardwareRestartFailed
+        }
         try hardware.observeChanges { [weak self] change in
             self?.hardwareChanged(change)
         }
-        lock.withLock { observationInstalled = true }
+        let installed = lock.withLock {
+            guard !isClosed else { return false }
+            observationInstalled = true
+            return true
+        }
+        if !installed { hardware.stopObserving() }
     }
 
     private func ensureObservation() throws {
-        guard !lock.withLock({ observationInstalled }) else { return }
+        let observationState = lock.withLock { (installed: observationInstalled, closed: isClosed) }
+        guard !observationState.closed else { throw AudioCaptureError.hardwareRestartFailed }
+        guard !observationState.installed else { return }
         do {
             try installObservation()
         } catch {
@@ -333,19 +370,25 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
     }
 
     private func restartObservation() {
-        lock.withLock { observationInstalled = false }
+        let shouldRestart = lock.withLock {
+            guard !isClosed else { return false }
+            observationInstalled = false
+            return true
+        }
+        guard shouldRestart else { return }
         hardware.stopObserving()
         do {
             try installObservation()
             refreshHardware()
         } catch {
-            let state = lock.withLock {
+            let state: AudioInputState? = lock.withLock {
+                guard !isClosed else { return nil }
                 setStatus(.unavailable(
                     message: AudioCaptureError.hardwareRestartFailed.localizedDescription
                 ))
                 return makeState()
             }
-            onInputStateChange?(state)
+            if let state { onInputStateChange?(state) }
         }
     }
 
@@ -394,7 +437,9 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
 
     private func expireRestoration(generation: Int) {
         let state = lock.withLock { () -> AudioInputState? in
-            guard statusGeneration == generation, case .restored = status else { return nil }
+            guard !isClosed, statusGeneration == generation, case .restored = status else {
+                return nil
+            }
             setStatus(Self.routeStatus(
                 preferredUID: preferredUID,
                 preferredName: rememberedPreferredName,

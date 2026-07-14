@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import FoldWiseVoiceKit
 
@@ -92,7 +93,7 @@ final class SettingsControllerWiringTests: XCTestCase {
         XCTAssertEqual(config.hotkey, "F8")
     }
 
-    func testInputDeviceProjectionAndSelectionReachSettingsWorkflow() {
+    func testInputDeviceProjectionInitializesSettingsModel() {
         let store = JSONLHistoryStore(url: dir.appendingPathComponent("input-history.jsonl"))
         let config = makeConfig()
         let builtIn = AudioInputDevice(uid: "built-in", name: "MacBook Microphone")
@@ -108,9 +109,26 @@ final class SettingsControllerWiringTests: XCTestCase {
             inputDevices: inputDevices
         )
 
+        XCTAssertEqual(controller.model.inputState, state)
+    }
+
+    func testInputDeviceSelectionReachesSettingsWorkflow() {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("input-history.jsonl"))
+        let config = makeConfig()
+        let builtIn = AudioInputDevice(uid: "built-in", name: "MacBook Microphone")
+        let usb = AudioInputDevice(uid: "usb-1", name: "Studio Mic")
+        let state = AudioInputState(
+            devices: [builtIn, usb], systemDefault: builtIn, preferredUID: nil,
+            preferredName: nil, effectiveDevice: builtIn, pendingDevice: nil,
+            status: .ready
+        )
+        let controller = SettingsController(
+            config: config, historyStore: store, statsStore: WiringStatsStore(),
+            inputDevices: WiringInputDevices(state)
+        )
+
         controller.model.onSelectInputDevice?(usb.uid)
 
-        XCTAssertEqual(controller.model.inputState, state)
         XCTAssertEqual(config.inputDevice, usb.uid)
     }
 
@@ -134,8 +152,15 @@ final class SettingsControllerWiringTests: XCTestCase {
             status: .unavailable(message: "No input device is available.")
         )
 
+        let published = expectation(description: "Input state published to Settings")
+        var observation: AnyCancellable?
+        observation = controller.model.$inputState.dropFirst().sink { state in
+            if state == changed { published.fulfill() }
+        }
+
         inputDevices.onInputStateChange?(changed)
-        await Task.yield()
+        await fulfillment(of: [published], timeout: 1)
+        withExtendedLifetime(observation) {}
 
         XCTAssertEqual(controller.model.inputState, changed)
     }

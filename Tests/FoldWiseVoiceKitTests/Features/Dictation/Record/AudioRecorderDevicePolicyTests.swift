@@ -116,6 +116,24 @@ final class AudioRecorderDevicePolicyTests: XCTestCase {
         XCTAssertEqual(hardware.startedUIDs, [builtIn.uid])
     }
 
+    func testRouteChangeDuringStopAppliesAfterSamplesFreeze() throws {
+        let hardware = FakeAudioHardware(devices: [builtIn, usb], defaultUID: builtIn.uid)
+        let recorder = AudioRecorder(preferredInputUID: nil, hardware: hardware)
+        var stateBeforeSamplesFreeze: AudioInputState?
+        hardware.onSessionStop = {
+            recorder.setPreferredInputUID(self.usb.uid)
+            stateBeforeSamplesFreeze = recorder.inputState
+        }
+        try recorder.start()
+
+        _ = recorder.stop()
+
+        XCTAssertEqual(stateBeforeSamplesFreeze?.effectiveDevice, builtIn)
+        XCTAssertEqual(stateBeforeSamplesFreeze?.pendingDevice, usb)
+        XCTAssertEqual(recorder.inputState.effectiveDevice, usb)
+        XCTAssertNil(recorder.inputState.pendingDevice)
+    }
+
     func testActiveRouteLossFailsSessionAndPreparesFallback() throws {
         let hardware = FakeAudioHardware(devices: [builtIn, usb], defaultUID: builtIn.uid)
         let recorder = AudioRecorder(preferredInputUID: usb.uid, hardware: hardware)
@@ -224,6 +242,16 @@ final class AudioRecorderDevicePolicyTests: XCTestCase {
         XCTAssertFalse(recorder.isRecording)
         XCTAssertEqual(hardware.lastSession?.closeCount, 1)
         XCTAssertEqual(hardware.stopObservingCount, 1)
+    }
+
+    func testQueuedHardwareChangeAfterCloseDoesNotRestartObservation() {
+        let hardware = FakeAudioHardware(devices: [builtIn], defaultUID: builtIn.uid)
+        let recorder = AudioRecorder(preferredInputUID: nil, hardware: hardware)
+        recorder.close()
+
+        hardware.restartService()
+
+        XCTAssertEqual(hardware.observeCount, 1)
     }
 
     func testSelectingSystemDefaultClearsRememberedPreferredName() {
@@ -462,6 +490,7 @@ private final class FakeAudioHardware: AudioHardware {
     var failureDuringStart: AudioCaptureError?
     var snapshotError: AudioCaptureError?
     var observeError: AudioCaptureError?
+    var onSessionStop: (() -> Void)?
     private(set) var startedUIDs: [String] = []
     private(set) var stopObservingCount = 0
     private(set) var observeCount = 0
@@ -494,7 +523,7 @@ private final class FakeAudioHardware: AudioHardware {
     ) throws -> any AudioCaptureSession {
         if let startError { throw startError }
         startedUIDs.append(deviceUID)
-        let session = FakeAudioCaptureSession(onFailure: onFailure)
+        let session = FakeAudioCaptureSession(onFailure: onFailure, onStop: onSessionStop)
         lastSession = session
         if let failureDuringStart { onFailure(failureDuringStart) }
         return session
@@ -520,13 +549,16 @@ private final class FakeAudioCaptureSession: AudioCaptureSession {
     var level: Float = 0
     private(set) var closeCount = 0
     private let onFailure: (AudioCaptureError) -> Void
+    private let onStop: (() -> Void)?
 
-    init(onFailure: @escaping (AudioCaptureError) -> Void) {
+    init(onFailure: @escaping (AudioCaptureError) -> Void, onStop: (() -> Void)?) {
         self.onFailure = onFailure
+        self.onStop = onStop
     }
 
     func stop() -> [Float] {
-        [0.1, 0.2]
+        onStop?()
+        return [0.1, 0.2]
     }
 
     func close() {

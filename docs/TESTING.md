@@ -90,7 +90,7 @@ their meaningful decisions into covered collaborators.
 | File | Reviewed reason |
 |---|---|
 | `AppMain.swift` | Application lifecycle and composition root |
-| `AudioRecorder.swift` | AVFoundation microphone capture adapter |
+| `CoreAudioHardware.swift` | Thin Core Audio and AVFoundation hardware boundary; routing policy lives in `AudioRecorder` |
 | `AudioDucker.swift` | Thin AppleScript system-command adapter; coordination lives in `AudioDuckCoordinator` |
 | `BadgeController.swift` | AppKit window and event-composition shell |
 | `BadgeView.swift` | Declarative SwiftUI Badge composition |
@@ -148,7 +148,7 @@ Run the relevant sections earlier when a boundary changes:
 
 | Changed boundary | Required sections |
 |---|---|
-| Microphone capture | 1, 2, and 3 |
+| Microphone capture or input-device routing | 1, 2, 3, and 9 |
 | Permission onboarding or prompts | 1 and 6; section 1 must use a clean macOS user account |
 | Global hotkey installation or handling | 2 and 3, while another app has focus |
 | Parakeet, Whisper, model storage, or ASR dispatch | 2 and 4; always exercise both ASR engines |
@@ -296,6 +296,47 @@ Pass when playback and the prior mute state are restored after both completed
 sessions, no stale restoration changes audio later, and disabling the setting
 leaves playback untouched. Fail if the player remains paused, output remains
 muted, or audio resumes when it was not playing before the session.
+
+### 9. Input-device routing
+
+Use a Mac with its built-in microphone, one USB input, and one Bluetooth input.
+Record the exact devices and macOS default route in the release evidence.
+
+1. Select **System Default** in FoldWise, choose the built-in microphone as the
+   macOS default, and complete a distinctive dictation. Confirm Settings names
+   the built-in microphone under System Default.
+2. While FoldWise remains open, change the macOS default to USB and then
+   Bluetooth. After each change, confirm the roster and System Default detail
+   update in platform order, then complete a dictation through that input.
+3. Select the USB input explicitly, change the macOS default to Bluetooth, and
+   confirm FoldWise keeps USB selected and in use.
+4. Start dictating through USB, select Bluetooth before stopping, and confirm
+   the deferred message names USB as current and Bluetooth as next. Stop the
+   session, then confirm the following session uses Bluetooth without combining
+   audio from both inputs.
+5. Select USB again and disconnect it while idle. Confirm the saved preference
+   remains as a dimmed **Not connected — Preferred** row, the fallback message
+   names USB and the live default, and changing the macOS default also changes
+   the fallback. Reconnect USB and confirm it is restored automatically with the
+   temporary restoration message.
+6. Start a new USB session with **Pause other audio** enabled, then physically
+   disconnect USB while speaking. Confirm the session ends in an error, partial
+   audio is not transcribed, inserted, or saved to History, ducked audio is
+   restored, and the next session uses the resolved fallback.
+7. With an explicit input still selected, deny FoldWise microphone permission
+   and try to dictate. Confirm FoldWise reports an error without claiming to be
+   listening and does not clear the preference. Re-enable permission and confirm
+   a later retry succeeds.
+8. Disconnect the preferred USB input, quit FoldWise, and relaunch it. Confirm
+   the unavailable preference and fallback survive relaunch; reconnect USB and
+   confirm automatic restoration. Repeat one ordinary dictation with Bluetooth
+   explicitly selected before finishing.
+
+Pass when all three input types capture successfully, System Default follows
+live macOS changes, explicit identity remains stable, healthy changes defer to
+the next session, reconnect restores the preference, active loss fails without
+partial output, permission denial is recoverable, and an unavailable preference
+survives relaunch. Any failure blocks the release.
 
 ## Finish and record evidence
 
