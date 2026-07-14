@@ -357,7 +357,15 @@ struct SettingsView: View {
             case .stats:
                 paneScroll("Stats") { StatsPane(model: model) }
             case .settings:
-                paneScroll("Settings") { settingsPane }
+                #if DEBUG
+                    if SettingsPrototypeEnvironment.isEnabled {
+                        SettingsPrototypeHost()
+                    } else {
+                        paneScroll("Settings") { settingsPane }
+                    }
+                #else
+                    paneScroll("Settings") { settingsPane }
+                #endif
             }
             if !model.status.isEmpty {
                 hairline(.horizontal)
