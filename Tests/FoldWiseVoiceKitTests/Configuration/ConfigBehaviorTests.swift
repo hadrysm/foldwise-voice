@@ -29,7 +29,25 @@ final class ConfigBehaviorTests: XCTestCase {
         XCTAssertEqual(config.hotkey, "alt_r")
         XCTAssertNil(config.toggleHotkey)
         XCTAssertTrue(config.pauseAudio)
+        XCTAssertNil(config.inputDevice)
         XCTAssertEqual(Set(config.modes.keys), Set(config.modeOrder))
+    }
+
+    func testInputDeviceMissingNullAndInvalidValuesLoadAsSystemDefault() throws {
+        let values = ["", #", "input_device": null"#, #", "input_device": 42"#]
+
+        for value in values {
+            let json = """
+            {
+              "active_mode": "Only"\(value),
+              "modes": {
+                "Only": {"asr_model": "m", "llm_model": null, "system_prompt": null, "vocab": []}
+              }
+            }
+            """
+            try Data(json.utf8).write(to: path)
+            XCTAssertNil(try Config.load(from: path).inputDevice)
+        }
     }
 
     func testLoadOrCreateWritesDefaultsWhenFileMissing() throws {

@@ -65,6 +65,13 @@ final class Config {
     }
 
     var pauseAudio: Bool
+
+    /// `nil` follows the live macOS default input; a string preserves the
+    /// user's explicit Core Audio UID even while that device is unavailable.
+    var inputDevice: String? {
+        didSet { if oldValue != inputDevice { pendingChanges.insert(.inputDevice) } }
+    }
+
     /// Master "Save dictation history" switch (PRD #78). When false the
     /// Pipeline records nothing and no `history.jsonl` is written. Persisted in
     /// modes.json; like `pauseAudio` nobody re-reads it through change
@@ -92,6 +99,7 @@ final class Config {
 
     init(
         activeMode: String, hotkey: String, toggleHotkey: String?, pauseAudio: Bool,
+        inputDevice: String? = nil,
         saveHistory: Bool = true, historyRetention: RetentionWindow = .default,
         badgePosition: [Double]?, sidebarCollapsed: Bool = false,
         modeOrder: [String], modes: [String: Mode], path: URL
@@ -100,6 +108,7 @@ final class Config {
         self.hotkey = hotkey
         self.toggleHotkey = toggleHotkey
         self.pauseAudio = pauseAudio
+        self.inputDevice = inputDevice
         self.saveHistory = saveHistory
         self.historyRetention = historyRetention
         self.badgePosition = badgePosition
@@ -181,6 +190,7 @@ final class Config {
         static let activeMode = ChangeSet(rawValue: 1 << 0)
         static let hotkeys = ChangeSet(rawValue: 1 << 1)
         static let asrModel = ChangeSet(rawValue: 1 << 2)
+        static let inputDevice = ChangeSet(rawValue: 1 << 3)
     }
 
     /// Changed keys accumulated by the tracked properties' `didSet`s,
@@ -216,6 +226,7 @@ final class Config {
             ("hotkey", hotkey),
             ("toggle_hotkey", toggleHotkey),
             ("pause_audio", pauseAudio),
+            ("input_device", inputDevice),
             ("save_history", saveHistory),
             ("retention_days", historyRetention.days),
             ("hud_position", badgePosition),
@@ -316,6 +327,7 @@ final class Config {
             hotkey: (raw["hotkey"] as? String) ?? "alt_r",
             toggleHotkey: raw["toggle_hotkey"] as? String,
             pauseAudio: (raw["pause_audio"] as? Bool) ?? true,
+            inputDevice: raw["input_device"] as? String,
             saveHistory: (raw["save_history"] as? Bool) ?? true,
             historyRetention: RetentionWindow(
                 days: (raw["retention_days"] as? Int) ?? RetentionWindow.default.days

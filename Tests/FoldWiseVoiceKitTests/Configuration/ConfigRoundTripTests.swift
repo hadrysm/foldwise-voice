@@ -79,6 +79,29 @@ final class ConfigRoundTripTests: XCTestCase {
         XCTAssertFalse(reloaded.pauseAudio)
     }
 
+    func testExplicitInputDeviceSurvivesRoundTripWhenUnavailable() throws {
+        let json = fixture.replacingOccurrences(
+            of: #""pause_audio": false,"#,
+            with: #""pause_audio": false, "input_device": "USB-opaque-uid","#
+        )
+
+        let reloaded = try roundTrip(json)
+
+        XCTAssertEqual(reloaded.inputDevice, "USB-opaque-uid")
+    }
+
+    func testSystemDefaultWritesNullOnRoundTrip() throws {
+        let url = try write(fixture)
+        let config = try Config.load(from: url)
+
+        try config.save()
+
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        XCTAssertTrue(object["input_device"] is NSNull)
+    }
+
     func testIntegerBadgePositionNormalizesToDoubles() throws {
         // Still stored under the legacy "hud_position" key (PRD #103), so a
         // pre-redesign config keeps its pill placement.

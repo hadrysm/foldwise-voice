@@ -10,6 +10,7 @@ final class SettingsController {
     private let config: Config
     private let historyStore: HistoryStore
     private let statsStore: StatsStore
+    private let inputDevices: (any AudioInputStateProviding)?
     let model = SettingsModel()
     private lazy var workflow = SettingsWorkflow(
         config: config,
@@ -31,10 +32,20 @@ final class SettingsController {
     /// menu-bar "Update Available" item.
     var onUpdateAvailable: ((String) -> Void)?
 
-    init(config: Config, historyStore: HistoryStore, statsStore: StatsStore) {
+    init(
+        config: Config, historyStore: HistoryStore, statsStore: StatsStore,
+        inputDevices: (any AudioInputStateProviding)? = nil
+    ) {
         self.config = config
         self.historyStore = historyStore
         self.statsStore = statsStore
+        self.inputDevices = inputDevices
+        if let inputDevices {
+            model.inputState = inputDevices.inputState
+            inputDevices.onInputStateChange = { [weak self] state in
+                Task { @MainActor in self?.model.inputState = state }
+            }
+        }
         wire()
         workflow.observeHistoryAppends()
     }
@@ -56,6 +67,9 @@ final class SettingsController {
 
     private func wire() {
         model.onCommit = { [weak self] in self?.workflow.commit() }
+        model.onSelectInputDevice = { [weak self] uid in
+            self?.workflow.selectInputDevice(uid)
+        }
         model.onRecord = { [weak self] field in self?.startRecording(field) }
         model.onSelectModel = { [weak self] name in self?.workflow.selectLLMModel(name) }
         model.onInstallModel = { [weak self] name in self?.workflow.installLLMModel(name) }
@@ -120,6 +134,7 @@ final class SettingsController {
 
     private func populate() {
         workflow.populatePreferences()
+        if let inputDevices { model.inputState = inputDevices.inputState }
         model.axTrusted = TextInserter.accessibilityTrusted()
         workflow.populateHistory()
         workflow.refreshLLMModels()

@@ -620,6 +620,25 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(received.count, 0)
     }
 
+    func testFailedInputDeviceSelectionReportsPersistenceError() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = SettingsWorkflow(
+            config: config,
+            model: model,
+            historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
+            persist: { throw TestFailure.save },
+            now: Date.init,
+            scheduleStatusClear: { _ in },
+            copy: { _ in }
+        )
+
+        workflow.selectInputDevice("usb-1")
+
+        XCTAssertTrue(model.status.hasPrefix("⚠️ save failed:"))
+        XCTAssertTrue(model.statusIsError)
+    }
+
     func testNoOpCommitDoesNotNotifyConfigObservers() {
         let config = makeConfig()
         let model = SettingsModel()

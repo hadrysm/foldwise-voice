@@ -82,6 +82,44 @@ final class ConfigChangePropagationTests: XCTestCase {
         XCTAssertEqual(received, [.asrModel])
     }
 
+    func testInputDeviceChangeNotifiesOnlyWithInputDevice() throws {
+        let config = Config.defaultConfig(path: path)
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.inputDevice = "USB-opaque-uid"
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [.inputDevice])
+    }
+
+    func testReselectingInputDeviceNotifiesNothing() throws {
+        let config = Config.defaultConfig(path: path)
+        config.inputDevice = "USB-opaque-uid"
+        try config.saveAndNotify()
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.inputDevice = "USB-opaque-uid"
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [])
+    }
+
+    func testFailedInputDeviceSaveRetriesItsChange() throws {
+        let missingDir = dir.appendingPathComponent("missing-input")
+        let config = Config.defaultConfig(path: missingDir.appendingPathComponent("modes.json"))
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.inputDevice = "USB-opaque-uid"
+        XCTAssertThrowsError(try config.saveAndNotify())
+        try FileManager.default.createDirectory(at: missingDir, withIntermediateDirectories: true)
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [.inputDevice])
+    }
+
     func testReselectingTheSameASRModelNotifiesNothing() throws {
         let config = Config.defaultConfig(path: path)
         var received: [Config.ChangeSet] = []

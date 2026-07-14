@@ -141,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Composition root: the one recorder is shared between the Pipeline
         // and the Badge's level meter, and warmup is triggered here (below),
         // not inside Pipeline.
-        let recorder = AudioRecorder()
+        let recorder = AudioRecorder(config: config, hardware: CoreAudioHardware())
         // The dispatcher fronts the ASR engines behind the `Transcribing` seam
         // (ADR-0005): it resolves the active engine from `config.asrModel` and
         // subscribes to `.asrModel` changes itself. The Pipeline drives it as an
@@ -170,7 +170,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             config: config, recorder: recorder, transcriber: transcriber,
             record: { historyStore.append($0) }
         )
-        settings = SettingsController(config: config, historyStore: historyStore, statsStore: statsStore)
+        settings = SettingsController(
+            config: config, historyStore: historyStore, statsStore: statsStore,
+            inputDevices: recorder
+        )
         badge = BadgeController(config: config) { [weak self] in
             self?.settings.show()
         }
@@ -371,6 +374,7 @@ public enum FoldWiseVoiceApp {
             let echo = Config(
                 activeMode: config.activeMode, hotkey: config.hotkey,
                 toggleHotkey: config.toggleHotkey, pauseAudio: config.pauseAudio,
+                inputDevice: config.inputDevice,
                 saveHistory: config.saveHistory,
                 historyRetention: config.historyRetention, badgePosition: config.badgePosition,
                 sidebarCollapsed: config.sidebarCollapsed, modeOrder: config.modeOrder,

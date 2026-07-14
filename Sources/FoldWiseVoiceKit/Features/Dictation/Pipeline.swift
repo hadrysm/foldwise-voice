@@ -10,7 +10,8 @@ import os
 /// The record stage's seam (ADR-0002). `AudioRecorder` is the production
 /// conformer; tests inject a fake with canned samples.
 protocol AudioRecording: AnyObject {
-    func start()
+    var onFailure: ((AudioCaptureError) -> Void)? { get set }
+    func start() throws
     func stop() -> [Float]
     func close()
 }
@@ -89,7 +90,7 @@ final class Pipeline {
 
     init(
         config: Config,
-        recorder: AudioRecording = AudioRecorder(),
+        recorder: AudioRecording,
         transcriber: Transcribing = Transcriber(),
         ducker: AudioDucking = AudioDucker(),
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
@@ -105,6 +106,9 @@ final class Pipeline {
         self.insert = insert
         self.record = record
         self.frontmostApp = frontmostApp
+        self.recorder.onFailure = { [weak self] error in
+            self?.recordingFailed(error)
+        }
         self.transcriber.onLoading = { [weak self] loading in
             guard let self else { return }
             withStateLock {
@@ -178,10 +182,16 @@ final class Pipeline {
     func startRecording() {
         withStateLock {
             guard !isShutDown, !recording else { return }
-            recording = true
             if config.pauseAudio { ducker.duck() }
-            recorder.start()
-            emit(.listening(mode: config.activeMode))
+            recording = true
+            do {
+                try recorder.start()
+                emit(.listening(mode: config.activeMode))
+            } catch {
+                recording = false
+                ducker.restore()
+                emit(.error(error.localizedDescription))
+            }
         }
     }
 
@@ -236,6 +246,15 @@ final class Pipeline {
             ducker.restore()
             recorder.close()
             deliver(.idle)
+        }
+    }
+
+    private func recordingFailed(_ error: AudioCaptureError) {
+        withStateLock {
+            guard !isShutDown, recording else { return }
+            recording = false
+            ducker.restore()
+            emit(.error(error.localizedDescription))
         }
     }
 

@@ -19,6 +19,15 @@ private final class WiringStatsStore: StatsStore {
     }
 }
 
+private final class WiringInputDevices: AudioInputStateProviding {
+    var inputState: AudioInputState
+    var onInputStateChange: ((AudioInputState) -> Void)?
+
+    init(_ inputState: AudioInputState) {
+        self.inputState = inputState
+    }
+}
+
 @MainActor
 final class SettingsControllerWiringTests: XCTestCase {
     private let dir = FileManager.default.temporaryDirectory
@@ -81,6 +90,54 @@ final class SettingsControllerWiringTests: XCTestCase {
         controller.model.onCommit?()
 
         XCTAssertEqual(config.hotkey, "F8")
+    }
+
+    func testInputDeviceProjectionAndSelectionReachSettingsWorkflow() {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("input-history.jsonl"))
+        let config = makeConfig()
+        let builtIn = AudioInputDevice(uid: "built-in", name: "MacBook Microphone")
+        let usb = AudioInputDevice(uid: "usb-1", name: "Studio Mic")
+        let state = AudioInputState(
+            devices: [builtIn, usb], systemDefault: builtIn, preferredUID: nil,
+            preferredName: nil, effectiveDevice: builtIn, pendingDevice: nil,
+            status: .ready
+        )
+        let inputDevices = WiringInputDevices(state)
+        let controller = SettingsController(
+            config: config, historyStore: store, statsStore: WiringStatsStore(),
+            inputDevices: inputDevices
+        )
+
+        controller.model.onSelectInputDevice?(usb.uid)
+
+        XCTAssertEqual(controller.model.inputState, state)
+        XCTAssertEqual(config.inputDevice, usb.uid)
+    }
+
+    func testInputDeviceProjectionPublishesLiveChanges() async {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("input-live-history.jsonl"))
+        let config = makeConfig()
+        let builtIn = AudioInputDevice(uid: "built-in", name: "MacBook Microphone")
+        let initial = AudioInputState(
+            devices: [builtIn], systemDefault: builtIn, preferredUID: nil,
+            preferredName: nil, effectiveDevice: builtIn, pendingDevice: nil,
+            status: .ready
+        )
+        let inputDevices = WiringInputDevices(initial)
+        let controller = SettingsController(
+            config: config, historyStore: store, statsStore: WiringStatsStore(),
+            inputDevices: inputDevices
+        )
+        let changed = AudioInputState(
+            devices: [], systemDefault: nil, preferredUID: nil, preferredName: nil,
+            effectiveDevice: nil, pendingDevice: nil,
+            status: .unavailable(message: "No input device is available.")
+        )
+
+        inputDevices.onInputStateChange?(changed)
+        await Task.yield()
+
+        XCTAssertEqual(controller.model.inputState, changed)
     }
 
     func testClosingWindowStopsShortcutRecordingMonitor() {

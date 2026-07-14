@@ -10,8 +10,8 @@
       "reason": "Application lifecycle and composition root"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Record/AudioRecorder.swift",
-      "reason": "AVFoundation microphone capture adapter"
+      "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Record/CoreAudioHardware.swift",
+      "reason": "Thin Core Audio and AVFoundation hardware boundary; routing policy lives in AudioRecorder"
     },
     {
       "path": "Sources/FoldWiseVoiceKit/SystemIntegrations/AudioDucking/AudioDucker.swift",

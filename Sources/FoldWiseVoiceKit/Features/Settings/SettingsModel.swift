@@ -76,6 +76,11 @@ final class SettingsModel: ObservableObject {
     @Published var pttKey = ""
     @Published var toggleKey = ""
     @Published var pauseAudio = true
+    @Published var inputState = AudioInputState(
+        devices: [], systemDefault: nil, preferredUID: nil, preferredName: nil,
+        effectiveDevice: nil, pendingDevice: nil,
+        status: .unavailable(message: "No input device is available.")
+    )
     /// Master "Save dictation history" switch, surfaced in the History pane.
     @Published var saveHistory = true
     /// Auto-delete window for history, a control distinct from `saveHistory`.
@@ -106,6 +111,7 @@ final class SettingsModel: ObservableObject {
 
     // wired by SettingsController
     var onCommit: (() -> Void)?
+    var onSelectInputDevice: ((String?) -> Void)?
     var onRecord: ((RecordingField) -> Void)?
     var onSelectModel: ((String) -> Void)?
     var onInstallModel: ((String) -> Void)?

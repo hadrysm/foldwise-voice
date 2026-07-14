@@ -199,6 +199,16 @@ final class SettingsWorkflow {
         commit()
     }
 
+    func selectInputDevice(_ uid: String?) {
+        config.inputDevice = uid
+        do {
+            try persist()
+            setStatus("Saved ✓", isError: false, clearAfter: true)
+        } catch {
+            setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
+        }
+    }
+
     func copyHistory(_ entry: HistoryEntry) {
         copy(entry.text)
     }

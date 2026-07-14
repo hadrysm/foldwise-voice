@@ -433,7 +433,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - settings (keyboard shortcuts + sound + updates)
+    // MARK: - settings (keyboard shortcuts + input + sound + updates)
 
     private var settingsPane: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -474,6 +474,15 @@ struct SettingsView: View {
             .font(Theme.ui(11))
             .foregroundStyle(Theme.textSecondary)
 
+            sectionHeader("Input")
+            inputDeviceRoster
+            if let message = inputDeviceMessage {
+                Text(message)
+                    .font(Theme.ui(11))
+                    .foregroundStyle(inputDeviceMessageIsError ? .red : Theme.textSecondary)
+                    .padding(.horizontal, 4)
+            }
+
             sectionHeader("Sound")
             Card {
                 CardRow(
@@ -502,6 +511,105 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private var inputDeviceRoster: some View {
+        Card {
+            inputDeviceButton(
+                uid: nil,
+                icon: "macbook",
+                title: "System Default",
+                detail: model.inputState.systemDefault.map {
+                    "\($0.name) — follows macOS"
+                } ?? "No macOS default input is available",
+                unavailable: false
+            )
+            ForEach(model.inputState.devices) { device in
+                Divider().padding(.leading, 14)
+                inputDeviceButton(
+                    uid: device.uid,
+                    icon: "mic",
+                    title: device.name,
+                    detail: device.uid == model.inputState.effectiveDevice?.uid
+                        ? "Connected — in use"
+                        : "Connected",
+                    unavailable: false
+                )
+            }
+            if let preferredUID = model.inputState.preferredUID,
+               !model.inputState.devices.contains(where: { $0.uid == preferredUID }) {
+                Divider().padding(.leading, 14)
+                inputDeviceButton(
+                    uid: preferredUID,
+                    icon: "mic.slash",
+                    title: model.inputState.preferredName ?? "Previously selected device",
+                    detail: "Not connected — Preferred",
+                    unavailable: true
+                )
+            }
+        }
+    }
+
+    private func inputDeviceButton(
+        uid: String?, icon: String, title: String, detail: String, unavailable: Bool
+    ) -> some View {
+        Button {
+            guard !unavailable else { return }
+            model.onSelectInputDevice?(uid)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(Theme.ui(13, .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(detail)
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer(minLength: 16)
+                Image(
+                    systemName: model.inputState.preferredUID == uid
+                        ? "checkmark.circle.fill"
+                        : "circle"
+                )
+                .foregroundStyle(
+                    model.inputState.preferredUID == uid
+                        ? AnyShapeStyle(Theme.accent)
+                        : AnyShapeStyle(Theme.textTertiary)
+                )
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+            .opacity(unavailable ? 0.55 : 1)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityHint(detail)
+    }
+
+    private var inputDeviceMessage: String? {
+        switch model.inputState.status {
+        case .ready:
+            nil
+        case let .fallback(preferred, effective):
+            "\(preferred) isn’t connected. Using \(effective) until it returns."
+        case let .restored(device):
+            "\(device) is connected again and has been restored."
+        case let .deferred(current, next):
+            "Using \(current) for this dictation. \(next) will be used next."
+        case let .unavailable(message):
+            message
+        }
+    }
+
+    private var inputDeviceMessageIsError: Bool {
+        if case .unavailable = model.inputState.status { return true }
+        return false
     }
 
     private var updateSubtitle: String {
