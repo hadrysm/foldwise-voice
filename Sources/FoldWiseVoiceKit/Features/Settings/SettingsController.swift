@@ -84,15 +84,9 @@ final class SettingsController {
             NSWorkspace.shared.open(config.path)
         }
         model.onCheckUpdates = { [weak self] in self?.workflow.checkForUpdates() }
-        model.onCopyHistory = { [weak self] entry in self?.workflow.copyHistory(entry) }
-        model.onCopyRawHistory = { [weak self] entry in self?.workflow.copyRawHistory(entry) }
-        model.onFlagHistory = { [weak self] entry in self?.workflow.flagHistory(entry) }
-        model.onRerunPolish = { [weak self] entry, modeName in
-            Task { @MainActor in
-                await self?.workflow.rerunPolish(entry, modeName: modeName)
-            }
+        model.onHistoryCommand = { [weak self] entry, command in
+            self?.workflow.performHistoryCommand(command, for: entry)
         }
-        model.onDeleteHistory = { [weak self] entry in self?.workflow.deleteHistory(entry) }
         model.onClearHistory = { [weak self] in self?.workflow.clearHistory() }
     }
 

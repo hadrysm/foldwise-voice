@@ -42,7 +42,7 @@ final class SettingsControllerWiringTests: XCTestCase {
         try FileManager.default.removeItem(at: dir)
     }
 
-    func testFlagHistoryCallbackReachesWorkflow() {
+    func testSemanticHistoryCommandReachesWorkflow() {
         let store = JSONLHistoryStore(url: dir.appendingPathComponent("flag-history.jsonl"))
         let row = entry(text: "stored words")
         store.append(row)
@@ -50,7 +50,7 @@ final class SettingsControllerWiringTests: XCTestCase {
             config: makeConfig(), historyStore: store, statsStore: WiringStatsStore()
         )
 
-        controller.model.onFlagHistory?(row)
+        controller.model.onHistoryCommand?(row, .toggleFlag)
 
         XCTAssertEqual(store.load().first?.flagged, true)
     }
@@ -63,7 +63,7 @@ final class SettingsControllerWiringTests: XCTestCase {
             config: makeConfig(), historyStore: store, statsStore: WiringStatsStore()
         )
 
-        controller.model.onDeleteHistory?(row)
+        controller.model.onHistoryCommand?(row, .delete)
 
         XCTAssertTrue(store.load().isEmpty)
     }

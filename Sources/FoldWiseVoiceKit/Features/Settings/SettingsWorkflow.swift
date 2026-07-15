@@ -214,6 +214,31 @@ final class SettingsWorkflow {
         copy(entry.text)
     }
 
+    @discardableResult
+    func performHistoryCommand(
+        _ command: DictationRowCommand,
+        for entry: HistoryEntry
+    ) -> Task<Void, Never>? {
+        switch command {
+        case .copyDisplayed:
+            copyHistory(entry)
+            return nil
+        case .copyRaw:
+            copyRawHistory(entry)
+            return nil
+        case .toggleFlag:
+            flagHistory(entry)
+            return nil
+        case let .rerunPolish(modeName):
+            return Task { @MainActor in
+                await rerunPolish(entry, modeName: modeName)
+            }
+        case .delete:
+            deleteHistory(entry)
+            return nil
+        }
+    }
+
     func copyRawHistory(_ entry: HistoryEntry) {
         copy(entry.rawText)
     }

@@ -34,6 +34,10 @@
       "reason": "Declarative SwiftUI home composition"
     },
     {
+      "path": "Sources/FoldWiseVoiceKit/Features/DictationRow/DictationRowView.swift",
+      "reason": "Declarative SwiftUI shared Dictation-row composition; presentation, action composition, and interaction rules live in covered collaborators"
+    },
+    {
       "path": "Sources/FoldWiseVoiceKit/SystemIntegrations/Hotkeys/HotkeyListener.swift",
       "reason": "Thin CGEventTap and NSEvent monitor adapter; matching and dispatch live in HotkeyDispatcher"
     },

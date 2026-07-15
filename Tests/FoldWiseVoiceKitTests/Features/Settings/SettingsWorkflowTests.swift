@@ -722,7 +722,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let workflow = makeWorkflow(config: config, model: model, pasteboard: pasteboard)
         let row = entry(createdAt: Date(), text: "polished words")
 
-        workflow.copyHistory(row)
+        workflow.performHistoryCommand(.copyDisplayed, for: row)
 
         XCTAssertEqual(pasteboard.string(forType: .string), "polished words")
     }
@@ -734,7 +734,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let workflow = makeWorkflow(config: config, model: model, pasteboard: pasteboard)
         let row = entry(createdAt: Date(), text: "polished words")
 
-        workflow.copyRawHistory(row)
+        workflow.performHistoryCommand(.copyRaw, for: row)
 
         XCTAssertEqual(pasteboard.string(forType: .string), "polished words raw")
     }
@@ -747,7 +747,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let model = SettingsModel()
         let workflow = makeWorkflow(config: config, model: model, historyStore: store)
 
-        workflow.flagHistory(row)
+        workflow.performHistoryCommand(.toggleFlag, for: row)
 
         XCTAssertEqual(model.historyEntries.map(\.flagged), [true])
     }
@@ -842,7 +842,8 @@ final class SettingsWorkflowTests: XCTestCase {
             }
         )
 
-        await workflow.rerunPolish(row, modeName: "Clean")
+        let task = workflow.performHistoryCommand(.rerunPolish(modeName: "Clean"), for: row)
+        await task?.value
 
         XCTAssertEqual(
             model.historyEntries.first?.text,
@@ -901,7 +902,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let model = SettingsModel()
         let workflow = makeWorkflow(config: config, model: model, historyStore: store)
 
-        workflow.deleteHistory(removed)
+        workflow.performHistoryCommand(.delete, for: removed)
 
         XCTAssertEqual(model.historyEntries.map(\.text), ["keep me"])
     }

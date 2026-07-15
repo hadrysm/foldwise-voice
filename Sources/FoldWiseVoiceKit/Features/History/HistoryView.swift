@@ -17,6 +17,16 @@ struct HistoryPane: View {
     @State private var confirmingDeleteOnOff = false
     @State private var search = ""
     @State private var flaggedOnly = false
+    @State private var projection = HistoryProjection.empty
+    @State private var projectionCache: HistoryProjectionCache
+
+    init(
+        model: SettingsModel,
+        projectionCache: HistoryProjectionCache = HistoryProjectionCache()
+    ) {
+        self.model = model
+        _projectionCache = State(initialValue: projectionCache)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -47,6 +57,9 @@ struct HistoryPane: View {
                 "Saving is now off, so no new dictations will be recorded. "
                     + "Delete the dictations already saved on this Mac?"
             )
+        }
+        .onChange(of: projectionInput, initial: true) { _, input in
+            projection = projectionCache.resolve(input)
         }
     }
 
@@ -124,15 +137,18 @@ struct HistoryPane: View {
     }
 
     private var populated: some View {
-        let filtered = HistoryFilter.apply(
-            to: model.historyEntries, query: search, flaggedOnly: flaggedOnly
-        )
-        return VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 16) {
             searchControls
-            if filtered.isEmpty {
+            if projection.isEmpty {
                 noMatchesState
             } else {
-                groupedList(filtered)
+                HistoryCollection(
+                    projection: projection,
+                    polishModeNames: polishModeNames,
+                    onCommand: { entry, command in
+                        model.onHistoryCommand?(entry, command)
+                    }
+                )
             }
             HStack {
                 Spacer()
@@ -144,8 +160,20 @@ struct HistoryPane: View {
         }
     }
 
+    private var projectionInput: HistoryProjection.Input {
+        HistoryProjection.Input(
+            entries: model.historyEntries,
+            search: search,
+            flaggedOnly: flaggedOnly
+        )
+    }
+
+    private var polishModeNames: [String] {
+        model.modeNames.filter { model.llmModes.contains($0) }
+    }
+
     /// Live search over both the polished and raw text, plus a Flagged-only
-    /// toggle. Both narrow the loaded list in memory via `HistoryFilter`;
+    /// toggle. Both narrow the loaded list through `HistoryProjection`;
     /// neither touches the store.
     private var searchControls: some View {
         HStack(spacing: 10) {
@@ -196,169 +224,39 @@ struct HistoryPane: View {
             }
         }
     }
+}
 
-    private func groupedList(_ entries: [HistoryEntry]) -> some View {
+/// Value-fed collection rendering. It deliberately observes no Settings state;
+/// only a new projection or action values can invalidate this lazy tree.
+private struct HistoryCollection: View {
+    let projection: HistoryProjection
+    let polishModeNames: [String]
+    let onCommand: (HistoryEntry, DictationRowCommand) -> Void
+
+    var body: some View {
         LazyVStack(alignment: .leading, spacing: 16) {
-            ForEach(HistoryPane.grouped(entries), id: \.header) { group in
-                sectionHeader(group.header)
+            ForEach(projection.sections, id: \.header) { section in
+                sectionHeader(section.header)
                 Card {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(group.entries.enumerated()), id: \.element.id) { i, entry in
-                            if i > 0 { Divider().padding(.leading, 14) }
-                            HistoryRow(model: model, entry: entry)
+                        ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
+                            if index > 0 {
+                                Divider().padding(.leading, 14)
+                            }
+                            DictationRow(
+                                presentation: row.presentation,
+                                moreCapabilities: DictationRowMoreCapabilities(
+                                    canCopyRaw: row.entry.isPolished,
+                                    polishModeNames: polishModeNames
+                                ),
+                                onCommand: { command in
+                                    onCommand(row.entry, command)
+                                }
+                            )
                         }
                     }
                 }
             }
         }
-    }
-
-    // MARK: - grouping (display-only; the view is not unit-tested per PRD #78)
-
-    struct DayGroup {
-        let header: String
-        let entries: [HistoryEntry]
-    }
-
-    /// Newest entry first, bucketed by calendar day, each bucket labeled
-    /// TODAY / YESTERDAY / a medium date. Buckets are ordered newest day first.
-    static func grouped(_ entries: [HistoryEntry], calendar: Calendar = .current) -> [DayGroup] {
-        let sorted = entries.sorted { $0.createdAt > $1.createdAt }
-        var order: [Date] = []
-        var buckets: [Date: [HistoryEntry]] = [:]
-        for entry in sorted {
-            let day = calendar.startOfDay(for: entry.createdAt)
-            if buckets[day] == nil { order.append(day) }
-            buckets[day, default: []].append(entry)
-        }
-        return order.map { day in
-            DayGroup(header: header(for: day, calendar: calendar), entries: buckets[day] ?? [])
-        }
-    }
-
-    private static func header(for day: Date, calendar: Calendar) -> String {
-        if calendar.isDateInToday(day) { return "Today" }
-        if calendar.isDateInYesterday(day) { return "Yesterday" }
-        return dayFormatter.string(from: day)
-    }
-
-    private static let dayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        return formatter
-    }()
-
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        return formatter
-    }()
-
-    static func time(_ date: Date) -> String {
-        timeFormatter.string(from: date)
-    }
-}
-
-/// One history row. A separate view so its hover state is row-local: hovering
-/// re-evaluates exactly this row, not the whole pane — with histories in the
-/// thousands, pane-wide hover invalidation re-filtered, re-grouped, and
-/// re-diffed the entire list on every pointer move. `model` is deliberately
-/// NOT `@ObservedObject`: the row reads callbacks and Mode names at action
-/// time, and list-shape changes reach it as new `entry` input from the pane.
-private struct HistoryRow: View {
-    let model: SettingsModel
-    let entry: HistoryEntry
-    @State private var hovered = false
-
-    var body: some View {
-        CardRow(
-            title: entry.text,
-            subtitle: "\(entry.modeName) · \(PolishStatus(entry).label) · "
-                + HistoryPane.time(entry.createdAt)
-        ) {
-            HStack(spacing: 8) {
-                if hovered {
-                    Button {
-                        model.onCopyHistory?(entry)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Copy text")
-                }
-                // A flagged row keeps its filled flag on show even off-hover, so
-                // the bookmark is visible at a glance; hovering reveals the flag
-                // affordance on unflagged rows.
-                if hovered || entry.flagged {
-                    Button {
-                        model.onFlagHistory?(entry)
-                    } label: {
-                        Image(systemName: entry.flagged ? "flag.fill" : "flag")
-                            .foregroundStyle(
-                                entry.flagged ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(entry.flagged ? "Remove flag" : "Flag for my review")
-                }
-                overflowMenu(entry)
-            }
-        }
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            hovered = hovering
-        }
-    }
-
-    /// The trailing kebab, mirroring the Models pane's overflow menu (kept a
-    /// sibling of the row so opening it never triggers a row action). Copy and
-    /// Flag mirror the hover buttons so they stay reachable without a pointer;
-    /// Copy raw recovers the pre-Polish transcript and is only meaningful when
-    /// the row is polished; Re-run Polish reshapes the stored raw text under a
-    /// Mode picked from the polishing Modes; Delete removes exactly this entry.
-    private func overflowMenu(_ entry: HistoryEntry) -> some View {
-        Menu {
-            // Copy and Flag also live behind hover on the row, but the menu is
-            // the always-present path so keyboard and VoiceOver users can still
-            // reach them without a pointer.
-            Button("Copy") { model.onCopyHistory?(entry) }
-            if entry.isPolished {
-                Button("Copy raw") { model.onCopyRawHistory?(entry) }
-            }
-            Button(entry.flagged ? "Remove flag" : "Flag for my review") {
-                model.onFlagHistory?(entry)
-            }
-            let polishModes = model.modeNames.filter { model.llmModes.contains($0) }
-            if !polishModes.isEmpty {
-                Menu("Re-run Polish") {
-                    ForEach(polishModes, id: \.self) { name in
-                        Button(name) { model.onRerunPolish?(entry, name) }
-                    }
-                }
-            }
-            // Copy and Flag are always present above, so Delete always earns a
-            // separator to keep the destructive action set apart.
-            Divider()
-            Button("Delete", role: .destructive) { model.onDeleteHistory?(entry) }
-        } label: {
-            // The bare `ellipsis` glyph is wide but only a few points tall, so on
-            // its own it gives a thin, hard-to-hit target under `.plain`. A square
-            // frame plus a rectangular content shape widens the click area to a
-            // comfortable 28pt without resizing the glyph; it fits inside the row's
-            // height so it doesn't change row layout.
-            Image(systemName: "ellipsis")
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .controlSize(.small)
-        .fixedSize()
-        .accessibilityLabel("More actions")
     }
 }
