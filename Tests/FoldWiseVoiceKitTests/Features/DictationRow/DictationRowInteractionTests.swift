@@ -210,6 +210,29 @@ final class DictationRowInteractionTests: XCTestCase {
         XCTAssertEqual([confirmed, feedback.isConfirmed], [true, false])
     }
 
+    @MainActor
+    func testDisplayedCopyCommandsUseFeedbackWhileOtherCommandsPassThrough() {
+        let feedback = DictationRowCopyFeedback { _ in {} }
+        var commands: [DictationRowCommand] = []
+        let content = DictationRowContent(
+            presentation: presentation(),
+            moreCapabilities: DictationRowMoreCapabilities(
+                canCopyRaw: true,
+                polishModeNames: ["Clean"]
+            ),
+            onCommand: { commands.append($0) },
+            interactionState: DictationRowInteractionState(hasMore: true),
+            copyFeedback: feedback
+        )
+
+        content.perform(.copyDisplayed)
+        let copyWasConfirmed = feedback.isConfirmed
+        content.perform(.copyRaw)
+
+        XCTAssertEqual(commands, [.copyDisplayed, .copyRaw])
+        XCTAssertTrue(copyWasConfirmed)
+    }
+
     private func presentation(isFlagged: Bool = true) -> DictationRowPresentation {
         DictationRowPresentation(entry: HistoryEntry(
             id: UUID(), createdAt: Date(timeIntervalSince1970: 1_783_499_700),

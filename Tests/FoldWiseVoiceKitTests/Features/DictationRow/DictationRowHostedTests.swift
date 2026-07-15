@@ -55,6 +55,45 @@ final class DictationRowHostedTests: XCTestCase {
         XCTAssertEqual([initialExecutions, executionCount], [1, 1])
     }
 
+    func testHostedHistoryRefreshesRelativeHeadersWhenTheCalendarDayChanges() throws {
+        let model = SettingsModel()
+        model.historyEntries = [entry()]
+        let notificationCenter = NotificationCenter()
+        let calendar = utcCalendar()
+        var currentNow = Date(timeIntervalSince1970: 1_783_512_000)
+        var projectedHeaders: [[String]] = []
+        let cache = HistoryProjectionCache(
+            now: { currentNow },
+            calendar: calendar,
+            project: { input in
+                let projection = HistoryProjection.project(
+                    input,
+                    now: currentNow,
+                    calendar: calendar,
+                    locale: Locale(identifier: "en_US")
+                )
+                projectedHeaders.append(projection.sections.map(\.header))
+                return projection
+            }
+        )
+        let hosting = NSHostingView(
+            rootView: HistoryPane(
+                model: model,
+                projectionCache: cache,
+                notificationCenter: notificationCenter
+            )
+            .frame(width: 800)
+        )
+        hosting.layoutSubtreeIfNeeded()
+
+        currentNow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: currentNow))
+        notificationCenter.post(name: .NSCalendarDayChanged, object: nil)
+        hosting.needsLayout = true
+        hosting.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(projectedHeaders, [["Today"], ["Yesterday"]])
+    }
+
     func testHostedHomeRowKeyboardTraversalReachesCopyAndFlag() {
         let interaction = DictationRowInteractionState(hasMore: false)
         interaction.setFocused(.row)

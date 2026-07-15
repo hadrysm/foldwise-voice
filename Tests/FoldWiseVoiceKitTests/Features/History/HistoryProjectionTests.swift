@@ -113,6 +113,28 @@ final class HistoryProjectionTests: XCTestCase {
         XCTAssertEqual(executionCount, 4)
     }
 
+    func testCacheInvalidatesWhenTheCalendarDayChanges() throws {
+        var currentNow = now
+        let source = entry(
+            text: "one", rawText: "one", minutesAgo: 60, flagged: false
+        )
+        let input = HistoryProjection.Input(
+            entries: [source], search: "", flaggedOnly: false
+        )
+        let cache = HistoryProjectionCache(
+            now: { currentNow },
+            calendar: calendar,
+            locale: Locale(identifier: "en_US")
+        )
+
+        let beforeMidnight = cache.resolve(input)
+        currentNow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: currentNow))
+        let afterMidnight = cache.resolve(input)
+
+        XCTAssertEqual(beforeMidnight.sections.map(\.header), ["Today"])
+        XCTAssertEqual(afterMidnight.sections.map(\.header), ["Yesterday"])
+    }
+
     private func project(
         _ entries: [HistoryEntry],
         search: String = "",

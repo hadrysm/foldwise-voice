@@ -608,6 +608,9 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(tile.title)
             .accessibilityHint(tile.detail)
+            .accessibilityValue(
+                model.appearance == tile.preference ? "Selected" : "Not selected"
+            )
         }
     }
 
@@ -693,6 +696,7 @@ struct SettingsView: View {
             .opacity(unavailable ? 0.55 : 1)
         }
         .buttonStyle(.plain)
+        .disabled(unavailable)
         .accessibilityLabel(title)
         .accessibilityHint(detail)
     }

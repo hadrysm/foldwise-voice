@@ -278,6 +278,9 @@ clipboard is overwritten after a successful synthetic paste.
    remains on-screen.
 4. Observe idle, recording, working, inserted, clipboard-only, and error states
    while running the other sections.
+5. Enable VoiceOver and traverse the System, Light, and Dark Appearance tiles.
+   Confirm each tile announces whether it is selected and changing the choice
+   updates those values immediately.
 
 Pass when the Badge remains a single crisp pill, idle is motionless, state text
 is readable, menus and checkmarks stay synchronized, and hovering or choosing a
@@ -320,7 +323,8 @@ Record the exact devices and macOS default route in the release evidence.
    remains as a dimmed **Not connected — Preferred** row, the fallback message
    names USB and the live default, and changing the macOS default also changes
    the fallback. Reconnect USB and confirm it is restored automatically with the
-   temporary restoration message.
+   temporary restoration message. With VoiceOver, confirm the disconnected row
+   is announced as unavailable and cannot be activated.
 6. Start a new USB session with **Pause other audio** enabled, then physically
    disconnect USB while speaking. Confirm the session ends in an error, partial
    audio is not transcribed, inserted, or saved to History, ducked audio is
@@ -365,10 +369,10 @@ compare the same saved entry on both surfaces.
    the 24-hour time, full single-line text, full untruncated Mode name,
    Raw or Polished status, and flagged state. Confirm Copy, Flag or Remove Flag,
    and More actions have specific labels and hints.
-7. Activate the direct Copy action with VoiceOver. Confirm it announces
-   “Copied,” shows a temporary checkmark, and returns to the Copy icon. Repeat
-   after scrolling the row off-screen and back to confirm feedback does not
-   remain stuck.
+7. Activate both the direct Copy action and More → Copy with VoiceOver. Confirm
+   each announces “Copied,” shows a temporary checkmark, and returns to the Copy
+   icon. Repeat after scrolling the row off-screen and back to confirm feedback
+   does not remain stuck.
 
 Pass when Home and History preserve identical row geometry and identity while
 their surface-specific actions, keyboard traversal, More-menu navigation,

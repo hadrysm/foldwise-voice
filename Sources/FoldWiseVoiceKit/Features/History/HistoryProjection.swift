@@ -95,39 +95,55 @@ struct HistoryProjection: Equatable {
 }
 
 /// Memoizes History's O(n) projection by the only three values that can change
-/// its result. SwiftUI may republish unrelated settings freely without making
-/// the collection rescan or regroup.
+/// its collection result and the current calendar day that determines relative
+/// headers. SwiftUI may republish unrelated settings freely without making the
+/// collection rescan or regroup.
 final class HistoryProjectionCache {
     typealias Project = (HistoryProjection.Input) -> HistoryProjection
+    private typealias TimedProject = (HistoryProjection.Input, Date) -> HistoryProjection
 
-    private let project: Project
-    private var cached: (input: HistoryProjection.Input, output: HistoryProjection)?
+    private let now: () -> Date
+    private let calendar: Calendar
+    private let project: TimedProject
+    private var cached: (
+        input: HistoryProjection.Input, day: Date, output: HistoryProjection
+    )?
 
     init(
         now: @escaping () -> Date = Date.init,
         calendar: Calendar = .current,
         locale: Locale = .current
     ) {
-        project = { input in
+        self.now = now
+        self.calendar = calendar
+        project = { input, currentNow in
             HistoryProjection.project(
                 input,
-                now: now(),
+                now: currentNow,
                 calendar: calendar,
                 locale: locale
             )
         }
     }
 
-    init(project: @escaping Project) {
-        self.project = project
+    init(
+        now: @escaping () -> Date = Date.init,
+        calendar: Calendar = .current,
+        project: @escaping Project
+    ) {
+        self.now = now
+        self.calendar = calendar
+        self.project = { input, _ in project(input) }
     }
 
     func resolve(_ input: HistoryProjection.Input) -> HistoryProjection {
-        if let cached, cached.input == input {
+        let currentNow = now()
+        let day = calendar.startOfDay(for: currentNow)
+        if let cached, cached.input == input, cached.day == day {
             return cached.output
         }
-        let output = project(input)
-        cached = (input, output)
+        let output = project(input, currentNow)
+        cached = (input, day, output)
         return output
     }
 }

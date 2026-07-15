@@ -315,6 +315,22 @@ final class AudioRecorderDevicePolicyTests: XCTestCase {
         XCTAssertEqual(recorder.inputState.effectiveDevice, builtIn)
     }
 
+    func testSelectingUnavailableUIDDoesNotReusePreviousPreferredName() {
+        let unavailableUID = "unavailable-1"
+        let hardware = FakeAudioHardware(devices: [builtIn, usb], defaultUID: builtIn.uid)
+        let recorder = AudioRecorder(preferredInputUID: usb.uid, hardware: hardware)
+
+        recorder.setPreferredInputUID(unavailableUID)
+
+        XCTAssertEqual(recorder.inputState.preferredUID, unavailableUID)
+        XCTAssertNil(recorder.inputState.preferredName)
+        XCTAssertEqual(recorder.inputState.effectiveDevice, builtIn)
+        XCTAssertEqual(
+            recorder.inputState.status,
+            .fallback(preferred: "Previously selected device", effective: builtIn.name)
+        )
+    }
+
     func testFreshSnapshotFailureAtStartIsTypedAndRetryable() {
         let hardware = FakeAudioHardware(devices: [builtIn], defaultUID: builtIn.uid)
         let recorder = AudioRecorder(preferredInputUID: nil, hardware: hardware)

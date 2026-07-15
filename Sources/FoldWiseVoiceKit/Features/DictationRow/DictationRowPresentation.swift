@@ -5,6 +5,8 @@ import Foundation
 /// value never becomes an action or persistence model.
 struct DictationRowPresentation: Equatable {
     static let maxCompactModeLength = 16
+    private static let formatterLock = NSLock()
+    private static var formatters: [String: DateFormatter] = [:]
 
     let time: String
     let text: String
@@ -42,11 +44,21 @@ struct DictationRowPresentation: Equatable {
     }
 
     private static func time(_ date: Date, calendar: Calendar) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
+        formatterLock.withLock {
+            let key = "\(calendar.identifier)|\(calendar.timeZone.identifier)"
+            if let formatter = formatters[key] {
+                return formatter.string(from: date)
+            }
+            let formatter = DateFormatter()
+            formatter.calendar = calendar
+            formatter.timeZone = calendar.timeZone
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "HH:mm"
+            if formatters.count >= 16 {
+                formatters.removeAll(keepingCapacity: true)
+            }
+            formatters[key] = formatter
+            return formatter.string(from: date)
+        }
     }
 }

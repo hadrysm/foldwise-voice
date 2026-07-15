@@ -9,6 +9,7 @@
 // (behind a confirmation) empties the store. Turning saving off offers to
 // delete what is already saved.
 
+import Combine
 import SwiftUI
 
 struct HistoryPane: View {
@@ -19,13 +20,16 @@ struct HistoryPane: View {
     @State private var flaggedOnly = false
     @State private var projection = HistoryProjection.empty
     @State private var projectionCache: HistoryProjectionCache
+    private let notificationCenter: NotificationCenter
 
     init(
         model: SettingsModel,
-        projectionCache: HistoryProjectionCache = HistoryProjectionCache()
+        projectionCache: HistoryProjectionCache = HistoryProjectionCache(),
+        notificationCenter: NotificationCenter = .default
     ) {
         self.model = model
         _projectionCache = State(initialValue: projectionCache)
+        self.notificationCenter = notificationCenter
     }
 
     var body: some View {
@@ -60,6 +64,9 @@ struct HistoryPane: View {
         }
         .onChange(of: projectionInput, initial: true) { _, input in
             projection = projectionCache.resolve(input)
+        }
+        .onReceive(notificationCenter.publisher(for: .NSCalendarDayChanged)) { _ in
+            projection = projectionCache.resolve(projectionInput)
         }
     }
 

@@ -236,23 +236,31 @@ struct DictationRowContent: View {
         case let .command(action):
             if action.isDestructive {
                 Button(action.label, role: .destructive) {
-                    onCommand(action.command)
+                    perform(action.command)
                 }
             } else {
                 Button(action.label) {
-                    onCommand(action.command)
+                    perform(action.command)
                 }
             }
         case let .submenu(label, commands):
             Menu(label) {
                 ForEach(Array(commands.enumerated()), id: \.offset) { _, action in
                     Button(action.label) {
-                        onCommand(action.command)
+                        perform(action.command)
                     }
                 }
             }
         case .separator:
             Divider()
+        }
+    }
+
+    func perform(_ command: DictationRowCommand) {
+        if command == .copyDisplayed {
+            copyDisplayedText()
+        } else {
+            onCommand(command)
         }
     }
 

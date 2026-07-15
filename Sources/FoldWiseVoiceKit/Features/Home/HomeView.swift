@@ -2,6 +2,7 @@
 // so their behavior can be tested without view inspection.
 
 import AppKit
+import Combine
 import SwiftUI
 
 struct HomeView: View {
@@ -16,6 +17,11 @@ struct HomeView: View {
     }
 
     @ObservedObject var model: SettingsModel
+    private let now: () -> Date
+    private let calendar: Calendar
+    private let locale: Locale
+    private let notificationCenter: NotificationCenter
+    private let project: ([HistoryEntry], Date, Calendar, Locale) -> HomeProjection
 
     /// Both projections are memoized off `historyEntries` — SettingsModel has
     /// dozens of unrelated @Published fields, and recomputing a whole-history
@@ -27,12 +33,37 @@ struct HomeView: View {
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
     )
 
+    init(
+        model: SettingsModel,
+        now: @escaping () -> Date = Date.init,
+        calendar: Calendar = .current,
+        locale: Locale = .current,
+        notificationCenter: NotificationCenter = .default,
+        project: @escaping ([HistoryEntry], Date, Calendar, Locale) -> HomeProjection = {
+            HomeProjection.project($0, now: $1, calendar: $2, locale: $3)
+        }
+    ) {
+        self.model = model
+        self.now = now
+        self.calendar = calendar
+        self.locale = locale
+        self.notificationCenter = notificationCenter
+        self.project = project
+    }
+
     var body: some View {
         main
             .onChange(of: model.historyEntries, initial: true) { _, entries in
                 stats = UsageStatsAggregator.aggregate(entries)
-                projection = HomeProjection.project(entries, now: Date())
+                refreshProjection(entries)
             }
+            .onReceive(notificationCenter.publisher(for: .NSCalendarDayChanged)) { _ in
+                refreshProjection(model.historyEntries)
+            }
+    }
+
+    private func refreshProjection(_ entries: [HistoryEntry]) {
+        projection = project(entries, now(), calendar, locale)
     }
 
     // MARK: - main column

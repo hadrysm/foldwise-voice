@@ -100,4 +100,30 @@ final class DictationRowPresentationTests: XCTestCase {
             "08:35, Raw words, Mode Voice to Text, Raw, Not flagged"
         )
     }
+
+    func testTimeFormatterCacheKeepsTimeZonesIndependent() throws {
+        let entry = HistoryEntry(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1_783_499_700),
+            text: "Words",
+            rawText: "Words",
+            isPolished: false,
+            modeName: "Voice to Text",
+            wordCount: 1,
+            sourceApp: nil,
+            durationMs: nil,
+            flagged: false,
+            flagReason: nil
+        )
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        var utcPlusTwo = Calendar(identifier: .gregorian)
+        utcPlusTwo.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 2 * 60 * 60))
+
+        let firstUTC = DictationRowPresentation(entry: entry, calendar: utc)
+        let plusTwo = DictationRowPresentation(entry: entry, calendar: utcPlusTwo)
+        let cachedUTC = DictationRowPresentation(entry: entry, calendar: utc)
+
+        XCTAssertEqual([firstUTC.time, plusTwo.time, cachedUTC.time], ["08:35", "10:35", "08:35"])
+    }
 }

@@ -145,7 +145,7 @@ final class CoreAudioHardware: AudioHardware {
         guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr else {
             return nil
         }
-        return value?.takeUnretainedValue() as String?
+        return value?.takeRetainedValue() as String?
     }
 
     private func defaultInputUID() -> String? {

@@ -108,11 +108,7 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
         )? in
             guard !isClosed else { return nil }
             preferredUID = selectedUID
-            if let device = snapshot.device(uid: selectedUID) {
-                rememberedPreferredName = device.name
-            } else if selectedUID == nil {
-                rememberedPreferredName = nil
-            }
+            rememberedPreferredName = snapshot.device(uid: selectedUID)?.name
             let resetGeneration = reduceRoute(restored: false)
             return (makeState(), resetGeneration)
         }
