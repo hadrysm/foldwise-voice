@@ -13,6 +13,20 @@ struct AudioHardwareSnapshot: Equatable {
     let devices: [AudioInputDevice]
     let defaultUID: String?
 
+    init(devices: [AudioInputDevice], defaultUID: String?) {
+        // AVAudioEngine publishes a process-scoped aggregate while it owns an
+        // I/O unit. Its UID changes on every launch and is not a user device.
+        self.devices = devices.filter {
+            Self.userSelectableUID($0.uid) != nil
+        }
+        self.defaultUID = defaultUID
+    }
+
+    static func userSelectableUID(_ uid: String?) -> String? {
+        guard let uid, !uid.hasPrefix("CADefaultDeviceAggregate-") else { return nil }
+        return uid
+    }
+
     var systemDefault: AudioInputDevice? {
         devices.first { $0.uid == defaultUID }
     }
@@ -20,6 +34,12 @@ struct AudioHardwareSnapshot: Equatable {
     func device(uid: String?) -> AudioInputDevice? {
         guard let uid else { return nil }
         return devices.first { $0.uid == uid }
+    }
+
+    func configurationFailure(activeDevice: AudioInputDevice) -> AudioCaptureError {
+        device(uid: activeDevice.uid) == nil
+            ? .activeDeviceDisconnected(device: activeDevice.name)
+            : .configurationChanged
     }
 }
 

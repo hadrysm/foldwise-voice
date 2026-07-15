@@ -6,6 +6,57 @@ final class AudioRecorderDevicePolicyTests: XCTestCase {
     private let usb = AudioInputDevice(uid: "usb-1", name: "Studio Mic")
     private let bluetooth = AudioInputDevice(uid: "bt-1", name: "Headset")
 
+    func testConfigurationFailureNamesAnActiveDeviceThatDisconnected() {
+        let snapshot = AudioHardwareSnapshot(devices: [builtIn], defaultUID: builtIn.uid)
+
+        let failure = snapshot.configurationFailure(activeDevice: usb)
+
+        XCTAssertEqual(failure, .activeDeviceDisconnected(device: usb.name))
+    }
+
+    func testConfigurationFailureStaysTypedWhileActiveDeviceIsConnected() {
+        let snapshot = AudioHardwareSnapshot(devices: [builtIn, usb], defaultUID: builtIn.uid)
+
+        let failure = snapshot.configurationFailure(activeDevice: usb)
+
+        XCTAssertEqual(failure, .configurationChanged)
+    }
+
+    func testTransientProcessAggregateIsNotAnInputDevice() {
+        let aggregate = AudioInputDevice(
+            uid: "CADefaultDeviceAggregate-12345-0",
+            name: "CADefaultDeviceAggregate-12345-0"
+        )
+        let hardware = FakeAudioHardware(
+            devices: [builtIn, aggregate], defaultUID: builtIn.uid
+        )
+
+        let recorder = AudioRecorder(preferredInputUID: nil, hardware: hardware)
+
+        XCTAssertEqual(recorder.inputState.devices, [builtIn])
+    }
+
+    func testTransientProcessAggregatePreferenceUsesSystemDefault() {
+        let aggregate = AudioInputDevice(
+            uid: "CADefaultDeviceAggregate-12345-0",
+            name: "CADefaultDeviceAggregate-12345-0"
+        )
+        let hardware = FakeAudioHardware(
+            devices: [builtIn, aggregate], defaultUID: builtIn.uid
+        )
+
+        let recorder = AudioRecorder(preferredInputUID: aggregate.uid, hardware: hardware)
+
+        XCTAssertEqual(
+            recorder.inputState,
+            AudioInputState(
+                devices: [builtIn], systemDefault: builtIn, preferredUID: nil,
+                preferredName: nil, effectiveDevice: builtIn, pendingDevice: nil,
+                status: .ready
+            )
+        )
+    }
+
     func testCaptureErrorsHaveSpecificRecoveryMessages() {
         let cases: [(AudioCaptureError, String)] = [
             (.permissionDenied, "Microphone permission is required."),

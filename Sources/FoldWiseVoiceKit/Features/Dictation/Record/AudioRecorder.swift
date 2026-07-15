@@ -71,13 +71,14 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
     ) {
         self.hardware = hardware
         self.scheduleRestorationReset = scheduleRestorationReset
-        preferredUID = preferredInputUID
+        let selectedUID = AudioHardwareSnapshot.userSelectableUID(preferredInputUID)
+        preferredUID = selectedUID
         do {
             snapshot = try hardware.snapshot()
-            rememberedPreferredName = snapshot.device(uid: preferredInputUID)?.name
-            effective = Self.resolve(preferredUID: preferredInputUID, snapshot: snapshot)
+            rememberedPreferredName = snapshot.device(uid: selectedUID)?.name
+            effective = Self.resolve(preferredUID: selectedUID, snapshot: snapshot)
             status = Self.routeStatus(
-                preferredUID: preferredInputUID,
+                preferredUID: selectedUID,
                 preferredName: rememberedPreferredName,
                 effective: effective,
                 snapshot: snapshot
@@ -101,14 +102,15 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
     }
 
     func setPreferredInputUID(_ uid: String?) {
+        let selectedUID = AudioHardwareSnapshot.userSelectableUID(uid)
         let update = lock.withLock { () -> (
             state: AudioInputState, resetGeneration: Int?
         )? in
             guard !isClosed else { return nil }
-            preferredUID = uid
-            if let device = snapshot.device(uid: uid) {
+            preferredUID = selectedUID
+            if let device = snapshot.device(uid: selectedUID) {
                 rememberedPreferredName = device.name
-            } else if uid == nil {
+            } else if selectedUID == nil {
                 rememberedPreferredName = nil
             }
             let resetGeneration = reduceRoute(restored: false)

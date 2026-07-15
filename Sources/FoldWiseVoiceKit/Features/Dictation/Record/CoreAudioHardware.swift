@@ -62,7 +62,15 @@ final class CoreAudioHardware: AudioHardware {
             throw AudioCaptureError.unreadableDevice
         }
         return try AVAudioCaptureSession(
-            deviceID: record.id, device: record.device, onFailure: onFailure
+            deviceID: record.id,
+            device: record.device,
+            configurationFailure: { [weak self] in
+                guard let self, let snapshot = try? snapshot() else {
+                    return .configurationChanged
+                }
+                return snapshot.configurationFailure(activeDevice: record.device)
+            },
+            onFailure: onFailure
         )
     }
 
@@ -159,11 +167,16 @@ private final class AVAudioCaptureSession: AudioCaptureSession {
     static let sampleRate = 16000.0
 
     private let engine = AVAudioEngine()
+    private let recovery = AudioCaptureRecoveryCoordinator()
     private let lock = NSLock()
     private var converter: AVAudioConverter
+    private let outputFormat: AVAudioFormat
+    private let configurationFailure: () -> AudioCaptureError
+    private let onFailure: (AudioCaptureError) -> Void
     private var buffered: [Float] = []
     private var latestLevel: Float = 0
     private var running = true
+    private var tapInstalled = false
     private var configurationObserver: NSObjectProtocol?
 
     var level: Float {
@@ -173,6 +186,7 @@ private final class AVAudioCaptureSession: AudioCaptureSession {
     init(
         deviceID: AudioDeviceID,
         device: AudioInputDevice,
+        configurationFailure: @escaping () -> AudioCaptureError,
         onFailure: @escaping (AudioCaptureError) -> Void
     ) throws {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
@@ -200,20 +214,20 @@ private final class AVAudioCaptureSession: AudioCaptureSession {
             throw AudioCaptureError.converterFailed(device: device.name)
         }
         self.converter = converter
-        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-            self?.consume(buffer, outputFormat: outputFormat)
-        }
+        self.outputFormat = outputFormat
+        self.configurationFailure = configurationFailure
+        self.onFailure = onFailure
+        installTap(inputFormat: inputFormat)
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
-        ) { _ in onFailure(.configurationChanged) }
+        ) { [weak self] _ in self?.configurationChanged() }
         do {
-            engine.prepare()
-            try engine.start()
-        } catch {
-            input.removeTap(onBus: 0)
-            if let configurationObserver {
-                NotificationCenter.default.removeObserver(configurationObserver)
+            try recovery.start {
+                engine.prepare()
+                try engine.start()
             }
+        } catch {
+            recovery.stop { shutDownEngine() }
             throw AudioCaptureError.engineStartFailed(message: error.localizedDescription)
         }
     }
@@ -227,7 +241,7 @@ private final class AVAudioCaptureSession: AudioCaptureSession {
             latestLevel = 0
             return samples
         }
-        shutDownEngine()
+        recovery.stop { shutDownEngine() }
         return samples
     }
 
@@ -239,19 +253,61 @@ private final class AVAudioCaptureSession: AudioCaptureSession {
             latestLevel = 0
             return true
         }
-        if shouldShutDown { shutDownEngine() }
+        if shouldShutDown { recovery.stop { shutDownEngine() } }
     }
 
     private func shutDownEngine() {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
         if let configurationObserver {
             NotificationCenter.default.removeObserver(configurationObserver)
             self.configurationObserver = nil
         }
+        removeTap()
+        engine.stop()
     }
 
-    private func consume(_ buffer: AVAudioPCMBuffer, outputFormat: AVAudioFormat) {
+    private func configurationChanged() {
+        // AVAudioEngine delivers this notification on an internal queue and
+        // warns against synchronous teardown there. Recovery owns its own
+        // serial queue so stop/close cannot race tap and engine rebuilding.
+        recovery.configurationChanged(
+            recover: { [weak self] in try self?.rebuildAndRestartEngine() },
+            onFailure: { [weak self] in
+                guard let self else { return }
+                onFailure(configurationFailure())
+            }
+        )
+    }
+
+    private func rebuildAndRestartEngine() throws {
+        engine.stop()
+        removeTap()
+        let inputFormat = engine.inputNode.outputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0,
+              let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+            throw AudioCaptureError.configurationChanged
+        }
+        lock.withLock { self.converter = converter }
+        installTap(inputFormat: inputFormat)
+        engine.prepare()
+        try engine.start()
+    }
+
+    private func installTap(inputFormat: AVAudioFormat) {
+        engine.inputNode.installTap(
+            onBus: 0, bufferSize: 1024, format: inputFormat
+        ) { [weak self] buffer, _ in
+            self?.consume(buffer)
+        }
+        tapInstalled = true
+    }
+
+    private func removeTap() {
+        guard tapInstalled else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        tapInstalled = false
+    }
+
+    private func consume(_ buffer: AVAudioPCMBuffer) {
         let ratio = outputFormat.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
         guard let out = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else {
@@ -260,7 +316,8 @@ private final class AVAudioCaptureSession: AudioCaptureSession {
         }
         var served = false
         var error: NSError?
-        converter.convert(to: out, error: &error) { _, status in
+        let activeConverter = lock.withLock { self.converter }
+        activeConverter.convert(to: out, error: &error) { _, status in
             if served {
                 status.pointee = .noDataNow
                 return nil
