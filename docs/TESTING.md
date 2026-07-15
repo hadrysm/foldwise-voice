@@ -96,6 +96,7 @@ their meaningful decisions into covered collaborators.
 | `BadgeView.swift` | Declarative SwiftUI Badge composition |
 | `HistoryView.swift` | Declarative SwiftUI history composition |
 | `HomeView.swift` | Declarative SwiftUI home composition |
+| `DictationRowView.swift` | Declarative SwiftUI shared Dictation-row composition; presentation, action composition, and interaction rules live in covered collaborators |
 | `HotkeyListener.swift` | Thin CGEventTap and NSEvent monitor adapter; matching and dispatch live in `HotkeyDispatcher` |
 | `Log.swift` | Static Logger declarations produce no LLVM-instrumentable lines; the policy explicitly permits its absent LLVM entry |
 | `OllamaTransport.swift` | Thin URLSession data and streaming transport adapter |
@@ -156,6 +157,7 @@ Run the relevant sections earlier when a boundary changes:
 | Clipboard or Accessibility insertion | 2 and 6 |
 | Badge, menu bar, or AppKit window behavior | 7 |
 | Audio ducking or restoration | 8 |
+| Home or History Dictation-row presentation and interaction | 10 |
 
 Passing a focused change-triggered run does not replace the complete
 pre-release run.
@@ -337,6 +339,41 @@ live macOS changes, explicit identity remains stable, healthy changes defer to
 the next session, reconnect restores the preference, active loss fails without
 partial output, permission denial is recoverable, and an unavailable preference
 survives relaunch. Any failure blocks the release.
+
+### 10. Home and History Dictation rows
+
+Prepare saved raw and polished dictations with short and long text, short and
+long Mode names, and both flagged states. Open Home and History wide enough to
+compare the same saved entry on both surfaces.
+
+1. Compare rows at rest and while hovering each action area. Confirm both
+   surfaces keep the same 44-point row geometry, fixed-width time column, text
+   position, spacing, and trailing width while identity swaps to actions.
+2. Confirm long transcripts remain one collapsed, tail-truncated line and long
+   Mode names remain lowercased and tail-truncated without shifting the row.
+3. Confirm a flagged row shows an orange filled flag at rest on both surfaces;
+   activate Flag and Remove Flag and verify the saved state updates everywhere.
+4. Without using the pointer, focus a row and press Tab through Copy and Flag
+   on Home, then Copy, Flag, and More on History. Shift-Tab back through the
+   same order. Confirm actions remain visible and a focus ring surrounds the
+   active row without changing its geometry.
+5. Open History's More menu with the keyboard. Verify Copy; Copy Raw only for a
+   polished entry; Flag or Remove Flag; every available Re-run Polish Mode; and
+   Delete separated and marked destructive. Navigate and activate the submenu
+   and actions without the pointer.
+6. Enable VoiceOver and move through a raw and a polished row. Confirm it reads
+   the 24-hour time, full single-line text, full untruncated Mode name,
+   Raw or Polished status, and flagged state. Confirm Copy, Flag or Remove Flag,
+   and More actions have specific labels and hints.
+7. Activate the direct Copy action with VoiceOver. Confirm it announces
+   “Copied,” shows a temporary checkmark, and returns to the Copy icon. Repeat
+   after scrolling the row off-screen and back to confirm feedback does not
+   remain stuck.
+
+Pass when Home and History preserve identical row geometry and identity while
+their surface-specific actions, keyboard traversal, More-menu navigation,
+VoiceOver descriptions, Copy announcement, long-content truncation, and flagged
+state all behave as described.
 
 ## Finish and record evidence
 

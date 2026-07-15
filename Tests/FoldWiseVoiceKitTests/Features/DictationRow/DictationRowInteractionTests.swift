@@ -196,7 +196,7 @@ final class DictationRowInteractionTests: XCTestCase {
         feedback.confirm {}
         feedback.cancel()
 
-        XCTAssertEqual(cancellations, 2)
+        XCTAssertEqual([cancellations == 2, feedback.isConfirmed], [true, false])
     }
 
     @MainActor
@@ -207,7 +207,7 @@ final class DictationRowInteractionTests: XCTestCase {
         let confirmed = feedback.isConfirmed
         feedback.cancel()
 
-        XCTAssertTrue(confirmed)
+        XCTAssertEqual([confirmed, feedback.isConfirmed], [true, false])
     }
 
     private func presentation(isFlagged: Bool = true) -> DictationRowPresentation {

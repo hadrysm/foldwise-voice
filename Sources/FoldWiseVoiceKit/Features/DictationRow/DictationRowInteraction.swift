@@ -106,6 +106,7 @@ final class DictationRowCopyFeedback: ObservableObject {
     func cancel() {
         cancelReset?()
         cancelReset = nil
+        isConfirmed = false
     }
 
     private static func scheduleLiveReset(
