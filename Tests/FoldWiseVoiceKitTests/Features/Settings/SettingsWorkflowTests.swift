@@ -29,6 +29,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let pttKey: String
         let toggleKey: String
         let pauseAudio: Bool
+        let appearance: AppearancePreference
         let saveHistory: Bool
         let retention: RetentionWindow
         let sidebarCollapsed: Bool
@@ -45,6 +46,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let hotkey: String
         let toggleHotkey: String?
         let pauseAudio: Bool
+        let appearance: AppearancePreference
         let saveHistory: Bool
         let retention: RetentionWindow
         let sidebarCollapsed: Bool
@@ -53,6 +55,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let persistedHotkey: String?
         let persistedLLMModel: String?
         let persistedASRModel: String?
+        let persistedAppearance: AppearancePreference
     }
 
     private struct RecordingState: Equatable {
@@ -285,7 +288,7 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(
             preferenceState(model),
             PreferenceState(
-                pttKey: "F5", toggleKey: "F6", pauseAudio: false,
+                pttKey: "F5", toggleKey: "F6", pauseAudio: false, appearance: .dark,
                 saveHistory: false, retention: .sevenDays,
                 sidebarCollapsed: true, activeMode: "Clean",
                 modeNames: ["Voice to Text", "Clean"], llmModes: ["Clean"],
@@ -398,6 +401,7 @@ final class SettingsWorkflowTests: XCTestCase {
         model.pttKey = "  F7  "
         model.toggleKey = " "
         model.pauseAudio = true
+        model.appearance = .light
         model.saveHistory = true
         model.retention = .ninetyDays
         model.sidebar = SidebarPresentation(prefersCollapsed: false)
@@ -411,10 +415,11 @@ final class SettingsWorkflowTests: XCTestCase {
             configState(config, persisted: persisted),
             ConfigState(
                 activeMode: "Voice to Text", hotkey: "F7", toggleHotkey: nil,
-                pauseAudio: true, saveHistory: true, retention: .ninetyDays,
+                pauseAudio: true, appearance: .light,
+                saveHistory: true, retention: .ninetyDays,
                 sidebarCollapsed: false, llmModel: "llama3.2:3b", asrModel: "whisper-small",
                 persistedHotkey: "F7", persistedLLMModel: "llama3.2:3b",
-                persistedASRModel: "whisper-small"
+                persistedASRModel: "whisper-small", persistedAppearance: .light
             )
         )
     }
@@ -620,6 +625,25 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(received.count, 0)
     }
 
+    func testFailedInputDeviceSelectionReportsPersistenceError() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = SettingsWorkflow(
+            config: config,
+            model: model,
+            historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
+            persist: { throw TestFailure.save },
+            now: Date.init,
+            scheduleStatusClear: { _ in },
+            copy: { _ in }
+        )
+
+        workflow.selectInputDevice("usb-1")
+
+        XCTAssertTrue(model.status.hasPrefix("⚠️ save failed:"))
+        XCTAssertTrue(model.statusIsError)
+    }
+
     func testNoOpCommitDoesNotNotifyConfigObservers() {
         let config = makeConfig()
         let model = SettingsModel()
@@ -698,7 +722,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let workflow = makeWorkflow(config: config, model: model, pasteboard: pasteboard)
         let row = entry(createdAt: Date(), text: "polished words")
 
-        workflow.copyHistory(row)
+        workflow.performHistoryCommand(.copyDisplayed, for: row)
 
         XCTAssertEqual(pasteboard.string(forType: .string), "polished words")
     }
@@ -710,7 +734,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let workflow = makeWorkflow(config: config, model: model, pasteboard: pasteboard)
         let row = entry(createdAt: Date(), text: "polished words")
 
-        workflow.copyRawHistory(row)
+        workflow.performHistoryCommand(.copyRaw, for: row)
 
         XCTAssertEqual(pasteboard.string(forType: .string), "polished words raw")
     }
@@ -723,7 +747,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let model = SettingsModel()
         let workflow = makeWorkflow(config: config, model: model, historyStore: store)
 
-        workflow.flagHistory(row)
+        workflow.performHistoryCommand(.toggleFlag, for: row)
 
         XCTAssertEqual(model.historyEntries.map(\.flagged), [true])
     }
@@ -818,7 +842,8 @@ final class SettingsWorkflowTests: XCTestCase {
             }
         )
 
-        await workflow.rerunPolish(row, modeName: "Clean")
+        let task = workflow.performHistoryCommand(.rerunPolish(modeName: "Clean"), for: row)
+        await task?.value
 
         XCTAssertEqual(
             model.historyEntries.first?.text,
@@ -877,7 +902,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let model = SettingsModel()
         let workflow = makeWorkflow(config: config, model: model, historyStore: store)
 
-        workflow.deleteHistory(removed)
+        workflow.performHistoryCommand(.delete, for: removed)
 
         XCTAssertEqual(model.historyEntries.map(\.text), ["keep me"])
     }
@@ -1299,6 +1324,7 @@ final class SettingsWorkflowTests: XCTestCase {
             pttKey: model.pttKey,
             toggleKey: model.toggleKey,
             pauseAudio: model.pauseAudio,
+            appearance: model.appearance,
             saveHistory: model.saveHistory,
             retention: model.retention,
             sidebarCollapsed: model.sidebar.prefersCollapsed,
@@ -1317,6 +1343,7 @@ final class SettingsWorkflowTests: XCTestCase {
             hotkey: config.hotkey,
             toggleHotkey: config.toggleHotkey,
             pauseAudio: config.pauseAudio,
+            appearance: config.appearance,
             saveHistory: config.saveHistory,
             retention: config.historyRetention,
             sidebarCollapsed: config.sidebarCollapsed,
@@ -1324,7 +1351,8 @@ final class SettingsWorkflowTests: XCTestCase {
             asrModel: config.asrModel,
             persistedHotkey: persisted.hotkey,
             persistedLLMModel: persisted.llmModel,
-            persistedASRModel: persisted.asrModel
+            persistedASRModel: persisted.asrModel,
+            persistedAppearance: persisted.appearance
         )
     }
 
@@ -1441,6 +1469,7 @@ final class SettingsWorkflowTests: XCTestCase {
         ]
         return Config(
             activeMode: "Clean", hotkey: "F5", toggleHotkey: "F6", pauseAudio: false,
+            appearance: .dark,
             saveHistory: false, historyRetention: .sevenDays, badgePosition: nil,
             sidebarCollapsed: true, modeOrder: ["Voice to Text", "Clean"], modes: modes,
             path: dir.appendingPathComponent("modes.json")

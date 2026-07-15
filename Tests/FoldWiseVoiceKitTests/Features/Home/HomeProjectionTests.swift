@@ -43,8 +43,8 @@ final class HomeProjectionTests: XCTestCase {
         let entries = (0 ..< 12).map { entry("entry \($0)", minutesAgo: Double($0)) }
         let rows = project(entries).sections.flatMap(\.rows)
         XCTAssertEqual(rows.count, 10)
-        XCTAssertEqual(rows.first?.preview, "entry 0")
-        XCTAssertEqual(rows.last?.preview, "entry 9")
+        XCTAssertEqual(rows.first?.presentation.text, "entry 0")
+        XCTAssertEqual(rows.last?.presentation.text, "entry 9")
     }
 
     func testGroupsIntoTodayYesterdayAndAbsoluteDays() {
@@ -60,22 +60,31 @@ final class HomeProjectionTests: XCTestCase {
     func testTimeIsTwentyFourHourMinutes() {
         // 12:00 UTC minus 205 minutes = 08:35.
         let projection = project([entry("morning", minutesAgo: 205)])
-        XCTAssertEqual(projection.sections.first?.rows.first?.time, "08:35")
+        XCTAssertEqual(projection.sections.first?.rows.first?.presentation.time, "08:35")
     }
 
     func testPreviewCollapsesWhitespaceToASingleLine() {
         let projection = project([entry("first line\nsecond   line", minutesAgo: 1)])
-        XCTAssertEqual(projection.sections.first?.rows.first?.preview, "first line second line")
+        XCTAssertEqual(
+            projection.sections.first?.rows.first?.presentation.text,
+            "first line second line"
+        )
     }
 
     func testTagLowercasesTheModeName() {
         let projection = project([entry("hi", mode: "Voice to Text", minutesAgo: 1)])
-        XCTAssertEqual(projection.sections.first?.rows.first?.tag, "voice to text")
+        XCTAssertEqual(
+            projection.sections.first?.rows.first?.presentation.compactModeName,
+            "voice to text"
+        )
     }
 
     func testTagTailTruncatesLongModeNames() {
         let projection = project([entry("hi", mode: "My Extremely Long Custom Mode", minutesAgo: 1)])
-        XCTAssertEqual(projection.sections.first?.rows.first?.tag, "my extremely lon")
+        XCTAssertEqual(
+            projection.sections.first?.rows.first?.presentation.compactModeName,
+            "my extremely lon"
+        )
     }
 
     func testRowsWithinADayAreNewestFirst() {
@@ -83,7 +92,7 @@ final class HomeProjectionTests: XCTestCase {
             entry("older", minutesAgo: 30),
             entry("newest", minutesAgo: 5),
         ]
-        let previews = project(entries).sections.first?.rows.map(\.preview)
+        let previews = project(entries).sections.first?.rows.map(\.presentation.text)
         XCTAssertEqual(previews, ["newest", "older"])
     }
 

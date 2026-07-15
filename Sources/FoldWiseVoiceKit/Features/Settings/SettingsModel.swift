@@ -76,6 +76,12 @@ final class SettingsModel: ObservableObject {
     @Published var pttKey = ""
     @Published var toggleKey = ""
     @Published var pauseAudio = true
+    @Published var appearance: AppearancePreference = .system
+    @Published var inputState = AudioInputState(
+        devices: [], systemDefault: nil, preferredUID: nil, preferredName: nil,
+        effectiveDevice: nil, pendingDevice: nil,
+        status: .unavailable(message: "No input device is available.")
+    )
     /// Master "Save dictation history" switch, surfaced in the History pane.
     @Published var saveHistory = true
     /// Auto-delete window for history, a control distinct from `saveHistory`.
@@ -106,6 +112,7 @@ final class SettingsModel: ObservableObject {
 
     // wired by SettingsController
     var onCommit: (() -> Void)?
+    var onSelectInputDevice: ((String?) -> Void)?
     var onRecord: ((RecordingField) -> Void)?
     var onSelectModel: ((String) -> Void)?
     var onInstallModel: ((String) -> Void)?
@@ -124,17 +131,8 @@ final class SettingsModel: ObservableObject {
     var onDeleteASRModel: ((String) -> Void)?
     var onEditFile: (() -> Void)?
     var onCheckUpdates: (() -> Void)?
-    /// History pane row actions, mediated by SettingsController (which owns the
-    /// store and the pasteboard). Copy puts the row's polished text on the
-    /// pasteboard; copy-raw puts the pre-Polish `rawText` there; flag toggles
-    /// the row's local bookmark; re-run Polish reshapes the stored raw
-    /// transcript under the named Mode; delete removes one row; clear empties
-    /// the store.
-    var onCopyHistory: ((HistoryEntry) -> Void)?
-    var onCopyRawHistory: ((HistoryEntry) -> Void)?
-    var onFlagHistory: ((HistoryEntry) -> Void)?
-    var onRerunPolish: ((HistoryEntry, String) -> Void)?
-    var onDeleteHistory: ((HistoryEntry) -> Void)?
+    /// One semantic row-action seam. Clear All remains collection-level.
+    var onHistoryCommand: ((HistoryEntry, DictationRowCommand) -> Void)?
     var onClearHistory: (() -> Void)?
 
     var ollamaDown: Bool {

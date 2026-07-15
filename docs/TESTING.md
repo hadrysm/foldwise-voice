@@ -90,12 +90,13 @@ their meaningful decisions into covered collaborators.
 | File | Reviewed reason |
 |---|---|
 | `AppMain.swift` | Application lifecycle and composition root |
-| `AudioRecorder.swift` | AVFoundation microphone capture adapter |
+| `CoreAudioHardware.swift` | Thin Core Audio and AVFoundation hardware boundary; routing policy lives in `AudioRecorder` |
 | `AudioDucker.swift` | Thin AppleScript system-command adapter; coordination lives in `AudioDuckCoordinator` |
 | `BadgeController.swift` | AppKit window and event-composition shell |
 | `BadgeView.swift` | Declarative SwiftUI Badge composition |
 | `HistoryView.swift` | Declarative SwiftUI history composition |
 | `HomeView.swift` | Declarative SwiftUI home composition |
+| `DictationRowView.swift` | Declarative SwiftUI shared Dictation-row composition; presentation, action composition, and interaction rules live in covered collaborators |
 | `HotkeyListener.swift` | Thin CGEventTap and NSEvent monitor adapter; matching and dispatch live in `HotkeyDispatcher` |
 | `Log.swift` | Static Logger declarations produce no LLVM-instrumentable lines; the policy explicitly permits its absent LLVM entry |
 | `OllamaTransport.swift` | Thin URLSession data and streaming transport adapter |
@@ -148,7 +149,7 @@ Run the relevant sections earlier when a boundary changes:
 
 | Changed boundary | Required sections |
 |---|---|
-| Microphone capture | 1, 2, and 3 |
+| Microphone capture or input-device routing | 1, 2, 3, and 9 |
 | Permission onboarding or prompts | 1 and 6; section 1 must use a clean macOS user account |
 | Global hotkey installation or handling | 2 and 3, while another app has focus |
 | Parakeet, Whisper, model storage, or ASR dispatch | 2 and 4; always exercise both ASR engines |
@@ -156,6 +157,7 @@ Run the relevant sections earlier when a boundary changes:
 | Clipboard or Accessibility insertion | 2 and 6 |
 | Badge, menu bar, or AppKit window behavior | 7 |
 | Audio ducking or restoration | 8 |
+| Home or History Dictation-row presentation and interaction | 10 |
 
 Passing a focused change-triggered run does not replace the complete
 pre-release run.
@@ -276,6 +278,9 @@ clipboard is overwritten after a successful synthetic paste.
    remains on-screen.
 4. Observe idle, recording, working, inserted, clipboard-only, and error states
    while running the other sections.
+5. Enable VoiceOver and traverse the System, Light, and Dark Appearance tiles.
+   Confirm each tile announces whether it is selected and changing the choice
+   updates those values immediately.
 
 Pass when the Badge remains a single crisp pill, idle is motionless, state text
 is readable, menus and checkmarks stay synchronized, and hovering or choosing a
@@ -296,6 +301,83 @@ Pass when playback and the prior mute state are restored after both completed
 sessions, no stale restoration changes audio later, and disabling the setting
 leaves playback untouched. Fail if the player remains paused, output remains
 muted, or audio resumes when it was not playing before the session.
+
+### 9. Input-device routing
+
+Use a Mac with its built-in microphone, one USB input, and one Bluetooth input.
+Record the exact devices and macOS default route in the release evidence.
+
+1. Select **System Default** in FoldWise, choose the built-in microphone as the
+   macOS default, and complete a distinctive dictation. Confirm Settings names
+   the built-in microphone under System Default.
+2. While FoldWise remains open, change the macOS default to USB and then
+   Bluetooth. After each change, confirm the roster and System Default detail
+   update in platform order, then complete a dictation through that input.
+3. Select the USB input explicitly, change the macOS default to Bluetooth, and
+   confirm FoldWise keeps USB selected and in use.
+4. Start dictating through USB, select Bluetooth before stopping, and confirm
+   the deferred message names USB as current and Bluetooth as next. Stop the
+   session, then confirm the following session uses Bluetooth without combining
+   audio from both inputs.
+5. Select USB again and disconnect it while idle. Confirm the saved preference
+   remains as a dimmed **Not connected — Preferred** row, the fallback message
+   names USB and the live default, and changing the macOS default also changes
+   the fallback. Reconnect USB and confirm it is restored automatically with the
+   temporary restoration message. With VoiceOver, confirm the disconnected row
+   is announced as unavailable and cannot be activated.
+6. Start a new USB session with **Pause other audio** enabled, then physically
+   disconnect USB while speaking. Confirm the session ends in an error, partial
+   audio is not transcribed, inserted, or saved to History, ducked audio is
+   restored, and the next session uses the resolved fallback.
+7. With an explicit input still selected, deny FoldWise microphone permission
+   and try to dictate. Confirm FoldWise reports an error without claiming to be
+   listening and does not clear the preference. Re-enable permission and confirm
+   a later retry succeeds.
+8. Disconnect the preferred USB input, quit FoldWise, and relaunch it. Confirm
+   the unavailable preference and fallback survive relaunch; reconnect USB and
+   confirm automatic restoration. Repeat one ordinary dictation with Bluetooth
+   explicitly selected before finishing.
+
+Pass when all three input types capture successfully, System Default follows
+live macOS changes, explicit identity remains stable, healthy changes defer to
+the next session, reconnect restores the preference, active loss fails without
+partial output, permission denial is recoverable, and an unavailable preference
+survives relaunch. Any failure blocks the release.
+
+### 10. Home and History Dictation rows
+
+Prepare saved raw and polished dictations with short and long text, short and
+long Mode names, and both flagged states. Open Home and History wide enough to
+compare the same saved entry on both surfaces.
+
+1. Compare rows at rest and while hovering each action area. Confirm both
+   surfaces keep the same 44-point row geometry, fixed-width time column, text
+   position, spacing, and trailing width while identity swaps to actions.
+2. Confirm long transcripts remain one collapsed, tail-truncated line and long
+   Mode names remain lowercased and tail-truncated without shifting the row.
+3. Confirm a flagged row shows an orange filled flag at rest on both surfaces;
+   activate Flag and Remove Flag and verify the saved state updates everywhere.
+4. Without using the pointer, focus a row and press Tab through Copy and Flag
+   on Home, then Copy, Flag, and More on History. Shift-Tab back through the
+   same order. Confirm actions remain visible and a focus ring surrounds the
+   active row without changing its geometry.
+5. Open History's More menu with the keyboard. Verify Copy; Copy Raw only for a
+   polished entry; Flag or Remove Flag; every available Re-run Polish Mode; and
+   Delete separated and marked destructive. Navigate and activate the submenu
+   and actions without the pointer.
+6. Enable VoiceOver and move through a raw and a polished row. Confirm it reads
+   the 24-hour time, full single-line text, full untruncated Mode name,
+   Raw or Polished status, and flagged state. Confirm Copy, Flag or Remove Flag,
+   and More actions have specific labels and hints.
+7. Activate both the direct Copy action and More → Copy with VoiceOver. Confirm
+   each announces “Copied,” shows a temporary checkmark, and returns to the Copy
+   icon. Repeat after scrolling the row off-screen and back to confirm feedback
+   does not remain stuck.
+
+Pass when Home and History preserve identical row geometry and identity while
+their surface-specific actions, keyboard traversal, More-menu navigation,
+VoiceOver descriptions, Copy announcement, long-content truncation, and flagged
+state all behave as described.
 
 ## Finish and record evidence
 

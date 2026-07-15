@@ -10,6 +10,7 @@ final class SettingsController {
     private let config: Config
     private let historyStore: HistoryStore
     private let statsStore: StatsStore
+    private let inputDevices: (any AudioInputStateProviding)?
     let model = SettingsModel()
     private lazy var workflow = SettingsWorkflow(
         config: config,
@@ -31,10 +32,20 @@ final class SettingsController {
     /// menu-bar "Update Available" item.
     var onUpdateAvailable: ((String) -> Void)?
 
-    init(config: Config, historyStore: HistoryStore, statsStore: StatsStore) {
+    init(
+        config: Config, historyStore: HistoryStore, statsStore: StatsStore,
+        inputDevices: (any AudioInputStateProviding)? = nil
+    ) {
         self.config = config
         self.historyStore = historyStore
         self.statsStore = statsStore
+        self.inputDevices = inputDevices
+        if let inputDevices {
+            model.inputState = inputDevices.inputState
+            inputDevices.onInputStateChange = { [weak self] state in
+                Task { @MainActor in self?.model.inputState = state }
+            }
+        }
         wire()
         workflow.observeHistoryAppends()
     }
@@ -56,6 +67,9 @@ final class SettingsController {
 
     private func wire() {
         model.onCommit = { [weak self] in self?.workflow.commit() }
+        model.onSelectInputDevice = { [weak self] uid in
+            self?.workflow.selectInputDevice(uid)
+        }
         model.onRecord = { [weak self] field in self?.startRecording(field) }
         model.onSelectModel = { [weak self] name in self?.workflow.selectLLMModel(name) }
         model.onInstallModel = { [weak self] name in self?.workflow.installLLMModel(name) }
@@ -70,15 +84,9 @@ final class SettingsController {
             NSWorkspace.shared.open(config.path)
         }
         model.onCheckUpdates = { [weak self] in self?.workflow.checkForUpdates() }
-        model.onCopyHistory = { [weak self] entry in self?.workflow.copyHistory(entry) }
-        model.onCopyRawHistory = { [weak self] entry in self?.workflow.copyRawHistory(entry) }
-        model.onFlagHistory = { [weak self] entry in self?.workflow.flagHistory(entry) }
-        model.onRerunPolish = { [weak self] entry, modeName in
-            Task { @MainActor in
-                await self?.workflow.rerunPolish(entry, modeName: modeName)
-            }
+        model.onHistoryCommand = { [weak self] entry, command in
+            self?.workflow.performHistoryCommand(command, for: entry)
         }
-        model.onDeleteHistory = { [weak self] entry in self?.workflow.deleteHistory(entry) }
         model.onClearHistory = { [weak self] in self?.workflow.clearHistory() }
     }
 
@@ -120,6 +128,7 @@ final class SettingsController {
 
     private func populate() {
         workflow.populatePreferences()
+        if let inputDevices { model.inputState = inputDevices.inputState }
         model.axTrusted = TextInserter.accessibilityTrusted()
         workflow.populateHistory()
         workflow.refreshLLMModels()

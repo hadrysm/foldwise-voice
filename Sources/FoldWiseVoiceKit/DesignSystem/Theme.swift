@@ -1,7 +1,7 @@
 // The design-token layer for the Editorial redesign (PRD #103): every color,
 // font, spacing, and radius the redesigned surfaces use, in one place. Window
 // colors adapt to the system light/dark appearance via dynamic NSColors; the
-// Badge carries its own fixed palette because it floats over any wallpaper.
+// Badge keeps its violet/ribbon identity while its neutral palette adapts.
 // Fonts route through `Theme.ui`/`Theme.mono` exclusively, so bundling
 // Instrument Sans / IBM Plex Mono later is a one-file change.
 
@@ -34,18 +34,28 @@ enum Theme {
     /// Card fill for the grouped settings rows, one step off the window.
     static let cardBackground = dynamic(light: 0xF7F5F0, dark: 0x1B1815)
 
-    // MARK: - badge palette (fixed — the pill floats over any wallpaper)
+    // MARK: - badge palette
 
     enum Badge {
-        static let pillBackground = Color(red: 16 / 255, green: 13 / 255, blue: 22 / 255, opacity: 0.96)
-        static let border = Color(red: 167 / 255, green: 139 / 255, blue: 250 / 255, opacity: 0.22)
-        static let borderRecording = Color(red: 167 / 255, green: 139 / 255, blue: 250 / 255, opacity: 0.45)
-        static let borderError = Color(red: 250 / 255, green: 160 / 255, blue: 120 / 255, opacity: 0.55)
-        static let iconIdle = Color(srgb: 0xB8AEDB)
-        static let iconEmphasized = Color(srgb: 0xE8E2F7)
-        static let timerText = Color(srgb: 0xCFC4EA)
-        static let buttonBackground = Color(red: 167 / 255, green: 139 / 255, blue: 250 / 255, opacity: 0.16)
-        static let buttonHover = Color(red: 167 / 255, green: 139 / 255, blue: 250 / 255, opacity: 0.30)
+        static let pillBackground = Theme.dynamic(
+            light: 0xF7F5FB, dark: 0x100D16, alpha: 0.96
+        )
+        static let border = Theme.dynamic(light: 0x7654C7, dark: 0xA78BFA, alpha: 0.22)
+        static let borderRecording = Theme.dynamic(
+            light: 0x7654C7, dark: 0xA78BFA, alpha: 0.45
+        )
+        static let borderError = Theme.dynamic(
+            light: 0xC24A22, dark: 0xFAA078, alpha: 0.55
+        )
+        static let iconIdle = Theme.dynamic(light: 0x665A86, dark: 0xB8AEDB)
+        static let iconEmphasized = Theme.dynamic(light: 0x211A32, dark: 0xE8E2F7)
+        static let timerText = Theme.dynamic(light: 0x55496F, dark: 0xCFC4EA)
+        static let buttonBackground = Theme.dynamic(
+            light: 0x7654C7, dark: 0xA78BFA, alpha: 0.16
+        )
+        static let buttonHover = Theme.dynamic(
+            light: 0x7654C7, dark: 0xA78BFA, alpha: 0.30
+        )
         /// Silk-ribbon strand colors, in strand order.
         static let ribbonPalette: [Color] = [
             Color(red: 196 / 255, green: 132 / 255, blue: 252 / 255),
@@ -104,9 +114,11 @@ enum Theme {
     // MARK: - helpers
 
     /// A dynamic color resolving per the system appearance, from hex sRGB.
-    private static func dynamic(light: UInt32, dark: UInt32) -> Color {
+    private static func dynamic(
+        light: UInt32, dark: UInt32, alpha: CGFloat = 1
+    ) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
-            NSColor(srgb: appearance.isDark ? dark : light)
+            NSColor(srgb: appearance.isDark ? dark : light).withAlphaComponent(alpha)
         })
     }
 }

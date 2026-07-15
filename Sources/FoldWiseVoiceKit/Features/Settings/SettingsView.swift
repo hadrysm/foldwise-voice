@@ -18,6 +18,38 @@ enum AppInfo {
     }
 }
 
+struct AppearanceTilePresentation: Identifiable, Equatable {
+    let preference: AppearancePreference
+    let title: String
+    let symbolName: String
+    let detail: String
+
+    var id: AppearancePreference {
+        preference
+    }
+
+    static let all = [
+        AppearanceTilePresentation(
+            preference: .system,
+            title: "System",
+            symbolName: "circle.lefthalf.filled",
+            detail: "Follows macOS as it changes"
+        ),
+        AppearanceTilePresentation(
+            preference: .light,
+            title: "Light",
+            symbolName: "sun.max",
+            detail: "Always uses the light appearance"
+        ),
+        AppearanceTilePresentation(
+            preference: .dark,
+            title: "Dark",
+            symbolName: "moon",
+            detail: "Always uses the dark appearance"
+        ),
+    ]
+}
+
 /// Rail-tile bounds, collected so the tooltip chip can be drawn at the window
 /// level — a chip drawn inside the 52pt rail would be covered by the content
 /// column rendered after it.
@@ -32,6 +64,8 @@ struct RailTileBoundsKey: PreferenceKey {
 }
 
 struct SettingsView: View {
+    private static let appearanceHorizontalBreakpoint = 650.0
+
     @ObservedObject var model: SettingsModel
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var presentationResetGeneration = 0
@@ -433,7 +467,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - settings (keyboard shortcuts + sound + updates)
+    // MARK: - settings (keyboard shortcuts + input + sound + appearance + updates)
 
     private var settingsPane: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -474,6 +508,15 @@ struct SettingsView: View {
             .font(Theme.ui(11))
             .foregroundStyle(Theme.textSecondary)
 
+            sectionHeader("Input")
+            inputDeviceRoster
+            if let message = inputDeviceMessage {
+                Text(message)
+                    .font(Theme.ui(11))
+                    .foregroundStyle(inputDeviceMessageIsError ? .red : Theme.textSecondary)
+                    .padding(.horizontal, 4)
+            }
+
             sectionHeader("Sound")
             Card {
                 CardRow(
@@ -495,6 +538,9 @@ struct SettingsView: View {
                 }
             }
 
+            sectionHeader("Appearance")
+            appearanceChoices
+
             sectionHeader("Updates")
             Card {
                 CardRow(title: "Updates", subtitle: updateSubtitle) {
@@ -502,6 +548,177 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var appearanceChoices: some View {
+        if settingsContentWidth >= Self.appearanceHorizontalBreakpoint {
+            HStack(spacing: 8) {
+                appearanceChoiceButtons
+            }
+        } else {
+            VStack(spacing: 8) {
+                appearanceChoiceButtons
+            }
+        }
+    }
+
+    private var appearanceChoiceButtons: some View {
+        ForEach(AppearanceTilePresentation.all) { tile in
+            Button {
+                model.appearance = tile.preference
+                model.onCommit?()
+            } label: {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: tile.symbolName)
+                            .font(.system(size: 16, weight: .medium))
+                        Spacer()
+                        Image(
+                            systemName: model.appearance == tile.preference
+                                ? "checkmark.circle.fill"
+                                : "circle"
+                        )
+                    }
+                    Text(tile.title)
+                        .font(Theme.ui(13, .semibold))
+                    Text(tile.detail)
+                        .font(Theme.ui(10.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Theme.textPrimary)
+                .padding(12)
+                .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+                .background(
+                    model.appearance == tile.preference
+                        ? Theme.activeNavBackground
+                        : Theme.cardBackground,
+                    in: RoundedRectangle(cornerRadius: Theme.cardRadius)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.cardRadius)
+                        .strokeBorder(
+                            model.appearance == tile.preference ? Theme.accent : Theme.hairline,
+                            lineWidth: 1
+                        )
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(tile.title)
+            .accessibilityHint(tile.detail)
+            .accessibilityValue(
+                model.appearance == tile.preference ? "Selected" : "Not selected"
+            )
+        }
+    }
+
+    private var settingsContentWidth: Double {
+        let sidebarWidth = sidebarMode == .expanded
+            ? Double(Theme.sidebarWidth)
+            : Double(Theme.railWidth)
+        return model.windowWidth - sidebarWidth - 1 - Double(Theme.contentPadding * 2)
+    }
+
+    private var inputDeviceRoster: some View {
+        Card {
+            inputDeviceButton(
+                uid: nil,
+                icon: "macbook",
+                title: "System Default",
+                detail: model.inputState.systemDefault.map {
+                    "\($0.name) — follows macOS"
+                } ?? "No macOS default input is available",
+                unavailable: false
+            )
+            ForEach(model.inputState.devices) { device in
+                Divider().padding(.leading, 14)
+                inputDeviceButton(
+                    uid: device.uid,
+                    icon: "mic",
+                    title: device.name,
+                    detail: device.uid == model.inputState.effectiveDevice?.uid
+                        ? "Connected — in use"
+                        : "Connected",
+                    unavailable: false
+                )
+            }
+            if let preferredUID = model.inputState.preferredUID,
+               !model.inputState.devices.contains(where: { $0.uid == preferredUID }) {
+                Divider().padding(.leading, 14)
+                inputDeviceButton(
+                    uid: preferredUID,
+                    icon: "mic.slash",
+                    title: model.inputState.preferredName ?? "Previously selected device",
+                    detail: "Not connected — Preferred",
+                    unavailable: true
+                )
+            }
+        }
+    }
+
+    private func inputDeviceButton(
+        uid: String?, icon: String, title: String, detail: String, unavailable: Bool
+    ) -> some View {
+        Button {
+            guard !unavailable else { return }
+            model.onSelectInputDevice?(uid)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(Theme.ui(13, .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(detail)
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer(minLength: 16)
+                Image(
+                    systemName: model.inputState.preferredUID == uid
+                        ? "checkmark.circle.fill"
+                        : "circle"
+                )
+                .foregroundStyle(
+                    model.inputState.preferredUID == uid
+                        ? AnyShapeStyle(Theme.accent)
+                        : AnyShapeStyle(Theme.textTertiary)
+                )
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+            .opacity(unavailable ? 0.55 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(unavailable)
+        .accessibilityLabel(title)
+        .accessibilityHint(detail)
+    }
+
+    private var inputDeviceMessage: String? {
+        switch model.inputState.status {
+        case .ready:
+            nil
+        case let .fallback(preferred, effective):
+            "\(preferred) isn’t connected. Using \(effective) until it returns."
+        case let .restored(device):
+            "\(device) is connected again and has been restored."
+        case let .deferred(current, next):
+            "Using \(current) for this dictation. \(next) will be used next."
+        case let .unavailable(message):
+            message
+        }
+    }
+
+    private var inputDeviceMessageIsError: Bool {
+        if case .unavailable = model.inputState.status { return true }
+        return false
     }
 
     private var updateSubtitle: String {

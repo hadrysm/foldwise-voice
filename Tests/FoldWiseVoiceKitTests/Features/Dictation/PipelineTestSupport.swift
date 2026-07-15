@@ -7,24 +7,33 @@ import Foundation
 @testable import FoldWiseVoiceKit
 
 final class FakeRecorder: AudioRecording {
+    var onFailure: ((AudioCaptureError) -> Void)?
     var samples: [Float]
+    var startError: AudioCaptureError?
     private(set) var startCount = 0
+    private(set) var stopCount = 0
     private(set) var closeCount = 0
 
     init(samples: [Float] = FakeRecorder.speech()) {
         self.samples = samples
     }
 
-    func start() {
+    func start() throws {
+        if let startError { throw startError }
         startCount += 1
     }
 
     func stop() -> [Float] {
-        samples
+        stopCount += 1
+        return samples
     }
 
     func close() {
         closeCount += 1
+    }
+
+    func fail(_ error: AudioCaptureError) {
+        onFailure?(error)
     }
 
     /// Canned capture loud enough and long enough to pass the Pipeline's

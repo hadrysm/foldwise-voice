@@ -13,6 +13,17 @@ idle ⇄ hover → recording → working → done/error and back; it never steal
 focus from the app being dictated into.
 _Avoid_: HUD, overlay, recording bar, floating window
 
+**Dictation row** — The compact presentation of one saved Dictation session
+used in both Home's recent list and the full History list. The two surfaces may
+offer different secondary actions, but the row's identity and visual language
+stay the same.
+_Avoid_: history element, history item, session preview
+
+**Appearance preference** — The user's global choice of System, Light, or Dark
+for FoldWise surfaces. System follows the live macOS appearance; Light and Dark
+override it across the main window and Badge.
+_Avoid_: theme mode, color mode
+
 ## Dictation pipeline
 
 **Dictation session** — One press-to-insert cycle: from holding the hotkey
@@ -20,6 +31,10 @@ and speaking, through to the (optionally polished) text landing in the
 focused app — or left on the clipboard when it can't be pasted. The unit the
 app sequences and reports progress for.
 _Avoid_: recording, dictation
+
+**Input device** — The global microphone source used by the record Stage. It is
+either the live macOS system default or a specifically chosen connected device.
+_Avoid_: microphone setting, audio source
 
 **Stage** — One of the four steps a dictation session flows through: record
 the audio, transcribe it to text, optionally polish that text, and insert it

@@ -44,7 +44,7 @@ struct UsageStats: Equatable {
 
 /// Computes `UsageStats` from the history entries already loaded into the
 /// Settings model. Pure and order-independent, so its rules are unit-tested
-/// apart from the (untested) SwiftUI pane — modeled on `HistoryFilter`.
+/// apart from the (untested) SwiftUI pane — modeled on `HistoryProjection`.
 enum UsageStatsAggregator {
     /// The typing speed the time-saved estimate is measured against — Wispr's
     /// in-app "average keyboard typist" figure. Chosen over its 40-wpm marketing

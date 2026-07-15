@@ -104,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // force unwrapping at every use for no real safety gain.
     // swiftlint:disable implicitly_unwrapped_optional
     private var config: Config!
+    private var appearanceReactor: AppearanceReactor!
     private var pipeline: Pipeline!
     private var badge: BadgeController!
     private var settings: SettingsController!
@@ -118,7 +119,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        guard acquireInstanceLock(port: lockPort) else {
+        let acquiredInstanceLock = acquireInstanceLock(port: lockPort)
+        let url = Config.resolvePath(cliPath: configPath)
+        config = Config.loadOrCreate(at: url)
+        if let modeOverride { config.setActiveMode(modeOverride) }
+        appearanceReactor = AppearanceReactor(config: config)
+
+        guard acquiredInstanceLock else {
             NSApp.activate(ignoringOtherApps: true)
             let alert = NSAlert()
             alert.messageText = "FoldWise Voice is already running"
@@ -134,14 +141,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // .regular, but needed then so Edit shortcuts work in text fields.
         NSApp.mainMenu = buildMainMenu()
 
-        let url = Config.resolvePath(cliPath: configPath)
-        config = Config.loadOrCreate(at: url)
-        if let modeOverride { config.setActiveMode(modeOverride) }
-
         // Composition root: the one recorder is shared between the Pipeline
         // and the Badge's level meter, and warmup is triggered here (below),
         // not inside Pipeline.
-        let recorder = AudioRecorder()
+        let recorder = AudioRecorder(config: config, hardware: CoreAudioHardware())
         // The dispatcher fronts the ASR engines behind the `Transcribing` seam
         // (ADR-0005): it resolves the active engine from `config.asrModel` and
         // subscribes to `.asrModel` changes itself. The Pipeline drives it as an
@@ -170,7 +173,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             config: config, recorder: recorder, transcriber: transcriber,
             record: { historyStore.append($0) }
         )
-        settings = SettingsController(config: config, historyStore: historyStore, statsStore: statsStore)
+        settings = SettingsController(
+            config: config, historyStore: historyStore, statsStore: statsStore,
+            inputDevices: recorder
+        )
         badge = BadgeController(config: config) { [weak self] in
             self?.settings.show()
         }
@@ -371,6 +377,8 @@ public enum FoldWiseVoiceApp {
             let echo = Config(
                 activeMode: config.activeMode, hotkey: config.hotkey,
                 toggleHotkey: config.toggleHotkey, pauseAudio: config.pauseAudio,
+                inputDevice: config.inputDevice,
+                appearance: config.appearance,
                 saveHistory: config.saveHistory,
                 historyRetention: config.historyRetention, badgePosition: config.badgePosition,
                 sidebarCollapsed: config.sidebarCollapsed, modeOrder: config.modeOrder,

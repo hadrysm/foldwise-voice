@@ -10,8 +10,8 @@
       "reason": "Application lifecycle and composition root"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Record/AudioRecorder.swift",
-      "reason": "AVFoundation microphone capture adapter"
+      "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Record/CoreAudioHardware.swift",
+      "reason": "Thin Core Audio and AVFoundation hardware boundary; routing policy lives in AudioRecorder"
     },
     {
       "path": "Sources/FoldWiseVoiceKit/SystemIntegrations/AudioDucking/AudioDucker.swift",
@@ -32,6 +32,10 @@
     {
       "path": "Sources/FoldWiseVoiceKit/Features/Home/HomeView.swift",
       "reason": "Declarative SwiftUI home composition"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/Features/DictationRow/DictationRowView.swift",
+      "reason": "Declarative SwiftUI shared Dictation-row composition; presentation, action composition, and interaction rules live in covered collaborators"
     },
     {
       "path": "Sources/FoldWiseVoiceKit/SystemIntegrations/Hotkeys/HotkeyListener.swift",

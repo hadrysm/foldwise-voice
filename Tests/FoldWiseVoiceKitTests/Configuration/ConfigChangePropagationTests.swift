@@ -82,6 +82,78 @@ final class ConfigChangePropagationTests: XCTestCase {
         XCTAssertEqual(received, [.asrModel])
     }
 
+    func testInputDeviceChangeNotifiesOnlyWithInputDevice() throws {
+        let config = Config.defaultConfig(path: path)
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.inputDevice = "USB-opaque-uid"
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [.inputDevice])
+    }
+
+    func testReselectingInputDeviceNotifiesNothing() throws {
+        let config = Config.defaultConfig(path: path)
+        config.inputDevice = "USB-opaque-uid"
+        try config.saveAndNotify()
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.inputDevice = "USB-opaque-uid"
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [])
+    }
+
+    func testAppearanceChangeNotifiesOnlyWithAppearance() throws {
+        let config = Config.defaultConfig(path: path)
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.appearance = .dark
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [.appearance])
+    }
+
+    func testReselectingAppearanceNotifiesNothing() throws {
+        let config = Config.defaultConfig(path: path)
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.appearance = .system
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [])
+    }
+
+    func testRevertingAppearanceBeforeSaveNotifiesNothing() throws {
+        let config = Config.defaultConfig(path: path)
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.appearance = .dark
+        config.appearance = .system
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [])
+    }
+
+    func testFailedInputDeviceSaveRetriesItsChange() throws {
+        let missingDir = dir.appendingPathComponent("missing-input")
+        let config = Config.defaultConfig(path: missingDir.appendingPathComponent("modes.json"))
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.inputDevice = "USB-opaque-uid"
+        XCTAssertThrowsError(try config.saveAndNotify())
+        try FileManager.default.createDirectory(at: missingDir, withIntermediateDirectories: true)
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [.inputDevice])
+    }
+
     func testReselectingTheSameASRModelNotifiesNothing() throws {
         let config = Config.defaultConfig(path: path)
         var received: [Config.ChangeSet] = []
@@ -133,6 +205,47 @@ final class ConfigChangePropagationTests: XCTestCase {
         try config.saveAndNotify()
 
         XCTAssertEqual(received, [[.activeMode, .hotkeys]])
+    }
+
+    func testAppearanceCombinesWithOtherChanges() throws {
+        let config = Config.defaultConfig(path: path)
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.appearance = .light
+        config.hotkey = "cmd_r"
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [[.appearance, .hotkeys]])
+    }
+
+    func testFailedAppearanceSaveRetriesItsChange() throws {
+        let missingDir = dir.appendingPathComponent("missing-appearance")
+        let config = Config.defaultConfig(path: missingDir.appendingPathComponent("modes.json"))
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.appearance = .dark
+        XCTAssertThrowsError(try config.saveAndNotify())
+        try FileManager.default.createDirectory(at: missingDir, withIntermediateDirectories: true)
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [.appearance])
+    }
+
+    func testRevertingAppearanceAfterFailedSaveClearsItsRetry() throws {
+        let missingDir = dir.appendingPathComponent("missing-appearance-revert")
+        let config = Config.defaultConfig(path: missingDir.appendingPathComponent("modes.json"))
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        config.appearance = .dark
+        XCTAssertThrowsError(try config.saveAndNotify())
+        config.appearance = .system
+        try FileManager.default.createDirectory(at: missingDir, withIntermediateDirectories: true)
+        try config.saveAndNotify()
+
+        XCTAssertEqual(received, [])
     }
 
     /// A failed persist must not propagate a half-applied change — and must
