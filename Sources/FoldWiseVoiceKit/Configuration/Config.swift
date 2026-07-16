@@ -587,7 +587,16 @@ final class Config {
         do {
             return try load(from: url)
         } catch {
-            let original = (try? Data(contentsOf: url)) ?? Data()
+            let original: Data
+            do {
+                original = try Data(contentsOf: url)
+            } catch let readError {
+                let detail = readError.localizedDescription
+                Log.config.error(
+                    "Could not preserve rejected config.json bytes: \(detail, privacy: .public)"
+                )
+                original = Data()
+            }
             return recoveryConfig(
                 path: url,
                 originalData: original,
@@ -839,7 +848,14 @@ final class Config {
         }
         let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("FoldWise Voice", isDirectory: true)
-        try? fileManager.createDirectory(at: support, withIntermediateDirectories: true)
+        do {
+            try fileManager.createDirectory(at: support, withIntermediateDirectories: true)
+        } catch {
+            let detail = error.localizedDescription
+            Log.config.error(
+                "Could not create the configuration directory: \(detail, privacy: .public)"
+            )
+        }
         return support.appendingPathComponent("config.json")
     }
 }

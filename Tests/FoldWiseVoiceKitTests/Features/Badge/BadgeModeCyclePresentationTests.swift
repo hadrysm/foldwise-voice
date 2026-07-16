@@ -479,6 +479,46 @@ final class BadgeModeCyclePresentationTests: XCTestCase {
         )
     }
 
+    func testDirectSelectionCancelsConfirmationForDifferentCommittedSelection() {
+        let state = BadgeModeCycleState(
+            display: .prepared(from: casual, to: email, motion: .standard),
+            visiblyConfirmed: casual
+        )
+
+        let transition = BadgeModeCycleReducer.reduce(
+            state,
+            .selectionChanged(.voiceToText)
+        )
+
+        XCTAssertEqual(
+            transition,
+            BadgeModeCycleTransition(
+                state: .idle(),
+                effects: [.cancelScheduled]
+            )
+        )
+    }
+
+    func testDeletingPresentedModeCancelsConfirmation() {
+        let state = BadgeModeCycleState(
+            display: .prepared(from: casual, to: email, motion: .standard),
+            visiblyConfirmed: casual
+        )
+
+        let transition = BadgeModeCycleReducer.reduce(
+            state,
+            .presentationsChanged([casual, meeting])
+        )
+
+        XCTAssertEqual(
+            transition,
+            BadgeModeCycleTransition(
+                state: .idle(),
+                effects: [.cancelScheduled]
+            )
+        )
+    }
+
     func testStaleSwapTimerAfterPipelineCancellationCannotRestoreReel() {
         var state = BadgeModeCycleReducer.reduce(
             .idle(), .committed(from: casual, to: email)
@@ -509,6 +549,15 @@ final class BadgeModeCyclePresentationTests: XCTestCase {
         let display = BadgeModeCycleDisplay.settled(longMode, motion: .standard)
 
         XCTAssertEqual(display.accessibilityLabel, longName)
+    }
+
+    func testSelectionHoverActionAccessibilityNamesTheCurrentSelection() {
+        XCTAssertEqual(
+            BadgeHoverAccessibility.selectionLabel(
+                currentSelection: "Quarterly planning notes"
+            ),
+            "Change Dictation selection, current selection Quarterly planning notes"
+        )
     }
 
     func testCenteredFramePreservesAnchorAcrossConfirmationResize() {

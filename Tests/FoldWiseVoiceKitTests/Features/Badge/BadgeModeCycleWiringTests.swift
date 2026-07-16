@@ -31,6 +31,55 @@ final class BadgeModeCycleWiringTests: XCTestCase {
         XCTAssertNil(badge.model.modeCycleDisplay)
     }
 
+    func testDirectSelectionCancelsActiveModeReel() async throws {
+        let config = Config.defaultConfig(path: directory.appendingPathComponent("config.json"))
+        let badge = BadgeController(config: config, onOpenApp: {})
+        let command = ModeCycleCommand(
+            config: config,
+            onCommitted: { badge.confirmModeCycle($0) }
+        )
+        command.perform()
+
+        try config.select(.voiceToText)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+
+        XCTAssertNil(badge.model.modeCycleDisplay)
+    }
+
+    func testDeletingPresentedModeCancelsActiveModeReel() throws {
+        let config = Config.defaultConfig(path: directory.appendingPathComponent("config.json"))
+        let remaining = try XCTUnwrap(config.orderedModes.first)
+        let badge = BadgeController(config: config, onOpenApp: {})
+        let command = ModeCycleCommand(
+            config: config,
+            onCommitted: { badge.confirmModeCycle($0) }
+        )
+        command.perform()
+
+        try config.replaceModes([remaining], selection: .voiceToText)
+
+        XCTAssertNil(badge.model.modeCycleDisplay)
+    }
+
+    func testRapidCommittedCyclesSurviveDeferredSelectionReconciliation() async {
+        let config = Config.defaultConfig(path: directory.appendingPathComponent("config.json"))
+        let badge = BadgeController(config: config, onOpenApp: {})
+        let command = ModeCycleCommand(
+            config: config,
+            onCommitted: { badge.confirmModeCycle($0) }
+        )
+
+        command.perform()
+        command.perform()
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+
+        XCTAssertNotNil(badge.model.modeCycleDisplay)
+    }
+
     func testCommittedCyclePreparesCurrentModeReel() throws {
         let config = Config.defaultConfig(path: directory.appendingPathComponent("config.json"))
         let first = try XCTUnwrap(config.orderedModes.first)

@@ -125,15 +125,22 @@ struct BadgeView: View {
                 symbol: "sparkles", diameter: 28, emphasized: false, action: onChangeMode
             )
             .help("Mode: \(model.activeModeName)")
+            .accessibilityLabel(
+                BadgeHoverAccessibility.selectionLabel(currentSelection: model.activeModeName)
+            )
             BadgeRoundButton(
                 symbol: "mic.fill", diameter: 30, emphasized: true, action: onRecord
             )
             .help("Dictate — \(model.hotkeyLabel)")
+            .accessibilityLabel(
+                BadgeHoverAccessibility.recordLabel(shortcut: model.hotkeyLabel)
+            )
             BadgeRoundButton(
                 symbol: "arrow.up.left.and.arrow.down.right", diameter: 28,
                 emphasized: false, action: onOpenApp
             )
             .help("Open FoldWise")
+            .accessibilityLabel(BadgeHoverAccessibility.openAppLabel)
         }
         .padding(.horizontal, 6)
     }

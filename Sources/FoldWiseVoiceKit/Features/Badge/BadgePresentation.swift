@@ -14,6 +14,18 @@ struct BadgeModeCycleItem: Equatable {
     let icon: String
 }
 
+enum BadgeHoverAccessibility {
+    static func selectionLabel(currentSelection: String) -> String {
+        "Change Dictation selection, current selection \(currentSelection)"
+    }
+
+    static func recordLabel(shortcut: String) -> String {
+        "Start Dictation, shortcut \(shortcut)"
+    }
+
+    static let openAppLabel = "Open FoldWise"
+}
+
 enum BadgeModeCycleMotion: Equatable {
     case standard
     case reduced
@@ -134,6 +146,7 @@ struct BadgeModeCycleState: Equatable {
 
 enum BadgeModeCycleEvent: Equatable {
     case committed(from: BadgeModeCycleItem, to: BadgeModeCycleItem)
+    case selectionChanged(DictationSelection)
     case failed
     case badgeBecameBusy
     case badgeBecameAvailable
@@ -185,6 +198,14 @@ enum BadgeModeCycleReducer {
                 begin(from: item, to: to, state: &state, effects: &effects)
             case nil:
                 begin(from: from, to: to, state: &state, effects: &effects)
+            }
+
+        case let .selectionChanged(selection):
+            let finalSelection = state.deferredTo?.selection
+                ?? state.queued.last?.selection
+                ?? state.display?.destination.selection
+            if let finalSelection, finalSelection != selection {
+                cancelSuccess(in: &state, effects: &effects)
             }
 
         case .failed:
@@ -263,6 +284,13 @@ enum BadgeModeCycleReducer {
             }
 
         case let .presentationsChanged(items):
+            let availableSelections = Set(items.map(\.selection))
+            if referencedItems(in: state).contains(where: {
+                !availableSelections.contains($0.selection)
+            }) {
+                cancelSuccess(in: &state, effects: &effects)
+                return BadgeModeCycleTransition(state: state, effects: effects)
+            }
             state.display = state.display.map { replacingItems(in: $0, with: items) }
             state.queued = state.queued.map { refreshed($0, with: items) }
             state.visiblyConfirmed = state.visiblyConfirmed.map { refreshed($0, with: items) }
@@ -292,6 +320,36 @@ enum BadgeModeCycleReducer {
         state.display = nil
         state.queued = []
         state.visiblyConfirmed = nil
+    }
+
+    private static func cancelSuccess(
+        in state: inout BadgeModeCycleState,
+        effects: inout [BadgeModeCycleEffect]
+    ) {
+        if state.display != nil {
+            effects.append(.cancelScheduled)
+        }
+        state.display = nil
+        state.queued = []
+        state.visiblyConfirmed = nil
+        state.deferredFrom = nil
+        state.deferredTo = nil
+    }
+
+    private static func referencedItems(in state: BadgeModeCycleState) -> [BadgeModeCycleItem] {
+        var items = state.queued
+        if let outgoing = state.display?.outgoing {
+            items.append(outgoing)
+        }
+        if let destination = state.display?.destination {
+            items.append(destination)
+        }
+        for item in [state.visiblyConfirmed, state.deferredFrom, state.deferredTo] {
+            if let item {
+                items.append(item)
+            }
+        }
+        return items
     }
 
     private static func replacingMotion(

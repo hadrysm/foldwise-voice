@@ -44,6 +44,7 @@ final class BadgeController: NSObject {
     private var saveWork: DispatchWorkItem?
     private var deferredModeSelectionError = false
     private var modeCycleState = BadgeModeCycleState.idle()
+    private var modeSelectionRevision = 0
     private var programmaticMove = false
     private var smoother = LevelSmoother()
     /// Pill anchor: (capsule center-x, bottom-y) in screen points.
@@ -62,6 +63,9 @@ final class BadgeController: NSObject {
             guard let self else { return }
             if changes.contains(.selection) || changes.contains(.modeLibrary) {
                 model.activeModeName = config.mode.name
+            }
+            if changes.contains(.selection) {
+                scheduleModeSelectionReconciliation()
             }
             if changes.contains(.modeLibrary) {
                 refreshModeCyclePresentations()
@@ -108,6 +112,8 @@ final class BadgeController: NSObject {
             Log.hotkey.error("Could not resolve committed Mode cycle for Badge feedback.")
             return
         }
+        modeSelectionRevision += 1
+        handleModeCycle(.selectionChanged(transition.from))
         if model.state == .hover { enter(.idle) }
         handleModeCycle(.committed(from: from, to: to))
     }
@@ -209,6 +215,15 @@ final class BadgeController: NSObject {
             BadgeModeCycleItem(selection: $0.id, name: $0.name, icon: $0.icon)
         }
         handleModeCycle(.presentationsChanged(items))
+    }
+
+    private func scheduleModeSelectionReconciliation() {
+        modeSelectionRevision += 1
+        let revision = modeSelectionRevision
+        DispatchQueue.main.async { [weak self] in
+            guard let self, revision == modeSelectionRevision else { return }
+            handleModeCycle(.selectionChanged(config.selection))
+        }
     }
 
     /// Make `state` current: swap the model, re-fit the pill, and start the

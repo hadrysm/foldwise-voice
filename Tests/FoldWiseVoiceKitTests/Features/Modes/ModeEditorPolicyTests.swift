@@ -156,19 +156,25 @@ final class ModeEditorPolicyTests: XCTestCase {
         XCTAssertNil(state.persistenceError)
     }
 
-    func testUnavailableModelWarningTracksCurrentDraftAndKnownInventory() {
+    func testUnavailableModelWarningWaitsForKnownInventory() {
         XCTAssertNil(
             ModeEditorPolicy.unavailableModelWarning(
                 for: "missing:latest",
                 installedModels: nil
             )
         )
+    }
+
+    func testUnavailableModelWarningAcceptsInstalledTrimmedModel() {
         XCTAssertNil(
             ModeEditorPolicy.unavailableModelWarning(
                 for: " qwen2.5:3b ",
                 installedModels: ["qwen2.5:3b"]
             )
         )
+    }
+
+    func testUnavailableModelWarningNamesMissingModel() {
         XCTAssertEqual(
             ModeEditorPolicy.unavailableModelWarning(
                 for: "missing:latest",
