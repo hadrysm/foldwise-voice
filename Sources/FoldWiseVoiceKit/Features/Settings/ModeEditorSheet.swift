@@ -10,12 +10,14 @@ struct ModeEditorSheet: View {
             VStack(spacing: 0) {
                 header(editor)
                 Divider()
-                HStack(alignment: .top, spacing: 28) {
-                    identityColumn(editor)
-                    Divider()
-                    instructionsColumn(editor)
+                ScrollView(.vertical) {
+                    HStack(alignment: .top, spacing: 28) {
+                        identityColumn(editor)
+                        Divider()
+                        instructionsColumn(editor)
+                    }
+                    .padding(24)
                 }
-                .padding(24)
                 Divider()
                 footer(editor)
             }
@@ -39,6 +41,16 @@ struct ModeEditorSheet: View {
                     .foregroundStyle(Theme.textSecondary)
             }
             Spacer()
+            Button { model.onCancelModeEditor?() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close Mode editor")
+            .accessibilityHint("Discards changes")
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 18)

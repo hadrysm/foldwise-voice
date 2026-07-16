@@ -1,10 +1,37 @@
 import AppKit
 import SwiftUI
+import Vision
 import XCTest
 @testable import FoldWiseVoiceKit
 
 @MainActor
 final class ModeEditorHostedTests: XCTestCase {
+    func testHostedEditorKeepsTitleAndFooterInsideVisibleBounds() {
+        let model = modeEditorModel()
+        let (hosting, window) = hostModeEditor(model)
+        defer { window.orderOut(nil) }
+
+        let visibleText = recognizedText(in: hosting)
+
+        XCTAssertEqual(
+            ["Add Mode", "Cancel", "Save"].map(visibleText.contains),
+            [true, true, true],
+            "Visible text: \(visibleText)"
+        )
+    }
+
+    func testHostedEditorCloseButtonCancelsEditing() {
+        let model = modeEditorModel()
+        var cancellations = 0
+        model.onCancelModeEditor = { cancellations += 1 }
+        let (_, window) = hostModeEditor(model)
+        defer { window.orderOut(nil) }
+
+        click(at: NSPoint(x: 790, y: 540), in: window)
+
+        XCTAssertEqual(cancellations, 1)
+    }
+
     func testHostedEditorUsesApprovedSheetGeometryWithValidationErrors() {
         let model = SettingsModel()
         model.installed = []
@@ -137,6 +164,42 @@ final class ModeEditorHostedTests: XCTestCase {
         return hosting
     }
 
+    private func modeEditorModel() -> SettingsModel {
+        let model = SettingsModel()
+        model.installed = []
+        model.modeEditor = ModeEditorState(
+            purpose: .add,
+            draft: ModeEditorDraft(
+                name: "",
+                icon: "wand.and.stars",
+                model: "gemma3:4b",
+                transformation: .inPlace,
+                systemPrompt: "",
+                vocabularyText: ""
+            )
+        )
+        return model
+    }
+
+    private func hostModeEditor(
+        _ model: SettingsModel
+    ) -> (NSHostingView<ModeEditorSheet>, NSWindow) {
+        let hosting = NSHostingView(rootView: ModeEditorSheet(model: model))
+        hosting.frame = NSRect(x: 0, y: 0, width: 820, height: 570)
+        let window = NSWindow(
+            contentRect: hosting.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = hosting
+        NSApp.finishLaunching()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        hosting.layoutSubtreeIfNeeded()
+        return (hosting, window)
+    }
+
     private func mode(name: String) -> Mode {
         Mode(
             id: .random(),
@@ -183,6 +246,50 @@ final class ModeEditorHostedTests: XCTestCase {
             return button
         }
         return view.subviews.lazy.compactMap { button(named: title, in: $0) }.first
+    }
+
+    private func recognizedText(in view: NSView) -> String {
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            XCTFail("Couldn't create a bitmap for the hosted Mode editor.")
+            return ""
+        }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        guard let image = bitmap.cgImage else {
+            XCTFail("Couldn't render the hosted Mode editor.")
+            return ""
+        }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        do {
+            try VNImageRequestHandler(cgImage: image).perform([request])
+        } catch {
+            XCTFail("Couldn't recognize Mode editor text: \(error)")
+            return ""
+        }
+        return (request.results ?? [])
+            .compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: "\n")
+    }
+
+    private func click(at point: NSPoint, in window: NSWindow) {
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            guard let event = NSEvent.mouseEvent(
+                with: type,
+                location: point,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 0,
+                clickCount: 1,
+                pressure: 1
+            ) else {
+                XCTFail("Couldn't create a mouse event for the Mode editor close button.")
+                return
+            }
+            NSApp.sendEvent(event)
+        }
     }
 
     private func sendMoveDownShortcut(to window: NSWindow) {
