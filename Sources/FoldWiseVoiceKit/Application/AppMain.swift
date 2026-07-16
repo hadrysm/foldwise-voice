@@ -122,7 +122,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let acquiredInstanceLock = acquireInstanceLock(port: lockPort)
         let url = Config.resolvePath(cliPath: configPath)
         config = Config.loadOrCreate(at: url)
-        if let modeOverride { config.setActiveMode(modeOverride) }
+        if let modeOverride {
+            do {
+                try config.setActiveMode(modeOverride)
+            } catch {
+                Log.config.error(
+                    "Could not apply the requested startup Mode: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
         appearanceReactor = AppearanceReactor(config: config)
 
         guard acquiredInstanceLock else {
@@ -217,6 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The living idle pill is the ready signal (PRD #103); the hotkey
         // hint lives on Home, rendered from the live config.
         badge.show()
+        if config.isReadOnly { settings.show() }
     }
 
     private func startListener() {
@@ -368,23 +377,12 @@ public enum FoldWiseVoiceApp {
         }
 
         if printConfig {
-            // Diagnostic: load the resolved config and echo it re-serialized, to
-            // verify modes.json round-trips losslessly. Exits without starting the UI.
+            // Diagnostic: load the resolved config and echo it re-serialized.
             let url = Config.resolvePath(cliPath: cliConfig)
             let config = Config.loadOrCreate(at: url)
             let tmp = FileManager.default.temporaryDirectory
                 .appendingPathComponent("foldwise-config-check.json")
-            let echo = Config(
-                activeMode: config.activeMode, hotkey: config.hotkey,
-                toggleHotkey: config.toggleHotkey, pauseAudio: config.pauseAudio,
-                inputDevice: config.inputDevice,
-                appearance: config.appearance,
-                saveHistory: config.saveHistory,
-                historyRetention: config.historyRetention, badgePosition: config.badgePosition,
-                sidebarCollapsed: config.sidebarCollapsed, modeOrder: config.modeOrder,
-                modes: config.modes, path: tmp
-            )
-            try? echo.save()
+            try? config.save(to: tmp)
             print("config: \(url.path)")
             print((try? String(contentsOf: tmp, encoding: .utf8)) ?? "<save failed>")
             exit(0)

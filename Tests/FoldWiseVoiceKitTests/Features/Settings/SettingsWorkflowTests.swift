@@ -4,8 +4,6 @@ import XCTest
 
 @MainActor
 final class SettingsWorkflowTests: XCTestCase {
-    private enum TestFailure: Error { case save }
-
     private final class NonPersistingHistoryStore: HistoryStore {
         private let entries: [HistoryEntry]
 
@@ -75,7 +73,6 @@ final class SettingsWorkflowTests: XCTestCase {
 
     private struct InvalidCommitState: Equatable {
         let configKey: String
-        let persistCount: Int
         let statusIsError: Bool
         let statusContainsUnknownHotkey: Bool
         let clearScheduled: Bool
@@ -277,7 +274,6 @@ final class SettingsWorkflowTests: XCTestCase {
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: {},
             now: { Date(timeIntervalSince1970: 1_700_000_000) },
             scheduleStatusClear: { _ in },
             copy: { _ in }
@@ -298,9 +294,9 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
-    func testPopulateMakesPersistedASRModelAvailableAndClearsTransientState() {
+    func testPopulateMakesPersistedASRModelAvailableAndClearsTransientState() throws {
         let config = makeConfig()
-        config.setASRModel("whisper-small")
+        try config.setASRModel("whisper-small")
         let model = SettingsModel()
         model.asrDownloading = "whisper-large-v3-turbo"
         model.asrDownloadError = "old download error"
@@ -391,7 +387,6 @@ final class SettingsWorkflowTests: XCTestCase {
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { try config.saveAndNotify() },
             now: { Date(timeIntervalSince1970: 1_700_000_000) },
             scheduleStatusClear: { _ in },
             copy: { _ in }
@@ -424,6 +419,24 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
+    func testRecoveryPopulationDisablesConfigurationAndKeepsVoiceToText() throws {
+        let path = dir.appendingPathComponent("invalid-config.json")
+        let original = Data("invalid".utf8)
+        try original.write(to: path)
+        let config = Config.loadOrCreate(at: path)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.populatePreferences()
+        model.activeMode = "Email"
+        workflow.commit()
+
+        XCTAssertTrue(model.configurationReadOnly)
+        XCTAssertEqual(model.activeMode, "Voice to Text")
+        XCTAssertTrue(model.statusIsError)
+        XCTAssertEqual(try Data(contentsOf: path), original)
+    }
+
     func testSuccessfulCommitReportsAndClearsStatus() {
         let config = makeConfig()
         let model = SettingsModel()
@@ -432,7 +445,6 @@ final class SettingsWorkflowTests: XCTestCase {
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: {},
             now: Date.init,
             scheduleStatusClear: { scheduledClear = $0 },
             copy: { _ in }
@@ -513,13 +525,11 @@ final class SettingsWorkflowTests: XCTestCase {
     func testCommitRejectsInvalidHotkeyWithoutPersisting() {
         let config = makeConfig()
         let model = SettingsModel()
-        var persistCount = 0
         var scheduledClear: (@MainActor () -> Void)?
         let workflow = SettingsWorkflow(
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { persistCount += 1 },
             now: Date.init,
             scheduleStatusClear: { scheduledClear = $0 },
             copy: { _ in }
@@ -531,13 +541,13 @@ final class SettingsWorkflowTests: XCTestCase {
 
         XCTAssertEqual(
             InvalidCommitState(
-                configKey: config.hotkey, persistCount: persistCount,
+                configKey: config.hotkey,
                 statusIsError: model.statusIsError,
                 statusContainsUnknownHotkey: model.status.contains("Unknown hotkey"),
                 clearScheduled: scheduledClear != nil
             ),
             InvalidCommitState(
-                configKey: "F5", persistCount: 0, statusIsError: true,
+                configKey: "F5", statusIsError: true,
                 statusContainsUnknownHotkey: true, clearScheduled: false
             )
         )
@@ -546,13 +556,11 @@ final class SettingsWorkflowTests: XCTestCase {
     func testCommitRejectsInvalidToggleWithoutPersisting() {
         let config = makeConfig()
         let model = SettingsModel()
-        var persistCount = 0
         var scheduledClear: (@MainActor () -> Void)?
         let workflow = SettingsWorkflow(
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { persistCount += 1 },
             now: Date.init,
             scheduleStatusClear: { scheduledClear = $0 },
             copy: { _ in }
@@ -564,27 +572,26 @@ final class SettingsWorkflowTests: XCTestCase {
 
         XCTAssertEqual(
             InvalidCommitState(
-                configKey: config.toggleHotkey ?? "", persistCount: persistCount,
+                configKey: config.toggleHotkey ?? "",
                 statusIsError: model.statusIsError,
                 statusContainsUnknownHotkey: model.status.contains("Unknown hotkey"),
                 clearScheduled: scheduledClear != nil
             ),
             InvalidCommitState(
-                configKey: "F6", persistCount: 0, statusIsError: true,
+                configKey: "F6", statusIsError: true,
                 statusContainsUnknownHotkey: true, clearScheduled: false
             )
         )
     }
 
     func testFailedPersistenceReportsError() {
-        let config = makeConfig()
+        let config = makeFailingConfig()
         let model = SettingsModel()
         var scheduledClear: (@MainActor () -> Void)?
         let workflow = SettingsWorkflow(
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { throw TestFailure.save },
             now: Date.init,
             scheduleStatusClear: { scheduledClear = $0 },
             copy: { _ in }
@@ -604,7 +611,7 @@ final class SettingsWorkflowTests: XCTestCase {
     }
 
     func testFailedPersistenceDoesNotNotifyObservers() {
-        let config = makeConfig()
+        let config = makeFailingConfig()
         let model = SettingsModel()
         var received: [Config.ChangeSet] = []
         config.onChange { received.append($0) }
@@ -612,7 +619,6 @@ final class SettingsWorkflowTests: XCTestCase {
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { throw TestFailure.save },
             now: Date.init,
             scheduleStatusClear: { _ in },
             copy: { _ in }
@@ -626,13 +632,12 @@ final class SettingsWorkflowTests: XCTestCase {
     }
 
     func testFailedInputDeviceSelectionReportsPersistenceError() {
-        let config = makeConfig()
+        let config = makeFailingConfig()
         let model = SettingsModel()
         let workflow = SettingsWorkflow(
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { throw TestFailure.save },
             now: Date.init,
             scheduleStatusClear: { _ in },
             copy: { _ in }
@@ -653,7 +658,6 @@ final class SettingsWorkflowTests: XCTestCase {
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { try config.saveAndNotify() },
             now: Date.init,
             scheduleStatusClear: { _ in },
             copy: { _ in }
@@ -665,10 +669,10 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(received.count, 0)
     }
 
-    func testTightenedRetentionRefreshesVisibleHistory() {
+    func testTightenedRetentionRefreshesVisibleHistory() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let config = makeConfig()
-        config.historyRetention = .ninetyDays
+        try config.setHistoryRetention(.ninetyDays)
         let model = SettingsModel()
         let historyStore = JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl"))
         historyStore.append(entry(createdAt: now.addingTimeInterval(-10 * 86400), text: "old"))
@@ -677,7 +681,6 @@ final class SettingsWorkflowTests: XCTestCase {
             config: config,
             model: model,
             historyStore: historyStore,
-            persist: {},
             now: { now },
             scheduleStatusClear: { _ in },
             copy: { _ in }
@@ -690,10 +693,10 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(model.historyEntries.map(\.text), ["new"])
     }
 
-    func testTightenedRetentionPreservesStreak() {
+    func testTightenedRetentionPreservesStreak() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let config = makeConfig()
-        config.historyRetention = .ninetyDays
+        try config.setHistoryRetention(.ninetyDays)
         let model = SettingsModel()
         let store = JSONLHistoryStore(url: dir.appendingPathComponent("retention-streak-history.jsonl"))
         let stats = JSONStatsStore(url: dir.appendingPathComponent("retention-streak-stats.json"))
@@ -1260,7 +1263,7 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
-    func testDeletingActiveASRModelFallsBackToDefault() async {
+    func testDeletingActiveASRModelFallsBackToDefault() async throws {
         let config = makeConfig()
         let model = SettingsModel()
         let workflow = makeWorkflow(
@@ -1270,7 +1273,7 @@ final class SettingsWorkflowTests: XCTestCase {
         )
         workflow.populatePreferences()
         model.asrModel = "whisper-small"
-        config.setASRModel("whisper-small")
+        try config.setASRModel("whisper-small")
         model.asrDownloaded.insert("whisper-small")
 
         workflow.deleteASRModel("whisper-small")
@@ -1388,7 +1391,6 @@ final class SettingsWorkflowTests: XCTestCase {
                 config: config,
                 model: model,
                 historyStore: historyStore,
-                persist: {},
                 now: now,
                 scheduleStatusClear: { _ in },
                 llmModels: effects,
@@ -1408,7 +1410,6 @@ final class SettingsWorkflowTests: XCTestCase {
             config: config,
             model: model,
             historyStore: historyStore,
-            persist: {},
             now: now,
             scheduleStatusClear: { _ in },
             copy: { text in
@@ -1456,7 +1457,7 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertTrue(condition(), file: file, line: line)
     }
 
-    private func makeConfig() -> Config {
+    private func makeConfig(path: URL? = nil) -> Config {
         let modes = [
             "Voice to Text": Mode(
                 name: "Voice to Text", asrModel: ASRModelCatalog.defaultID,
@@ -1472,8 +1473,12 @@ final class SettingsWorkflowTests: XCTestCase {
             appearance: .dark,
             saveHistory: false, historyRetention: .sevenDays, badgePosition: nil,
             sidebarCollapsed: true, modeOrder: ["Voice to Text", "Clean"], modes: modes,
-            path: dir.appendingPathComponent("modes.json")
+            path: path ?? dir.appendingPathComponent("config.json")
         )
+    }
+
+    private func makeFailingConfig() -> Config {
+        makeConfig(path: dir.appendingPathComponent("missing/config.json"))
     }
 
     private func entry(createdAt: Date, text: String) -> HistoryEntry {

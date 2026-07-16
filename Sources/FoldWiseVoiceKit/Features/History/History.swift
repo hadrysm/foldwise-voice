@@ -120,7 +120,7 @@ protocol HistoryStore: AnyObject {
 }
 
 /// Appends entries as one JSON object per line to a `history.jsonl` file —
-/// separate from `modes.json`, which is hand-serialized to preserve Mode order
+/// separate from `config.json`, which preserves the committed Mode array order
 /// and must not carry churny append data. Reads and writes are best-effort:
 /// nothing here throws to the caller, so a failed or blocked write degrades to
 /// a no-op logged at the boundary rather than breaking the session.
@@ -146,7 +146,7 @@ final class JSONLHistoryStore: HistoryStore {
         decoder = JSONDecoder()
     }
 
-    /// `history.jsonl` alongside `modes.json` in Application Support.
+    /// `history.jsonl` alongside `config.json` in Application Support.
     static var defaultURL: URL {
         let support = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

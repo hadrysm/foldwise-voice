@@ -35,7 +35,9 @@ final class MenuBarController: NSObject {
         // Wherever the active mode is changed — here, the Badge's mode menu,
         // or Settings — the checkmarks follow.
         config.onChange { [weak self] changes in
-            if changes.contains(.activeMode) { self?.refreshModeChecks() }
+            if changes.contains(.selection) || changes.contains(.modeLibrary) {
+                self?.refreshModeChecks()
+            }
         }
     }
 
@@ -63,6 +65,7 @@ final class MenuBarController: NSObject {
     private func refreshModeChecks() {
         for item in modeItems {
             item.state = item.title == config.activeMode ? .on : .off
+            item.isEnabled = !config.isReadOnly
         }
     }
 
@@ -92,6 +95,7 @@ final class MenuBarController: NSObject {
                 title: name, action: #selector(switchMode(_:)), keyEquivalent: ""
             )
             item.target = self
+            item.isEnabled = !config.isReadOnly
             menu.addItem(item)
             modeItems.append(item)
         }
@@ -122,8 +126,13 @@ final class MenuBarController: NSObject {
     }
 
     @objc private func switchMode(_ sender: NSMenuItem) {
-        config.setActiveMode(sender.title)
-        try? config.saveAndNotify()
+        do {
+            try config.setActiveMode(sender.title)
+        } catch {
+            Log.config.error(
+                "Could not select Mode from the menu bar: \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     @objc private func openReleasePage(_ sender: Any?) {

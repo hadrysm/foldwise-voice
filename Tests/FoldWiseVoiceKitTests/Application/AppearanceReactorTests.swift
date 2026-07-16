@@ -15,7 +15,7 @@ final class AppearanceReactorTests: XCTestCase {
         try FileManager.default.removeItem(at: dir)
     }
 
-    func testInitialPreferenceMapsToApplicationAppearance() {
+    func testInitialPreferenceMapsToApplicationAppearance() throws {
         let expected: [AppearancePreference: NSAppearance.Name?] = [
             .system: nil,
             .light: .aqua,
@@ -24,7 +24,7 @@ final class AppearanceReactorTests: XCTestCase {
 
         for appearance in AppearancePreference.allCases {
             let config = Config.defaultConfig(path: path(appearance.rawValue))
-            config.appearance = appearance
+            try config.setAppearance(appearance)
             var applied: [NSAppearance.Name?] = []
 
             _ = AppearanceReactor(config: config) { applied.append($0?.name) }
@@ -39,8 +39,7 @@ final class AppearanceReactorTests: XCTestCase {
         let reactor = AppearanceReactor(config: config) { applied.append($0?.name) }
         applied.removeAll()
 
-        config.appearance = .dark
-        try config.saveAndNotify()
+        try config.setAppearance(.dark)
 
         withExtendedLifetime(reactor) {}
         XCTAssertEqual(applied, [.darkAqua])
@@ -52,8 +51,7 @@ final class AppearanceReactorTests: XCTestCase {
         let reactor = AppearanceReactor(config: config) { applied.append($0?.name) }
         applied.removeAll()
 
-        config.hotkey = "cmd_r"
-        try config.saveAndNotify()
+        try config.setHotkey("cmd_r")
 
         withExtendedLifetime(reactor) {}
         XCTAssertEqual(applied, [])

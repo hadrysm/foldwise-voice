@@ -1,6 +1,5 @@
 // pynput-compatible key names ↔ macOS virtual keycodes, shared by the hotkey
-// listener and the settings key recorder so modes.json stays portable between
-// the Python and Swift apps.
+// listener, schema validation, and the settings key recorder.
 
 import CoreGraphics
 import Foundation

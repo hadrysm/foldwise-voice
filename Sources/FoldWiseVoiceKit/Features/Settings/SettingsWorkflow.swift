@@ -31,14 +31,12 @@ protocol SettingsUpdateChecking {
 /// Deterministic settings decisions shared by the SwiftUI/AppKit shell.
 @MainActor
 final class SettingsWorkflow {
-    typealias Persist = @MainActor () throws -> Void
     typealias ScheduleStatusClear = @MainActor ((@MainActor () -> Void)?) -> Void
     typealias Copy = @MainActor (String) -> Void
 
     private let config: Config
     private let model: SettingsModel
     private let historyStore: HistoryStore
-    private let persist: Persist
     private let now: () -> Date
     private let scheduleStatusClear: ScheduleStatusClear
     private let llmModels: any LLMModelManaging
@@ -59,7 +57,6 @@ final class SettingsWorkflow {
         config: Config,
         model: SettingsModel,
         historyStore: HistoryStore,
-        persist: @escaping Persist,
         now: @escaping () -> Date,
         scheduleStatusClear: @escaping ScheduleStatusClear,
         copy: @escaping Copy,
@@ -73,7 +70,6 @@ final class SettingsWorkflow {
             config: config,
             model: model,
             historyStore: historyStore,
-            persist: persist,
             now: now,
             scheduleStatusClear: scheduleStatusClear,
             llmModels: LiveLLMModelManager(),
@@ -91,7 +87,6 @@ final class SettingsWorkflow {
         config: Config,
         model: SettingsModel,
         historyStore: HistoryStore,
-        persist: @escaping Persist,
         now: @escaping () -> Date,
         scheduleStatusClear: @escaping ScheduleStatusClear,
         llmModels: any LLMModelManaging,
@@ -106,7 +101,6 @@ final class SettingsWorkflow {
         self.config = config
         self.model = model
         self.historyStore = historyStore
-        self.persist = persist
         self.now = now
         self.scheduleStatusClear = scheduleStatusClear
         self.llmModels = llmModels
@@ -120,6 +114,7 @@ final class SettingsWorkflow {
     }
 
     func populatePreferences() {
+        model.configurationRecoveryMessage = config.recovery?.message
         model.modeNames = config.modeOrder
         model.llmModes = Set(config.modeOrder.filter { config.modes[$0]?.usesLLM == true })
         model.activeMode = config.activeMode
@@ -201,9 +196,8 @@ final class SettingsWorkflow {
     }
 
     func selectInputDevice(_ uid: String?) {
-        config.inputDevice = uid
         do {
-            try persist()
+            try config.setInputDevice(uid)
             setStatus("Saved ✓", isError: false, clearAfter: true)
         } catch {
             setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
@@ -414,27 +408,29 @@ final class SettingsWorkflow {
             return
         }
 
-        if !model.selectedModel.isEmpty {
-            config.setLLMModel(model.selectedModel)
-        }
-        if !model.asrModel.isEmpty {
-            config.setASRModel(model.asrModel)
-        }
-        config.setActiveMode(model.activeMode)
-        config.hotkey = ptt
-        config.toggleHotkey = toggle.isEmpty ? nil : toggle
-        config.pauseAudio = model.pauseAudio
-        config.appearance = model.appearance
-        config.saveHistory = model.saveHistory
         let retentionChanged = config.historyRetention != model.retention
-        config.historyRetention = model.retention
-        // Transient auto-collapse never mutates `prefersCollapsed`, so only
-        // the explicit sidebar toggle can overwrite the user's saved intent.
-        config.sidebarCollapsed = model.sidebar.prefersCollapsed
+        let selectedModeID = config.orderedModes.first { $0.name == model.activeMode }?.id
+        var preferences = config.preferences
+        if !model.selectedModel.isEmpty { preferences.llmModel = model.selectedModel }
+        if !model.asrModel.isEmpty { preferences.asrModel = model.asrModel }
+        if model.activeMode == "Voice to Text" {
+            preferences.selection = .voiceToText
+        } else if let selectedModeID {
+            preferences.selection = .mode(selectedModeID)
+        }
+        preferences.hotkey = ptt
+        preferences.toggleHotkey = toggle.isEmpty ? nil : toggle
+        preferences.pauseAudio = model.pauseAudio
+        preferences.appearance = model.appearance
+        preferences.saveHistory = model.saveHistory
+        preferences.historyRetention = model.retention
+        // Transient auto-collapse never mutates this preference.
+        preferences.sidebarCollapsed = model.sidebar.prefersCollapsed
 
         do {
-            try persist()
+            try config.apply(preferences)
         } catch {
+            populatePreferences()
             setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
             return
         }

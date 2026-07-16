@@ -7,6 +7,13 @@ import XCTest
 @testable import FoldWiseVoiceKit
 
 final class HistoryStoreRoundTripTests: XCTestCase {
+    func testRetentionDaysResolveKnownAndUnknownValues() {
+        XCTAssertEqual(
+            [RetentionWindow(days: 7), RetentionWindow(days: 30), RetentionWindow(days: 12)],
+            [.sevenDays, .thirtyDays, .default]
+        )
+    }
+
     /// XCTest instantiates the case once per test method, so each test gets
     /// its own scratch directory.
     private let dir = FileManager.default.temporaryDirectory

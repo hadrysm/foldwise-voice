@@ -214,7 +214,7 @@ struct ModelsPane: View {
     private var missingSelectedRow: some View {
         CardRow(
             title: model.selectedModel,
-            subtitle: "Configured in modes.json but not installed — polishing falls back "
+            subtitle: "Configured in config.json but not installed — polishing falls back "
                 + "to the raw transcript until it is."
         ) {
             HStack(spacing: 12) {

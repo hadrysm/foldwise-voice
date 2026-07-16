@@ -1,6 +1,6 @@
 // Owns the settings NSWindow and mediates between SettingsModel (UI state)
 // and Config/OllamaClient/UpdateChecker. Every change commits straight to
-// modes.json; there is no Save button.
+// config.json; there is no Save button.
 
 import AppKit
 import SwiftUI
@@ -16,7 +16,6 @@ final class SettingsController {
         config: config,
         model: model,
         historyStore: historyStore,
-        persist: { [config] in try config.saveAndNotify() },
         now: Date.init,
         scheduleStatusClear: { [weak self] clear in self?.scheduleStatusClear(clear) },
         copy: Self.copyToPasteboard,
@@ -88,6 +87,8 @@ final class SettingsController {
             self?.workflow.performHistoryCommand(command, for: entry)
         }
         model.onClearHistory = { [weak self] in self?.workflow.clearHistory() }
+        model.onResetConfiguration = { [weak self] in self?.resetConfiguration() }
+        model.onQuitRecovery = { NSApp.terminate(nil) }
     }
 
     private func build() {
@@ -133,6 +134,18 @@ final class SettingsController {
         workflow.populateHistory()
         workflow.refreshLLMModels()
         workflow.checkForUpdates()
+    }
+
+    private func resetConfiguration() {
+        do {
+            let backup = try config.resetRecovery()
+            populate()
+            model.status = "Reset complete. Backup: \(backup.lastPathComponent)"
+            model.statusIsError = false
+        } catch {
+            model.status = "Reset failed: \(error.localizedDescription)"
+            model.statusIsError = true
+        }
     }
 
     private static func copyToPasteboard(_ text: String) {

@@ -113,11 +113,11 @@ final class PipelineRecordTests: XCTestCase {
 
     // MARK: - master "Save dictation history" switch
 
-    func testDoesNotRecordWhenSavingDisabled() async {
+    func testDoesNotRecordWhenSavingDisabled() async throws {
         // With saving off, the Pipeline must assemble and hand off nothing —
         // the record seam is never called, so no history file is ever written.
         let config = makeTestConfig()
-        config.saveHistory = false
+        try await MainActor.run { try config.setSaveHistory(false) }
         let entries = await recordSession(config: config, transcript: .success(longTranscript))
         XCTAssertTrue(entries.isEmpty)
     }

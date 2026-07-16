@@ -3,7 +3,7 @@
 // the 190pt labeled list and the 52pt icon rail (tooltip chips on hover), and
 // six panes — Home, Modes, Models, History, Stats, Settings. The old Speech
 // pane lives inside Models; Configuration and Sound merged into Settings.
-// Every change saves straight to modes.json; there is no Save button.
+// Every change saves straight to config.json; there is no Save button.
 
 import AppKit
 import SwiftUI
@@ -145,6 +145,7 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             .keyboardShortcut("\\", modifiers: .command)
             .help("Toggle sidebar (⌘\\)")
+            .disabled(model.configurationReadOnly)
             Text("FoldWise Voice")
                 .font(Theme.ui(12.5, .semibold))
                 .foregroundStyle(Theme.textTertiary)
@@ -306,6 +307,7 @@ struct SettingsView: View {
     }
 
     private func toggleSidebar() {
+        guard !model.configurationReadOnly else { return }
         if sidebarMode == .rail {
             clearRailHover()
         }
@@ -379,20 +381,27 @@ struct SettingsView: View {
 
     private var content: some View {
         VStack(spacing: 0) {
-            switch model.pane {
-            case .home:
-                HomeView(model: model)
-            case .modes:
-                paneScroll("Modes") { modesPane }
-            case .models:
-                paneScroll("Models") { ModelsCombinedPane(model: model) }
-            case .history:
-                paneScroll("History") { HistoryPane(model: model) }
-            case .stats:
-                paneScroll("Stats") { StatsPane(model: model) }
-            case .settings:
-                paneScroll("Settings") { settingsPane }
+            if let message = model.configurationRecoveryMessage {
+                recoveryBanner(message)
+                hairline(.horizontal)
             }
+            Group {
+                switch model.pane {
+                case .home:
+                    HomeView(model: model)
+                case .modes:
+                    paneScroll("Modes") { modesPane }
+                case .models:
+                    paneScroll("Models") { ModelsCombinedPane(model: model) }
+                case .history:
+                    paneScroll("History") { HistoryPane(model: model) }
+                case .stats:
+                    paneScroll("Stats") { StatsPane(model: model) }
+                case .settings:
+                    paneScroll("Settings") { settingsPane }
+                }
+            }
+            .disabled(configurationPaneIsReadOnly)
             if !model.status.isEmpty {
                 hairline(.horizontal)
                 Text(model.status)
@@ -403,6 +412,34 @@ struct SettingsView: View {
                     .padding(.vertical, 6)
             }
         }
+    }
+
+    private var configurationPaneIsReadOnly: Bool {
+        guard model.configurationReadOnly else { return false }
+        return [.modes, .models, .history, .settings].contains(model.pane)
+    }
+
+    private func recoveryBanner(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Configuration recovery")
+                    .font(Theme.ui(13, .semibold))
+                Text(message)
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.textSecondary)
+                Text("Voice to Text remains available. Configuration changes are disabled.")
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            Spacer()
+            Button("Quit") { model.onQuitRecovery?() }
+            Button("Reset Configuration") { model.onResetConfiguration?() }
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(14)
     }
 
     private func paneScroll(_ title: String, @ViewBuilder body: () -> some View) -> some View {
@@ -459,7 +496,7 @@ struct SettingsView: View {
                 }
             }
             HStack {
-                Button("Edit modes.json…") { model.onEditFile?() }
+                Button("Edit config.json…") { model.onEditFile?() }
                 Text("Prompts and vocabulary live in the config file.")
                     .font(Theme.ui(11))
                     .foregroundStyle(Theme.textSecondary)

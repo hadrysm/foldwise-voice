@@ -97,6 +97,7 @@ final class SettingsModel: ObservableObject {
     @Published var status = ""
     @Published var statusIsError = false
     @Published var recordingField: RecordingField?
+    @Published var configurationRecoveryMessage: String?
 
     var modeNames: [String] = []
     var llmModes: Set<String> = []
@@ -134,6 +135,12 @@ final class SettingsModel: ObservableObject {
     /// One semantic row-action seam. Clear All remains collection-level.
     var onHistoryCommand: ((HistoryEntry, DictationRowCommand) -> Void)?
     var onClearHistory: (() -> Void)?
+    var onResetConfiguration: (() -> Void)?
+    var onQuitRecovery: (() -> Void)?
+
+    var configurationReadOnly: Bool {
+        configurationRecoveryMessage != nil
+    }
 
     var ollamaDown: Bool {
         installed?.isEmpty ?? false

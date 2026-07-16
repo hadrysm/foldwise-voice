@@ -56,8 +56,9 @@ final class BadgeController: NSObject {
         model.hotkeyLabel = KeyMap.pretty(config.hotkey)
         config.onChange { [weak self] changes in
             guard let self else { return }
-            if changes.contains(.activeMode) { model.activeModeName = config.activeMode }
+            if changes.contains(.selection) { model.activeModeName = config.activeMode }
             if changes.contains(.hotkeys) { model.hotkeyLabel = KeyMap.pretty(config.hotkey) }
+            panel?.isMovableByWindowBackground = !config.isReadOnly
         }
     }
 
@@ -136,7 +137,7 @@ final class BadgeController: NSObject {
         p.hasShadow = false
         p.ignoresMouseEvents = false
         p.hidesOnDeactivate = false
-        p.isMovableByWindowBackground = true
+        p.isMovableByWindowBackground = !config.isReadOnly
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         let view = BadgeView(
@@ -170,14 +171,20 @@ final class BadgeController: NSObject {
             )
             item.target = self
             item.state = name == config.activeMode ? .on : .off
+            item.isEnabled = !config.isReadOnly
             menu.addItem(item)
         }
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
     @objc private func modeMenuItemPicked(_ item: NSMenuItem) {
-        config.setActiveMode(item.title)
-        try? config.saveAndNotify()
+        do {
+            try config.setActiveMode(item.title)
+        } catch {
+            Log.config.error(
+                "Could not select Mode from the Badge: \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     private func defaultAnchor() -> CGPoint {
@@ -243,7 +250,7 @@ final class BadgeController: NSObject {
         // Only user drags move the anchor. Programmatic resizes can be
         // clamped at a screen edge, which shifts midX — tracking those would
         // drift the anchor toward the screen center on every dictation.
-        guard let panel, !programmaticMove else { return }
+        guard let panel, !programmaticMove, !config.isReadOnly else { return }
         let f = panel.frame
         anchor = CGPoint(x: f.midX, y: f.minY)
         saveWork?.cancel()
@@ -261,8 +268,13 @@ final class BadgeController: NSObject {
         }
         // badgePosition has no ChangeSet member, so this persists silently —
         // in particular it never rebuilds the TCC-sensitive hotkey tap.
-        config.badgePosition = new.map { ($0 * 10).rounded() / 10 }
-        try? config.saveAndNotify()
+        do {
+            try config.setBadgePosition(new.map { ($0 * 10).rounded() / 10 })
+        } catch {
+            Log.config.error(
+                "Could not save the Badge position: \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     // MARK: - timers
