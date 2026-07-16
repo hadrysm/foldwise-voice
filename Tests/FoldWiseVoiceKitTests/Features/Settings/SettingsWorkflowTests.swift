@@ -138,9 +138,11 @@ final class SettingsWorkflowTests: XCTestCase {
         let names: [String]
         let selection: DictationSelection
         let projectedNames: [String]
-        let sharedMenuNames: [String]
+        let menuBarNames: [String]
+        let badgeMenuNames: [String]
         let badgeModeName: String
         let badgeState: BadgeState
+        let nextCycleModeID: ModeID?
         let persistedNames: [String]
         let changes: [Config.ChangeSet]
     }
@@ -173,6 +175,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let selection: DictationSelection
         let projectedModes: [Mode]
         let notifications: [Config.ChangeSet]
+        let liveSurfacesUnchanged: Bool
         let retryID: ModeID?
         let errorMatchesOperation: Bool
         let fileExists: Bool
@@ -184,7 +187,27 @@ final class SettingsWorkflowTests: XCTestCase {
         let purpose: ModeEditorPurpose?
         let actionTitle: String?
         let hasPersistenceError: Bool
+        let liveSurfacesUnchanged: Bool
         let fileExists: Bool
+    }
+
+    private struct LiveModeSurfaceState: Equatable {
+        let menuBarNames: [String]
+        let badgeMenuNames: [String]
+        let badgeModeName: String
+        let badgeState: BadgeState
+        let historyModeName: String
+        let historyModeIcon: String
+        let historyModeIsDeleted: Bool
+        let nextCycleModeID: ModeID?
+    }
+
+    private struct LiveModeSurfaces {
+        let menuBar: MenuBarController
+        let menuBarMenu: NSMenu
+        let badge: BadgeController
+        let badgeMenu: NSMenu
+        let historyEntry: HistoryEntry
     }
 
     private struct EditorRetryResult: Equatable {
@@ -193,6 +216,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let failedErrorIsVisible: Bool
         let failedModeNames: [String]
         let failedSelection: DictationSelection
+        let failedLiveSurfacesUnchanged: Bool
         let retryDismissed: Bool
         let retryModeNames: [String]
         let retryPersisted: Bool
@@ -748,9 +772,22 @@ final class SettingsWorkflowTests: XCTestCase {
         let config = Config.defaultConfig(path: dir.appendingPathComponent("reorder.json"))
         try config.save()
         let selectedID = try XCTUnwrap(config.orderedModes.first?.id)
+        let nextID = try XCTUnwrap(config.orderedModes.last?.id)
         let model = SettingsModel()
         let workflow = makeWorkflow(config: config, model: model)
+        let menuBarMenu = NSMenu()
+        let menuBar = MenuBarController(
+            config: config,
+            onSettings: {},
+            onCheckForUpdates: {},
+            onModeSelectionError: {},
+            onQuit: {},
+            menu: menuBarMenu
+        )
         let badge = BadgeController(config: config, onOpenApp: {})
+        let badgeMenu = NSMenu()
+        badge.beginModeMenuSession(badgeMenu)
+        defer { badge.endModeMenuSession(badgeMenu) }
         workflow.populatePreferences()
         var changes: [Config.ChangeSet] = []
         config.onChange { changes.append($0) }
@@ -762,12 +799,11 @@ final class SettingsWorkflowTests: XCTestCase {
                 names: config.orderedModes.map(\.name),
                 selection: config.selection,
                 projectedNames: model.modeSelection.editableItems.map(\.name),
-                sharedMenuNames: ModePresentationFactory.projection(
-                    modes: config.orderedModes,
-                    selection: config.selection
-                ).editableItems.map(\.name),
+                menuBarNames: modeNames(in: menuBarMenu),
+                badgeMenuNames: modeNames(in: badgeMenu),
                 badgeModeName: badge.model.activeModeName,
                 badgeState: badge.model.state,
+                nextCycleModeID: config.modeCycleSuccessor(after: selectedID),
                 persistedNames: try Config.load(from: config.path).orderedModes.map(\.name),
                 changes: changes
             ),
@@ -775,13 +811,16 @@ final class SettingsWorkflowTests: XCTestCase {
                 names: ["Email", "Casual"],
                 selection: .mode(selectedID),
                 projectedNames: ["Email", "Casual"],
-                sharedMenuNames: ["Email", "Casual"],
+                menuBarNames: ["Voice to Text", "Email", "Casual"],
+                badgeMenuNames: ["Voice to Text", "Email", "Casual"],
                 badgeModeName: "Casual",
                 badgeState: .idle,
+                nextCycleModeID: nextID,
                 persistedNames: ["Email", "Casual"],
                 changes: [.modeLibrary]
             )
         )
+        withExtendedLifetime(menuBar) {}
     }
 
     func testRequestModeDeletionExplainsHistoryAndModelRetention() throws {
@@ -908,6 +947,9 @@ final class SettingsWorkflowTests: XCTestCase {
         let model = SettingsModel()
         let workflow = makeWorkflow(config: config, model: model)
         workflow.populatePreferences()
+        let surfaces = try makeLiveModeSurfaces(config)
+        defer { finishLiveModeSurfaces(surfaces) }
+        let originalSurfaceState = liveModeSurfaceState(surfaces, config: config)
         var changes: [Config.ChangeSet] = []
         config.onChange { changes.append($0) }
 
@@ -919,6 +961,8 @@ final class SettingsWorkflowTests: XCTestCase {
                 selection: config.selection,
                 projectedModes: model.modes,
                 notifications: changes,
+                liveSurfacesUnchanged: liveModeSurfaceState(surfaces, config: config)
+                    == originalSurfaceState,
                 retryID: nil,
                 errorMatchesOperation: model.status.contains("couldn't reorder Mode"),
                 fileExists: FileManager.default.fileExists(atPath: config.path.path)
@@ -928,6 +972,7 @@ final class SettingsWorkflowTests: XCTestCase {
                 selection: originalSelection,
                 projectedModes: originalModes,
                 notifications: [],
+                liveSurfacesUnchanged: true,
                 retryID: nil,
                 errorMatchesOperation: true,
                 fileExists: false
@@ -946,6 +991,9 @@ final class SettingsWorkflowTests: XCTestCase {
         let workflow = makeWorkflow(config: config, model: model)
         workflow.populatePreferences()
         workflow.requestModeDeletion(deletedID)
+        let surfaces = try makeLiveModeSurfaces(config)
+        defer { finishLiveModeSurfaces(surfaces) }
+        let originalSurfaceState = liveModeSurfaceState(surfaces, config: config)
         var changes: [Config.ChangeSet] = []
         config.onChange { changes.append($0) }
 
@@ -957,6 +1005,8 @@ final class SettingsWorkflowTests: XCTestCase {
                 selection: config.selection,
                 projectedModes: model.modes,
                 notifications: changes,
+                liveSurfacesUnchanged: liveModeSurfaceState(surfaces, config: config)
+                    == originalSurfaceState,
                 retryID: model.modePendingDeletion?.id,
                 errorMatchesOperation: model.status.contains("couldn't delete Mode"),
                 fileExists: FileManager.default.fileExists(atPath: config.path.path)
@@ -966,6 +1016,7 @@ final class SettingsWorkflowTests: XCTestCase {
                 selection: originalSelection,
                 projectedModes: originalModes,
                 notifications: [],
+                liveSurfacesUnchanged: true,
                 retryID: deletedID,
                 errorMatchesOperation: true,
                 fileExists: false
@@ -984,6 +1035,9 @@ final class SettingsWorkflowTests: XCTestCase {
         model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
         let workflow = makeWorkflow(config: config, model: model)
         workflow.beginDuplicateMode(sourceID)
+        let surfaces = try makeLiveModeSurfaces(config)
+        defer { finishLiveModeSurfaces(surfaces) }
+        let originalSurfaceState = liveModeSurfaceState(surfaces, config: config)
 
         workflow.saveModeEditor()
 
@@ -996,6 +1050,8 @@ final class SettingsWorkflowTests: XCTestCase {
                 hasPersistenceError: model.modeEditor?.persistenceError?.contains(
                     "Couldn't save Mode"
                 ) == true,
+                liveSurfacesUnchanged: liveModeSurfaceState(surfaces, config: config)
+                    == originalSurfaceState,
                 fileExists: FileManager.default.fileExists(atPath: config.path.path)
             ),
             FailedDuplicateResult(
@@ -1004,6 +1060,7 @@ final class SettingsWorkflowTests: XCTestCase {
                 purpose: .duplicate(sourceID),
                 actionTitle: "Retry",
                 hasPersistenceError: true,
+                liveSurfacesUnchanged: true,
                 fileExists: false
             )
         )
@@ -1085,11 +1142,16 @@ final class SettingsWorkflowTests: XCTestCase {
         editor.draft.systemPrompt = "Keep this complete draft."
         editor.draft.vocabularyText = "FoldWise\nBuenos Aires"
         model.modeEditor = editor
+        let surfaces = try makeLiveModeSurfaces(config)
+        defer { finishLiveModeSurfaces(surfaces) }
+        let originalSurfaceState = liveModeSurfaceState(surfaces, config: config)
 
         workflow.saveModeEditor()
 
         let failedEditor = try XCTUnwrap(model.modeEditor)
         let failedModeNames = config.orderedModes.map(\.name)
+        let failedLiveSurfacesUnchanged = liveModeSurfaceState(surfaces, config: config)
+            == originalSurfaceState
         try FileManager.default.createDirectory(
             at: config.path.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -1106,6 +1168,7 @@ final class SettingsWorkflowTests: XCTestCase {
                 ) == true,
                 failedModeNames: failedModeNames,
                 failedSelection: originalSelection,
+                failedLiveSurfacesUnchanged: failedLiveSurfacesUnchanged,
                 retryDismissed: model.modeEditor == nil,
                 retryModeNames: config.orderedModes.map(\.name),
                 retryPersisted: persisted.orderedModes == config.orderedModes
@@ -1117,6 +1180,7 @@ final class SettingsWorkflowTests: XCTestCase {
                 failedErrorIsVisible: true,
                 failedModeNames: ["Clean"],
                 failedSelection: originalSelection,
+                failedLiveSurfacesUnchanged: true,
                 retryDismissed: true,
                 retryModeNames: ["Clean", "Retry Mode"],
                 retryPersisted: true
@@ -2300,6 +2364,69 @@ final class SettingsWorkflowTests: XCTestCase {
             modelToggle: model.toggleKey,
             recordingField: model.recordingField
         )
+    }
+
+    private func makeLiveModeSurfaces(_ config: Config) throws -> LiveModeSurfaces {
+        let menuBarMenu = NSMenu()
+        let menuBar = MenuBarController(
+            config: config,
+            onSettings: {},
+            onCheckForUpdates: {},
+            onModeSelectionError: {},
+            onQuit: {},
+            menu: menuBarMenu
+        )
+        let badge = BadgeController(config: config, onOpenApp: {})
+        let badgeMenu = NSMenu()
+        badge.beginModeMenuSession(badgeMenu)
+        let mode = try XCTUnwrap(config.orderedModes.first)
+        var historyEntry = entry(createdAt: Date(timeIntervalSince1970: 1_700_000_000), text: "Saved")
+        historyEntry.modeID = try XCTUnwrap(mode.id)
+        historyEntry.modeName = mode.name
+        return LiveModeSurfaces(
+            menuBar: menuBar,
+            menuBarMenu: menuBarMenu,
+            badge: badge,
+            badgeMenu: badgeMenu,
+            historyEntry: historyEntry
+        )
+    }
+
+    private func liveModeSurfaceState(
+        _ surfaces: LiveModeSurfaces,
+        config: Config
+    ) -> LiveModeSurfaceState {
+        withExtendedLifetime(surfaces.menuBar) {
+            let history = DictationRowPresentation(
+                entry: surfaces.historyEntry,
+                modes: config.orderedModes
+            )
+            return LiveModeSurfaceState(
+                menuBarNames: modeNames(in: surfaces.menuBarMenu),
+                badgeMenuNames: modeNames(in: surfaces.badgeMenu),
+                badgeModeName: surfaces.badge.model.activeModeName,
+                badgeState: surfaces.badge.model.state,
+                historyModeName: history.fullModeName,
+                historyModeIcon: history.modeIcon,
+                historyModeIsDeleted: history.isDeletedMode,
+                nextCycleModeID: modeCycleSuccessor(in: config)
+            )
+        }
+    }
+
+    private func finishLiveModeSurfaces(_ surfaces: LiveModeSurfaces) {
+        surfaces.badge.endModeMenuSession(surfaces.badgeMenu)
+    }
+
+    private func modeCycleSuccessor(in config: Config) -> ModeID? {
+        guard case let .mode(id) = config.selection else { return nil }
+        return config.modeCycleSuccessor(after: id)
+    }
+
+    private func modeNames(in menu: NSMenu) -> [String] {
+        menu.items.compactMap { item in
+            item.representedObject as? DictationSelection == nil ? nil : item.title
+        }
     }
 
     private func makeWorkflow(

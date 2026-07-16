@@ -27,7 +27,8 @@ final class MenuBarController: NSObject {
         onSettings: @escaping () -> Void,
         onCheckForUpdates: @escaping () -> Void,
         onModeSelectionError: @escaping () -> Void,
-        onQuit: @escaping () -> Void
+        onQuit: @escaping () -> Void,
+        menu: NSMenu? = nil
     ) {
         self.config = config
         self.onSettings = onSettings
@@ -35,7 +36,7 @@ final class MenuBarController: NSObject {
         self.onModeSelectionError = onModeSelectionError
         self.onQuit = onQuit
         super.init()
-        build()
+        build(menu ?? NSMenu())
         // Wherever the active mode is changed — here, the Badge's mode menu,
         // or Settings — the checkmarks follow.
         config.onChange { [weak self] changes in
@@ -103,10 +104,9 @@ final class MenuBarController: NSObject {
         modeItems = rebuiltItems
     }
 
-    private func build() {
+    private func build(_ menu: NSMenu) {
         setIcon(.idle)
 
-        let menu = NSMenu()
         menu.autoenablesItems = false
 
         let header = NSMenuItem(title: "FoldWise Voice", action: nil, keyEquivalent: "")

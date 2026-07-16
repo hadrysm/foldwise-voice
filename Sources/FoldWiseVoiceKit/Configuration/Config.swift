@@ -375,6 +375,17 @@ final class Config {
         orderedModes.first { $0.id == id }
     }
 
+    func modeCycleSuccessor(after id: ModeID) -> ModeID? {
+        guard orderedModes.count > 1,
+              let currentIndex = orderedModes.firstIndex(where: { $0.id == id })
+        else { return nil }
+        let nextIndex = orderedModes.index(after: currentIndex)
+        let successorIndex = nextIndex == orderedModes.endIndex
+            ? orderedModes.startIndex
+            : nextIndex
+        return orderedModes[successorIndex].id
+    }
+
     @MainActor
     func onChange(_ observer: @escaping (ChangeSet) -> Void) {
         observers.append(observer)
