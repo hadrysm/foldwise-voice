@@ -48,11 +48,11 @@ _Avoid_: clean, format, LLM step
 
 **Mode** — A named dictation profile that decides whether and how to polish:
 its LLM model, system prompt, and preserved vocabulary. E.g. "Voice to Text"
-(raw), "Clean", "Email", "Bullets".
+(raw), "Casual", "Email", "Bullets".
 _Avoid_: profile, preset
 
 **In-place Mode** — A Mode whose Polish output tracks the transcript closely:
-same words, same rough length, fixed punctuation/casing. E.g. "Clean". Off-task
+same words, same rough length, fixed punctuation/casing. E.g. "Casual". Off-task
 detection can be strict here — the polished text should stay near the raw one.
 _Avoid_: transform-in-place, tight mode
 
