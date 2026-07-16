@@ -183,20 +183,15 @@ final class BadgeController: NSObject {
     /// checked, built fresh from config on every click so it can never go
     /// stale. NSMenu never activates the app, so focus stays put.
     private func popUpModeMenu() {
-        let menu = NSMenu()
-        beginModeMenuSession(menu)
-        defer { endModeMenuSession(menu) }
+        let menu = makeLiveModeMenu()
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
-    func beginModeMenuSession(_ menu: NSMenu) {
+    func makeLiveModeMenu() -> NSMenu {
+        let menu = NSMenu()
         rebuildModeMenu(menu)
         activeModeMenu = menu
-    }
-
-    func endModeMenuSession(_ menu: NSMenu) {
-        guard activeModeMenu === menu else { return }
-        activeModeMenu = nil
+        return menu
     }
 
     private func rebuildModeMenu(_ menu: NSMenu) {

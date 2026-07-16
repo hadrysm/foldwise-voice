@@ -192,6 +192,27 @@ final class ConfigBehaviorTests: XCTestCase {
         )
     }
 
+    func testModeCycleSuccessorFollowsOrderAndHandlesNoSuccessor() throws {
+        let config = Config.defaultConfig(path: path)
+        let firstID = try XCTUnwrap(config.orderedModes.first?.id)
+        let secondID = try XCTUnwrap(config.orderedModes.last?.id)
+
+        let successors = [
+            config.modeCycleSuccessor(after: firstID),
+            config.modeCycleSuccessor(after: secondID),
+            config.modeCycleSuccessor(after: .random()),
+        ]
+        try config.replaceModes([config.orderedModes[0]], selection: .mode(firstID))
+        let singleModeSuccessor = config.modeCycleSuccessor(after: firstID)
+        try config.replaceModes([], selection: .voiceToText)
+        let zeroModeSuccessor = config.modeCycleSuccessor(after: firstID)
+
+        XCTAssertEqual(
+            successors + [singleModeSuccessor, zeroModeSuccessor],
+            [secondID, firstID, nil, nil, nil]
+        )
+    }
+
     func testResolvePathPrefersExplicitConfigPath() {
         XCTAssertEqual(Config.resolvePath(cliPath: path.path), path)
     }
