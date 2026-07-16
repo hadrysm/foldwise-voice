@@ -45,7 +45,7 @@ final class BadgeController: NSObject {
     private var deferredModeSelectionError = false
     private var modeCycleState = BadgeModeCycleState.idle()
     private var modeSelectionRevision = 0
-    private var programmaticMove = false
+    private var programmaticMove = BadgeProgrammaticMoveState()
     private var smoother = LevelSmoother()
     /// Pill anchor: (capsule center-x, bottom-y) in screen points.
     private var anchor: CGPoint?
@@ -376,18 +376,18 @@ final class BadgeController: NSObject {
             screen: screenFrame(at: a)
         )
         guard frame != panel.frame else { return }
-        programmaticMove = true
+        let moveRevision = programmaticMove.begin()
         if animate {
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = BadgeModeCycleReducer.resizeDuration
                 ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.2, 1)
                 panel.animator().setFrame(frame, display: true)
             } completionHandler: { [weak self] in
-                Task { @MainActor in self?.programmaticMove = false }
+                Task { @MainActor in self?.programmaticMove.complete(revision: moveRevision) }
             }
         } else {
             panel.setFrame(frame, display: true)
-            programmaticMove = false
+            programmaticMove.complete(revision: moveRevision)
         }
     }
 
@@ -411,7 +411,7 @@ final class BadgeController: NSObject {
         // Only user drags move the anchor. Programmatic resizes can be
         // clamped at a screen edge, which shifts midX — tracking those would
         // drift the anchor toward the screen center on every dictation.
-        guard let panel, !programmaticMove, !config.isReadOnly else { return }
+        guard let panel, !programmaticMove.isActive, !config.isReadOnly else { return }
         let f = panel.frame
         anchor = CGPoint(x: f.midX, y: f.minY)
         saveWork?.cancel()

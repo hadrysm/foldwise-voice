@@ -182,6 +182,19 @@ final class HotkeyDispatcherTests: XCTestCase {
         XCTAssertEqual(fired, [.cycle, .cycle])
     }
 
+    func testLatchingModifierToggleFiresOnceForEveryPhysicalPress() throws {
+        let dispatcher = try makeDispatcher(ptt: "alt_r", toggle: "caps_lock")
+
+        dispatcher.process(.flagsChanged(keycode: 57, flags: .maskAlphaShift))
+        dispatcher.process(.flagsChanged(keycode: 57, flags: []))
+
+        XCTAssertEqual(fired, [.toggle, .toggle])
+    }
+
+    func testLatchingModifierIsRejectedForPushToTalk() {
+        XCTAssertThrowsError(try makeDispatcher(ptt: "caps_lock"))
+    }
+
     func testCharacterSpecMatchesByTypedCharacterNotKeycode() throws {
         // A single-character hotkey matches whatever key produces that
         // character, regardless of keycode.
@@ -235,6 +248,40 @@ final class HotkeyListenerConfigurationTests: XCTestCase {
             onRelease: {},
             onToggle: {}
         ))
+    }
+
+    func testStopReleasesAnActivePushToTalkHold() throws {
+        var callbacks: [String] = []
+        let dispatcher = try HotkeyDispatcher(
+            pttKey: "f19",
+            toggleKey: nil,
+            onPress: { callbacks.append("press") },
+            onRelease: { callbacks.append("release") },
+            onToggle: {}
+        )
+        let listener = HotkeyListener(dispatcher: dispatcher)
+
+        dispatcher.process(.key(keycode: 80, character: nil, down: true, isRepeat: false))
+        listener.stop()
+        listener.stop()
+
+        XCTAssertEqual(callbacks, ["press", "release"])
+    }
+
+    func testStopDoesNotReleaseWhenPushToTalkIsIdle() throws {
+        var releaseCount = 0
+        let dispatcher = try HotkeyDispatcher(
+            pttKey: "f19",
+            toggleKey: nil,
+            onPress: {},
+            onRelease: { releaseCount += 1 },
+            onToggle: {}
+        )
+        let listener = HotkeyListener(dispatcher: dispatcher)
+
+        listener.stop()
+
+        XCTAssertEqual(releaseCount, 0)
     }
 }
 

@@ -32,6 +32,17 @@ struct ShortcutCollisionError: LocalizedError, Equatable {
     }
 }
 
+enum ShortcutAssignmentError: LocalizedError, Equatable {
+    case latchingModifierCannotPushToTalk
+
+    var errorDescription: String? {
+        switch self {
+        case .latchingModifierCannotPushToTalk:
+            "Push to Talk requires a key with distinct press and release events."
+        }
+    }
+}
+
 struct ShortcutBindings: Equatable {
     var pushToTalk: String
     var toggleRecording: String?
@@ -47,7 +58,7 @@ struct ShortcutBindings: Equatable {
 
     func validateAssignment(for command: ShortcutCommand) throws {
         guard let assignedValue = value(for: command) else { return }
-        let identity = try KeyMap.effectiveIdentity(assignedValue)
+        let identity = try Self.validatedIdentity(assignedValue, for: command)
         for owner in ShortcutCommand.precedence where owner != command {
             guard let other = value(for: owner) else { continue }
             if try KeyMap.effectiveIdentity(other) == identity {
@@ -62,12 +73,29 @@ struct ShortcutBindings: Equatable {
             var claimed: Set<KeySpec> = []
             for command in ShortcutCommand.precedence {
                 guard let value = value(for: command) else { continue }
-                let identity = try KeyMap.effectiveIdentity(value)
+                let identity = try Self.validatedIdentity(value, for: command)
                 guard claimed.insert(identity).inserted else { continue }
                 result[command] = identity
             }
             return result
         }
+    }
+
+    private static func validatedIdentity(
+        _ value: String,
+        for command: ShortcutCommand
+    ) throws -> KeySpec {
+        let identity = try KeyMap.effectiveIdentity(value)
+        try validateSupport(identity, for: command)
+        return identity
+    }
+
+    private static func validateSupport(_ spec: KeySpec, for command: ShortcutCommand) throws {
+        guard command == .pushToTalk,
+              case let .keycode(keycode) = spec,
+              KeyMap.isLatchingModifier(keycode: keycode)
+        else { return }
+        throw ShortcutAssignmentError.latchingModifierCannotPushToTalk
     }
 }
 

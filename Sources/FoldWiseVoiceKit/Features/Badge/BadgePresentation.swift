@@ -405,6 +405,22 @@ enum BadgeFramePolicy {
     }
 }
 
+struct BadgeProgrammaticMoveState {
+    private(set) var isActive = false
+    private var revision = 0
+
+    mutating func begin() -> Int {
+        revision &+= 1
+        isActive = true
+        return revision
+    }
+
+    mutating func complete(revision: Int) {
+        guard revision == self.revision else { return }
+        isActive = false
+    }
+}
+
 enum BadgeState: Equatable {
     case idle
     case hover

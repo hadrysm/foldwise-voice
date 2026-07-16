@@ -1597,6 +1597,49 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertTrue(model.statusIsError)
     }
 
+    func testInvalidCapturedKeyRestoresCommittedShortcutDisplays() throws {
+        let config = makeConfig()
+        try config.setShortcutBindings(ShortcutBindings(
+            pushToTalk: "F5",
+            toggleRecording: "F6",
+            modeCycle: "F7"
+        ))
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginRecording(.ptt)
+
+        workflow.finishRecording(with: "not_a_key")
+
+        XCTAssertEqual([model.pttKey, model.toggleKey, model.cycleKey], ["F5", "F6", "F7"])
+    }
+
+    func testInvalidCapturedKeyReportsError() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginRecording(.ptt)
+
+        workflow.finishRecording(with: "not_a_key")
+
+        XCTAssertTrue(model.statusIsError)
+        XCTAssertTrue(model.status.contains("Unknown hotkey"))
+    }
+
+    func testInvalidCapturedKeyEndsShortcutCapture() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let gate = ShortcutCaptureGate()
+        let workflow = makeWorkflow(config: config, model: model, captureGate: gate)
+        workflow.populatePreferences()
+        workflow.beginRecording(.ptt)
+
+        workflow.finishRecording(with: "not_a_key")
+
+        XCTAssertFalse(gate.isCapturing)
+    }
+
     func testFinishRecordingWithoutAKeyCancelsTheEdit() {
         let config = makeConfig()
         let model = SettingsModel()

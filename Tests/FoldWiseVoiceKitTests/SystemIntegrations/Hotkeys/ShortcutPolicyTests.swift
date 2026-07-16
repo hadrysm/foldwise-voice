@@ -40,6 +40,27 @@ final class ShortcutPolicyTests: XCTestCase {
         XCTAssertThrowsError(try toggleAndCycle.validateAssignment(for: .modeCycle))
     }
 
+    func testLatchingModifierIsRejectedOnlyForPushToTalk() throws {
+        let pushToTalk = ShortcutBindings(
+            pushToTalk: "caps_lock", toggleRecording: "f18", modeCycle: "f19"
+        )
+        XCTAssertThrowsError(try pushToTalk.validateAssignment(for: .pushToTalk)) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Push to Talk requires a key with distinct press and release events."
+            )
+        }
+
+        let toggle = ShortcutBindings(
+            pushToTalk: "alt_r", toggleRecording: "caps_lock", modeCycle: "f19"
+        )
+        let cycle = ShortcutBindings(
+            pushToTalk: "alt_r", toggleRecording: "f19", modeCycle: "caps_lock"
+        )
+        XCTAssertNoThrow(try toggle.validateAssignment(for: .toggleRecording))
+        XCTAssertNoThrow(try cycle.validateAssignment(for: .modeCycle))
+    }
+
     func testExternalCollisionRuntimePrecedenceDisablesLowerPriorityCommands() throws {
         let bindings = ShortcutBindings(
             pushToTalk: "F7", toggleRecording: "f7", modeCycle: " F7 "

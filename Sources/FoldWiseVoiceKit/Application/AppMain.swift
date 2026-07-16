@@ -370,31 +370,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - entry point
-
 public enum FoldWiseVoiceApp {
     public static func main() {
-        var cliConfig: String?
-        var printConfig = false
-        var argIterator = CommandLine.arguments.dropFirst().makeIterator()
-        while let arg = argIterator.next() {
-            switch arg {
-            case "--config": cliConfig = argIterator.next()
-            case "--print-config": printConfig = true
-            default: break
+        let action = FoldWiseVoiceCommandLine().evaluate(arguments: CommandLine.arguments)
+        let cliConfig: String?
+        switch action {
+        case let .launch(configPath):
+            cliConfig = configPath
+        case let .terminate(result):
+            if let output = result.standardOutput.data(using: .utf8) {
+                FileHandle.standardOutput.write(output)
             }
-        }
-
-        if printConfig {
-            // Diagnostic: load the resolved config and echo it re-serialized.
-            let url = Config.resolvePath(cliPath: cliConfig)
-            let config = Config.loadOrCreate(at: url)
-            let tmp = FileManager.default.temporaryDirectory
-                .appendingPathComponent("foldwise-config-check.json")
-            try? config.save(to: tmp)
-            print("config: \(url.path)")
-            print((try? String(contentsOf: tmp, encoding: .utf8)) ?? "<save failed>")
-            exit(0)
+            if let error = result.standardError.data(using: .utf8) {
+                FileHandle.standardError.write(error)
+            }
+            exit(result.status)
         }
 
         MainActor.assumeIsolated {

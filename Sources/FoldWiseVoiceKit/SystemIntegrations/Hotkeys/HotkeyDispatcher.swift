@@ -48,10 +48,7 @@ final class HotkeyDispatcher {
 
     func process(_ event: Event) {
         if isSuspended() {
-            if pttDown {
-                pttDown = false
-                onRelease()
-            }
+            releaseActivePushToTalkHold()
             toggleDown = false
             cycleDown = false
             return
@@ -72,6 +69,12 @@ final class HotkeyDispatcher {
         case let .key(keycode, character, down, _):
             dispatch(keycode: keycode, character: character, down: down)
         }
+    }
+
+    func releaseActivePushToTalkHold() {
+        guard pttDown else { return }
+        pttDown = false
+        onRelease()
     }
 
     private func dispatch(keycode: CGKeyCode, character: String?, down: Bool) {

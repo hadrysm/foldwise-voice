@@ -72,6 +72,10 @@ final class HotkeyListener: HotkeyListening {
         )
     }
 
+    init(dispatcher: HotkeyDispatcher) {
+        self.dispatcher = dispatcher
+    }
+
     func start() throws {
         if health.start() == .becameFocusedAppOnly {
             // No effective Input Monitoring / Accessibility grant for the
@@ -91,6 +95,7 @@ final class HotkeyListener: HotkeyListening {
     }
 
     func stop() {
+        dispatcher.releaseActivePushToTalkHold()
         retryTimer?.invalidate()
         retryTimer = nil
         health.stop()

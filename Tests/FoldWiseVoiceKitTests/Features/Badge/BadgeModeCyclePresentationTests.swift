@@ -585,4 +585,16 @@ final class BadgeModeCyclePresentationTests: XCTestCase {
 
         XCTAssertEqual(frame.origin, CGPoint(x: 4, y: 4))
     }
+
+    func testOlderResizeCompletionCannotEndNewerProgrammaticMove() {
+        var state = BadgeProgrammaticMoveState()
+        let olderRevision = state.begin()
+        let newerRevision = state.begin()
+
+        state.complete(revision: olderRevision)
+
+        XCTAssertTrue(state.isActive)
+        state.complete(revision: newerRevision)
+        XCTAssertFalse(state.isActive)
+    }
 }

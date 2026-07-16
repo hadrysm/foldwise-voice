@@ -630,6 +630,7 @@ final class SettingsWorkflow {
             if !toggle.isEmpty { _ = try KeyMap.parse(toggle) }
             if !cycle.isEmpty { _ = try KeyMap.parse(cycle) }
         } catch {
+            populateShortcutBindings()
             setStatus("⚠️ \(error.localizedDescription)", isError: true)
             return
         }
