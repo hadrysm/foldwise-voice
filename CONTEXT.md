@@ -24,6 +24,17 @@ for FoldWise surfaces. System follows the live macOS appearance; Light and Dark
 override it across the main window and Badge.
 _Avoid_: theme mode, color mode
 
+**Shortcut collision** — An invalid assignment where Push to Talk, Toggle
+Recording, or Mode cycle resolve to the same effective key, including aliases
+and differences in case or surrounding whitespace.
+_Avoid_: duplicate shortcut, hotkey conflict
+
+**Mode cycle** — The optional global command that advances the active selection
+through the visible order of editable Modes, wrapping at the end. Voice to Text
+is outside the order; the command has no effect when no different selection is
+available.
+_Avoid_: switch mode, next mode
+
 ## Dictation pipeline
 
 **Dictation session** — One press-to-insert cycle: from holding the hotkey
