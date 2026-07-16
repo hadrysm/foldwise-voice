@@ -83,6 +83,28 @@ struct ModeEditorActionPresentation: Equatable {
     let keyboardAction: ModeEditorKeyboardAction
 }
 
+struct ModeLibraryActionPresentation: Equatable {
+    let duplicateLabel: String
+    let moveUpLabel: String
+    let moveDownLabel: String
+    let deleteLabel: String
+    let deleteHint: String
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+}
+
+extension ModeLibraryActionPresentation {
+    init(modeName: String, index: Int, modeCount: Int) {
+        duplicateLabel = "Duplicate \(modeName)"
+        moveUpLabel = "Move \(modeName) up"
+        moveDownLabel = "Move \(modeName) down"
+        deleteLabel = "Delete \(modeName)"
+        deleteHint = "Asks for confirmation. History remains and the AI model is not uninstalled."
+        canMoveUp = index > 0
+        canMoveDown = index < modeCount - 1
+    }
+}
+
 struct ModeEditorAccessibilityPresentation: Equatable {
     let nameValue: String
     let iconValue: String

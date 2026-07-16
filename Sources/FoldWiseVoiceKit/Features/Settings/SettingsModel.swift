@@ -103,6 +103,7 @@ final class SettingsModel: ObservableObject {
     )
     @Published var modes: [Mode] = []
     @Published var modeEditor: ModeEditorState?
+    @Published var modePendingDeletion: ModeDeletionState?
     /// Loaded from the HistoryStore when the window opens and re-read after a
     /// delete or clear-all, so the History pane reflects the store live.
     @Published var historyEntries: [HistoryEntry] = []
@@ -120,6 +121,11 @@ final class SettingsModel: ObservableObject {
     var onSelectMode: ((DictationSelection) -> Void)?
     var onAddMode: (() -> Void)?
     var onEditMode: ((ModeID) -> Void)?
+    var onDuplicateMode: ((ModeID) -> Void)?
+    var onMoveMode: ((ModeID, ModeMoveDirection) -> Void)?
+    var onRequestModeDeletion: ((ModeID) -> Void)?
+    var onConfirmModeDeletion: (() -> Void)?
+    var onCancelModeDeletion: (() -> Void)?
     var onSaveModeEditor: (() -> Void)?
     var onCancelModeEditor: (() -> Void)?
     var onInstallModel: ((String) -> Void)?

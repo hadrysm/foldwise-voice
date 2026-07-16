@@ -121,6 +121,48 @@ final class SettingsControllerWiringTests: XCTestCase {
         )
     }
 
+    func testDuplicateModeCallbackOpensCopiedDraft() throws {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("mode-lifecycle-history.jsonl"))
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("mode-lifecycle.json"))
+        let firstID = try XCTUnwrap(config.orderedModes.first?.id)
+        let controller = SettingsController(
+            config: config, historyStore: store, statsStore: WiringStatsStore()
+        )
+
+        controller.model.onDuplicateMode?(firstID)
+
+        XCTAssertEqual(controller.model.modeEditor?.purpose, .duplicate(firstID))
+    }
+
+    func testMoveModeCallbackReordersCommittedLibrary() throws {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("move-mode-history.jsonl"))
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("move-mode.json"))
+        let firstID = try XCTUnwrap(config.orderedModes.first?.id)
+        let secondID = try XCTUnwrap(config.orderedModes.last?.id)
+        let controller = SettingsController(
+            config: config, historyStore: store, statsStore: WiringStatsStore()
+        )
+
+        controller.model.onMoveMode?(firstID, .down)
+
+        XCTAssertEqual(config.orderedModes.map(\.id), [secondID, firstID])
+    }
+
+    func testDeleteModeCallbacksConfirmCommittedRemoval() throws {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("delete-mode-history.jsonl"))
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("delete-mode.json"))
+        let firstID = try XCTUnwrap(config.orderedModes.first?.id)
+        let secondID = try XCTUnwrap(config.orderedModes.last?.id)
+        let controller = SettingsController(
+            config: config, historyStore: store, statsStore: WiringStatsStore()
+        )
+
+        controller.model.onRequestModeDeletion?(secondID)
+        controller.model.onConfirmModeDeletion?()
+
+        XCTAssertEqual(config.orderedModes.map(\.id), [firstID])
+    }
+
     func testInputDeviceProjectionInitializesSettingsModel() {
         let store = JSONLHistoryStore(url: dir.appendingPathComponent("input-history.jsonl"))
         let config = makeConfig()

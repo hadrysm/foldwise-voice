@@ -325,6 +325,7 @@ struct ModeEditorSheet: View {
     private func editorTitle(_ purpose: ModeEditorPurpose) -> String {
         switch purpose {
         case .add: "Add Mode"
+        case .duplicate: "Duplicate Mode"
         case .edit: "Edit Mode"
         }
     }

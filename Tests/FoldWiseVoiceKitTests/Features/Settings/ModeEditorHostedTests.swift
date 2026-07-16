@@ -64,10 +64,82 @@ final class ModeEditorHostedTests: XCTestCase {
         )
     }
 
+    func testHostedModesPaneKeyboardShortcutMovesSelectedModeDown() throws {
+        let model = SettingsModel()
+        model.pane = .modes
+        let first = mode(name: "First")
+        let second = mode(name: "Second")
+        let firstID = try XCTUnwrap(first.id)
+        model.modes = [first, second]
+        model.modeSelection = ModePresentationFactory.projection(
+            modes: model.modes,
+            selection: .mode(firstID)
+        )
+        var moved: ModeMoveDirection?
+        model.onMoveMode = { _, direction in moved = direction }
+        let hosting = hostSettings(model)
+        let window = hostInKeyWindow(hosting)
+
+        sendMoveDownShortcut(to: window)
+        window.orderOut(nil)
+
+        XCTAssertEqual(moved, .down)
+    }
+
     private func hostSettings(_ model: SettingsModel) -> NSHostingView<SettingsView> {
         let hosting = NSHostingView(rootView: SettingsView(model: model))
         hosting.frame = NSRect(x: 0, y: 0, width: 980, height: 720)
         hosting.layoutSubtreeIfNeeded()
         return hosting
+    }
+
+    private func mode(name: String) -> Mode {
+        Mode(
+            id: .random(),
+            name: name,
+            icon: "text.bubble",
+            asrModel: ASRModelCatalog.defaultID,
+            llmModel: "qwen2.5:3b",
+            transformation: .inPlace,
+            systemPrompt: "Keep wording.",
+            vocabulary: []
+        )
+    }
+
+    private func hostInKeyWindow(_ hosting: NSHostingView<SettingsView>) -> NSWindow {
+        let window = NSWindow(
+            contentRect: hosting.frame,
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = hosting
+        NSApp.finishLaunching()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        hosting.layoutSubtreeIfNeeded()
+        return window
+    }
+
+    private func sendMoveDownShortcut(to window: NSWindow) {
+        DispatchQueue.main.async {
+            if let event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [.command, .option],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                characters: "\u{F701}",
+                charactersIgnoringModifiers: "\u{F701}",
+                isARepeat: false,
+                keyCode: 125
+            ) {
+                NSApp.sendEvent(event)
+            }
+            NSApp.abortModal()
+        }
+        NSApp.runModal(for: window)
+        window.contentView?.layoutSubtreeIfNeeded()
     }
 }

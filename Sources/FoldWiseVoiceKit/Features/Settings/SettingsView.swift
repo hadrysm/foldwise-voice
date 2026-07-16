@@ -119,6 +119,16 @@ struct SettingsView: View {
         .sheet(isPresented: modeEditorPresented) {
             ModeEditorSheet(model: model)
         }
+        .alert(
+            model.modePendingDeletion?.title ?? "Delete Mode?",
+            isPresented: modeDeletionPresented,
+            presenting: model.modePendingDeletion
+        ) { _ in
+            Button("Delete", role: .destructive) { model.onConfirmModeDeletion?() }
+            Button("Cancel", role: .cancel) { model.onCancelModeDeletion?() }
+        } message: { deletion in
+            Text(deletion.message)
+        }
     }
 
     private var modeEditorPresented: Binding<Bool> {
@@ -126,6 +136,15 @@ struct SettingsView: View {
             get: { model.modeEditor != nil },
             set: { isPresented in
                 if !isPresented { model.onCancelModeEditor?() }
+            }
+        )
+    }
+
+    private var modeDeletionPresented: Binding<Bool> {
+        Binding(
+            get: { model.modePendingDeletion != nil },
+            set: { isPresented in
+                if !isPresented { model.onCancelModeDeletion?() }
             }
         )
     }
@@ -512,7 +531,7 @@ struct SettingsView: View {
                                 id: \.element.id
                             ) { index, item in
                                 if index > 0 { Divider().padding(.leading, 14) }
-                                modeSelectionButton(item)
+                                modeLibraryRow(item, index: index)
                             }
                         }
                     }
@@ -529,7 +548,13 @@ struct SettingsView: View {
             sectionHeader("Mode details")
             if let mode = model.selectedEditableMode,
                let item = model.selectedEditableModeItem,
-               let id = mode.id {
+               let id = mode.id,
+               let modeIndex = model.modes.firstIndex(where: { $0.id == id }) {
+                let actions = ModeLibraryActionPresentation(
+                    modeName: mode.name,
+                    index: modeIndex,
+                    modeCount: model.modes.count
+                )
                 Card {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack(spacing: 10) {
@@ -546,8 +571,12 @@ struct SettingsView: View {
                                     .foregroundStyle(Theme.textSecondary)
                             }
                             Spacer()
-                            Button("Edit") { model.onEditMode?(id) }
-                                .accessibilityLabel("Edit \(mode.name)")
+                            HStack(spacing: 8) {
+                                Button("Edit") { model.onEditMode?(id) }
+                                    .accessibilityLabel("Edit \(mode.name)")
+                                Button("Duplicate") { model.onDuplicateMode?(id) }
+                                    .accessibilityLabel(actions.duplicateLabel)
+                            }
                         }
                         Divider()
                         modeDetailField("AI model", mode.llmModel ?? "Unavailable")
@@ -559,6 +588,27 @@ struct SettingsView: View {
                         if let installed = model.installed,
                            !installed.contains(where: { $0.name == mode.llmModel }) {
                             unavailableModelNotice(mode.llmModel ?? "This model")
+                        }
+                        Divider()
+                        HStack(spacing: 8) {
+                            Button("Move up", systemImage: "arrow.up") {
+                                model.onMoveMode?(id, .up)
+                            }
+                            .disabled(!actions.canMoveUp)
+                            .accessibilityLabel(actions.moveUpLabel)
+                            .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                            Button("Move down", systemImage: "arrow.down") {
+                                model.onMoveMode?(id, .down)
+                            }
+                            .disabled(!actions.canMoveDown)
+                            .accessibilityLabel(actions.moveDownLabel)
+                            .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                            Spacer()
+                            Button("Delete", role: .destructive) {
+                                model.onRequestModeDeletion?(id)
+                            }
+                            .accessibilityLabel(actions.deleteLabel)
+                            .accessibilityHint(actions.deleteHint)
                         }
                     }
                     .padding(16)
@@ -645,6 +695,41 @@ struct SettingsView: View {
         .accessibilityLabel(item.accessibilityLabel)
         .accessibilityValue(item.accessibilityValue)
         .accessibilityHint(item.accessibilityHint)
+    }
+
+    @ViewBuilder
+    private func modeLibraryRow(_ item: ModeSelectionItem, index: Int) -> some View {
+        if case let .mode(id) = item.id {
+            let actions = ModeLibraryActionPresentation(
+                modeName: item.name,
+                index: index,
+                modeCount: model.modeSelection.editableItems.count
+            )
+            HStack(spacing: 2) {
+                modeSelectionButton(item)
+                Button {
+                    model.onMoveMode?(id, .up)
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .frame(width: 22, height: 28)
+                }
+                .buttonStyle(.plain)
+                .disabled(!actions.canMoveUp)
+                .help(actions.moveUpLabel)
+                .accessibilityLabel(actions.moveUpLabel)
+                Button {
+                    model.onMoveMode?(id, .down)
+                } label: {
+                    Image(systemName: "arrow.down")
+                        .frame(width: 22, height: 28)
+                }
+                .buttonStyle(.plain)
+                .disabled(!actions.canMoveDown)
+                .help(actions.moveDownLabel)
+                .accessibilityLabel(actions.moveDownLabel)
+            }
+            .padding(.trailing, 10)
+        }
     }
 
     // MARK: - settings (keyboard shortcuts + input + sound + appearance + updates)

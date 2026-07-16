@@ -73,6 +73,15 @@ final class SettingsController {
         model.onSelectMode = { [weak self] selection in self?.workflow.selectMode(selection) }
         model.onAddMode = { [weak self] in self?.workflow.beginAddMode() }
         model.onEditMode = { [weak self] id in self?.workflow.beginEditMode(id) }
+        model.onDuplicateMode = { [weak self] id in self?.workflow.beginDuplicateMode(id) }
+        model.onMoveMode = { [weak self] id, direction in
+            self?.workflow.moveMode(id, direction: direction)
+        }
+        model.onRequestModeDeletion = { [weak self] id in
+            self?.workflow.requestModeDeletion(id)
+        }
+        model.onConfirmModeDeletion = { [weak self] in self?.workflow.confirmModeDeletion() }
+        model.onCancelModeDeletion = { [weak self] in self?.workflow.cancelModeDeletion() }
         model.onSaveModeEditor = { [weak self] in self?.workflow.saveModeEditor() }
         model.onCancelModeEditor = { [weak self] in self?.workflow.cancelModeEditor() }
         model.onInstallModel = { [weak self] name in self?.workflow.installLLMModel(name) }

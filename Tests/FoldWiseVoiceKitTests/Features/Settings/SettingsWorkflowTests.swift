@@ -101,6 +101,11 @@ final class SettingsWorkflowTests: XCTestCase {
         let selection: DictationSelection
     }
 
+    private struct DuplicateEditorOpening: Equatable {
+        let editor: ModeEditorState?
+        let committedIDs: [ModeID]
+    }
+
     private struct InvalidEditorSave: Equatable {
         let draft: ModeEditorDraft?
         let issues: ModeEditorIssues?
@@ -119,6 +124,67 @@ final class SettingsWorkflowTests: XCTestCase {
         let selectionMatchesAddedID: Bool
         let persistedMatchesLive: Bool
         let projectedSelection: DictationSelection?
+    }
+
+    private struct DuplicatedModeResult: Equatable {
+        let names: [String]
+        let copiedSettings: Bool
+        let mintedDistinctID: Bool
+        let selection: DictationSelection
+        let persistedModes: [Mode]
+    }
+
+    private struct ReorderedModeResult: Equatable {
+        let names: [String]
+        let selection: DictationSelection
+        let projectedNames: [String]
+        let sharedMenuNames: [String]
+        let badgeModeName: String
+        let badgeState: BadgeState
+        let persistedNames: [String]
+        let changes: [Config.ChangeSet]
+    }
+
+    private struct DeletedModeResult: Equatable {
+        let names: [String]
+        let selection: DictationSelection
+        let persistedSelection: DictationSelection
+        let retainedHistoryModeID: ModeID?
+        let installedModels: [String]
+        let confirmationDismissed: Bool
+    }
+
+    private struct UnselectedDeletionResult: Equatable {
+        let names: [String]
+        let activeMode: String
+        let selection: DictationSelection
+    }
+
+    private struct ZeroModeResult: Equatable {
+        let configIsEmpty: Bool
+        let selection: DictationSelection
+        let settingsIsEmpty: Bool
+        let projectionIsEmpty: Bool
+        let systemSelectionIsSelected: Bool
+    }
+
+    private struct FailedLifecycleResult: Equatable {
+        let modes: [Mode]
+        let selection: DictationSelection
+        let projectedModes: [Mode]
+        let notifications: [Config.ChangeSet]
+        let retryID: ModeID?
+        let errorMatchesOperation: Bool
+        let fileExists: Bool
+    }
+
+    private struct FailedDuplicateResult: Equatable {
+        let modes: [Mode]
+        let selection: DictationSelection
+        let purpose: ModeEditorPurpose?
+        let actionTitle: String?
+        let hasPersistenceError: Bool
+        let fileExists: Bool
     }
 
     private struct EditorRetryResult: Equatable {
@@ -477,6 +543,37 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
+    func testBeginDuplicateModeCopiesSettingsWithoutMintingAnID() throws {
+        let config = makeConfig()
+        let source = try XCTUnwrap(config.orderedModes.first)
+        let sourceID = try XCTUnwrap(source.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.beginDuplicateMode(sourceID)
+
+        XCTAssertEqual(
+            DuplicateEditorOpening(
+                editor: model.modeEditor,
+                committedIDs: config.orderedModes.compactMap(\.id)
+            ),
+            DuplicateEditorOpening(
+                editor: ModeEditorState(
+                    purpose: .duplicate(sourceID),
+                    draft: ModeEditorDraft(
+                        name: "Clean Copy",
+                        icon: "text.bubble",
+                        model: "qwen2.5:3b",
+                        transformation: .inPlace,
+                        systemPrompt: "Polish",
+                        vocabularyText: ""
+                    )
+                ),
+                committedIDs: [sourceID]
+            )
+        )
+    }
+
     func testSaveModeEditorReportsAllValidationWithoutChangingConfig() throws {
         let config = makeConfig()
         let model = SettingsModel()
@@ -607,6 +704,307 @@ final class SettingsWorkflowTests: XCTestCase {
                 selectionMatchesAddedID: true,
                 persistedMatchesLive: true,
                 projectedSelection: .mode(addedID)
+            )
+        )
+    }
+
+    func testSaveDuplicateInsertsAfterSourceMintsIDAndActivates() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("duplicate.json"))
+        let source = try XCTUnwrap(config.orderedModes.first)
+        let sourceID = try XCTUnwrap(source.id)
+        let model = SettingsModel()
+        model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginDuplicateMode(sourceID)
+
+        workflow.saveModeEditor()
+
+        let duplicate = try XCTUnwrap(config.orderedModes.dropFirst().first)
+        let duplicateID = try XCTUnwrap(duplicate.id)
+        XCTAssertEqual(
+            DuplicatedModeResult(
+                names: config.orderedModes.map(\.name),
+                copiedSettings: duplicate.icon == source.icon
+                    && duplicate.llmModel == source.llmModel
+                    && duplicate.transformation == source.transformation
+                    && duplicate.systemPrompt == source.systemPrompt
+                    && duplicate.vocab == source.vocab,
+                mintedDistinctID: duplicateID != sourceID,
+                selection: config.selection,
+                persistedModes: try Config.load(from: config.path).orderedModes
+            ),
+            DuplicatedModeResult(
+                names: ["Casual", "Casual Copy", "Email"],
+                copiedSettings: true,
+                mintedDistinctID: true,
+                selection: .mode(duplicateID),
+                persistedModes: config.orderedModes
+            )
+        )
+    }
+
+    func testMoveModePersistsSoleOrderAndPreservesStableSelection() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("reorder.json"))
+        try config.save()
+        let selectedID = try XCTUnwrap(config.orderedModes.first?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        let badge = BadgeController(config: config, onOpenApp: {})
+        workflow.populatePreferences()
+        var changes: [Config.ChangeSet] = []
+        config.onChange { changes.append($0) }
+
+        workflow.moveMode(selectedID, direction: .down)
+
+        XCTAssertEqual(
+            ReorderedModeResult(
+                names: config.orderedModes.map(\.name),
+                selection: config.selection,
+                projectedNames: model.modeSelection.editableItems.map(\.name),
+                sharedMenuNames: ModePresentationFactory.projection(
+                    modes: config.orderedModes,
+                    selection: config.selection
+                ).editableItems.map(\.name),
+                badgeModeName: badge.model.activeModeName,
+                badgeState: badge.model.state,
+                persistedNames: try Config.load(from: config.path).orderedModes.map(\.name),
+                changes: changes
+            ),
+            ReorderedModeResult(
+                names: ["Email", "Casual"],
+                selection: .mode(selectedID),
+                projectedNames: ["Email", "Casual"],
+                sharedMenuNames: ["Email", "Casual"],
+                badgeModeName: "Casual",
+                badgeState: .idle,
+                persistedNames: ["Email", "Casual"],
+                changes: [.modeLibrary]
+            )
+        )
+    }
+
+    func testRequestModeDeletionExplainsHistoryAndModelRetention() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("delete-prompt.json"))
+        let sourceID = try XCTUnwrap(config.orderedModes.first?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.requestModeDeletion(sourceID)
+
+        XCTAssertEqual(
+            model.modePendingDeletion,
+            ModeDeletionState(
+                id: sourceID,
+                title: "Delete Casual?",
+                message: "Your History will remain. The qwen2.5:3b AI model will not be "
+                    + "uninstalled."
+            )
+        )
+    }
+
+    func testConfirmSelectedModeDeletionFallsBackAndRetainsHistoryAndModel() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("delete-selected.json"))
+        try config.save()
+        let sourceID = try XCTUnwrap(config.orderedModes.first?.id)
+        let historyStore = JSONLHistoryStore(url: dir.appendingPathComponent("delete-history.jsonl"))
+        var history = entry(createdAt: Date(), text: "Saved words")
+        history.modeName = "Casual"
+        history.modeID = sourceID
+        historyStore.append(history)
+        let model = SettingsModel()
+        model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: historyStore
+        )
+        workflow.populatePreferences()
+        workflow.requestModeDeletion(sourceID)
+
+        workflow.confirmModeDeletion()
+
+        let persisted = try Config.load(from: config.path)
+        XCTAssertEqual(
+            DeletedModeResult(
+                names: config.orderedModes.map(\.name),
+                selection: config.selection,
+                persistedSelection: persisted.selection,
+                retainedHistoryModeID: historyStore.load().first?.modeID,
+                installedModels: model.installed?.map(\.name) ?? [],
+                confirmationDismissed: model.modePendingDeletion == nil
+            ),
+            DeletedModeResult(
+                names: ["Email"],
+                selection: .voiceToText,
+                persistedSelection: .voiceToText,
+                retainedHistoryModeID: sourceID,
+                installedModels: ["qwen2.5:3b"],
+                confirmationDismissed: true
+            )
+        )
+    }
+
+    func testConfirmUnselectedModeDeletionPreservesSelection() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("delete-unselected.json"))
+        let selectedID = try XCTUnwrap(config.orderedModes.first?.id)
+        let deletedID = try XCTUnwrap(config.orderedModes.last?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.requestModeDeletion(deletedID)
+
+        workflow.confirmModeDeletion()
+
+        XCTAssertEqual(
+            UnselectedDeletionResult(
+                names: config.orderedModes.map(\.name),
+                activeMode: config.activeMode,
+                selection: config.selection
+            ),
+            UnselectedDeletionResult(
+                names: ["Casual"],
+                activeMode: "Casual",
+                selection: .mode(selectedID)
+            )
+        )
+    }
+
+    func testDeletingLastModePublishesInvitingZeroModeState() throws {
+        let config = makeConfig()
+        let deletedID = try XCTUnwrap(config.orderedModes.first?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.requestModeDeletion(deletedID)
+
+        workflow.confirmModeDeletion()
+
+        XCTAssertEqual(
+            ZeroModeResult(
+                configIsEmpty: config.orderedModes.isEmpty,
+                selection: config.selection,
+                settingsIsEmpty: model.modes.isEmpty,
+                projectionIsEmpty: model.modeSelection.editableItems.isEmpty,
+                systemSelectionIsSelected: model.modeSelection.systemItem.isSelected
+            ),
+            ZeroModeResult(
+                configIsEmpty: true,
+                selection: .voiceToText,
+                settingsIsEmpty: true,
+                projectionIsEmpty: true,
+                systemSelectionIsSelected: true
+            )
+        )
+    }
+
+    func testFailedReorderKeepsCommittedLibrarySelectionAndProjection() throws {
+        let config = Config.defaultConfig(
+            path: dir.appendingPathComponent("missing-reorder/config.json")
+        )
+        let originalModes = config.orderedModes
+        let originalSelection = config.selection
+        let movedID = try XCTUnwrap(originalModes.first?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        var changes: [Config.ChangeSet] = []
+        config.onChange { changes.append($0) }
+
+        workflow.moveMode(movedID, direction: .down)
+
+        XCTAssertEqual(
+            FailedLifecycleResult(
+                modes: config.orderedModes,
+                selection: config.selection,
+                projectedModes: model.modes,
+                notifications: changes,
+                retryID: nil,
+                errorMatchesOperation: model.status.contains("couldn't reorder Mode"),
+                fileExists: FileManager.default.fileExists(atPath: config.path.path)
+            ),
+            FailedLifecycleResult(
+                modes: originalModes,
+                selection: originalSelection,
+                projectedModes: originalModes,
+                notifications: [],
+                retryID: nil,
+                errorMatchesOperation: true,
+                fileExists: false
+            )
+        )
+    }
+
+    func testFailedDeleteKeepsCommittedStateAndConfirmationForRetry() throws {
+        let config = Config.defaultConfig(
+            path: dir.appendingPathComponent("missing-delete/config.json")
+        )
+        let originalModes = config.orderedModes
+        let originalSelection = config.selection
+        let deletedID = try XCTUnwrap(originalModes.first?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.requestModeDeletion(deletedID)
+        var changes: [Config.ChangeSet] = []
+        config.onChange { changes.append($0) }
+
+        workflow.confirmModeDeletion()
+
+        XCTAssertEqual(
+            FailedLifecycleResult(
+                modes: config.orderedModes,
+                selection: config.selection,
+                projectedModes: model.modes,
+                notifications: changes,
+                retryID: model.modePendingDeletion?.id,
+                errorMatchesOperation: model.status.contains("couldn't delete Mode"),
+                fileExists: FileManager.default.fileExists(atPath: config.path.path)
+            ),
+            FailedLifecycleResult(
+                modes: originalModes,
+                selection: originalSelection,
+                projectedModes: originalModes,
+                notifications: [],
+                retryID: deletedID,
+                errorMatchesOperation: true,
+                fileExists: false
+            )
+        )
+    }
+
+    func testFailedDuplicateKeepsDraftAndCommittedStateForRetry() throws {
+        let config = Config.defaultConfig(
+            path: dir.appendingPathComponent("missing-duplicate/config.json")
+        )
+        let originalModes = config.orderedModes
+        let originalSelection = config.selection
+        let sourceID = try XCTUnwrap(originalModes.first?.id)
+        let model = SettingsModel()
+        model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.beginDuplicateMode(sourceID)
+
+        workflow.saveModeEditor()
+
+        XCTAssertEqual(
+            FailedDuplicateResult(
+                modes: config.orderedModes,
+                selection: config.selection,
+                purpose: model.modeEditor?.purpose,
+                actionTitle: model.modeEditor?.saveActionTitle,
+                hasPersistenceError: model.modeEditor?.persistenceError?.contains(
+                    "Couldn't save Mode"
+                ) == true,
+                fileExists: FileManager.default.fileExists(atPath: config.path.path)
+            ),
+            FailedDuplicateResult(
+                modes: originalModes,
+                selection: originalSelection,
+                purpose: .duplicate(sourceID),
+                actionTitle: "Retry",
+                hasPersistenceError: true,
+                fileExists: false
             )
         )
     }

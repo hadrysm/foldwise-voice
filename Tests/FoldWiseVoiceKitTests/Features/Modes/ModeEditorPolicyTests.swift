@@ -2,6 +2,19 @@ import XCTest
 @testable import FoldWiseVoiceKit
 
 final class ModeEditorPolicyTests: XCTestCase {
+    func testDuplicateNameUsesLowestFreeSuffixAcrossAlreadySuffixedNames() {
+        let names = ["Email", "Email Copy", "Email Copy 3", "Email Copy 4"]
+
+        XCTAssertEqual(
+            [
+                ModeEditorPolicy.duplicateName(for: "Email", existingNames: names),
+                ModeEditorPolicy.duplicateName(for: "Email Copy 3", existingNames: names),
+                ModeEditorPolicy.duplicateName(for: "Copy", existingNames: ["Copy"]),
+            ],
+            ["Email Copy 2", "Email Copy 2", "Copy Copy"]
+        )
+    }
+
     func testEvaluateNormalizesValidDraftForSubmission() {
         let draft = ModeEditorDraft(
             name: "  Café   Notes \n",
@@ -233,6 +246,28 @@ final class ModeEditorPolicyTests: XCTestCase {
                     keyboardAction: .cancelAction
                 ),
             ]
+        )
+    }
+
+    func testLibraryActionsExposeTextAndReorderAvailability() {
+        let presentation = ModeLibraryActionPresentation(
+            modeName: "A long planning Mode name",
+            index: 1,
+            modeCount: 3
+        )
+
+        XCTAssertEqual(
+            presentation,
+            ModeLibraryActionPresentation(
+                duplicateLabel: "Duplicate A long planning Mode name",
+                moveUpLabel: "Move A long planning Mode name up",
+                moveDownLabel: "Move A long planning Mode name down",
+                deleteLabel: "Delete A long planning Mode name",
+                deleteHint: "Asks for confirmation. History remains and the AI model is not "
+                    + "uninstalled.",
+                canMoveUp: true,
+                canMoveDown: true
+            )
         )
     }
 

@@ -239,11 +239,28 @@ final class SettingsWorkflow {
 
     func beginEditMode(_ id: ModeID) {
         guard !config.isReadOnly, let mode = config.mode(id: id) else { return }
+        model.modeEditor = editorState(for: mode, purpose: .edit(id), name: mode.name)
+    }
+
+    func beginDuplicateMode(_ id: ModeID) {
+        guard !config.isReadOnly, let mode = config.mode(id: id) else { return }
+        let name = ModeEditorPolicy.duplicateName(
+            for: mode.name,
+            existingNames: config.orderedModes.map(\.name)
+        )
+        model.modeEditor = editorState(for: mode, purpose: .duplicate(id), name: name)
+    }
+
+    private func editorState(
+        for mode: Mode,
+        purpose: ModeEditorPurpose,
+        name: String
+    ) -> ModeEditorState {
         let modelName = mode.llmModel ?? ""
-        model.modeEditor = ModeEditorState(
-            purpose: .edit(id),
+        return ModeEditorState(
+            purpose: purpose,
             draft: ModeEditorDraft(
-                name: mode.name,
+                name: name,
                 icon: mode.icon,
                 model: modelName,
                 transformation: mode.transformation,
@@ -278,6 +295,17 @@ final class SettingsWorkflow {
                     config.orderedModes + [mode],
                     selection: .mode(id)
                 )
+            case let .duplicate(sourceID):
+                let id = ModeID.random()
+                let mode = makeMode(id: id, from: submission)
+                guard let candidate = ModeLibraryPolicy.insertingDuplicate(
+                    mode,
+                    after: sourceID,
+                    in: config.orderedModes
+                ) else {
+                    throw ConfigError.invalid("Source Mode no longer exists.")
+                }
+                try config.replaceModes(candidate.modes, selection: candidate.selection)
             case let .edit(id):
                 guard config.mode(id: id) != nil else {
                     throw ConfigError.invalid("Mode no longer exists.")
@@ -293,6 +321,59 @@ final class SettingsWorkflow {
 
     func cancelModeEditor() {
         model.modeEditor = nil
+    }
+
+    func moveMode(_ id: ModeID, direction: ModeMoveDirection) {
+        guard !config.isReadOnly,
+              let candidate = ModeLibraryPolicy.moving(
+                  id,
+                  direction: direction,
+                  in: config.orderedModes,
+                  selection: config.selection
+              )
+        else { return }
+        do {
+            try config.replaceModes(candidate.modes, selection: candidate.selection)
+            setStatus("Mode order updated ✓", isError: false, clearAfter: true)
+        } catch {
+            populateModes()
+            setStatus("⚠️ couldn't reorder Mode: \(error.localizedDescription)", isError: true)
+        }
+    }
+
+    func requestModeDeletion(_ id: ModeID) {
+        guard !config.isReadOnly, let mode = config.mode(id: id) else { return }
+        let modelName = mode.llmModel ?? "referenced AI model"
+        model.modePendingDeletion = ModeDeletionState(
+            id: id,
+            title: "Delete \(mode.name)?",
+            message: "Your History will remain. The \(modelName) AI model will not be uninstalled."
+        )
+    }
+
+    func confirmModeDeletion() {
+        guard let pending = model.modePendingDeletion,
+              let candidate = ModeLibraryPolicy.deleting(
+                  pending.id,
+                  from: config.orderedModes,
+                  selection: config.selection
+              )
+        else {
+            model.modePendingDeletion = nil
+            return
+        }
+        do {
+            try config.replaceModes(candidate.modes, selection: candidate.selection)
+            model.modePendingDeletion = nil
+            setStatus("Mode deleted ✓", isError: false, clearAfter: true)
+        } catch {
+            populateModes()
+            setStatus("⚠️ couldn't delete Mode: \(error.localizedDescription)", isError: true)
+        }
+    }
+
+    func cancelModeDeletion() {
+        model.modePendingDeletion = nil
     }
 
     private func makeMode(id: ModeID, from submission: ModeEditorSubmission) -> Mode {
