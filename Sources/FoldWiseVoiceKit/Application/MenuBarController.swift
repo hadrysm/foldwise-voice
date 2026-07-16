@@ -69,13 +69,11 @@ final class MenuBarController: NSObject {
     }
 
     private func refreshModeChecks() {
-        for item in modeItems {
-            guard let selection = item.representedObject as? DictationSelection else { continue }
-            let isSelected = selection == config.selection
-            item.state = isSelected ? .on : .off
-            item.setAccessibilityValue(isSelected ? "Selected" : "Not selected")
-            item.isEnabled = !config.isReadOnly
-        }
+        ModePresentationFactory.refreshMenuItems(
+            modeItems,
+            selection: config.selection,
+            isEnabled: !config.isReadOnly
+        )
     }
 
     private func rebuildModeItems() {
@@ -91,24 +89,18 @@ final class MenuBarController: NSObject {
             modes: config.orderedModes,
             selection: config.selection
         )
+        let rebuiltItems = ModePresentationFactory.menuItems(
+            for: projection,
+            target: self,
+            action: #selector(switchMode(_:)),
+            isEnabled: !config.isReadOnly
+        )
         var nextIndex = insertionIndex
-        for (index, projectionItem) in projection.items.enumerated() {
-            if index == 1 {
-                let separator = NSMenuItem.separator()
-                menu.insertItem(separator, at: nextIndex)
-                modeItems.append(separator)
-                nextIndex += 1
-            }
-            let item = ModePresentationFactory.menuItem(
-                for: projectionItem,
-                target: self,
-                action: #selector(switchMode(_:))
-            )
+        for item in rebuiltItems {
             menu.insertItem(item, at: nextIndex)
-            modeItems.append(item)
             nextIndex += 1
         }
-        refreshModeChecks()
+        modeItems = rebuiltItems
     }
 
     private func build() {

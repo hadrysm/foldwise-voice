@@ -84,11 +84,33 @@ final class BadgeReducerTests: XCTestCase {
                 BadgeTransition(
                     state: .error(message: "couldn’t select Mode"), command: nil
                 ),
-                BadgeTransition(state: .recording, command: .deferModeSelectionError),
                 BadgeTransition(
-                    state: .working(status: nil), command: .deferModeSelectionError
+                    state: .recording,
+                    command: nil,
+                    deferredModeSelectionError: true
+                ),
+                BadgeTransition(
+                    state: .working(status: nil),
+                    command: nil,
+                    deferredModeSelectionError: true
                 ),
             ]
+        )
+    }
+
+    func testDeferredModeSelectionFailureAppearsAfterPipelineReturnsToIdle() {
+        let deferred = reduce(.recording, .modeSelectionFailed)
+
+        XCTAssertEqual(
+            BadgeReducer.reduce(
+                deferred.state,
+                .pipeline(.idle),
+                deferredModeSelectionError: deferred.deferredModeSelectionError
+            ),
+            BadgeTransition(
+                state: .error(message: "couldn’t select Mode"),
+                command: nil
+            )
         )
     }
 

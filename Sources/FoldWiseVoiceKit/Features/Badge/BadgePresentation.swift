@@ -80,17 +80,21 @@ enum BadgeEvent: Equatable {
 /// Side effect a transition asks the controller to perform.
 enum BadgeCommand: Equatable {
     case stopRecording
-    case deferModeSelectionError
 }
 
 struct BadgeTransition: Equatable {
     var state: BadgeState
     var command: BadgeCommand?
+    var deferredModeSelectionError = false
 }
 
 enum BadgeReducer {
-    static func reduce(_ state: BadgeState, _ event: BadgeEvent) -> BadgeTransition {
-        switch event {
+    static func reduce(
+        _ state: BadgeState,
+        _ event: BadgeEvent,
+        deferredModeSelectionError: Bool = false
+    ) -> BadgeTransition {
+        var transition = switch event {
         case let .pipeline(phase):
             BadgeTransition(state: map(phase, from: state), command: nil)
         case .modeSelectionFailed:
@@ -98,7 +102,11 @@ enum BadgeReducer {
             case .idle, .hover:
                 BadgeTransition(state: .error(message: "couldn’t select Mode"), command: nil)
             case .recording, .working, .done, .error:
-                BadgeTransition(state: state, command: .deferModeSelectionError)
+                BadgeTransition(
+                    state: state,
+                    command: nil,
+                    deferredModeSelectionError: true
+                )
             }
         case let .hoverChanged(over):
             switch (state, over) {
@@ -120,6 +128,13 @@ enum BadgeReducer {
             default: BadgeTransition(state: state, command: nil)
             }
         }
+        transition.deferredModeSelectionError =
+            deferredModeSelectionError || transition.deferredModeSelectionError
+        if transition.state == .idle, transition.deferredModeSelectionError {
+            transition.state = .error(message: "couldn’t select Mode")
+            transition.deferredModeSelectionError = false
+        }
+        return transition
     }
 
     private static func map(_ phase: PipelineState, from state: BadgeState) -> BadgeState {

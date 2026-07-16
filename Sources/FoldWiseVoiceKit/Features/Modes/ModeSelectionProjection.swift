@@ -1,5 +1,16 @@
 import Foundation
 
+enum ModeSelectionProjectionError: LocalizedError {
+    case missingModeID(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .missingModeID(name):
+            "Mode selection projection requires a stable ID for \(name)."
+        }
+    }
+}
+
 struct ModeSelectionItem: Identifiable, Equatable {
     let id: DictationSelection
     let name: String
@@ -51,18 +62,10 @@ struct ModeSelectionProjection: Equatable {
         modes: [Mode],
         selection: DictationSelection,
         iconIsAvailable: (String) -> Bool
-    ) {
-        let voiceToText = ModeSelectionItem(
-            id: .voiceToText,
-            name: "Voice to Text",
-            icon: "waveform",
-            summary: "Raw transcription — no Polish",
-            isSelected: selection == .voiceToText,
-            isProtected: true
-        )
-        items = [voiceToText] + modes.map { mode in
+    ) throws {
+        items = [Self.systemItem(selection: selection)] + (try modes.map { mode in
             guard let modeID = mode.id else {
-                preconditionFailure("Mode selection projection requires stable Mode IDs.")
+                throw ModeSelectionProjectionError.missingModeID(mode.name)
             }
             let id = DictationSelection.mode(modeID)
             let transformation = switch mode.transformation {
@@ -77,7 +80,22 @@ struct ModeSelectionProjection: Equatable {
                 isSelected: selection == id,
                 isProtected: false
             )
-        }
+        })
+    }
+
+    static func systemOnly(selection: DictationSelection) -> ModeSelectionProjection {
+        ModeSelectionProjection(items: [systemItem(selection: selection)])
+    }
+
+    private static func systemItem(selection: DictationSelection) -> ModeSelectionItem {
+        ModeSelectionItem(
+            id: .voiceToText,
+            name: "Voice to Text",
+            icon: "waveform",
+            summary: "Raw transcription — no Polish",
+            isSelected: selection == .voiceToText,
+            isProtected: true
+        )
     }
 
     private init(items: [ModeSelectionItem]) {

@@ -103,22 +103,16 @@ final class BadgeController: NSObject {
 
     private func handle(_ event: BadgeEvent) {
         ensurePanel()
-        let transition = BadgeReducer.reduce(model.state, event)
-        switch transition.command {
-        case .stopRecording:
-            onStop?()
-        case .deferModeSelectionError:
-            deferredModeSelectionError = true
-        case nil:
-            break
-        }
+        let transition = BadgeReducer.reduce(
+            model.state,
+            event,
+            deferredModeSelectionError: deferredModeSelectionError
+        )
+        deferredModeSelectionError = transition.deferredModeSelectionError
+        if transition.command == .stopRecording { onStop?() }
         if transition.state != model.state {
             enter(transition.state)
             panel?.orderFrontRegardless()
-        }
-        if model.state == .idle, deferredModeSelectionError {
-            deferredModeSelectionError = false
-            handle(.modeSelectionFailed)
         }
     }
 
@@ -202,25 +196,23 @@ final class BadgeController: NSObject {
             modes: config.orderedModes,
             selection: config.selection
         )
-        for (index, projectionItem) in projection.items.enumerated() {
-            if index == 1 { menu.addItem(.separator()) }
-            let item = ModePresentationFactory.menuItem(
-                for: projectionItem,
-                target: self,
-                action: #selector(modeMenuItemPicked(_:))
-            )
-            item.isEnabled = !config.isReadOnly
+        let items = ModePresentationFactory.menuItems(
+            for: projection,
+            target: self,
+            action: #selector(modeMenuItemPicked(_:)),
+            isEnabled: !config.isReadOnly
+        )
+        for item in items {
             menu.addItem(item)
         }
     }
 
     private func refreshModeMenuChecks(_ menu: NSMenu) {
-        for item in menu.items {
-            guard let selection = item.representedObject as? DictationSelection else { continue }
-            let isSelected = selection == config.selection
-            item.state = isSelected ? .on : .off
-            item.setAccessibilityValue(isSelected ? "Selected" : "Not selected")
-        }
+        ModePresentationFactory.refreshMenuItems(
+            menu.items,
+            selection: config.selection,
+            isEnabled: !config.isReadOnly
+        )
     }
 
     @objc private func modeMenuItemPicked(_ item: NSMenuItem) {

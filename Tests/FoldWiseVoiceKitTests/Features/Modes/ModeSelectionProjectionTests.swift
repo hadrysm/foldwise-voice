@@ -14,6 +14,18 @@ final class ModeSelectionProjectionTests: XCTestCase {
         let state: NSControl.StateValue
     }
 
+    private struct MenuCollectionState: Equatable {
+        let selections: [DictationSelection?]
+        let separators: [Bool]
+        let enabled: [Bool]
+    }
+
+    private struct MenuRefreshState: Equatable {
+        let states: [NSControl.StateValue]
+        let accessibilityValues: [String?]
+        let enabled: [Bool]
+    }
+
     func testProjectionOrdersProtectedSystemSelectionBeforeStableModes() throws {
         let casualID = try XCTUnwrap(
             ModeID(rawValue: "11111111-1111-4111-8111-111111111111")
@@ -44,7 +56,7 @@ final class ModeSelectionProjectionTests: XCTestCase {
             ),
         ]
 
-        let projection = ModeSelectionProjection(
+        let projection = try ModeSelectionProjection(
             modes: modes,
             selection: .mode(emailID),
             iconIsAvailable: { $0 != "future.unknown.symbol" }
@@ -96,7 +108,7 @@ final class ModeSelectionProjectionTests: XCTestCase {
             vocabulary: []
         )
 
-        let projection = ModeSelectionProjection(
+        let projection = try ModeSelectionProjection(
             modes: [mode],
             selection: .mode(id),
             iconIsAvailable: { _ in true }
@@ -114,8 +126,8 @@ final class ModeSelectionProjectionTests: XCTestCase {
         )
     }
 
-    func testZeroModesKeepsVoiceToTextAsProtectedSelection() {
-        let projection = ModeSelectionProjection(
+    func testZeroModesKeepsVoiceToTextAsProtectedSelection() throws {
+        let projection = try ModeSelectionProjection(
             modes: [],
             selection: .voiceToText,
             iconIsAvailable: { _ in true }
@@ -149,7 +161,7 @@ final class ModeSelectionProjectionTests: XCTestCase {
             systemPrompt: "Rewrite it.",
             vocabulary: []
         )
-        let initial = ModeSelectionProjection(
+        let initial = try ModeSelectionProjection(
             modes: [mode],
             selection: .mode(id),
             iconIsAvailable: { _ in true }
@@ -218,6 +230,155 @@ final class ModeSelectionProjectionTests: XCTestCase {
                 accessibilityHelp: "Reshape · qwen2.5:3b",
                 state: .on
             )
+        )
+    }
+
+    func testMenuItemsSeparateProtectedSelectionAndApplyEnabledState() throws {
+        let id = try XCTUnwrap(
+            ModeID(rawValue: "66666666-6666-4666-8666-666666666666")
+        )
+        let projection = try ModeSelectionProjection(
+            modes: [
+                Mode(
+                    id: id,
+                    name: "Email",
+                    icon: "envelope",
+                    asrModel: "parakeet-v3",
+                    llmModel: "qwen2.5:3b",
+                    transformation: .expanding,
+                    systemPrompt: "Rewrite it.",
+                    vocabulary: []
+                ),
+            ],
+            selection: .voiceToText,
+            iconIsAvailable: { _ in true }
+        )
+
+        let items = ModePresentationFactory.menuItems(
+            for: projection,
+            target: nil,
+            action: NSSelectorFromString("selectMode:"),
+            isEnabled: false
+        )
+
+        XCTAssertEqual(
+            MenuCollectionState(
+                selections: items.map { $0.representedObject as? DictationSelection },
+                separators: items.map(\.isSeparatorItem),
+                enabled: items.map(\.isEnabled)
+            ),
+            MenuCollectionState(
+                selections: [.voiceToText, nil, .mode(id)],
+                separators: [false, true, false],
+                enabled: [false, false, false]
+            )
+        )
+    }
+
+    func testRefreshMenuItemsUpdatesStableSelectionAccessibilityAndEnabledState() throws {
+        let id = try XCTUnwrap(
+            ModeID(rawValue: "77777777-7777-4777-8777-777777777777")
+        )
+        let items = [
+            ModePresentationFactory.menuItem(
+                for: ModeSelectionItem(
+                    id: .voiceToText,
+                    name: "Voice to Text",
+                    icon: "waveform",
+                    summary: "Raw transcription — no Polish",
+                    isSelected: true,
+                    isProtected: true
+                ),
+                target: nil,
+                action: NSSelectorFromString("selectMode:")
+            ),
+            ModePresentationFactory.menuItem(
+                for: ModeSelectionItem(
+                    id: .mode(id),
+                    name: "Email",
+                    icon: "envelope",
+                    summary: "Reshape · qwen2.5:3b",
+                    isSelected: false,
+                    isProtected: false
+                ),
+                target: nil,
+                action: NSSelectorFromString("selectMode:")
+            ),
+        ]
+
+        ModePresentationFactory.refreshMenuItems(
+            items,
+            selection: .mode(id),
+            isEnabled: false
+        )
+
+        XCTAssertEqual(
+            MenuRefreshState(
+                states: items.map(\.state),
+                accessibilityValues: items.map { $0.accessibilityValue() as? String },
+                enabled: items.map(\.isEnabled)
+            ),
+            MenuRefreshState(
+                states: [.off, .on],
+                accessibilityValues: ["Not selected", "Selected"],
+                enabled: [false, false]
+            )
+        )
+    }
+
+    func testFactoryFallsBackToSystemSelectionWhenModeLacksStableID() {
+        let mode = Mode(
+            name: "Legacy",
+            asrModel: "parakeet-v3",
+            llmModel: "qwen2.5:3b",
+            systemPrompt: "Clean it.",
+            vocab: []
+        )
+
+        let projection = ModePresentationFactory.projection(
+            modes: [mode],
+            selection: .voiceToText
+        )
+
+        XCTAssertEqual(
+            projection.items,
+            [
+                ModeSelectionItem(
+                    id: .voiceToText,
+                    name: "Voice to Text",
+                    icon: "waveform",
+                    summary: "Raw transcription — no Polish",
+                    isSelected: true,
+                    isProtected: true
+                ),
+            ]
+        )
+    }
+
+    func testProjectionRejectsModeWithoutStableID() {
+        let mode = Mode(
+            name: "Legacy",
+            asrModel: "parakeet-v3",
+            llmModel: "qwen2.5:3b",
+            systemPrompt: "Clean it.",
+            vocab: []
+        )
+
+        let message: String
+        do {
+            _ = try ModeSelectionProjection(
+                modes: [mode],
+                selection: .voiceToText,
+                iconIsAvailable: { _ in true }
+            )
+            message = "No error"
+        } catch {
+            message = error.localizedDescription
+        }
+
+        XCTAssertEqual(
+            message,
+            "Mode selection projection requires a stable ID for Legacy."
         )
     }
 }
