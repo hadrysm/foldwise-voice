@@ -93,6 +93,76 @@ final class SettingsControllerWiringTests: XCTestCase {
         XCTAssertEqual(config.hotkey, "F8")
     }
 
+    func testModeEditorCallbacksReachAtomicWorkflow() throws {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("mode-editor-history.jsonl"))
+        let config = makeConfig()
+        let controller = SettingsController(
+            config: config, historyStore: store, statsStore: WiringStatsStore()
+        )
+        controller.model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+
+        controller.model.onAddMode?()
+        var editor = try XCTUnwrap(controller.model.modeEditor)
+        editor.draft.name = "Meeting notes"
+        editor.draft.systemPrompt = "Turn the transcript into concise meeting notes."
+        controller.model.modeEditor = editor
+        controller.model.onSaveModeEditor?()
+
+        let saved = try XCTUnwrap(config.orderedModes.first)
+        let savedID = try XCTUnwrap(saved.id)
+        XCTAssertEqual(
+            [
+                saved.name,
+                saved.llmModel,
+                config.selection == .mode(savedID) ? "selected" : "not selected",
+                controller.model.modeEditor == nil ? "dismissed" : "open",
+            ],
+            ["Meeting notes", "qwen2.5:3b", "selected", "dismissed"]
+        )
+    }
+
+    func testDuplicateModeCallbackOpensCopiedDraft() throws {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("mode-lifecycle-history.jsonl"))
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("mode-lifecycle.json"))
+        let firstID = try XCTUnwrap(config.orderedModes.first?.id)
+        let controller = SettingsController(
+            config: config, historyStore: store, statsStore: WiringStatsStore()
+        )
+
+        controller.model.onDuplicateMode?(firstID)
+
+        XCTAssertEqual(controller.model.modeEditor?.purpose, .duplicate(firstID))
+    }
+
+    func testMoveModeCallbackReordersCommittedLibrary() throws {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("move-mode-history.jsonl"))
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("move-mode.json"))
+        let firstID = try XCTUnwrap(config.orderedModes.first?.id)
+        let secondID = try XCTUnwrap(config.orderedModes.last?.id)
+        let controller = SettingsController(
+            config: config, historyStore: store, statsStore: WiringStatsStore()
+        )
+
+        controller.model.onMoveMode?(firstID, .down)
+
+        XCTAssertEqual(config.orderedModes.map(\.id), [secondID, firstID])
+    }
+
+    func testDeleteModeCallbacksConfirmCommittedRemoval() throws {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("delete-mode-history.jsonl"))
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("delete-mode.json"))
+        let firstID = try XCTUnwrap(config.orderedModes.first?.id)
+        let secondID = try XCTUnwrap(config.orderedModes.last?.id)
+        let controller = SettingsController(
+            config: config, historyStore: store, statsStore: WiringStatsStore()
+        )
+
+        controller.model.onRequestModeDeletion?(secondID)
+        controller.model.onConfirmModeDeletion?()
+
+        XCTAssertEqual(config.orderedModes.map(\.id), [firstID])
+    }
+
     func testInputDeviceProjectionInitializesSettingsModel() {
         let store = JSONLHistoryStore(url: dir.appendingPathComponent("input-history.jsonl"))
         let config = makeConfig()
@@ -196,13 +266,20 @@ final class SettingsControllerWiringTests: XCTestCase {
 
     private func makeConfig() -> Config {
         Config(
-            activeMode: "Voice to Text", hotkey: "F5", toggleHotkey: nil, pauseAudio: false,
-            badgePosition: nil, modeOrder: ["Voice to Text"],
-            modes: ["Voice to Text": Mode(
-                name: "Voice to Text", asrModel: "", llmModel: nil,
-                systemPrompt: nil, vocab: []
-            )],
-            path: dir.appendingPathComponent("modes.json")
+            preferences: Config.Preferences(
+                selection: .voiceToText,
+                hotkey: "F5",
+                toggleHotkey: nil,
+                pauseAudio: false,
+                inputDevice: nil,
+                asrModel: ASRModelCatalog.defaultID,
+                appearance: .system,
+                saveHistory: true,
+                historyRetention: .default,
+                sidebarCollapsed: false
+            ),
+            badgePosition: nil, orderedModes: [],
+            path: dir.appendingPathComponent("config.json")
         )
     }
 

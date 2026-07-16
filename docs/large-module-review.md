@@ -16,10 +16,10 @@ count, as the reason to split.
   would expose shared operation identifiers or add forwarding coordinators
   without hiding new complexity.
 - **Configuration:** retained intact. `Config` is deliberately a deep module
-  whose small interface hides compatibility parsing, ordered serialization,
+  whose small interface hides strict schema parsing, ordered serialization,
   defaults, validation, persistence, and change propagation. Separating those
-  rules would weaken the single owner of the `modes.json` contract described by
-  ADR-0003 and ADR-0006.
+  rules would weaken the single owner of the `config.json` contract described by
+  ADR-0003, ADR-0006, and ADR-0007.
 - **Ollama client:** split pure Polish response policy into
   `OllamaPolishPolicy.swift`, as an extension of `OllamaClient`. Request sizing
   and shape, sanitization, and off-task decisions are independent of transport

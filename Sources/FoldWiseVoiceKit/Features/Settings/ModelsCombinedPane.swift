@@ -3,8 +3,7 @@ import SwiftUI
 // MARK: - models (ASR + Ollama in one pane)
 
 /// The merged Models pane (PRD #103): everything model-shaped in one place —
-/// the speech (ASR) catalog on top, the Polish (Ollama) models below. Both
-/// sections are the previous panes unchanged in behavior.
+/// the speech (ASR) catalog on top, the Polish (Ollama) inventory below.
 struct ModelsCombinedPane: View {
     @ObservedObject var model: SettingsModel
 

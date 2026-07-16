@@ -1,16 +1,17 @@
 // pynput-compatible key names ↔ macOS virtual keycodes, shared by the hotkey
-// listener and the settings key recorder so modes.json stays portable between
-// the Python and Swift apps.
+// listener, schema validation, and the settings key recorder.
 
 import CoreGraphics
 import Foundation
 
-enum KeySpec {
+enum KeySpec: Hashable {
     case keycode(CGKeyCode)
     case character(String)
 }
 
 enum KeyMap {
+    private static let capsLockKeycode: CGKeyCode = 57
+
     static let nameToCode: [String: CGKeyCode] = [
         "alt": 58, "alt_l": 58, "alt_r": 61,
         "cmd": 55, "cmd_l": 55, "cmd_r": 54,
@@ -68,6 +69,10 @@ enum KeyMap {
         return raw & bits.own != 0 || raw & (bits.own | bits.sibling) == 0
     }
 
+    static func isLatchingModifier(keycode: CGKeyCode) -> Bool {
+        keycode == capsLockKeycode
+    }
+
     static let prettyNames: [String: String] = [
         "alt_r": "right ⌥", "alt_l": "left ⌥", "alt": "left ⌥",
         "cmd_r": "right ⌘", "cmd_l": "left ⌘", "cmd": "left ⌘",
@@ -94,5 +99,9 @@ enum KeyMap {
                     "Unknown hotkey '\(name)'. Use a key name (e.g. 'alt_r', 'cmd_r', 'f19') or a single character.",
             ]
         )
+    }
+
+    static func effectiveIdentity(_ name: String) throws -> KeySpec {
+        try parse(name)
     }
 }

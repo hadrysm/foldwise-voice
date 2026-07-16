@@ -18,9 +18,9 @@ final class HomeViewHostedTests: XCTestCase {
             calendar: calendar,
             locale: Locale(identifier: "en_US"),
             notificationCenter: notificationCenter,
-            project: { entries, now, calendar, locale in
+            project: { input, now, calendar, locale in
                 let projection = HomeProjection.project(
-                    entries,
+                    input,
                     now: now,
                     calendar: calendar,
                     locale: locale

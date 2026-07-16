@@ -134,18 +134,27 @@ struct DictationRowContent: View {
     }
 
     private var identity: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 5) {
+            Image(systemName: presentation.modeIcon)
+                .font(Theme.ui(10, .semibold))
+                .foregroundStyle(Theme.textFaint)
             Text(presentation.compactModeName)
                 .font(Theme.modeTag)
                 .foregroundStyle(Theme.textFaint)
                 .lineLimit(1)
                 .truncationMode(.tail)
+            if presentation.isDeletedMode {
+                Text("deleted")
+                    .font(Theme.ui(9, .medium))
+                    .foregroundStyle(Theme.textTertiary)
+            }
             if presentation.isFlagged {
                 Image(systemName: "flag.fill")
                     .font(Theme.ui(11, .semibold))
                     .foregroundStyle(.orange)
             }
         }
+        .help(presentation.fullModeName)
     }
 
     private var actions: some View {

@@ -31,7 +31,19 @@ final class SettingsModel: ObservableObject {
         }
     }
 
-    enum RecordingField { case ptt, toggle }
+    enum RecordingField {
+        case ptt
+        case toggle
+        case cycle
+
+        var command: ShortcutCommand {
+            switch self {
+            case .ptt: .pushToTalk
+            case .toggle: .toggleRecording
+            case .cycle: .modeCycle
+            }
+        }
+    }
 
     enum UpdateState {
         case idle
@@ -45,7 +57,6 @@ final class SettingsModel: ObservableObject {
 
     @Published var pane: Pane = .home
     @Published var updateState: UpdateState = .idle
-    @Published var activeMode = ""
     @Published var selectedModel = ""
     /// The active ASR model's catalog id (ADR-0006). Speech-pane state below.
     @Published var asrModel = ASRModelCatalog.defaultID
@@ -75,6 +86,7 @@ final class SettingsModel: ObservableObject {
     @Published var customModel = ""
     @Published var pttKey = ""
     @Published var toggleKey = ""
+    @Published var cycleKey = ""
     @Published var pauseAudio = true
     @Published var appearance: AppearancePreference = .system
     @Published var inputState = AudioInputState(
@@ -97,9 +109,15 @@ final class SettingsModel: ObservableObject {
     @Published var status = ""
     @Published var statusIsError = false
     @Published var recordingField: RecordingField?
+    @Published var shortcutListenerHealth: ShortcutListenerHealth = .global
+    @Published var configurationRecoveryMessage: String?
 
-    var modeNames: [String] = []
-    var llmModes: Set<String> = []
+    @Published var modeSelection = ModePresentationFactory.projection(
+        modes: [], selection: .voiceToText
+    )
+    @Published var modes: [Mode] = []
+    @Published var modeEditor: ModeEditorState?
+    @Published var modePendingDeletion: ModeDeletionState?
     /// Loaded from the HistoryStore when the window opens and re-read after a
     /// delete or clear-all, so the History pane reflects the store live.
     @Published var historyEntries: [HistoryEntry] = []
@@ -114,13 +132,22 @@ final class SettingsModel: ObservableObject {
     var onCommit: (() -> Void)?
     var onSelectInputDevice: ((String?) -> Void)?
     var onRecord: ((RecordingField) -> Void)?
-    var onSelectModel: ((String) -> Void)?
+    var onOpenShortcutPermissions: (() -> Void)?
+    var onSelectMode: ((DictationSelection) -> Void)?
+    var onAddMode: (() -> Void)?
+    var onEditMode: ((ModeID) -> Void)?
+    var onDuplicateMode: ((ModeID) -> Void)?
+    var onMoveMode: ((ModeID, ModeMoveDirection) -> Void)?
+    var onRequestModeDeletion: ((ModeID) -> Void)?
+    var onConfirmModeDeletion: (() -> Void)?
+    var onCancelModeDeletion: (() -> Void)?
+    var onSaveModeEditor: (() -> Void)?
+    var onCancelModeEditor: (() -> Void)?
     var onInstallModel: ((String) -> Void)?
     var onDeleteModel: ((String) -> Void)?
     var onRefreshModels: (() -> Void)?
-    /// Speech pane, the ASR analogues of `onSelectModel` / `onInstallModel`
-    /// (ADR-0006): select an already-downloaded model as active; download an
-    /// available one's weights so it becomes selectable.
+    /// Speech pane actions select an already-downloaded model as active or
+    /// download an available model's weights.
     var onSelectASRModel: ((String) -> Void)?
     var onDownloadASRModel: ((String) -> Void)?
     /// Abort an in-flight download/prepare and return the row to its pre-download
@@ -129,11 +156,16 @@ final class SettingsModel: ObservableObject {
     /// Delete a downloaded model's on-disk weights to reclaim space (#95). If it
     /// was active, dictation falls back to Parakeet until another is selected.
     var onDeleteASRModel: ((String) -> Void)?
-    var onEditFile: (() -> Void)?
     var onCheckUpdates: (() -> Void)?
     /// One semantic row-action seam. Clear All remains collection-level.
     var onHistoryCommand: ((HistoryEntry, DictationRowCommand) -> Void)?
     var onClearHistory: (() -> Void)?
+    var onResetConfiguration: (() -> Void)?
+    var onQuitRecovery: (() -> Void)?
+
+    var configurationReadOnly: Bool {
+        configurationRecoveryMessage != nil
+    }
 
     var ollamaDown: Bool {
         installed?.isEmpty ?? false
@@ -143,5 +175,19 @@ final class SettingsModel: ObservableObject {
     var selectedModelInstalled: Bool {
         guard let installed, !installed.isEmpty else { return true }
         return installed.contains { $0.name == selectedModel }
+    }
+
+    var selectedEditableMode: Mode? {
+        guard case let .mode(id) = selectedEditableModeItem?.id else {
+            return nil
+        }
+        return modes.first { $0.id == id }
+    }
+
+    var selectedEditableModeItem: ModeSelectionItem? {
+        guard let item = modeSelection.items.first(where: \.isSelected), !item.isProtected else {
+            return nil
+        }
+        return item
     }
 }

@@ -196,6 +196,94 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         )
     }
 
+    // MARK: - start-time Mode snapshot
+
+    func testModeSnapshotSurvivesDeletionDuringTranscription() async throws {
+        let fixture = snapshotFixture()
+        try preparePersistence(for: fixture.config, in: self)
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success(snapshotTranscript)
+        let entered = expectation(description: "transcription started")
+        let finish = Latch()
+        transcriber.onTranscribe = {
+            entered.fulfill()
+            await finish.wait()
+        }
+        let recorded = RecordSpy()
+        let (pipeline, _) = makePipeline(
+            config: fixture.config,
+            transcriber: transcriber,
+            record: { recorded.record($0) }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await fulfillment(of: [entered])
+        try await deleteModes(from: fixture.config)
+        await finish.open()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(recorded.entries.first?.modeID, fixture.modeID)
+    }
+
+    func testModeSnapshotSurvivesDeletionDuringPolish() async throws {
+        let fixture = snapshotFixture()
+        try preparePersistence(for: fixture.config, in: self)
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success(snapshotTranscript)
+        let entered = expectation(description: "polish started")
+        let finish = Latch()
+        let recorded = RecordSpy()
+        let (pipeline, _) = makePipeline(
+            config: fixture.config,
+            transcriber: transcriber,
+            polish: { text, _ in
+                entered.fulfill()
+                await finish.wait()
+                return text
+            },
+            record: { recorded.record($0) }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await fulfillment(of: [entered])
+        try await deleteModes(from: fixture.config)
+        await finish.open()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(recorded.entries.first?.modeID, fixture.modeID)
+    }
+
+    func testModeSnapshotSurvivesDeletionDuringInsertion() async throws {
+        let fixture = snapshotFixture()
+        try preparePersistence(for: fixture.config, in: self)
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success(snapshotTranscript)
+        let entered = expectation(description: "insertion started")
+        let finish = Latch()
+        let recorded = RecordSpy()
+        let (pipeline, _) = makePipeline(
+            config: fixture.config,
+            transcriber: transcriber,
+            insert: { _ in
+                entered.fulfill()
+                await finish.wait()
+                return true
+            },
+            record: { recorded.record($0) }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await fulfillment(of: [entered])
+        try await deleteModes(from: fixture.config)
+        await finish.open()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(recorded.entries.first?.modeID, fixture.modeID)
+    }
+
     // MARK: - callback lifetime
 
     func testTranscriberCallbacksDoNothingAfterPipelineDeallocation() {
@@ -470,5 +558,30 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
             collector.states,
             [.listening(mode: "Voice to Text"), .idle]
         )
+    }
+
+    private var snapshotTranscript: String {
+        "this transcript is unquestionably longer than the forty character polish threshold"
+    }
+
+    private func snapshotFixture() -> (config: Config, modeID: ModeID) {
+        let modeID = ModeID.random()
+        let mode = Mode(
+            id: modeID,
+            name: "Frozen",
+            icon: "snowflake",
+            asrModel: ASRModelCatalog.defaultID,
+            llmModel: "qwen2.5:3b",
+            transformation: .inPlace,
+            systemPrompt: "Keep the wording",
+            vocabulary: ["FoldWise"]
+        )
+        return (makeTestConfig(mode: mode), modeID)
+    }
+
+    private func deleteModes(from config: Config) async throws {
+        try await MainActor.run {
+            try config.replaceModes([], selection: .voiceToText)
+        }
     }
 }

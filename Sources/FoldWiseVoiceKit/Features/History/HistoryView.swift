@@ -151,7 +151,7 @@ struct HistoryPane: View {
             } else {
                 HistoryCollection(
                     projection: projection,
-                    polishModeNames: polishModeNames,
+                    polishModes: polishModes,
                     onCommand: { entry, command in
                         model.onHistoryCommand?(entry, command)
                     }
@@ -171,12 +171,16 @@ struct HistoryPane: View {
         HistoryProjection.Input(
             entries: model.historyEntries,
             search: search,
-            flaggedOnly: flaggedOnly
+            flaggedOnly: flaggedOnly,
+            modes: model.modes
         )
     }
 
-    private var polishModeNames: [String] {
-        model.modeNames.filter { model.llmModes.contains($0) }
+    private var polishModes: [DictationRowPolishMode] {
+        model.modes.compactMap { mode in
+            guard mode.usesLLM, let id = mode.id else { return nil }
+            return DictationRowPolishMode(id: id, name: mode.name)
+        }
     }
 
     /// Live search over both the polished and raw text, plus a Flagged-only
@@ -237,7 +241,7 @@ struct HistoryPane: View {
 /// only a new projection or action values can invalidate this lazy tree.
 private struct HistoryCollection: View {
     let projection: HistoryProjection
-    let polishModeNames: [String]
+    let polishModes: [DictationRowPolishMode]
     let onCommand: (HistoryEntry, DictationRowCommand) -> Void
 
     var body: some View {
@@ -254,7 +258,7 @@ private struct HistoryCollection: View {
                                 presentation: row.presentation,
                                 moreCapabilities: DictationRowMoreCapabilities(
                                     canCopyRaw: row.entry.isPolished,
-                                    polishModeNames: polishModeNames
+                                    polishModes: polishModes
                                 ),
                                 onCommand: { command in
                                     onCommand(row.entry, command)

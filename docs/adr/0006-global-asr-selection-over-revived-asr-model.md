@@ -2,7 +2,25 @@
 
 ## Status
 
-Accepted (2026-07-07)
+Accepted (2026-07-07). Amended (2026-07-16) by the user-managed Mode-library
+schema decision.
+
+## Amendment: the initial public schema stores the global selection once
+
+The original decision's product semantics remain: ASR-model selection is global,
+unknown identifiers are preserved until the user explicitly selects a catalog
+model, and runtime resolution safely falls back to Parakeet. Its persistence
+mechanism changes when the initial public user-managed Mode schema ships: it
+stores `asr_model` once at the top level and removes it from individual Mode
+records. The app is not public yet, so this is a clean schema replacement rather
+than a legacy migration or backward-writing contract.
+
+The old per-Mode representation depended on every configuration containing at
+least one Mode. The user-managed library deliberately allows zero Modes and
+makes Voice to Text a separate system selection, so that representation can no
+longer hold a global preference. This amendment supersedes the per-Mode storage
+and "no further schema churn" parts of the original decision, not its global
+ownership or runtime fallback behavior.
 
 ## Context
 

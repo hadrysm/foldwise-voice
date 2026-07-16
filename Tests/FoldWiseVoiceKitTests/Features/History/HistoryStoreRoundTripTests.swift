@@ -7,6 +7,13 @@ import XCTest
 @testable import FoldWiseVoiceKit
 
 final class HistoryStoreRoundTripTests: XCTestCase {
+    func testRetentionDaysResolveKnownAndUnknownValues() {
+        XCTAssertEqual(
+            [RetentionWindow(days: 7), RetentionWindow(days: 30), RetentionWindow(days: 12)],
+            [.sevenDays, .thirtyDays, .default]
+        )
+    }
+
     /// XCTest instantiates the case once per test method, so each test gets
     /// its own scratch directory.
     private let dir = FileManager.default.temporaryDirectory
@@ -50,6 +57,26 @@ final class HistoryStoreRoundTripTests: XCTestCase {
         store.append(written)
 
         XCTAssertEqual(store.load(), [written])
+    }
+
+    func testStableModeIDRoundTrips() {
+        let store = JSONLHistoryStore(url: storeURL)
+        let modeID = ModeID.random()
+        var written = entry(secondsSince1970: 1_700_000_000, text: "identified")
+        written.modeID = modeID
+
+        store.append(written)
+
+        XCTAssertEqual(store.load().first?.modeID, modeID)
+    }
+
+    func testLegacyNameOnlyEntryWithoutModeIDStillLoads() throws {
+        let legacy = entry(secondsSince1970: 1_700_000_000, text: "legacy")
+        var line = try JSONEncoder().encode(legacy)
+        line.append(0x0A)
+        try line.write(to: storeURL)
+
+        XCTAssertEqual(JSONLHistoryStore(url: storeURL).load().first?.modeName, "Clean")
     }
 
     func testMultipleAppendsLoadInAppendOrder() {

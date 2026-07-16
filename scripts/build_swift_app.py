@@ -1,12 +1,12 @@
 """Build the native Swift app as 'FoldWise Voice Native.app' and install it.
 
 The bundle contains a real compiled binary — no launcher script. The local
-install shares the repo's modes.json via the LSEnvironment FOLDWISE_CONFIG
+install shares the repo's config.json via the LSEnvironment FOLDWISE_CONFIG
 hook, so repo edits to modes take effect without a rebuild.
 
 With --dmg it instead builds a distributable disk image: a self-contained
 'FoldWise Voice.app' (no repo paths baked in — the app creates its own
-modes.json in ~/Library/Application Support/FoldWise Voice/ on first launch)
+config.json in ~/Library/Application Support/FoldWise Voice/ on first launch)
 inside a drag-to-Applications .dmg.
 
 By default the bundle is ad-hoc signed. To sign the .dmg build with a real
@@ -90,10 +90,10 @@ def build_bundle(binary: Path, dest: Path, name: str, icon: Path,
         ),
     }
     if share_repo_config:
-        # Point the local install at the repo's modes.json. Never set for the
+        # Point the local install at the repo's config.json. Never set for the
         # .dmg build: the repo path doesn't exist on other machines, and the
         # app falls back to ~/Library/Application Support/FoldWise Voice/.
-        plist["LSEnvironment"] = {"FOLDWISE_CONFIG": str(REPO / "modes.json")}
+        plist["LSEnvironment"] = {"FOLDWISE_CONFIG": str(REPO / "config.json")}
     shutil.copy2(icon, resources / "icon.icns")
     plist["CFBundleIconFile"] = "icon"
 

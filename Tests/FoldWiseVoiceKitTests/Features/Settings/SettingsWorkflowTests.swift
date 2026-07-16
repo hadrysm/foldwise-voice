@@ -4,7 +4,35 @@ import XCTest
 
 @MainActor
 final class SettingsWorkflowTests: XCTestCase {
-    private enum TestFailure: Error { case save }
+    private final class DispatchingListener: HotkeyListening {
+        var onHealthChange: ((ShortcutListenerHealth) -> Void)?
+        private(set) var isStarted = false
+        private let callbacks: HotkeyCallbacks
+        private let startError: Error?
+
+        init(callbacks: HotkeyCallbacks, startError: Error? = nil) {
+            self.callbacks = callbacks
+            self.startError = startError
+        }
+
+        func start() throws {
+            if let startError { throw startError }
+            isStarted = true
+        }
+
+        func stop() {
+            isStarted = false
+        }
+
+        func dispatchCycle() {
+            guard isStarted, !callbacks.isSuspended() else { return }
+            callbacks.onCycle()
+        }
+    }
+
+    private struct ListenerFailure: LocalizedError {
+        let errorDescription: String? = "listener activation failed"
+    }
 
     private final class NonPersistingHistoryStore: HistoryStore {
         private let entries: [HistoryEntry]
@@ -33,9 +61,6 @@ final class SettingsWorkflowTests: XCTestCase {
         let saveHistory: Bool
         let retention: RetentionWindow
         let sidebarCollapsed: Bool
-        let activeMode: String
-        let modeNames: [String]
-        let llmModes: Set<String>
         let selectedModel: String
         let asrModel: String
         let status: String
@@ -75,7 +100,6 @@ final class SettingsWorkflowTests: XCTestCase {
 
     private struct InvalidCommitState: Equatable {
         let configKey: String
-        let persistCount: Int
         let statusIsError: Bool
         let statusContainsUnknownHotkey: Bool
         let clearScheduled: Bool
@@ -85,6 +109,165 @@ final class SettingsWorkflowTests: XCTestCase {
         let hasSaveFailurePrefix: Bool
         let isError: Bool
         let clearScheduled: Bool
+    }
+
+    private struct SelectionState: Equatable {
+        let committed: DictationSelection
+        let projected: DictationSelection?
+        let persisted: DictationSelection
+        let statusIsError: Bool
+    }
+
+    private struct FailedSelectionState: Equatable {
+        let committed: DictationSelection
+        let projected: DictationSelection?
+        let reportsSelectionFailure: Bool
+        let statusIsError: Bool
+    }
+
+    private struct AddEditorOpening: Equatable {
+        let editor: ModeEditorState?
+        let modes: [Mode]
+        let selection: DictationSelection
+    }
+
+    private struct DuplicateEditorOpening: Equatable {
+        let editor: ModeEditorState?
+        let committedIDs: [ModeID]
+    }
+
+    private struct InvalidEditorSave: Equatable {
+        let draft: ModeEditorDraft?
+        let issues: ModeEditorIssues?
+        let modeNames: [String]
+        let selection: DictationSelection
+    }
+
+    private struct AddedModeResult: Equatable {
+        let editorDismissed: Bool
+        let names: [String]
+        let models: [String?]
+        let addedTransformation: ModeTransformation?
+        let addedPrompt: String?
+        let addedVocabulary: [String]?
+        let addedHasNewID: Bool
+        let selectionMatchesAddedID: Bool
+        let persistedMatchesLive: Bool
+        let projectedSelection: DictationSelection?
+    }
+
+    private struct DuplicatedModeResult: Equatable {
+        let names: [String]
+        let copiedSettings: Bool
+        let mintedDistinctID: Bool
+        let selection: DictationSelection
+        let persistedModes: [Mode]
+    }
+
+    private struct ReorderedModeResult: Equatable {
+        let names: [String]
+        let selection: DictationSelection
+        let projectedNames: [String]
+        let menuBarNames: [String]
+        let badgeMenuNames: [String]
+        let badgeModeName: String
+        let badgeState: BadgeState
+        let nextCycleModeID: ModeID?
+        let persistedNames: [String]
+        let changes: [Config.ChangeSet]
+    }
+
+    private struct DeletedModeResult: Equatable {
+        let names: [String]
+        let selection: DictationSelection
+        let persistedSelection: DictationSelection
+        let retainedHistoryModeID: ModeID?
+        let installedModels: [String]
+        let confirmationDismissed: Bool
+    }
+
+    private struct UnselectedDeletionResult: Equatable {
+        let names: [String]
+        let activeMode: String
+        let selection: DictationSelection
+    }
+
+    private struct ZeroModeResult: Equatable {
+        let configIsEmpty: Bool
+        let selection: DictationSelection
+        let settingsIsEmpty: Bool
+        let projectionIsEmpty: Bool
+        let systemSelectionIsSelected: Bool
+    }
+
+    private struct FailedLifecycleResult: Equatable {
+        let modes: [Mode]
+        let selection: DictationSelection
+        let projectedModes: [Mode]
+        let notifications: [Config.ChangeSet]
+        let liveSurfacesUnchanged: Bool
+        let retryID: ModeID?
+        let errorMatchesOperation: Bool
+        let fileExists: Bool
+    }
+
+    private struct FailedDuplicateResult: Equatable {
+        let modes: [Mode]
+        let selection: DictationSelection
+        let settingsUnchanged: Bool
+        let purpose: ModeEditorPurpose?
+        let actionTitle: String?
+        let hasPersistenceError: Bool
+        let liveSurfacesUnchanged: Bool
+        let fileExists: Bool
+    }
+
+    private struct LiveModeSurfaceState: Equatable {
+        let menuBarNames: [String]
+        let badgeMenuNames: [String]
+        let badgeModeName: String
+        let badgeState: BadgeState
+        let historyModeName: String
+        let historyModeIcon: String
+        let historyModeIsDeleted: Bool
+        let nextCycleModeID: ModeID?
+    }
+
+    private struct LiveModeSurfaces {
+        let menuBar: MenuBarController
+        let menuBarMenu: NSMenu
+        let badge: BadgeController
+        let badgeMenu: NSMenu
+        let historyEntry: HistoryEntry
+    }
+
+    private struct ListenerRollbackResult: Equatable {
+        let liveBinding: String?
+        let settingsBinding: String
+        let persistedBinding: String?
+        let liveSurfacesUnchanged: Bool
+        let oldListenerActive: Bool
+        let candidateDestroyed: Bool
+        let dispatchCount: Int
+        let reportsActivationFailure: Bool
+    }
+
+    private struct SettingsModeState: Equatable {
+        let modes: [Mode]
+        let selection: ModeSelectionProjection
+    }
+
+    private struct EditorRetryResult: Equatable {
+        let failedDraft: ModeEditorDraft?
+        let failedActionTitle: String?
+        let failedErrorIsVisible: Bool
+        let failedModeNames: [String]
+        let failedSelection: DictationSelection
+        let failedSettingsUnchanged: Bool
+        let failedLiveSurfacesUnchanged: Bool
+        let retryDismissed: Bool
+        let retryModeNames: [String]
+        let retryPersisted: Bool
     }
 
     private struct LLMInstallState: Equatable {
@@ -277,7 +460,6 @@ final class SettingsWorkflowTests: XCTestCase {
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: {},
             now: { Date(timeIntervalSince1970: 1_700_000_000) },
             scheduleStatusClear: { _ in },
             copy: { _ in }
@@ -290,17 +472,860 @@ final class SettingsWorkflowTests: XCTestCase {
             PreferenceState(
                 pttKey: "F5", toggleKey: "F6", pauseAudio: false, appearance: .dark,
                 saveHistory: false, retention: .sevenDays,
-                sidebarCollapsed: true, activeMode: "Clean",
-                modeNames: ["Voice to Text", "Clean"], llmModes: ["Clean"],
+                sidebarCollapsed: true,
                 selectedModel: "qwen2.5:3b", asrModel: ASRModelCatalog.defaultID,
                 status: ""
             )
         )
     }
 
-    func testPopulateMakesPersistedASRModelAvailableAndClearsTransientState() {
+    func testModeLibraryChangesRefreshOpenHistoryInputs() throws {
         let config = makeConfig()
-        config.setASRModel("whisper-small")
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+
+        try config.replaceModes([], selection: .voiceToText)
+
+        XCTAssertTrue(model.modes.isEmpty)
+    }
+
+    func testExternalSelectionChangesRefreshOpenModesProjection() throws {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+
+        try config.select(.voiceToText)
+
+        XCTAssertEqual(
+            model.modeSelection.items.first(where: \.isSelected)?.id,
+            .voiceToText
+        )
+    }
+
+    func testSelectingModeCommitsStableIDAndRefreshesProjection() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("selection.json"))
+        try config.save()
+        let emailID = try XCTUnwrap(config.orderedModes.last?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+
+        workflow.selectMode(.mode(emailID))
+
+        XCTAssertEqual(
+            SelectionState(
+                committed: config.selection,
+                projected: model.modeSelection.items.first(where: \.isSelected)?.id,
+                persisted: try Config.load(from: config.path).selection,
+                statusIsError: model.statusIsError
+            ),
+            SelectionState(
+                committed: .mode(emailID),
+                projected: .mode(emailID),
+                persisted: .mode(emailID),
+                statusIsError: false
+            )
+        )
+    }
+
+    func testFailedModeSelectionKeepsCommittedProjectionAndReportsRecovery() throws {
+        let path = dir.appendingPathComponent("missing/selection.json")
+        let config = Config.defaultConfig(path: path)
+        let original = config.selection
+        let emailID = try XCTUnwrap(config.orderedModes.last?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+
+        workflow.selectMode(.mode(emailID))
+
+        XCTAssertEqual(
+            FailedSelectionState(
+                committed: config.selection,
+                projected: model.modeSelection.items.first(where: \.isSelected)?.id,
+                reportsSelectionFailure: model.status.contains("couldn’t select Mode"),
+                statusIsError: model.statusIsError
+            ),
+            FailedSelectionState(
+                committed: original,
+                projected: original,
+                reportsSelectionFailure: true,
+                statusIsError: true
+            )
+        )
+    }
+
+    func testBeginAddModeOpensIsolatedDraftUsingInstalledModel() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        model.installed = [.init(name: "llama3.2:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.beginAddMode()
+
+        XCTAssertEqual(
+            AddEditorOpening(
+                editor: model.modeEditor,
+                modes: config.orderedModes,
+                selection: config.selection
+            ),
+            AddEditorOpening(
+                editor: ModeEditorState(
+                    purpose: .add,
+                    draft: ModeEditorDraft(
+                        name: "",
+                        icon: "wand.and.sparkles",
+                        model: "llama3.2:3b",
+                        transformation: .inPlace,
+                        systemPrompt: "",
+                        vocabularyText: ""
+                    )
+                ),
+                modes: config.orderedModes,
+                selection: config.selection
+            )
+        )
+    }
+
+    func testBeginEditModeCopiesStableModeWhenModelBecameUnavailable() throws {
+        let config = makeConfig()
+        let mode = try XCTUnwrap(config.orderedModes.first)
+        let modeID = try XCTUnwrap(mode.id)
+        let model = SettingsModel()
+        model.installed = [.init(name: "llama3.2:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.beginEditMode(modeID)
+
+        XCTAssertEqual(
+            model.modeEditor,
+            ModeEditorState(
+                purpose: .edit(modeID),
+                draft: ModeEditorDraft(
+                    name: "Clean",
+                    icon: "text.bubble",
+                    model: "qwen2.5:3b",
+                    transformation: .inPlace,
+                    systemPrompt: "Polish",
+                    vocabularyText: ""
+                )
+            )
+        )
+    }
+
+    func testBeginDuplicateModeCopiesSettingsWithoutMintingAnID() throws {
+        let config = makeConfig()
+        let source = try XCTUnwrap(config.orderedModes.first)
+        let sourceID = try XCTUnwrap(source.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.beginDuplicateMode(sourceID)
+
+        XCTAssertEqual(
+            DuplicateEditorOpening(
+                editor: model.modeEditor,
+                committedIDs: config.orderedModes.compactMap(\.id)
+            ),
+            DuplicateEditorOpening(
+                editor: ModeEditorState(
+                    purpose: .duplicate(sourceID),
+                    draft: ModeEditorDraft(
+                        name: "Clean Copy",
+                        icon: "text.bubble",
+                        model: "qwen2.5:3b",
+                        transformation: .inPlace,
+                        systemPrompt: "Polish",
+                        vocabularyText: ""
+                    )
+                ),
+                committedIDs: [sourceID]
+            )
+        )
+    }
+
+    func testSaveModeEditorReportsAllValidationWithoutChangingConfig() throws {
+        let config = makeConfig()
+        let model = SettingsModel()
+        model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.beginAddMode()
+        var editor = try XCTUnwrap(model.modeEditor)
+        editor.draft.name = "  clean  "
+        editor.draft.model = "missing:latest"
+        editor.draft.systemPrompt = "  \n  "
+        model.modeEditor = editor
+
+        workflow.saveModeEditor()
+
+        XCTAssertEqual(
+            InvalidEditorSave(
+                draft: model.modeEditor?.draft,
+                issues: model.modeEditor?.issues,
+                modeNames: config.orderedModes.map(\.name),
+                selection: config.selection
+            ),
+            InvalidEditorSave(
+                draft: editor.draft,
+                issues: ModeEditorIssues(
+                    name: "A Mode named 'clean' already exists.",
+                    model: "missing:latest isn't installed. Install it in Models before saving.",
+                    systemPrompt: "Enter Polish instructions."
+                ),
+                modeNames: ["Clean"],
+                selection: config.selection
+            )
+        )
+    }
+
+    func testSaveModeEditorReportsPendingModelInventoryWithoutCallingModelUnavailable() throws {
+        let config = makeConfig()
+        let modeID = try XCTUnwrap(config.orderedModes.first?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.beginEditMode(modeID)
+
+        workflow.saveModeEditor()
+
+        XCTAssertEqual(
+            model.modeEditor?.issues.model,
+            "Installed AI models are still loading. Try again in a moment."
+        )
+    }
+
+    func testCancelModeEditorDiscardsDraftWithoutChangingConfig() throws {
+        let config = makeConfig()
+        let originalModes = config.orderedModes
+        let originalSelection = config.selection
+        let model = SettingsModel()
+        model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.beginAddMode()
+        var editor = try XCTUnwrap(model.modeEditor)
+        editor.draft.name = "Discard me"
+        editor.draft.systemPrompt = "Discard these instructions"
+        model.modeEditor = editor
+
+        workflow.cancelModeEditor()
+
+        XCTAssertEqual(
+            AddEditorOpening(
+                editor: model.modeEditor,
+                modes: config.orderedModes,
+                selection: config.selection
+            ),
+            AddEditorOpening(
+                editor: nil,
+                modes: originalModes,
+                selection: originalSelection
+            )
+        )
+    }
+
+    func testSaveAddAppendsNormalizesActivatesAndPersistsOneMode() throws {
+        let config = makeConfig()
+        let originalID = try XCTUnwrap(config.orderedModes.first?.id)
+        let model = SettingsModel()
+        model.installed = [
+            .init(name: "qwen2.5:3b", sizeBytes: 42),
+            .init(name: "llama3.2:3b", sizeBytes: 42),
+        ]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginAddMode()
+        var editor = try XCTUnwrap(model.modeEditor)
+        editor.draft = ModeEditorDraft(
+            name: "  Team   Update ",
+            icon: "person.3",
+            model: " llama3.2:3b ",
+            transformation: .expanding,
+            systemPrompt: "  Turn this into a concise update.  ",
+            vocabularyText: " FoldWise\nfoldwise\nBuenos Aires "
+        )
+        model.modeEditor = editor
+
+        workflow.saveModeEditor()
+
+        let added = try XCTUnwrap(config.orderedModes.last)
+        let addedID = try XCTUnwrap(added.id)
+        let persisted = try Config.load(from: config.path)
+        XCTAssertEqual(
+            AddedModeResult(
+                editorDismissed: model.modeEditor == nil,
+                names: config.orderedModes.map(\.name),
+                models: config.orderedModes.map(\.llmModel),
+                addedTransformation: added.transformation,
+                addedPrompt: added.systemPrompt,
+                addedVocabulary: added.vocab,
+                addedHasNewID: addedID != originalID,
+                selectionMatchesAddedID: config.selection == .mode(addedID),
+                persistedMatchesLive: persisted.orderedModes == config.orderedModes
+                    && persisted.selection == config.selection,
+                projectedSelection: model.modeSelection.items.first(where: \.isSelected)?.id
+            ),
+            AddedModeResult(
+                editorDismissed: true,
+                names: ["Clean", "Team Update"],
+                models: ["qwen2.5:3b", "llama3.2:3b"],
+                addedTransformation: .expanding,
+                addedPrompt: "Turn this into a concise update.",
+                addedVocabulary: ["FoldWise", "Buenos Aires"],
+                addedHasNewID: true,
+                selectionMatchesAddedID: true,
+                persistedMatchesLive: true,
+                projectedSelection: .mode(addedID)
+            )
+        )
+    }
+
+    func testSaveDuplicateInsertsAfterSourceMintsIDAndActivates() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("duplicate.json"))
+        let source = try XCTUnwrap(config.orderedModes.first)
+        let sourceID = try XCTUnwrap(source.id)
+        let model = SettingsModel()
+        model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginDuplicateMode(sourceID)
+
+        workflow.saveModeEditor()
+
+        let duplicate = try XCTUnwrap(config.orderedModes.dropFirst().first)
+        let duplicateID = try XCTUnwrap(duplicate.id)
+        XCTAssertEqual(
+            DuplicatedModeResult(
+                names: config.orderedModes.map(\.name),
+                copiedSettings: duplicate.icon == source.icon
+                    && duplicate.llmModel == source.llmModel
+                    && duplicate.transformation == source.transformation
+                    && duplicate.systemPrompt == source.systemPrompt
+                    && duplicate.vocab == source.vocab,
+                mintedDistinctID: duplicateID != sourceID,
+                selection: config.selection,
+                persistedModes: try Config.load(from: config.path).orderedModes
+            ),
+            DuplicatedModeResult(
+                names: ["Casual", "Casual Copy", "Email"],
+                copiedSettings: true,
+                mintedDistinctID: true,
+                selection: .mode(duplicateID),
+                persistedModes: config.orderedModes
+            )
+        )
+    }
+
+    func testMoveModePersistsSoleOrderAndPreservesStableSelection() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("reorder.json"))
+        let selectedID = try XCTUnwrap(config.orderedModes.first?.id)
+        let thirdID = ModeID.random()
+        let thirdMode = Mode(
+            id: thirdID,
+            name: "Meeting",
+            icon: "person.3",
+            asrModel: config.asrModel,
+            llmModel: "qwen2.5:3b",
+            transformation: .expanding,
+            systemPrompt: "Turn this into meeting notes.",
+            vocabulary: []
+        )
+        try config.replaceModes(
+            config.orderedModes + [thirdMode],
+            selection: .mode(selectedID)
+        )
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        let menuBarMenu = NSMenu()
+        let menuBar = MenuBarController(
+            config: config,
+            onSettings: {},
+            onCheckForUpdates: {},
+            onModeSelectionError: {},
+            onQuit: {},
+            menu: menuBarMenu
+        )
+        let badge = BadgeController(config: config, onOpenApp: {})
+        let badgeMenu = badge.makeLiveModeMenu()
+        workflow.populatePreferences()
+        var changes: [Config.ChangeSet] = []
+        config.onChange { changes.append($0) }
+
+        workflow.moveMode(selectedID, direction: .down)
+
+        XCTAssertEqual(
+            ReorderedModeResult(
+                names: config.orderedModes.map(\.name),
+                selection: config.selection,
+                projectedNames: model.modeSelection.editableItems.map(\.name),
+                menuBarNames: modeNames(in: menuBarMenu),
+                badgeMenuNames: modeNames(in: badgeMenu),
+                badgeModeName: badge.model.activeModeName,
+                badgeState: badge.model.state,
+                nextCycleModeID: config.modeCycleSuccessor(after: selectedID),
+                persistedNames: try Config.load(from: config.path).orderedModes.map(\.name),
+                changes: changes
+            ),
+            ReorderedModeResult(
+                names: ["Email", "Casual", "Meeting"],
+                selection: .mode(selectedID),
+                projectedNames: ["Email", "Casual", "Meeting"],
+                menuBarNames: ["Voice to Text", "Email", "Casual", "Meeting"],
+                badgeMenuNames: ["Voice to Text", "Email", "Casual", "Meeting"],
+                badgeModeName: "Casual",
+                badgeState: .idle,
+                nextCycleModeID: thirdID,
+                persistedNames: ["Email", "Casual", "Meeting"],
+                changes: [.modeLibrary]
+            )
+        )
+        withExtendedLifetime(menuBar) {}
+    }
+
+    func testRequestModeDeletionExplainsHistoryAndModelRetention() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("delete-prompt.json"))
+        let sourceID = try XCTUnwrap(config.orderedModes.first?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.requestModeDeletion(sourceID)
+
+        XCTAssertEqual(
+            model.modePendingDeletion,
+            ModeDeletionState(
+                id: sourceID,
+                title: "Delete Casual?",
+                message: "Your History will remain. The qwen2.5:3b AI model will not be "
+                    + "uninstalled."
+            )
+        )
+    }
+
+    func testConfirmSelectedModeDeletionFallsBackAndRetainsHistoryAndModel() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("delete-selected.json"))
+        try config.save()
+        let sourceID = try XCTUnwrap(config.orderedModes.first?.id)
+        let historyStore = JSONLHistoryStore(url: dir.appendingPathComponent("delete-history.jsonl"))
+        var history = entry(createdAt: Date(), text: "Saved words")
+        history.modeName = "Casual"
+        history.modeID = sourceID
+        historyStore.append(history)
+        let model = SettingsModel()
+        model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: historyStore
+        )
+        workflow.populatePreferences()
+        workflow.requestModeDeletion(sourceID)
+
+        workflow.confirmModeDeletion()
+
+        let persisted = try Config.load(from: config.path)
+        XCTAssertEqual(
+            DeletedModeResult(
+                names: config.orderedModes.map(\.name),
+                selection: config.selection,
+                persistedSelection: persisted.selection,
+                retainedHistoryModeID: historyStore.load().first?.modeID,
+                installedModels: model.installed?.map(\.name) ?? [],
+                confirmationDismissed: model.modePendingDeletion == nil
+            ),
+            DeletedModeResult(
+                names: ["Email"],
+                selection: .voiceToText,
+                persistedSelection: .voiceToText,
+                retainedHistoryModeID: sourceID,
+                installedModels: ["qwen2.5:3b"],
+                confirmationDismissed: true
+            )
+        )
+    }
+
+    func testConfirmUnselectedModeDeletionPreservesSelection() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("delete-unselected.json"))
+        let selectedID = try XCTUnwrap(config.orderedModes.first?.id)
+        let deletedID = try XCTUnwrap(config.orderedModes.last?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.requestModeDeletion(deletedID)
+
+        workflow.confirmModeDeletion()
+
+        XCTAssertEqual(
+            UnselectedDeletionResult(
+                names: config.orderedModes.map(\.name),
+                activeMode: config.mode.name,
+                selection: config.selection
+            ),
+            UnselectedDeletionResult(
+                names: ["Casual"],
+                activeMode: "Casual",
+                selection: .mode(selectedID)
+            )
+        )
+    }
+
+    func testDeletingLastModePublishesInvitingZeroModeState() throws {
+        let config = makeConfig()
+        let deletedID = try XCTUnwrap(config.orderedModes.first?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.requestModeDeletion(deletedID)
+
+        workflow.confirmModeDeletion()
+
+        XCTAssertEqual(
+            ZeroModeResult(
+                configIsEmpty: config.orderedModes.isEmpty,
+                selection: config.selection,
+                settingsIsEmpty: model.modes.isEmpty,
+                projectionIsEmpty: model.modeSelection.editableItems.isEmpty,
+                systemSelectionIsSelected: model.modeSelection.systemItem.isSelected
+            ),
+            ZeroModeResult(
+                configIsEmpty: true,
+                selection: .voiceToText,
+                settingsIsEmpty: true,
+                projectionIsEmpty: true,
+                systemSelectionIsSelected: true
+            )
+        )
+    }
+
+    func testFailedReorderKeepsCommittedLibrarySelectionAndProjection() throws {
+        let config = Config.defaultConfig(
+            path: dir.appendingPathComponent("missing-reorder/config.json")
+        )
+        let originalModes = config.orderedModes
+        let originalSelection = config.selection
+        let movedID = try XCTUnwrap(originalModes.first?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        let surfaces = try makeLiveModeSurfaces(config)
+        let originalSurfaceState = liveModeSurfaceState(surfaces, config: config)
+        var changes: [Config.ChangeSet] = []
+        config.onChange { changes.append($0) }
+
+        workflow.moveMode(movedID, direction: .down)
+
+        XCTAssertEqual(
+            FailedLifecycleResult(
+                modes: config.orderedModes,
+                selection: config.selection,
+                projectedModes: model.modes,
+                notifications: changes,
+                liveSurfacesUnchanged: liveModeSurfaceState(surfaces, config: config)
+                    == originalSurfaceState,
+                retryID: nil,
+                errorMatchesOperation: model.status.contains("couldn't reorder Mode"),
+                fileExists: FileManager.default.fileExists(atPath: config.path.path)
+            ),
+            FailedLifecycleResult(
+                modes: originalModes,
+                selection: originalSelection,
+                projectedModes: originalModes,
+                notifications: [],
+                liveSurfacesUnchanged: true,
+                retryID: nil,
+                errorMatchesOperation: true,
+                fileExists: false
+            )
+        )
+    }
+
+    func testFailedDeleteKeepsCommittedStateAndConfirmationForRetry() throws {
+        let config = Config.defaultConfig(
+            path: dir.appendingPathComponent("missing-delete/config.json")
+        )
+        let originalModes = config.orderedModes
+        let originalSelection = config.selection
+        let deletedID = try XCTUnwrap(originalModes.first?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.requestModeDeletion(deletedID)
+        let surfaces = try makeLiveModeSurfaces(config)
+        let originalSurfaceState = liveModeSurfaceState(surfaces, config: config)
+        var changes: [Config.ChangeSet] = []
+        config.onChange { changes.append($0) }
+
+        workflow.confirmModeDeletion()
+
+        XCTAssertEqual(
+            FailedLifecycleResult(
+                modes: config.orderedModes,
+                selection: config.selection,
+                projectedModes: model.modes,
+                notifications: changes,
+                liveSurfacesUnchanged: liveModeSurfaceState(surfaces, config: config)
+                    == originalSurfaceState,
+                retryID: model.modePendingDeletion?.id,
+                errorMatchesOperation: model.status.contains("couldn't delete Mode"),
+                fileExists: FileManager.default.fileExists(atPath: config.path.path)
+            ),
+            FailedLifecycleResult(
+                modes: originalModes,
+                selection: originalSelection,
+                projectedModes: originalModes,
+                notifications: [],
+                liveSurfacesUnchanged: true,
+                retryID: deletedID,
+                errorMatchesOperation: true,
+                fileExists: false
+            )
+        )
+    }
+
+    func testListenerActivationFailureKeepsEverySurfaceAndOldDispatchCommitted() throws {
+        let config = makeConfig()
+        try config.save()
+        try config.setShortcutBindings(ShortcutBindings(
+            pushToTalk: config.hotkey,
+            toggleRecording: config.toggleHotkey,
+            modeCycle: "F8"
+        ))
+        let model = SettingsModel()
+        let surfaces = try makeLiveModeSurfaces(config)
+        let committedSurfaceState = liveModeSurfaceState(surfaces, config: config)
+        var listeners: [DispatchingListener] = []
+        var dispatchCount = 0
+        let coordinator = HotkeyBindingCoordinator(
+            config: config,
+            callbacks: HotkeyCallbacks(
+                isSuspended: { false },
+                onPress: {},
+                onRelease: {},
+                onToggle: {},
+                onCycle: { dispatchCount += 1 },
+                onHealthChange: { _ in }
+            ),
+            prepare: { _, callbacks in
+                let listener = DispatchingListener(
+                    callbacks: callbacks,
+                    startError: listeners.isEmpty ? nil : ListenerFailure()
+                )
+                listeners.append(listener)
+                return listener
+            }
+        )
+        try coordinator.start()
+        defer { coordinator.stop() }
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            updateHotkeys: { try coordinator.update($0) }
+        )
+        workflow.populatePreferences()
+
+        model.cycleKey = "F9"
+        workflow.commit(changedShortcut: .cycle)
+        listeners.forEach { $0.dispatchCycle() }
+
+        XCTAssertEqual(
+            ListenerRollbackResult(
+                liveBinding: config.modeCycleHotkey,
+                settingsBinding: model.cycleKey,
+                persistedBinding: try Config.load(from: config.path).modeCycleHotkey,
+                liveSurfacesUnchanged: liveModeSurfaceState(surfaces, config: config)
+                    == committedSurfaceState,
+                oldListenerActive: listeners.first?.isStarted == true,
+                candidateDestroyed: listeners.last?.isStarted == false,
+                dispatchCount: dispatchCount,
+                reportsActivationFailure: model.status.contains("listener activation failed")
+                    && model.statusIsError
+            ),
+            ListenerRollbackResult(
+                liveBinding: "F8",
+                settingsBinding: "F8",
+                persistedBinding: "F8",
+                liveSurfacesUnchanged: true,
+                oldListenerActive: true,
+                candidateDestroyed: true,
+                dispatchCount: 1,
+                reportsActivationFailure: true
+            )
+        )
+    }
+
+    func testFailedDuplicateKeepsDraftAndCommittedStateForRetry() throws {
+        let config = Config.defaultConfig(
+            path: dir.appendingPathComponent("missing-duplicate/config.json")
+        )
+        let originalModes = config.orderedModes
+        let originalSelection = config.selection
+        let sourceID = try XCTUnwrap(originalModes.first?.id)
+        let model = SettingsModel()
+        model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        let originalSettingsState = settingsModeState(model)
+        workflow.beginDuplicateMode(sourceID)
+        let surfaces = try makeLiveModeSurfaces(config)
+        let originalSurfaceState = liveModeSurfaceState(surfaces, config: config)
+
+        workflow.saveModeEditor()
+
+        XCTAssertEqual(
+            FailedDuplicateResult(
+                modes: config.orderedModes,
+                selection: config.selection,
+                settingsUnchanged: settingsModeState(model) == originalSettingsState,
+                purpose: model.modeEditor?.purpose,
+                actionTitle: model.modeEditor?.saveActionTitle,
+                hasPersistenceError: model.modeEditor?.persistenceError?.contains(
+                    "Couldn't save Mode"
+                ) == true,
+                liveSurfacesUnchanged: liveModeSurfaceState(surfaces, config: config)
+                    == originalSurfaceState,
+                fileExists: FileManager.default.fileExists(atPath: config.path.path)
+            ),
+            FailedDuplicateResult(
+                modes: originalModes,
+                selection: originalSelection,
+                settingsUnchanged: true,
+                purpose: .duplicate(sourceID),
+                actionTitle: "Retry",
+                hasPersistenceError: true,
+                liveSurfacesUnchanged: true,
+                fileExists: false
+            )
+        )
+    }
+
+    func testSaveEditPreservesStableIDAndSelectionChangedWhileDraftWasOpen() throws {
+        let config = makeConfig()
+        let modeID = try XCTUnwrap(config.orderedModes.first?.id)
+        let model = SettingsModel()
+        model.installed = [.init(name: "llama3.2:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginEditMode(modeID)
+        workflow.selectMode(.voiceToText)
+        var editor = try XCTUnwrap(model.modeEditor)
+        editor.draft.name = "  Renamed   Mode  "
+        editor.draft.model = "llama3.2:3b"
+        editor.draft.transformation = .expanding
+        editor.draft.systemPrompt = "Reshape this while preserving meaning."
+        model.modeEditor = editor
+
+        workflow.saveModeEditor()
+
+        let edited = try XCTUnwrap(config.orderedModes.first)
+        let persisted = try Config.load(from: config.path)
+        XCTAssertEqual(
+            [
+                edited.id?.rawValue,
+                edited.name,
+                edited.llmModel,
+                edited.transformation.rawValue,
+                config.selection == .voiceToText ? "voice_to_text" : "mode",
+                persisted.selection == .voiceToText ? "voice_to_text" : "mode",
+                model.modeEditor == nil ? "dismissed" : "open",
+            ],
+            [
+                modeID.rawValue,
+                "Renamed Mode",
+                "llama3.2:3b",
+                ModeTransformation.expanding.rawValue,
+                "voice_to_text",
+                "voice_to_text",
+                "dismissed",
+            ]
+        )
+    }
+
+    func testSaveEditChangesOnlyTargetModesModelAssignment() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("owned-models.json"))
+        let firstID = try XCTUnwrap(config.orderedModes.first?.id)
+        let model = SettingsModel()
+        model.installed = [
+            .init(name: "qwen2.5:3b", sizeBytes: 42),
+            .init(name: "llama3.2:3b", sizeBytes: 42),
+        ]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.beginEditMode(firstID)
+        var editor = try XCTUnwrap(model.modeEditor)
+        editor.draft.model = "llama3.2:3b"
+        model.modeEditor = editor
+
+        workflow.saveModeEditor()
+
+        XCTAssertEqual(
+            config.orderedModes.map(\.llmModel),
+            ["llama3.2:3b", "qwen2.5:3b"]
+        )
+    }
+
+    func testFailedSaveRetainsCompleteDraftAndRetryCommitsIt() throws {
+        let config = makeFailingConfig()
+        let originalSelection = config.selection
+        let model = SettingsModel()
+        model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        let originalSettingsState = settingsModeState(model)
+        workflow.beginAddMode()
+        var editor = try XCTUnwrap(model.modeEditor)
+        editor.draft.name = "Retry Mode"
+        editor.draft.systemPrompt = "Keep this complete draft."
+        editor.draft.vocabularyText = "FoldWise\nBuenos Aires"
+        model.modeEditor = editor
+        let surfaces = try makeLiveModeSurfaces(config)
+        let originalSurfaceState = liveModeSurfaceState(surfaces, config: config)
+
+        workflow.saveModeEditor()
+
+        let failedEditor = try XCTUnwrap(model.modeEditor)
+        let failedModeNames = config.orderedModes.map(\.name)
+        let failedSettingsUnchanged = settingsModeState(model) == originalSettingsState
+        let failedLiveSurfacesUnchanged = liveModeSurfaceState(surfaces, config: config)
+            == originalSurfaceState
+        try FileManager.default.createDirectory(
+            at: config.path.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        workflow.saveModeEditor()
+        let persisted = try Config.load(from: config.path)
+
+        XCTAssertEqual(
+            EditorRetryResult(
+                failedDraft: failedEditor.draft,
+                failedActionTitle: failedEditor.saveActionTitle,
+                failedErrorIsVisible: failedEditor.persistenceError?.contains(
+                    "Couldn't save Mode"
+                ) == true,
+                failedModeNames: failedModeNames,
+                failedSelection: originalSelection,
+                failedSettingsUnchanged: failedSettingsUnchanged,
+                failedLiveSurfacesUnchanged: failedLiveSurfacesUnchanged,
+                retryDismissed: model.modeEditor == nil,
+                retryModeNames: config.orderedModes.map(\.name),
+                retryPersisted: persisted.orderedModes == config.orderedModes
+                    && persisted.selection == config.selection
+            ),
+            EditorRetryResult(
+                failedDraft: editor.draft,
+                failedActionTitle: "Retry",
+                failedErrorIsVisible: true,
+                failedModeNames: ["Clean"],
+                failedSelection: originalSelection,
+                failedSettingsUnchanged: true,
+                failedLiveSurfacesUnchanged: true,
+                retryDismissed: true,
+                retryModeNames: ["Clean", "Retry Mode"],
+                retryPersisted: true
+            )
+        )
+    }
+
+    func testPopulateMakesPersistedASRModelAvailableAndClearsTransientState() throws {
+        let config = makeConfig()
+        try config.setASRModel("whisper-small")
         let model = SettingsModel()
         model.asrDownloading = "whisper-large-v3-turbo"
         model.asrDownloadError = "old download error"
@@ -391,13 +1416,12 @@ final class SettingsWorkflowTests: XCTestCase {
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { try config.saveAndNotify() },
             now: { Date(timeIntervalSince1970: 1_700_000_000) },
             scheduleStatusClear: { _ in },
             copy: { _ in }
         )
         workflow.populatePreferences()
-        model.activeMode = "Voice to Text"
+        workflow.selectMode(.voiceToText)
         model.pttKey = "  F7  "
         model.toggleKey = " "
         model.pauseAudio = true
@@ -405,7 +1429,6 @@ final class SettingsWorkflowTests: XCTestCase {
         model.saveHistory = true
         model.retention = .ninetyDays
         model.sidebar = SidebarPresentation(prefersCollapsed: false)
-        model.selectedModel = "llama3.2:3b"
         model.asrModel = "whisper-small"
 
         workflow.commit()
@@ -417,11 +1440,51 @@ final class SettingsWorkflowTests: XCTestCase {
                 activeMode: "Voice to Text", hotkey: "F7", toggleHotkey: nil,
                 pauseAudio: true, appearance: .light,
                 saveHistory: true, retention: .ninetyDays,
-                sidebarCollapsed: false, llmModel: "llama3.2:3b", asrModel: "whisper-small",
-                persistedHotkey: "F7", persistedLLMModel: "llama3.2:3b",
+                sidebarCollapsed: false, llmModel: nil, asrModel: "whisper-small",
+                persistedHotkey: "F7", persistedLLMModel: nil,
                 persistedASRModel: "whisper-small", persistedAppearance: .light
             )
         )
+    }
+
+    func testCommitPreservesDistinctPerModeModelAssignments() throws {
+        let config = Config.defaultConfig(
+            path: dir.appendingPathComponent("per-mode-models-config.json")
+        )
+        var email = try XCTUnwrap(config.orderedModes.last)
+        email.llmModel = "llama3.2:3b"
+        try config.saveMode(email)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        model.pttKey = "F7"
+
+        workflow.commit()
+
+        XCTAssertEqual(
+            config.orderedModes.map(\.llmModel),
+            ["qwen2.5:3b", "llama3.2:3b"]
+        )
+    }
+
+    func testRecoveryPopulationDisablesConfigurationAndKeepsVoiceToText() throws {
+        let path = dir.appendingPathComponent("invalid-config.json")
+        let original = Data("invalid".utf8)
+        try original.write(to: path)
+        let config = Config.loadOrCreate(at: path)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.populatePreferences()
+        workflow.commit()
+
+        XCTAssertTrue(model.configurationReadOnly)
+        XCTAssertEqual(
+            model.modeSelection.items.first(where: \.isSelected)?.id,
+            .voiceToText
+        )
+        XCTAssertTrue(model.statusIsError)
+        XCTAssertEqual(try Data(contentsOf: path), original)
     }
 
     func testSuccessfulCommitReportsAndClearsStatus() {
@@ -432,7 +1495,6 @@ final class SettingsWorkflowTests: XCTestCase {
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: {},
             now: Date.init,
             scheduleStatusClear: { scheduledClear = $0 },
             copy: { _ in }
@@ -492,6 +1554,92 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
+    func testFinishRecordingCommitsCapturedModeCycleKey() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginRecording(.cycle)
+
+        workflow.finishRecording(with: "F9")
+
+        XCTAssertEqual(config.modeCycleHotkey, "F9")
+        XCTAssertEqual(model.cycleKey, "F9")
+        XCTAssertNil(model.recordingField)
+    }
+
+    func testCaptureSuspendsCommandsUntilCommitOrCancel() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let gate = ShortcutCaptureGate()
+        let workflow = makeWorkflow(config: config, model: model, captureGate: gate)
+        workflow.populatePreferences()
+
+        workflow.beginRecording(.cycle)
+        XCTAssertTrue(gate.isCapturing)
+
+        workflow.cancelRecording()
+        XCTAssertFalse(gate.isCapturing)
+    }
+
+    func testCollisionIdentifiesOwnerAndRestoresCommittedShortcut() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginRecording(.cycle)
+
+        workflow.finishRecording(with: " f5 ")
+
+        XCTAssertNil(config.modeCycleHotkey)
+        XCTAssertEqual(model.cycleKey, "")
+        XCTAssertTrue(model.status.contains("Push to Talk"))
+        XCTAssertTrue(model.statusIsError)
+    }
+
+    func testInvalidCapturedKeyRestoresCommittedShortcutDisplays() throws {
+        let config = makeConfig()
+        try config.setShortcutBindings(ShortcutBindings(
+            pushToTalk: "F5",
+            toggleRecording: "F6",
+            modeCycle: "F7"
+        ))
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginRecording(.ptt)
+
+        workflow.finishRecording(with: "not_a_key")
+
+        XCTAssertEqual([model.pttKey, model.toggleKey, model.cycleKey], ["F5", "F6", "F7"])
+    }
+
+    func testInvalidCapturedKeyReportsError() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginRecording(.ptt)
+
+        workflow.finishRecording(with: "not_a_key")
+
+        XCTAssertTrue(model.statusIsError)
+        XCTAssertTrue(model.status.contains("Unknown hotkey"))
+    }
+
+    func testInvalidCapturedKeyEndsShortcutCapture() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let gate = ShortcutCaptureGate()
+        let workflow = makeWorkflow(config: config, model: model, captureGate: gate)
+        workflow.populatePreferences()
+        workflow.beginRecording(.ptt)
+
+        workflow.finishRecording(with: "not_a_key")
+
+        XCTAssertFalse(gate.isCapturing)
+    }
+
     func testFinishRecordingWithoutAKeyCancelsTheEdit() {
         let config = makeConfig()
         let model = SettingsModel()
@@ -513,13 +1661,11 @@ final class SettingsWorkflowTests: XCTestCase {
     func testCommitRejectsInvalidHotkeyWithoutPersisting() {
         let config = makeConfig()
         let model = SettingsModel()
-        var persistCount = 0
         var scheduledClear: (@MainActor () -> Void)?
         let workflow = SettingsWorkflow(
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { persistCount += 1 },
             now: Date.init,
             scheduleStatusClear: { scheduledClear = $0 },
             copy: { _ in }
@@ -531,13 +1677,13 @@ final class SettingsWorkflowTests: XCTestCase {
 
         XCTAssertEqual(
             InvalidCommitState(
-                configKey: config.hotkey, persistCount: persistCount,
+                configKey: config.hotkey,
                 statusIsError: model.statusIsError,
                 statusContainsUnknownHotkey: model.status.contains("Unknown hotkey"),
                 clearScheduled: scheduledClear != nil
             ),
             InvalidCommitState(
-                configKey: "F5", persistCount: 0, statusIsError: true,
+                configKey: "F5", statusIsError: true,
                 statusContainsUnknownHotkey: true, clearScheduled: false
             )
         )
@@ -546,13 +1692,11 @@ final class SettingsWorkflowTests: XCTestCase {
     func testCommitRejectsInvalidToggleWithoutPersisting() {
         let config = makeConfig()
         let model = SettingsModel()
-        var persistCount = 0
         var scheduledClear: (@MainActor () -> Void)?
         let workflow = SettingsWorkflow(
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { persistCount += 1 },
             now: Date.init,
             scheduleStatusClear: { scheduledClear = $0 },
             copy: { _ in }
@@ -564,27 +1708,26 @@ final class SettingsWorkflowTests: XCTestCase {
 
         XCTAssertEqual(
             InvalidCommitState(
-                configKey: config.toggleHotkey ?? "", persistCount: persistCount,
+                configKey: config.toggleHotkey ?? "",
                 statusIsError: model.statusIsError,
                 statusContainsUnknownHotkey: model.status.contains("Unknown hotkey"),
                 clearScheduled: scheduledClear != nil
             ),
             InvalidCommitState(
-                configKey: "F6", persistCount: 0, statusIsError: true,
+                configKey: "F6", statusIsError: true,
                 statusContainsUnknownHotkey: true, clearScheduled: false
             )
         )
     }
 
     func testFailedPersistenceReportsError() {
-        let config = makeConfig()
+        let config = makeFailingConfig()
         let model = SettingsModel()
         var scheduledClear: (@MainActor () -> Void)?
         let workflow = SettingsWorkflow(
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { throw TestFailure.save },
             now: Date.init,
             scheduleStatusClear: { scheduledClear = $0 },
             copy: { _ in }
@@ -604,7 +1747,7 @@ final class SettingsWorkflowTests: XCTestCase {
     }
 
     func testFailedPersistenceDoesNotNotifyObservers() {
-        let config = makeConfig()
+        let config = makeFailingConfig()
         let model = SettingsModel()
         var received: [Config.ChangeSet] = []
         config.onChange { received.append($0) }
@@ -612,7 +1755,6 @@ final class SettingsWorkflowTests: XCTestCase {
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { throw TestFailure.save },
             now: Date.init,
             scheduleStatusClear: { _ in },
             copy: { _ in }
@@ -626,13 +1768,12 @@ final class SettingsWorkflowTests: XCTestCase {
     }
 
     func testFailedInputDeviceSelectionReportsPersistenceError() {
-        let config = makeConfig()
+        let config = makeFailingConfig()
         let model = SettingsModel()
         let workflow = SettingsWorkflow(
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { throw TestFailure.save },
             now: Date.init,
             scheduleStatusClear: { _ in },
             copy: { _ in }
@@ -644,6 +1785,22 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertTrue(model.statusIsError)
     }
 
+    func testConfigurationRecoveryDoesNotOpenModeEditor() throws {
+        let path = dir.appendingPathComponent("invalid-mode-editor-config.json")
+        let original = Data("invalid".utf8)
+        try original.write(to: path)
+        let config = Config.loadOrCreate(at: path)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.beginAddMode()
+
+        XCTAssertEqual(
+            [model.modeEditor == nil, try Data(contentsOf: path) == original],
+            [true, true]
+        )
+    }
+
     func testNoOpCommitDoesNotNotifyConfigObservers() {
         let config = makeConfig()
         let model = SettingsModel()
@@ -653,7 +1810,6 @@ final class SettingsWorkflowTests: XCTestCase {
             config: config,
             model: model,
             historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
-            persist: { try config.saveAndNotify() },
             now: Date.init,
             scheduleStatusClear: { _ in },
             copy: { _ in }
@@ -665,10 +1821,10 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(received.count, 0)
     }
 
-    func testTightenedRetentionRefreshesVisibleHistory() {
+    func testTightenedRetentionRefreshesVisibleHistory() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let config = makeConfig()
-        config.historyRetention = .ninetyDays
+        try config.setHistoryRetention(.ninetyDays)
         let model = SettingsModel()
         let historyStore = JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl"))
         historyStore.append(entry(createdAt: now.addingTimeInterval(-10 * 86400), text: "old"))
@@ -677,7 +1833,6 @@ final class SettingsWorkflowTests: XCTestCase {
             config: config,
             model: model,
             historyStore: historyStore,
-            persist: {},
             now: { now },
             scheduleStatusClear: { _ in },
             copy: { _ in }
@@ -690,10 +1845,10 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(model.historyEntries.map(\.text), ["new"])
     }
 
-    func testTightenedRetentionPreservesStreak() {
+    func testTightenedRetentionPreservesStreak() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let config = makeConfig()
-        config.historyRetention = .ninetyDays
+        try config.setHistoryRetention(.ninetyDays)
         let model = SettingsModel()
         let store = JSONLHistoryStore(url: dir.appendingPathComponent("retention-streak-history.jsonl"))
         let stats = JSONStatsStore(url: dir.appendingPathComponent("retention-streak-stats.json"))
@@ -842,7 +1997,10 @@ final class SettingsWorkflowTests: XCTestCase {
             }
         )
 
-        let task = workflow.performHistoryCommand(.rerunPolish(modeName: "Clean"), for: row)
+        guard let modeID = config.orderedModes.first?.id else {
+            return XCTFail("expected an editable Mode")
+        }
+        let task = workflow.performHistoryCommand(.rerunPolish(modeID: modeID), for: row)
         await task?.value
 
         XCTAssertEqual(
@@ -867,7 +2025,10 @@ final class SettingsWorkflowTests: XCTestCase {
             }
         )
 
-        await workflow.rerunPolish(row, modeName: "Clean")
+        guard let modeID = config.orderedModes.first?.id else {
+            return XCTFail("expected an editable Mode")
+        }
+        await workflow.rerunPolish(row, modeID: modeID)
 
         XCTAssertEqual(model.historyEntries.first?.text, row.rawText)
     }
@@ -887,9 +2048,130 @@ final class SettingsWorkflowTests: XCTestCase {
             polish: { _, _ in "Please summarize the quarterly revenue figures for the board report." }
         )
 
-        await workflow.rerunPolish(missing, modeName: "Clean")
+        guard let modeID = config.orderedModes.first?.id else {
+            return XCTFail("expected an editable Mode")
+        }
+        await workflow.rerunPolish(missing, modeID: modeID)
 
         XCTAssertEqual(model.historyEntries.map(\.id), [kept.id])
+    }
+
+    func testRerunPolishMissingModeKeepsEntryUnchanged() async {
+        let result = await rerunPolishWithMissingMode()
+
+        XCTAssertEqual(result.persistedText, "unchanged words")
+    }
+
+    func testRerunPolishMissingModeShowsRecoverableError() async {
+        let result = await rerunPolishWithMissingMode()
+
+        XCTAssertEqual(
+            result.status,
+            WorkflowStatus(
+                message: "⚠️ Mode is no longer available. Choose another Mode.",
+                isError: true
+            )
+        )
+    }
+
+    private func rerunPolishWithMissingMode() async -> MissingModeResult {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("rerun-missing-mode.jsonl"))
+        let row = entry(createdAt: Date(), text: "unchanged words")
+        store.append(row)
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model, historyStore: store)
+
+        await workflow.rerunPolish(row, modeID: .random())
+
+        return MissingModeResult(
+            persistedText: store.load().first?.text,
+            status: WorkflowStatus(message: model.status, isError: model.statusIsError)
+        )
+    }
+
+    func testRerunPolishFreezesModeAtExecutionStartAcrossDeletion() async throws {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("rerun-frozen-mode.jsonl"))
+        var row = entry(createdAt: Date(), text: "earlier words")
+        row.rawText = "hey can you send the quarterly numbers over to the finance team when you get a chance"
+        store.append(row)
+        let config = makeConfig()
+        let mode = try XCTUnwrap(config.orderedModes.first)
+        let modeID = try XCTUnwrap(mode.id)
+        let model = SettingsModel()
+        let polishing = expectation(description: "reprocessing started")
+        let finishPolishing = Latch()
+        let receivedMode = ModeCapture()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            polish: { _, snapshot in
+                receivedMode.value = snapshot
+                polishing.fulfill()
+                await finishPolishing.wait()
+                return "Hey, can you send the quarterly numbers over to the finance team when you get a chance?"
+            }
+        )
+
+        let task = Task { await workflow.rerunPolish(row, modeID: modeID) }
+        await fulfillment(of: [polishing])
+        try config.replaceModes([], selection: .voiceToText)
+        await finishPolishing.open()
+        await task.value
+
+        let updated = try XCTUnwrap(store.load().first)
+        XCTAssertEqual(
+            [receivedMode.value?.name, updated.modeName, updated.modeID?.rawValue],
+            ["Clean", "Clean", modeID.rawValue]
+        )
+    }
+
+    func testRerunPolishFreezesEditAtExecutionStartAndUsesItForNextRun() async throws {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("rerun-edited-mode.jsonl"))
+        var row = entry(createdAt: Date(), text: "earlier words")
+        row.rawText = "hey can you send the quarterly numbers over to the finance team when you get a chance"
+        store.append(row)
+        let config = makeConfig()
+        let mode = try XCTUnwrap(config.orderedModes.first)
+        let modeID = try XCTUnwrap(mode.id)
+        var edited = mode
+        edited.name = "Edited Clean"
+        edited.icon = "pencil.circle"
+        edited.llmModel = "edited-model"
+        edited.systemPrompt = "Use the edited instructions."
+        edited.vocab = ["FoldWise"]
+        edited.transformation = .expanding
+        let model = SettingsModel()
+        let polishing = expectation(description: "reprocessing started")
+        polishing.assertForOverFulfill = false
+        let finishPolishing = Latch()
+        let receivedMode = ModeCapture()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            polish: { _, snapshot in
+                receivedMode.value = snapshot
+                polishing.fulfill()
+                await finishPolishing.wait()
+                return "Hey, can you send the quarterly numbers over to the finance team when you get a chance?"
+            }
+        )
+
+        let firstTask = Task { await workflow.rerunPolish(row, modeID: modeID) }
+        await fulfillment(of: [polishing])
+        try config.saveMode(edited)
+        await finishPolishing.open()
+        await firstTask.value
+        let firstSnapshot = receivedMode.value
+
+        await workflow.rerunPolish(row, modeID: modeID)
+
+        XCTAssertEqual(
+            [firstSnapshot, receivedMode.value],
+            [Optional(mode), Optional(edited)]
+        )
     }
 
     func testDeleteHistoryPublishesRemainingPersistedEntries() {
@@ -988,17 +2270,6 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual([model.historyEntries.first?.text, model.currentStreak.map(String.init)], ["stored words", "1"])
     }
 
-    func testSelectingLLMModelPersistsTheChoice() {
-        let config = makeConfig()
-        let model = SettingsModel()
-        let workflow = makeWorkflow(config: config, model: model)
-        workflow.populatePreferences()
-
-        workflow.selectLLMModel("llama3.2:3b")
-
-        XCTAssertEqual(config.llmModel, "llama3.2:3b")
-    }
-
     func testRefreshingLLMModelsPublishesTheBoundaryResult() async {
         let config = makeConfig()
         let model = SettingsModel()
@@ -1036,7 +2307,7 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(model.installed?.map(\.name), ["newest"])
     }
 
-    func testInstallingLLMModelSelectsAndRefreshesIt() async {
+    func testInstallingLLMModelRefreshesInventoryWithoutReassigningModes() async {
         let config = makeConfig()
         let model = SettingsModel()
         model.customModel = "llama3.2:3b"
@@ -1052,12 +2323,12 @@ final class SettingsWorkflowTests: XCTestCase {
 
         XCTAssertEqual(
             LLMInstallCompletion(
-                selectedModel: model.selectedModel, persistedModel: config.llmModel,
+                selectedModel: model.selectedModel, persistedModel: config.mode.llmModel,
                 pullingModel: model.pullingModel, customModel: model.customModel,
                 installed: model.installed?.map(\.name)
             ),
             LLMInstallCompletion(
-                selectedModel: "llama3.2:3b", persistedModel: "llama3.2:3b",
+                selectedModel: "qwen2.5:3b", persistedModel: "qwen2.5:3b",
                 pullingModel: nil, customModel: "", installed: ["llama3.2:3b"]
             )
         )
@@ -1100,7 +2371,7 @@ final class SettingsWorkflowTests: XCTestCase {
 
         XCTAssertEqual(
             LLMInstallState(
-                selectedModel: model.selectedModel, persistedModel: config.llmModel,
+                selectedModel: model.selectedModel, persistedModel: config.mode.llmModel,
                 pullingModel: model.pullingModel, progressStatus: model.pullStatus,
                 progressFraction: model.pullFraction, error: model.pullError,
                 customModel: model.customModel, installed: model.installed?.map(\.name)
@@ -1260,7 +2531,7 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
-    func testDeletingActiveASRModelFallsBackToDefault() async {
+    func testDeletingActiveASRModelFallsBackToDefault() async throws {
         let config = makeConfig()
         let model = SettingsModel()
         let workflow = makeWorkflow(
@@ -1270,7 +2541,7 @@ final class SettingsWorkflowTests: XCTestCase {
         )
         workflow.populatePreferences()
         model.asrModel = "whisper-small"
-        config.setASRModel("whisper-small")
+        try config.setASRModel("whisper-small")
         model.asrDownloaded.insert("whisper-small")
 
         workflow.deleteASRModel("whisper-small")
@@ -1328,9 +2599,6 @@ final class SettingsWorkflowTests: XCTestCase {
             saveHistory: model.saveHistory,
             retention: model.retention,
             sidebarCollapsed: model.sidebar.prefersCollapsed,
-            activeMode: model.activeMode,
-            modeNames: model.modeNames,
-            llmModes: model.llmModes,
             selectedModel: model.selectedModel,
             asrModel: model.asrModel,
             status: model.status
@@ -1339,7 +2607,7 @@ final class SettingsWorkflowTests: XCTestCase {
 
     private func configState(_ config: Config, persisted: Config) -> ConfigState {
         ConfigState(
-            activeMode: config.activeMode,
+            activeMode: config.mode.name,
             hotkey: config.hotkey,
             toggleHotkey: config.toggleHotkey,
             pauseAudio: config.pauseAudio,
@@ -1347,10 +2615,10 @@ final class SettingsWorkflowTests: XCTestCase {
             saveHistory: config.saveHistory,
             retention: config.historyRetention,
             sidebarCollapsed: config.sidebarCollapsed,
-            llmModel: config.llmModel,
+            llmModel: config.mode.llmModel,
             asrModel: config.asrModel,
             persistedHotkey: persisted.hotkey,
-            persistedLLMModel: persisted.llmModel,
+            persistedLLMModel: persisted.mode.llmModel,
             persistedASRModel: persisted.asrModel,
             persistedAppearance: persisted.appearance
         )
@@ -1366,6 +2634,68 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
+    private func makeLiveModeSurfaces(_ config: Config) throws -> LiveModeSurfaces {
+        let menuBarMenu = NSMenu()
+        let menuBar = MenuBarController(
+            config: config,
+            onSettings: {},
+            onCheckForUpdates: {},
+            onModeSelectionError: {},
+            onQuit: {},
+            menu: menuBarMenu
+        )
+        let badge = BadgeController(config: config, onOpenApp: {})
+        let badgeMenu = badge.makeLiveModeMenu()
+        let mode = try XCTUnwrap(config.orderedModes.first)
+        var historyEntry = entry(createdAt: Date(timeIntervalSince1970: 1_700_000_000), text: "Saved")
+        historyEntry.modeID = try XCTUnwrap(mode.id)
+        historyEntry.modeName = mode.name
+        return LiveModeSurfaces(
+            menuBar: menuBar,
+            menuBarMenu: menuBarMenu,
+            badge: badge,
+            badgeMenu: badgeMenu,
+            historyEntry: historyEntry
+        )
+    }
+
+    private func liveModeSurfaceState(
+        _ surfaces: LiveModeSurfaces,
+        config: Config
+    ) -> LiveModeSurfaceState {
+        withExtendedLifetime(surfaces.menuBar) {
+            let history = DictationRowPresentation(
+                entry: surfaces.historyEntry,
+                modes: config.orderedModes
+            )
+            return LiveModeSurfaceState(
+                menuBarNames: modeNames(in: surfaces.menuBarMenu),
+                badgeMenuNames: modeNames(in: surfaces.badgeMenu),
+                badgeModeName: surfaces.badge.model.activeModeName,
+                badgeState: surfaces.badge.model.state,
+                historyModeName: history.fullModeName,
+                historyModeIcon: history.modeIcon,
+                historyModeIsDeleted: history.isDeletedMode,
+                nextCycleModeID: modeCycleSuccessor(in: config)
+            )
+        }
+    }
+
+    private func settingsModeState(_ model: SettingsModel) -> SettingsModeState {
+        SettingsModeState(modes: model.modes, selection: model.modeSelection)
+    }
+
+    private func modeCycleSuccessor(in config: Config) -> ModeID? {
+        guard case let .mode(id) = config.selection else { return nil }
+        return config.modeCycleSuccessor(after: id)
+    }
+
+    private func modeNames(in menu: NSMenu) -> [String] {
+        menu.items.compactMap { item in
+            item.representedObject as? DictationSelection == nil ? nil : item.title
+        }
+    }
+
     private func makeWorkflow(
         config: Config,
         model: SettingsModel,
@@ -1377,7 +2707,9 @@ final class SettingsWorkflowTests: XCTestCase {
         calendar: Calendar = .current,
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
         updates: (any SettingsUpdateChecking)? = nil,
-        reportUpdate: @escaping (String) -> Void = { _ in }
+        reportUpdate: @escaping (String) -> Void = { _ in },
+        updateHotkeys: ((ShortcutBindings) throws -> Void)? = nil,
+        captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
     ) -> SettingsWorkflow {
         let historyStore = historyStore
             ?? JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl"))
@@ -1388,7 +2720,6 @@ final class SettingsWorkflowTests: XCTestCase {
                 config: config,
                 model: model,
                 historyStore: historyStore,
-                persist: {},
                 now: now,
                 scheduleStatusClear: { _ in },
                 llmModels: effects,
@@ -1401,14 +2732,15 @@ final class SettingsWorkflowTests: XCTestCase {
                 calendar: calendar,
                 polish: polish,
                 updates: updates ?? CannedUpdateChecker(result: .failed),
-                reportUpdate: reportUpdate
+                reportUpdate: reportUpdate,
+                updateHotkeys: updateHotkeys,
+                captureGate: captureGate
             )
         }
         return SettingsWorkflow(
             config: config,
             model: model,
             historyStore: historyStore,
-            persist: {},
             now: now,
             scheduleStatusClear: { _ in },
             copy: { text in
@@ -1419,7 +2751,9 @@ final class SettingsWorkflowTests: XCTestCase {
             calendar: calendar,
             polish: polish,
             updates: updates ?? CannedUpdateChecker(result: .failed),
-            reportUpdate: reportUpdate
+            reportUpdate: reportUpdate,
+            updateHotkeys: updateHotkeys,
+            captureGate: captureGate
         )
     }
 
@@ -1456,24 +2790,49 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertTrue(condition(), file: file, line: line)
     }
 
-    private func makeConfig() -> Config {
-        let modes = [
-            "Voice to Text": Mode(
-                name: "Voice to Text", asrModel: ASRModelCatalog.defaultID,
-                llmModel: nil, systemPrompt: nil, vocab: []
-            ),
-            "Clean": Mode(
-                name: "Clean", asrModel: ASRModelCatalog.defaultID,
-                llmModel: "qwen2.5:3b", systemPrompt: "Polish", vocab: [], expands: false
-            ),
-        ]
+    private func makeConfig(path: URL? = nil) -> Config {
+        let cleanID = ModeID.random()
+        let modes = [Mode(
+            id: cleanID,
+            name: "Clean",
+            icon: "text.bubble",
+            asrModel: ASRModelCatalog.defaultID,
+            llmModel: "qwen2.5:3b",
+            transformation: .inPlace,
+            systemPrompt: "Polish",
+            vocabulary: []
+        )]
         return Config(
-            activeMode: "Clean", hotkey: "F5", toggleHotkey: "F6", pauseAudio: false,
-            appearance: .dark,
-            saveHistory: false, historyRetention: .sevenDays, badgePosition: nil,
-            sidebarCollapsed: true, modeOrder: ["Voice to Text", "Clean"], modes: modes,
-            path: dir.appendingPathComponent("modes.json")
+            preferences: Config.Preferences(
+                selection: .mode(cleanID),
+                hotkey: "F5",
+                toggleHotkey: "F6",
+                pauseAudio: false,
+                inputDevice: nil,
+                asrModel: ASRModelCatalog.defaultID,
+                appearance: .dark,
+                saveHistory: false,
+                historyRetention: .sevenDays,
+                sidebarCollapsed: true
+            ),
+            badgePosition: nil,
+            orderedModes: modes,
+            path: path ?? dir.appendingPathComponent("config.json")
         )
+    }
+
+    private func makeFailingConfig() -> Config {
+        makeConfig(path: dir.appendingPathComponent("missing/config.json"))
+    }
+
+    private struct WorkflowStatus: Equatable {
+        let message: String
+        let isError: Bool
+    }
+
+    private struct MissingModeResult {
+        let persistedText: String?
+        let status: WorkflowStatus
     }
 
     private func entry(createdAt: Date, text: String) -> HistoryEntry {

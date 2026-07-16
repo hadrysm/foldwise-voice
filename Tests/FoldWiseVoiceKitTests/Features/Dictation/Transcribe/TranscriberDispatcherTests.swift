@@ -23,7 +23,7 @@ final class TranscriberDispatcherTests: XCTestCase {
     }
 
     private func makeConfig() -> Config {
-        Config.defaultConfig(path: dir.appendingPathComponent("modes.json"))
+        Config.defaultConfig(path: dir.appendingPathComponent("config.json"))
     }
 
     func testTranscribeDelegatesToTheEngine() async throws {
@@ -101,8 +101,7 @@ final class TranscriberDispatcherTests: XCTestCase {
         var loadings: [Bool] = []
         dispatcher.onLoading = { loadings.append($0) }
 
-        config.setASRModel("whisper-large-v3-turbo")
-        try config.saveAndNotify()
+        try config.setASRModel("whisper-large-v3-turbo")
         built.last?.onLoading?(true)
 
         XCTAssertEqual(loadings, [true])
@@ -143,17 +142,16 @@ final class TranscriberDispatcherTests: XCTestCase {
         var fractions: [Double] = []
         dispatcher.onDownloadProgress = { fractions.append($0) }
 
-        config.setASRModel("whisper-large-v3-turbo")
-        try config.saveAndNotify()
+        try config.setASRModel("whisper-large-v3-turbo")
         built.last?.onDownloadProgress?(0.75)
 
         XCTAssertEqual(fractions, [0.75], "progress from the swapped-in engine still reaches the sink")
     }
 
-    func testResolvesTheParakeetEngineForAnUnknownFossilID() {
+    func testResolvesTheParakeetEngineForAnUnknownFossilID() throws {
         // A stored MLX fossil resolves to Parakeet without being rewritten.
-        let config = Config.defaultConfig(path: dir.appendingPathComponent("modes.json"))
-        config.setASRModel("mlx-community/whisper-large-v3-turbo")
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("config.json"))
+        try config.setASRModel("mlx-community/whisper-large-v3-turbo")
         var engines: [ASRModelCatalog.Engine] = []
         _ = TranscriberDispatcher(config: config) { engine in
             engines.append(engine)
@@ -163,9 +161,9 @@ final class TranscriberDispatcherTests: XCTestCase {
         XCTAssertEqual(engines, [.parakeet(version: .v3)])
     }
 
-    func testSelectsTheConfiguredWhisperEngine() {
+    func testSelectsTheConfiguredWhisperEngine() throws {
         let config = makeConfig()
-        config.setASRModel("whisper-small")
+        try config.setASRModel("whisper-small")
         var engines: [ASRModelCatalog.Engine] = []
 
         _ = TranscriberDispatcher(config: config) { engine in
@@ -187,8 +185,7 @@ final class TranscriberDispatcherTests: XCTestCase {
         }
         XCTAssertEqual(built.count, 1, "the initial engine is built at init")
 
-        config.setASRModel("parakeet-different")
-        try config.saveAndNotify()
+        try config.setASRModel("parakeet-different")
 
         XCTAssertEqual(built.count, 2, "a selection change rebuilds the engine")
         let text = try await dispatcher.transcribe([0.1])
@@ -210,8 +207,7 @@ final class TranscriberDispatcherTests: XCTestCase {
             return LifecycleFake(index: index, log: log)
         }
 
-        config.setASRModel("whisper-large-v3-turbo")
-        try config.saveAndNotify()
+        try config.setASRModel("whisper-large-v3-turbo")
 
         XCTAssertEqual(log.events, ["build-0", "release-0", "build-1"])
         _ = dispatcher // keep alive so engine-1 isn't released before the assert
@@ -226,8 +222,7 @@ final class TranscriberDispatcherTests: XCTestCase {
         }
         XCTAssertEqual(buildCount, 1)
 
-        config.hotkey = "cmd_r"
-        try config.saveAndNotify()
+        try config.setHotkey("cmd_r")
 
         XCTAssertEqual(buildCount, 1, "a non-ASR change leaves the engine untouched")
     }

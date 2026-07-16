@@ -1,266 +1,226 @@
-// Behavior of Config beyond serialization: defaults, fallbacks on bad input,
-// and the mode-mutation helpers used by the settings UI.
-
 import XCTest
 @testable import FoldWiseVoiceKit
 
+@MainActor
 final class ConfigBehaviorTests: XCTestCase {
-    /// XCTest instantiates the case once per test method, so each test gets
-    /// its own scratch directory.
-    private let dir = FileManager.default.temporaryDirectory
-        .appendingPathComponent("foldwise-tests-\(UUID().uuidString)")
+    private struct DefaultState: Equatable {
+        let names: [String]
+        let activeName: String
+        let icons: [String]
+        let transformations: [ModeTransformation]
+        let vocabulary: [[String]]
+        let models: [String?]
+        let uniqueIDCount: Int
+    }
+
+    private struct SelectedState: Equatable {
+        let selection: DictationSelection
+        let name: String
+        let icon: String
+        let transformation: ModeTransformation
+        let usesLLM: Bool
+    }
+
+    private struct NormalizedState: Equatable {
+        let name: String
+        let model: String?
+        let prompt: String?
+        let vocabulary: [String]
+        let persisted: Mode?
+    }
+
+    private struct CommitState: Equatable {
+        let modes: [Mode]
+        let selection: DictationSelection?
+        let data: Data?
+        let notifications: [Config.ChangeSet]
+    }
+
+    private let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("foldwise-config-behavior-tests-\(UUID().uuidString)")
 
     override func setUpWithError() throws {
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
     override func tearDownWithError() throws {
-        try FileManager.default.removeItem(at: dir)
+        try FileManager.default.removeItem(at: directory)
     }
 
     private var path: URL {
-        dir.appendingPathComponent("modes.json")
+        directory.appendingPathComponent("config.json")
     }
 
-    func testDefaultConfigShape() {
+    func testDefaultConfigContainsCasualThenEmailWithStableSelection() {
         let config = Config.defaultConfig(path: path)
-        XCTAssertEqual(config.modeOrder, ["Voice to Text", "Clean", "Email", "Bullets"])
-        XCTAssertEqual(config.activeMode, "Clean")
-        XCTAssertEqual(config.hotkey, "alt_r")
-        XCTAssertNil(config.toggleHotkey)
-        XCTAssertTrue(config.pauseAudio)
-        XCTAssertNil(config.inputDevice)
-        XCTAssertEqual(config.appearance, .system)
-        XCTAssertEqual(Set(config.modes.keys), Set(config.modeOrder))
+
+        XCTAssertEqual(
+            DefaultState(
+                names: config.orderedModes.map(\.name),
+                activeName: config.mode.name,
+                icons: config.orderedModes.map(\.icon),
+                transformations: config.orderedModes.map(\.transformation),
+                vocabulary: config.orderedModes.map(\.vocab),
+                models: config.orderedModes.map(\.llmModel),
+                uniqueIDCount: Set(config.orderedModes.compactMap(\.id)).count
+            ),
+            DefaultState(
+                names: ["Casual", "Email"], activeName: "Casual",
+                icons: ["wand.and.sparkles", "envelope"],
+                transformations: [.inPlace, .expanding], vocabulary: [[], []],
+                models: ["qwen2.5:3b", "qwen2.5:3b"], uniqueIDCount: 2
+            )
+        )
     }
 
-    func testAppearanceMissingAndInvalidValuesLoadAsSystem() throws {
-        let values = ["", #", "appearance": "sepia""#, #", "appearance": 42"#]
-
-        for value in values {
-            let json = """
-            {
-              "active_mode": "Only"\(value),
-              "modes": {
-                "Only": {"asr_model": "m", "llm_model": null, "system_prompt": null, "vocab": []}
-              }
-            }
-            """
-            try Data(json.utf8).write(to: path)
-            XCTAssertEqual(try Config.load(from: path).appearance, .system)
-        }
-    }
-
-    func testInputDeviceMissingNullAndInvalidValuesLoadAsSystemDefault() throws {
-        let values = ["", #", "input_device": null"#, #", "input_device": 42"#]
-
-        for value in values {
-            let json = """
-            {
-              "active_mode": "Only"\(value),
-              "modes": {
-                "Only": {"asr_model": "m", "llm_model": null, "system_prompt": null, "vocab": []}
-              }
-            }
-            """
-            try Data(json.utf8).write(to: path)
-            XCTAssertNil(try Config.load(from: path).inputDevice)
-        }
-    }
-
-    func testLoadOrCreateWritesDefaultsWhenFileMissing() throws {
-        XCTAssertFalse(FileManager.default.fileExists(atPath: path.path))
-        let config = Config.loadOrCreate(at: path)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: path.path))
-        XCTAssertEqual(config.activeMode, "Clean")
-        // The written file must itself load cleanly.
-        XCTAssertNoThrow(try Config.load(from: path))
-    }
-
-    func testLoadOrCreateFallsBackToDefaultsOnCorruptJSON() throws {
-        try Data("{ this is not json".utf8).write(to: path)
-        let config = Config.loadOrCreate(at: path)
-        XCTAssertEqual(config.modeOrder, ["Voice to Text", "Clean", "Email", "Bullets"])
-    }
-
-    func testLoadThrowsWhenModesMissingOrEmpty() throws {
-        try Data(#"{"active_mode": "Clean"}"#.utf8).write(to: path)
-        XCTAssertThrowsError(try Config.load(from: path))
-        try Data(#"{"modes": {}}"#.utf8).write(to: path)
-        XCTAssertThrowsError(try Config.load(from: path))
-    }
-
-    func testUnknownActiveModeFallsBackToFirstModeInFileOrder() throws {
-        let json = """
-        {
-          "active_mode": "Nope",
-          "modes": {
-            "Second": {"asr_model": "m", "llm_model": null, "system_prompt": null, "vocab": []},
-            "First": {"asr_model": "m", "llm_model": null, "system_prompt": null, "vocab": []}
-          }
-        }
-        """
-        try Data(json.utf8).write(to: path)
-        let config = try Config.load(from: path)
-        XCTAssertEqual(config.activeMode, "Second")
-        XCTAssertEqual(config.mode.name, "Second")
-    }
-
-    func testSetActiveModeIgnoresUnknownNames() {
+    func testVoiceToTextSelectionBypassesPolish() throws {
         let config = Config.defaultConfig(path: path)
-        config.setActiveMode("Does Not Exist")
-        XCTAssertEqual(config.activeMode, "Clean")
-        config.setActiveMode("Email")
-        XCTAssertEqual(config.activeMode, "Email")
+
+        try config.select(.voiceToText)
+
+        XCTAssertEqual(
+            selectedState(config),
+            SelectedState(
+                selection: .voiceToText, name: "Voice to Text", icon: "waveform",
+                transformation: .inPlace, usesLLM: false
+            )
+        )
     }
 
-    func testModeFallsBackToFirstOrderedModeAfterLiveMutation() {
+    func testRenamePreservesStableSelectionAndExplicitTransformation() throws {
         let config = Config.defaultConfig(path: path)
-        config.modes.removeValue(forKey: config.activeMode)
+        let selectedID = try XCTUnwrap(config.orderedModes.first?.id)
 
-        XCTAssertEqual(config.mode.name, "Voice to Text")
+        var mode = try XCTUnwrap(config.orderedModes.first)
+        mode.name = "Conversation"
+        mode.transformation = .expanding
+        try config.saveMode(mode)
+
+        XCTAssertEqual(
+            selectedState(config),
+            SelectedState(
+                selection: .mode(selectedID), name: "Conversation",
+                icon: "wand.and.sparkles", transformation: .expanding, usesLLM: true
+            )
+        )
     }
 
-    func testModeFallsBackToRawDictationWhenLiveModesBecomeEmpty() {
+    func testUpdateNormalizesModeAndVocabularyBeforePersisting() throws {
         let config = Config.defaultConfig(path: path)
-        config.modes.removeAll()
 
-        let mode = config.mode
+        var candidate = try XCTUnwrap(config.orderedModes.first)
+        candidate.name = "  Café\n  Notes  "
+        candidate.llmModel = " qwen2.5:3b "
+        candidate.systemPrompt = "  Keep this wording.  "
+        candidate.vocab = [" FoldWise ", "foldwise", "", " Résumé "]
+        try config.saveMode(candidate)
 
-        XCTAssertEqual(mode.name, "Voice to Text")
-        XCTAssertFalse(mode.usesLLM)
+        let mode = try XCTUnwrap(config.orderedModes.first)
+        XCTAssertEqual(
+            NormalizedState(
+                name: mode.name, model: mode.llmModel, prompt: mode.systemPrompt,
+                vocabulary: mode.vocab,
+                persisted: try Config.load(from: path).orderedModes.first
+            ),
+            NormalizedState(
+                name: "Café Notes", model: "qwen2.5:3b", prompt: "Keep this wording.",
+                vocabulary: ["FoldWise", "Résumé"], persisted: mode
+            )
+        )
     }
 
-    func testSetLLMModelOnlyTouchesLLMEnabledModes() {
+    func testZeroModesIsValidOnlyForVoiceToText() throws {
         let config = Config.defaultConfig(path: path)
-        config.setLLMModel("gemma3:1b")
-        XCTAssertNil(config.modes["Voice to Text"]?.llmModel)
-        XCTAssertEqual(config.modes["Clean"]?.llmModel, "gemma3:1b")
-        XCTAssertEqual(config.modes["Email"]?.llmModel, "gemma3:1b")
-        XCTAssertEqual(config.modes["Bullets"]?.llmModel, "gemma3:1b")
-        XCTAssertEqual(config.llmModel, "gemma3:1b")
+
+        try config.replaceModes([], selection: .voiceToText)
+
+        XCTAssertEqual(
+            CommitState(
+                modes: config.orderedModes,
+                selection: try Config.load(from: path).selection,
+                data: nil, notifications: []
+            ),
+            CommitState(
+                modes: [], selection: .voiceToText,
+                data: nil, notifications: []
+            )
+        )
     }
 
-    func testLLMModelIsNilWhenNoModeUsesLLM() {
+    func testZeroModesRejectsModeSelectionWithoutChangingCommittedState() {
         let config = Config.defaultConfig(path: path)
-        config.modes = config.modes.mapValues { mode in
-            var mode = mode
-            mode.llmModel = nil
-            return mode
-        }
+        let original = config.orderedModes
 
-        XCTAssertNil(config.llmModel)
+        assertThrowsConfigError(
+            .invalid,
+            try config.replaceModes([], selection: config.selection)
+        )
+
+        XCTAssertEqual(
+            CommitState(
+                modes: config.orderedModes, selection: nil,
+                data: nil, notifications: []
+            ),
+            CommitState(
+                modes: original, selection: nil,
+                data: nil, notifications: []
+            )
+        )
     }
 
-    func testDefaultConfigUsesParakeetV3ForASRModel() {
-        // Fresh install defaults to our own id, not the old MLX fossil (ADR-0006).
+    func testValidationFailureLeavesDiskLiveStateAndObserversAtCommit() throws {
         let config = Config.defaultConfig(path: path)
-        XCTAssertEqual(config.asrModel, "parakeet-v3")
-        for name in config.modeOrder {
-            XCTAssertEqual(config.modes[name]?.asrModel, "parakeet-v3")
-        }
+        try config.save()
+        let originalData = try Data(contentsOf: path)
+        let originalModes = config.orderedModes
+        var received: [Config.ChangeSet] = []
+        config.onChange { received.append($0) }
+
+        var duplicate = try XCTUnwrap(config.orderedModes.last)
+        duplicate.name = "casual"
+        assertThrowsConfigError(.invalid, try config.saveMode(duplicate))
+
+        XCTAssertEqual(
+            CommitState(
+                modes: config.orderedModes, selection: nil,
+                data: try Data(contentsOf: path), notifications: received
+            ),
+            CommitState(
+                modes: originalModes, selection: nil,
+                data: originalData, notifications: []
+            )
+        )
     }
 
-    func testASRModelReadsTheFirstModeInOrder() throws {
-        let json = """
-        {
-          "active_mode": "Second",
-          "modes": {
-            "First": {"asr_model": "id-first", "llm_model": null, "system_prompt": null, "vocab": []},
-            "Second": {"asr_model": "id-second", "llm_model": null, "system_prompt": null, "vocab": []}
-          }
-        }
-        """
-        try Data(json.utf8).write(to: path)
-        let config = try Config.load(from: path)
-        XCTAssertEqual(config.asrModel, "id-first")
-    }
-
-    func testASRModelFallsBackToDefaultWhenLiveModesBecomeEmpty() {
+    func testModeCycleSuccessorFollowsOrderAndHandlesNoSuccessor() throws {
         let config = Config.defaultConfig(path: path)
-        config.modes.removeAll()
+        let firstID = try XCTUnwrap(config.orderedModes.first?.id)
+        let secondID = try XCTUnwrap(config.orderedModes.last?.id)
 
-        XCTAssertEqual(config.asrModel, ASRModelCatalog.defaultID)
+        let successors = [
+            config.modeCycleSuccessor(after: firstID),
+            config.modeCycleSuccessor(after: secondID),
+            config.modeCycleSuccessor(after: .random()),
+        ]
+        try config.replaceModes([config.orderedModes[0]], selection: .mode(firstID))
+        let singleModeSuccessor = config.modeCycleSuccessor(after: firstID)
+        try config.replaceModes([], selection: .voiceToText)
+        let zeroModeSuccessor = config.modeCycleSuccessor(after: firstID)
+
+        XCTAssertEqual(
+            successors + [singleModeSuccessor, zeroModeSuccessor],
+            [secondID, firstID, nil, nil, nil]
+        )
     }
 
-    func testSetASRModelWritesEveryMode() {
-        let config = Config.defaultConfig(path: path)
-        config.setASRModel("whisper-large-v3-turbo")
-        for name in config.modeOrder {
-            XCTAssertEqual(config.modes[name]?.asrModel, "whisper-large-v3-turbo")
-        }
-        XCTAssertEqual(config.asrModel, "whisper-large-v3-turbo")
-    }
-
-    func testPickingAModelOverwritesAPreservedFossilAcrossModes() throws {
-        let json = """
-        {
-          "active_mode": "Only",
-          "modes": {
-            "Only": {
-              "asr_model": "mlx-community/whisper-large-v3-turbo",
-              "llm_model": null, "system_prompt": null, "vocab": []
-            }
-          }
-        }
-        """
-        try Data(json.utf8).write(to: path)
-        let config = try Config.load(from: path)
-        XCTAssertEqual(config.asrModel, "mlx-community/whisper-large-v3-turbo")
-        config.setASRModel("parakeet-v3")
-        XCTAssertEqual(config.asrModel, "parakeet-v3")
-    }
-
-    func testUsesLLMIsFalseForNilAndEmptyModel() {
-        var mode = Mode(name: "M", asrModel: "m", llmModel: nil, systemPrompt: nil, vocab: [])
-        XCTAssertFalse(mode.usesLLM)
-        mode.llmModel = ""
-        XCTAssertFalse(mode.usesLLM)
-        mode.llmModel = "llama3.2:3b"
-        XCTAssertTrue(mode.usesLLM)
-    }
-
-    func testBuiltInInPlaceModesDoNotExpand() {
-        let config = Config.defaultConfig(path: path)
-        XCTAssertEqual(config.modes["Clean"]?.expands, false)
-        XCTAssertEqual(config.modes["Voice to Text"]?.expands, false)
-    }
-
-    func testBuiltInExpandingModesExpand() {
-        let config = Config.defaultConfig(path: path)
-        XCTAssertEqual(config.modes["Email"]?.expands, true)
-        XCTAssertEqual(config.modes["Bullets"]?.expands, true)
-    }
-
-    func testLoadedUserDefinedModeDefaultsToExpanding() throws {
-        let json = """
-        {
-          "active_mode": "Custom",
-          "modes": {
-            "Custom": {"asr_model": "m", "llm_model": "qwen2.5:3b", "system_prompt": "do a thing", "vocab": []}
-          }
-        }
-        """
-        try Data(json.utf8).write(to: path)
-        let config = try Config.load(from: path)
-        XCTAssertEqual(config.modes["Custom"]?.expands, true)
-    }
-
-    func testReloadedBuiltInKeepsInPlaceCalibration() throws {
-        // `expands` is never persisted, so a reloaded Clean must re-derive its
-        // In-place calibration from the name — not silently become loose.
-        try Config.defaultConfig(path: path).save()
-        let reloaded = try Config.load(from: path)
-        XCTAssertEqual(reloaded.modes["Clean"]?.expands, false)
-    }
-
-    func testExpandsIsNotPersisted() throws {
-        try Config.defaultConfig(path: path).save()
-        let written = try String(contentsOf: path, encoding: .utf8)
-        XCTAssertFalse(written.contains("expands"))
-    }
-
-    func testResolvePathPrefersExplicitCLIPath() {
+    func testResolvePathPrefersExplicitConfigPath() {
         XCTAssertEqual(Config.resolvePath(cliPath: path.path), path)
+    }
+
+    private func selectedState(_ config: Config) -> SelectedState {
+        SelectedState(
+            selection: config.selection, name: config.mode.name, icon: config.mode.icon,
+            transformation: config.mode.transformation, usesLLM: config.mode.usesLLM
+        )
     }
 }

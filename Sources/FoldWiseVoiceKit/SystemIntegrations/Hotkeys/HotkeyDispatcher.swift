@@ -8,28 +8,60 @@ final class HotkeyDispatcher {
 
     private let ptt: KeySpec
     private let toggle: KeySpec?
+    private let cycle: KeySpec?
+    private let isSuspended: () -> Bool
     private let onPress: () -> Void
     private let onRelease: () -> Void
     private let onToggle: () -> Void
+    private let onCycle: () -> Void
     private var pttDown = false
+    private var toggleDown = false
+    private var cycleDown = false
 
     init(
         pttKey: String,
         toggleKey: String?,
+        cycleKey: String? = nil,
+        isSuspended: @escaping () -> Bool = { false },
         onPress: @escaping () -> Void,
         onRelease: @escaping () -> Void,
-        onToggle: @escaping () -> Void
+        onToggle: @escaping () -> Void,
+        onCycle: @escaping () -> Void = {}
     ) throws {
-        ptt = try KeyMap.parse(pttKey)
-        toggle = try toggleKey.map { try KeyMap.parse($0) }
+        let commands = try ShortcutBindings(
+            pushToTalk: pttKey,
+            toggleRecording: toggleKey,
+            modeCycle: cycleKey
+        ).effectiveCommands
+        guard let ptt = commands[.pushToTalk] else {
+            throw ConfigError.invalid("Push to Talk must have a key.")
+        }
+        self.ptt = ptt
+        toggle = commands[.toggleRecording]
+        cycle = commands[.modeCycle]
+        self.isSuspended = isSuspended
         self.onPress = onPress
         self.onRelease = onRelease
         self.onToggle = onToggle
+        self.onCycle = onCycle
     }
 
     func process(_ event: Event) {
+        if isSuspended() {
+            releaseActivePushToTalkHold()
+            toggleDown = false
+            cycleDown = false
+            return
+        }
         switch event {
         case let .flagsChanged(keycode, flags):
+            if KeyMap.isLatchingModifier(keycode: keycode) {
+                // Caps Lock reports one flags-changed event when its latch
+                // toggles, rather than separate physical down/up events.
+                dispatch(keycode: keycode, character: nil, down: true)
+                dispatch(keycode: keycode, character: nil, down: false)
+                return
+            }
             let down = KeyMap.isModifierDown(keycode: keycode, flags: flags) ?? false
             dispatch(keycode: keycode, character: nil, down: down)
         case .key(_, _, _, isRepeat: true):
@@ -37,6 +69,12 @@ final class HotkeyDispatcher {
         case let .key(keycode, character, down, _):
             dispatch(keycode: keycode, character: character, down: down)
         }
+    }
+
+    func releaseActivePushToTalkHold() {
+        guard pttDown else { return }
+        pttDown = false
+        onRelease()
     }
 
     private func dispatch(keycode: CGKeyCode, character: String?, down: Bool) {
@@ -48,8 +86,20 @@ final class HotkeyDispatcher {
                 pttDown = false
                 onRelease()
             }
-        } else if down, let toggle, matches(toggle, keycode: keycode, character: character) {
-            onToggle()
+        } else if let toggle, matches(toggle, keycode: keycode, character: character) {
+            if down, !toggleDown {
+                toggleDown = true
+                onToggle()
+            } else if !down {
+                toggleDown = false
+            }
+        } else if let cycle, matches(cycle, keycode: keycode, character: character) {
+            if down, !cycleDown {
+                cycleDown = true
+                onCycle()
+            } else if !down {
+                cycleDown = false
+            }
         }
     }
 

@@ -8,6 +8,19 @@ struct HistoryProjection: Equatable {
         let entries: [HistoryEntry]
         let search: String
         let flaggedOnly: Bool
+        let modes: [Mode]
+
+        init(
+            entries: [HistoryEntry],
+            search: String,
+            flaggedOnly: Bool,
+            modes: [Mode] = []
+        ) {
+            self.entries = entries
+            self.search = search
+            self.flaggedOnly = flaggedOnly
+            self.modes = modes
+        }
     }
 
     struct Row: Equatable, Identifiable {
@@ -55,7 +68,11 @@ struct HistoryProjection: Equatable {
             if buckets[day] == nil { dayOrder.append(day) }
             buckets[day, default: []].append(Row(
                 entry: entry,
-                presentation: DictationRowPresentation(entry: entry, calendar: calendar)
+                presentation: DictationRowPresentation(
+                    entry: entry,
+                    modes: input.modes,
+                    calendar: calendar
+                )
             ))
         }
 
@@ -94,10 +111,10 @@ struct HistoryProjection: Equatable {
     }
 }
 
-/// Memoizes History's O(n) projection by the only three values that can change
-/// its collection result and the current calendar day that determines relative
-/// headers. SwiftUI may republish unrelated settings freely without making the
-/// collection rescan or regroup.
+/// Memoizes History's O(n) projection by its entries, filters, current Mode
+/// library, and the calendar day that determines relative headers. SwiftUI may
+/// republish unrelated settings freely without making the collection rescan or
+/// regroup.
 final class HistoryProjectionCache {
     typealias Project = (HistoryProjection.Input) -> HistoryProjection
     private typealias TimedProject = (HistoryProjection.Input, Date) -> HistoryProjection

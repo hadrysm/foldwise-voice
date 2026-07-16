@@ -1,4 +1,4 @@
-// KeyMap: pynput-compatible key names ↔ macOS virtual keycodes. modes.json
+// KeyMap: pynput-compatible key names ↔ macOS virtual keycodes. config.json
 // written by either app must parse identically in both.
 
 import XCTest

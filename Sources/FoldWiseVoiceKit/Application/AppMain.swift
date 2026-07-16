@@ -97,7 +97,6 @@ private func acquireInstanceLock(port: UInt16) -> Bool {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let configPath: String?
-    let modeOverride: String?
 
     // Standard AppKit delayed-init: these exist for the app's whole life but
     // can only be built in applicationDidFinishLaunching. Optionals would
@@ -109,20 +108,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var badge: BadgeController!
     private var settings: SettingsController!
     private var menuBar: MenuBarController!
-    private var listener: HotkeyListener?
+    private var hotkeys: HotkeyBindingCoordinator!
+    private var modeCycleCommand: ModeCycleCommand!
     private var updateChecker: UpdateChecker!
+    private let shortcutCaptureGate = ShortcutCaptureGate()
     // swiftlint:enable implicitly_unwrapped_optional
 
-    init(configPath: String?, modeOverride: String?) {
+    init(configPath: String?) {
         self.configPath = configPath
-        self.modeOverride = modeOverride
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let acquiredInstanceLock = acquireInstanceLock(port: lockPort)
         let url = Config.resolvePath(cliPath: configPath)
         config = Config.loadOrCreate(at: url)
-        if let modeOverride { config.setActiveMode(modeOverride) }
         appearanceReactor = AppearanceReactor(config: config)
 
         guard acquiredInstanceLock else {
@@ -173,33 +172,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             config: config, recorder: recorder, transcriber: transcriber,
             record: { historyStore.append($0) }
         )
-        settings = SettingsController(
-            config: config, historyStore: historyStore, statsStore: statsStore,
-            inputDevices: recorder
-        )
         badge = BadgeController(config: config) { [weak self] in
             self?.settings.show()
         }
         badge.recorder = recorder
         badge.onStop = { [weak self] in self?.pipeline.stopRecording() }
         badge.onRecord = { [weak self] in self?.pipeline.toggleRecording() }
+        modeCycleCommand = ModeCycleCommand(
+            config: config,
+            onCommitted: { [weak self] transition in
+                self?.badge.confirmModeCycle(transition)
+            },
+            onFailure: { [weak self] error in
+                Log.hotkey.error(
+                    "Mode cycle failed: \(error.localizedDescription, privacy: .public)"
+                )
+                self?.badge.showModeCycleError()
+            }
+        )
+        hotkeys = HotkeyBindingCoordinator(
+            config: config,
+            callbacks: HotkeyCallbacks(
+                isSuspended: { [weak self] in
+                    self?.shortcutCaptureGate.isCapturing ?? false
+                },
+                onPress: { [weak self] in self?.pipeline.startRecording() },
+                onRelease: { [weak self] in self?.pipeline.stopRecording() },
+                onToggle: { [weak self] in self?.pipeline.toggleRecording() },
+                onCycle: { [weak self] in self?.modeCycleCommand.perform() },
+                onHealthChange: { [weak self] health in
+                    self?.settings?.model.shortcutListenerHealth = health
+                }
+            ),
+            prepare: { bindings, callbacks in
+                let listener = try HotkeyListener(
+                    pttKey: bindings.pushToTalk,
+                    toggleKey: bindings.toggleRecording,
+                    cycleKey: bindings.modeCycle,
+                    isSuspended: callbacks.isSuspended,
+                    onPress: callbacks.onPress,
+                    onRelease: callbacks.onRelease,
+                    onToggle: callbacks.onToggle,
+                    onCycle: callbacks.onCycle
+                )
+                listener.onHealthChange = callbacks.onHealthChange
+                return listener
+            }
+        )
+        settings = SettingsController(
+            config: config, historyStore: historyStore, statsStore: statsStore,
+            inputDevices: recorder, hotkeys: hotkeys, captureGate: shortcutCaptureGate
+        )
         menuBar = MenuBarController(
             config: config,
             onSettings: { [weak self] in self?.settings.show() },
             onCheckForUpdates: { [weak self] in self?.checkForUpdatesManually() },
+            onModeSelectionError: { [weak self] in self?.badge.showModeSelectionError() },
             onQuit: { [weak self] in self?.quit() }
         )
         settings.onUpdateAvailable = { [weak self] version in
             self?.menuBar.showUpdateAvailable(version)
         }
-        // The other config reactors subscribe in their own inits; the hotkey
-        // listener has no controller object, so its subscription lives here.
-        // Rebinding tears down the TCC-sensitive event tap, so it must run
-        // only when a hotkey actually changed.
-        config.onChange { [weak self] changes in
-            if changes.contains(.hotkeys) { self?.startListener() }
-        }
-
         pipeline.onState = { [weak self] state in
             Task { @MainActor in self?.apply(state) }
         }
@@ -211,32 +244,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Permissions.requestAtLaunch()
 
-        startListener()
-        transcriber.warmup()
-
-        // The living idle pill is the ready signal (PRD #103); the hotkey
-        // hint lives on Home, rendered from the live config.
-        badge.show()
-    }
-
-    private func startListener() {
-        listener?.stop()
-        listener = nil
         do {
-            let l = try HotkeyListener(
-                pttKey: config.hotkey,
-                toggleKey: config.toggleHotkey,
-                onPress: { [weak self] in self?.pipeline.startRecording() },
-                onRelease: { [weak self] in self?.pipeline.stopRecording() },
-                onToggle: { [weak self] in self?.pipeline.toggleRecording() }
-            )
-            l.start()
-            listener = l
+            try hotkeys.start()
         } catch {
             Log.app.error(
                 "Hotkey setup failed: \(error.localizedDescription, privacy: .public)"
             )
         }
+        transcriber.warmup()
+
+        // The living idle pill is the ready signal (PRD #103); the hotkey
+        // hint lives on Home, rendered from the live config.
+        badge.show()
+        if config.isReadOnly { settings.show() }
     }
 
     /// "Check for Updates…" from the menu bar: check immediately and always
@@ -291,7 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() {
-        listener?.stop()
+        hotkeys.stop()
         pipeline.shutdown()
         badge.hide()
         NSApp.terminate(nil)
@@ -350,49 +370,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - entry point
-
 public enum FoldWiseVoiceApp {
     public static func main() {
-        var cliConfig: String?
-        var cliMode: String?
-        var printConfig = false
-        var argIterator = CommandLine.arguments.dropFirst().makeIterator()
-        while let arg = argIterator.next() {
-            switch arg {
-            case "--config": cliConfig = argIterator.next()
-            case "--mode": cliMode = argIterator.next()
-            case "--print-config": printConfig = true
-            default: break
+        let action = FoldWiseVoiceCommandLine().evaluate(arguments: CommandLine.arguments)
+        let cliConfig: String?
+        switch action {
+        case let .launch(configPath):
+            cliConfig = configPath
+        case let .terminate(result):
+            if let output = result.standardOutput.data(using: .utf8) {
+                FileHandle.standardOutput.write(output)
             }
-        }
-
-        if printConfig {
-            // Diagnostic: load the resolved config and echo it re-serialized, to
-            // verify modes.json round-trips losslessly. Exits without starting the UI.
-            let url = Config.resolvePath(cliPath: cliConfig)
-            let config = Config.loadOrCreate(at: url)
-            let tmp = FileManager.default.temporaryDirectory
-                .appendingPathComponent("foldwise-config-check.json")
-            let echo = Config(
-                activeMode: config.activeMode, hotkey: config.hotkey,
-                toggleHotkey: config.toggleHotkey, pauseAudio: config.pauseAudio,
-                inputDevice: config.inputDevice,
-                appearance: config.appearance,
-                saveHistory: config.saveHistory,
-                historyRetention: config.historyRetention, badgePosition: config.badgePosition,
-                sidebarCollapsed: config.sidebarCollapsed, modeOrder: config.modeOrder,
-                modes: config.modes, path: tmp
-            )
-            try? echo.save()
-            print("config: \(url.path)")
-            print((try? String(contentsOf: tmp, encoding: .utf8)) ?? "<save failed>")
-            exit(0)
+            if let error = result.standardError.data(using: .utf8) {
+                FileHandle.standardError.write(error)
+            }
+            exit(result.status)
         }
 
         MainActor.assumeIsolated {
             let app = NSApplication.shared
-            let delegate = AppDelegate(configPath: cliConfig, modeOverride: cliMode)
+            let delegate = AppDelegate(configPath: cliConfig)
             app.delegate = delegate
             app.setActivationPolicy(.accessory)
             app.run()

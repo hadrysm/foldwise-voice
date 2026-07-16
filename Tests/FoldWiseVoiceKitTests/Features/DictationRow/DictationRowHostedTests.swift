@@ -21,7 +21,7 @@ final class DictationRowHostedTests: XCTestCase {
             presentation: presentation,
             moreCapabilities: DictationRowMoreCapabilities(
                 canCopyRaw: true,
-                polishModeNames: ["Clean"]
+                polishModes: [.init(id: .random(), name: "Clean")]
             )
         )
 
@@ -131,7 +131,7 @@ final class DictationRowHostedTests: XCTestCase {
             presentation: DictationRowPresentation(entry: entry(), calendar: utcCalendar()),
             moreCapabilities: DictationRowMoreCapabilities(
                 canCopyRaw: true,
-                polishModeNames: ["Clean"]
+                polishModes: [.init(id: .random(), name: "Clean")]
             ),
             onCommand: { _ in },
             interactionState: interaction,

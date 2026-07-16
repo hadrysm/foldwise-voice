@@ -1,6 +1,6 @@
 // Owns the settings NSWindow and mediates between SettingsModel (UI state)
-// and Config/OllamaClient/UpdateChecker. Every change commits straight to
-// modes.json; there is no Save button.
+// and Config/OllamaClient/UpdateChecker. Preferences commit immediately;
+// Mode drafts commit only through the editor's Save action.
 
 import AppKit
 import SwiftUI
@@ -11,22 +11,32 @@ final class SettingsController {
     private let historyStore: HistoryStore
     private let statsStore: StatsStore
     private let inputDevices: (any AudioInputStateProviding)?
+    private let hotkeys: HotkeyBindingCoordinator?
+    private let captureGate: ShortcutCaptureGate
     let model = SettingsModel()
     private lazy var workflow = SettingsWorkflow(
         config: config,
         model: model,
         historyStore: historyStore,
-        persist: { [config] in try config.saveAndNotify() },
         now: Date.init,
         scheduleStatusClear: { [weak self] clear in self?.scheduleStatusClear(clear) },
         copy: Self.copyToPasteboard,
         statsStore: statsStore,
-        reportUpdate: { [weak self] version in self?.onUpdateAvailable?(version) }
+        reportUpdate: { [weak self] version in self?.onUpdateAvailable?(version) },
+        updateHotkeys: { [weak self] bindings in
+            if let hotkeys = self?.hotkeys {
+                try hotkeys.update(bindings)
+            } else {
+                try self?.config.setShortcutBindings(bindings)
+            }
+        },
+        captureGate: captureGate
     )
     private var window: NSWindow?
     private var keyMonitor: Any?
     private var statusClearTask: Task<Void, Never>?
     private var closeObserver: NSObjectProtocol?
+    private var resignObserver: NSObjectProtocol?
 
     /// Wired by AppDelegate so a manual check here also lights up the
     /// menu-bar "Update Available" item.
@@ -34,12 +44,16 @@ final class SettingsController {
 
     init(
         config: Config, historyStore: HistoryStore, statsStore: StatsStore,
-        inputDevices: (any AudioInputStateProviding)? = nil
+        inputDevices: (any AudioInputStateProviding)? = nil,
+        hotkeys: HotkeyBindingCoordinator? = nil,
+        captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
     ) {
         self.config = config
         self.historyStore = historyStore
         self.statsStore = statsStore
         self.inputDevices = inputDevices
+        self.hotkeys = hotkeys
+        self.captureGate = captureGate
         if let inputDevices {
             model.inputState = inputDevices.inputState
             inputDevices.onInputStateChange = { [weak self] state in
@@ -52,6 +66,7 @@ final class SettingsController {
 
     deinit {
         if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
     }
 
     func show() {
@@ -71,7 +86,21 @@ final class SettingsController {
             self?.workflow.selectInputDevice(uid)
         }
         model.onRecord = { [weak self] field in self?.startRecording(field) }
-        model.onSelectModel = { [weak self] name in self?.workflow.selectLLMModel(name) }
+        model.onOpenShortcutPermissions = { Self.openShortcutPermissions() }
+        model.onSelectMode = { [weak self] selection in self?.workflow.selectMode(selection) }
+        model.onAddMode = { [weak self] in self?.workflow.beginAddMode() }
+        model.onEditMode = { [weak self] id in self?.workflow.beginEditMode(id) }
+        model.onDuplicateMode = { [weak self] id in self?.workflow.beginDuplicateMode(id) }
+        model.onMoveMode = { [weak self] id, direction in
+            self?.workflow.moveMode(id, direction: direction)
+        }
+        model.onRequestModeDeletion = { [weak self] id in
+            self?.workflow.requestModeDeletion(id)
+        }
+        model.onConfirmModeDeletion = { [weak self] in self?.workflow.confirmModeDeletion() }
+        model.onCancelModeDeletion = { [weak self] in self?.workflow.cancelModeDeletion() }
+        model.onSaveModeEditor = { [weak self] in self?.workflow.saveModeEditor() }
+        model.onCancelModeEditor = { [weak self] in self?.workflow.cancelModeEditor() }
         model.onInstallModel = { [weak self] name in self?.workflow.installLLMModel(name) }
         model.onDeleteModel = { [weak self] name in self?.workflow.deleteLLMModel(name) }
         model.onRefreshModels = { [weak self] in self?.workflow.refreshLLMModels() }
@@ -79,15 +108,13 @@ final class SettingsController {
         model.onDownloadASRModel = { [weak self] id in self?.workflow.downloadASRModel(id) }
         model.onCancelASRDownload = { [weak self] in self?.workflow.cancelASRDownload() }
         model.onDeleteASRModel = { [weak self] id in self?.workflow.deleteASRModel(id) }
-        model.onEditFile = { [weak self] in
-            guard let self else { return }
-            NSWorkspace.shared.open(config.path)
-        }
         model.onCheckUpdates = { [weak self] in self?.workflow.checkForUpdates() }
         model.onHistoryCommand = { [weak self] entry, command in
             self?.workflow.performHistoryCommand(command, for: entry)
         }
         model.onClearHistory = { [weak self] in self?.workflow.clearHistory() }
+        model.onResetConfiguration = { [weak self] in self?.resetConfiguration() }
+        model.onQuitRecovery = { NSApp.terminate(nil) }
     }
 
     private func build() {
@@ -99,10 +126,15 @@ final class SettingsController {
             forName: NSWindow.willCloseNotification, object: win, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.stopKeyMonitor()
+                self?.cancelRecording()
                 // Back to menu-bar-only once settings closes.
                 NSApp.setActivationPolicy(.accessory)
             }
+        }
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: win, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.cancelRecording() }
         }
         window = win
     }
@@ -135,6 +167,18 @@ final class SettingsController {
         workflow.checkForUpdates()
     }
 
+    private func resetConfiguration() {
+        do {
+            let backup = try config.resetRecovery()
+            populate()
+            model.status = "Reset complete. Backup: \(backup.lastPathComponent)"
+            model.statusIsError = false
+        } catch {
+            model.status = "Reset failed: \(error.localizedDescription)"
+            model.statusIsError = true
+        }
+    }
+
     private static func copyToPasteboard(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -145,9 +189,19 @@ final class SettingsController {
 
     private func startRecording(_ field: SettingsModel.RecordingField) {
         stopKeyMonitor()
-        workflow.beginRecording(field)
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+        guard workflow.beginRecording(field) else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .flagsChanged, .leftMouseUp, .rightMouseUp]
+        ) { [weak self] event in
             guard let self else { return event }
+            if event.type == .leftMouseUp || event.type == .rightMouseUp {
+                // A SwiftUI Button handles this same mouse-up before the queued
+                // task runs. The active chip therefore observes and cancels its
+                // own capture, while every other completed click cancels after
+                // its action without timing thresholds.
+                Task { @MainActor [weak self] in self?.cancelRecording() }
+                return event
+            }
             var name: String?
             if event.type == .flagsChanged {
                 // Capture modifiers on press only (flag bit present).
@@ -165,6 +219,21 @@ final class SettingsController {
             stopKeyMonitor()
             return nil // swallow the keystroke
         }
+    }
+
+    private func cancelRecording() {
+        stopKeyMonitor()
+        workflow.cancelRecording()
+    }
+
+    private static func openShortcutPermissions() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+        ) else {
+            Log.hotkey.error("Could not construct the shortcut permission settings URL")
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     private func stopKeyMonitor() {

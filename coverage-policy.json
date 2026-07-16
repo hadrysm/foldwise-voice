@@ -71,6 +71,10 @@
       "reason": "Declarative SwiftUI settings composition"
     },
     {
+      "path": "Sources/FoldWiseVoiceKit/Features/Settings/ModeEditorSheet.swift",
+      "reason": "Declarative SwiftUI Mode-editor composition; normalization, validation, choice presentation, and transactions live in covered collaborators"
+    },
+    {
       "path": "Sources/FoldWiseVoiceKit/Features/Settings/ModelsCombinedPane.swift",
       "reason": "Declarative SwiftUI settings composition extracted from SettingsView"
     },

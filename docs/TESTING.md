@@ -151,11 +151,13 @@ Run the relevant sections earlier when a boundary changes:
 |---|---|
 | Microphone capture or input-device routing | 1, 2, 3, and 9 |
 | Permission onboarding or prompts | 1 and 6; section 1 must use a clean macOS user account |
-| Global hotkey installation or handling | 2 and 3, while another app has focus |
+| Global hotkey installation or handling | 2, 3, and 11, while another app has focus |
+| Mode configuration, lifecycle, or History attribution | 5, 7, 10, 11, and 12 |
+| Configuration loading, persistence, or recovery | 2, 11, and 13 |
 | Parakeet, Whisper, model storage, or ASR dispatch | 2 and 4; always exercise both ASR engines |
 | Ollama transport or Polish integration | 5 |
 | Clipboard or Accessibility insertion | 2 and 6 |
-| Badge, menu bar, or AppKit window behavior | 7 |
+| Badge, menu bar, or AppKit window behavior | 7 and 11 |
 | Audio ducking or restoration | 8 |
 | Home or History Dictation-row presentation and interaction | 10 |
 
@@ -172,11 +174,12 @@ pre-release run.
 3. In **Settings → Models → Speech recognition**, make sure Parakeet TDT v3 and
    at least one Whisper model are downloaded. A first-time download is allowed
    in this manual procedure.
-4. For Polish checks, run Ollama and install the model selected by the Clean
+4. For Polish checks, run Ollama and install the model selected by the Casual
    Mode. Note how to stop and restart Ollama on this Mac.
-5. In **Settings → Modes**, identify the raw **Voice to Text** Mode and the
-   polished **Clean** Mode. In **Settings → Settings**, identify the configured
-   push-to-talk and toggle hotkeys and enable **Pause other audio**.
+5. In **Settings → Modes**, identify the protected **Voice to Text** selection
+   and the polished **Casual** Mode. In **Settings → Settings**, identify the configured
+   push-to-talk, toggle, and optional Cycle Modes shortcuts and enable
+   **Pause other audio**.
 6. Close any document containing unsaved work. The procedure deliberately
    changes permission grants, focus, audio playback, and the clipboard.
 
@@ -241,10 +244,10 @@ requires both engines; validating only the changed engine is insufficient.
 
 ### 5. Ollama Polish and fallback
 
-1. Start Ollama, select an installed Polish model, and activate **Clean**.
+1. Start Ollama, select an installed Polish model, and activate **Casual**.
 2. Dictate a sentence with obvious filler or missing punctuation. Confirm the
    inserted result is polished and still expresses what was spoken.
-3. Stop Ollama while leaving Clean active. Dictate a new distinctive sentence.
+3. Stop Ollama while leaving Casual active. Dictate a new distinctive sentence.
 4. Restart Ollama after the check.
 
 Pass when the healthy path inserts a sensible polished result and the unavailable
@@ -272,7 +275,8 @@ clipboard is overwritten after a successful synthetic paste.
 ### 7. Badge and menu behavior
 
 1. With TextEdit frontmost, hover the Badge and use its Mode picker. Confirm the
-   active Mode checkmark also updates in the menu-bar menu and Settings.
+   active Mode checkmark also updates in the menu-bar menu and Settings, with no
+   Mode-cycle reel for this direct selection.
 2. Use the Badge microphone button for a dictation, then use its open-app button.
 3. Drag the Badge, relaunch the app, and confirm its position is retained and
    remains on-screen.
@@ -379,11 +383,179 @@ their surface-specific actions, keyboard traversal, More-menu navigation,
 VoiceOver descriptions, Copy announcement, long-content truncation, and flagged
 state all behave as described.
 
+### 11. Cycle Modes shortcut and permission recovery
+
+Record the initial Mode order and selection. Keep TextEdit frontmost whenever a
+step says global; return to Settings only to change a binding or the Mode order.
+
+1. Confirm Cycle Modes starts unassigned. Assign a dedicated function key,
+   cancel capture by clicking its active chip again, repeat and cancel by
+   clicking elsewhere, then assign Escape. Confirm capture itself never starts
+   or stops a dictation and never changes the selected Mode. Use the separate
+   Remove shortcut action, quit and relaunch, and confirm the binding remains
+   cleared and Escape no longer dispatches. Assign a dedicated key again for
+   the remaining steps.
+2. Try to assign the effective Push to Talk key using different case, outer
+   whitespace, or a generic left-modifier alias. Confirm the inline error names
+   Push to Talk and the committed shortcut and selection remain unchanged.
+   Repeat against Toggle Recording, then assign a distinct Cycle Modes key.
+3. With TextEdit frontmost, press and release the Cycle Modes key once. Confirm
+   Settings and both Mode menus select the next editable Mode before the Badge
+   reel begins. Confirm the Badge remains centered on its existing screen anchor,
+   grows from 88 × 38 points to 176 × 38 points, and reels the old icon/name up
+   while the complete new icon/name enters from below. Use rapid discrete presses
+   through wraparound and confirm every committed intermediate Mode appears FIFO,
+   the final Mode remains for about 900 ms, and the Badge then returns to its
+   static 88 × 38 point idle glyph. Hold the key and confirm OS autorepeat does
+   not advance again.
+4. Reorder the Modes in Settings, return focus to TextEdit, and press once.
+   Confirm cycling immediately follows the new visible order. Select Voice to
+   Text and confirm the next press enters at the first Mode. Reduce the library
+   to one already-selected Mode, then zero Modes, and confirm presses are silent
+   no-ops in both cases.
+5. Start an idle Mode reel, then immediately begin a dictation. Confirm recording
+   feedback cancels the reel without a visual overlap. Press Cycle Modes several
+   times while recording and working, then finish the session. Confirm the current
+   result and History attribution use the start-time Mode; after inserted/error
+   feedback finishes, one reel starts at the last Mode fully shown before the
+   interruption and ends at the final committed Mode. The next dictation must use
+   that final Mode.
+6. In **System Settings → Accessibility → Display**, enable **Reduce motion**.
+   Repeat a single press and rapid wraparound presses. Confirm the whole icon/name
+   row crossfades with no vertical travel, width changes without traveling, the
+   900 ms final dwell remains, and TextEdit keeps focus. Disable Reduce motion and
+   confirm the vertical reel returns.
+7. Deny both Input Monitoring and Accessibility. Confirm Settings explains that
+   shortcuts work only while FoldWise is focused and offers the correct System
+   Settings route. Verify focused-app operation, then grant either effective
+   permission while FoldWise stays running. Keep TextEdit frontmost and confirm
+   global cycling recovers without relaunching or resaving the shortcut.
+8. Quit and relaunch. Confirm the binding and selected stable Mode survive and
+   one background press advances exactly once without activating FoldWise or
+   moving focus from TextEdit.
+
+Pass when capture, collision policy, edge dispatch, live order, start-time
+freezing, persistence, FIFO/reduced-motion Badge feedback, focused fallback,
+automatic global recovery, and focus retention all match the steps. Any failure
+blocks the release.
+
+### 12. User-managed Mode lifecycle, accessibility, and concurrent Dictation
+
+Keep an installed Ollama model available for successful saves. Create a second
+test model assignment that can be uninstalled during this section. Keep TextEdit
+open as the focus target and save one legacy name-only History fixture from a
+pre-Mode-ID build before starting.
+
+1. With only the keyboard, select Voice to Text and each editable Mode from the
+   Settings list and both Mode menus. Tab through Add, Edit, Duplicate, model,
+   icon, transformation, prompt, vocabulary, Save, Cancel, move up/down, and
+   Delete. Activate every action without clicking a row, dragging, or relying on
+   pointer hover. Confirm Voice to Text is visibly separate and cannot be edited,
+   reordered, duplicated, or deleted.
+2. Add a Mode with a long unique name, choose an icon and installed model, use
+   Reshape, and enter a prompt and vocabulary. Trigger empty-name, duplicate-name,
+   unavailable-model, and empty-prompt validation in turn. Confirm Save exposes
+   all current errors, preserves the draft, and that Cancel changes nothing.
+   Save the valid draft, then duplicate it twice and verify the proposed names
+   use `Copy` and the lowest free numbered suffix.
+3. Rename the selected Mode, change its icon, prompt, transformation, vocabulary,
+   and per-Mode model, then reorder it. Confirm its stable selection, Settings,
+   both menus, Badge idle identity, and resolvable History rows update together.
+   Confirm each Mode retains its own model assignment.
+4. Turn on VoiceOver. Traverse the protected lane, every Mode row, the complete
+   editor, model and icon choices, validation, reorder controls, delete prompt,
+   shortcut capture, and both Mode menus. Confirm it announces full untruncated
+   names plus selected, protected, transformation, unavailable-model, validation,
+   destructive, capturing, collision, cleared, and permission-degraded states.
+   No state may depend only on its icon, position, or color.
+5. Quit FoldWise and, in a copied schema-1 acceptance fixture at an explicit
+   configuration path, replace one saved Mode icon with a syntactically valid
+   but unavailable SF Symbol name. Relaunch and confirm the file remains valid,
+   the stored value survives an unrelated configuration save and relaunch, and
+   every applicable surface renders `text.bubble` while VoiceOver announces the
+   complete Mode name and state. Repair the icon through the editor before
+   continuing; direct JSON editing is only an injected acceptance fixture, not
+   a supported product workflow.
+6. Uninstall the model assigned to one saved Mode from Models. Confirm the Mode
+   keeps its model reference and all other instructions, shows an unavailable
+   warning with a route to Models, and a Dictation falls back to the complete raw
+   transcript. Reinstall it and confirm Polish resumes without repairing the Mode.
+7. While a Dictation is separately listening, transcribing, polishing, and
+   inserting, exercise Cycle Modes, a full edit, rename, reorder, and selected
+   deletion. For each run, record the selection snapshot at session start. The
+   current output and History attribution must use that complete snapshot; the
+   next session must use the latest committed selection and Mode definition.
+   Re-run Polish from History, edit and then delete its chosen Mode while the job
+   is running, and confirm each running job keeps its execution-start snapshot.
+8. Delete a Mode with saved History. Confirm the prompt states that History
+   remains and its model is not uninstalled. A selected deletion must fall back
+   to Voice to Text; the saved row must retain its recorded full name, neutral
+   icon, and Deleted Mode state. The legacy name-only row must remain readable
+   with a neutral attribution that does not claim deletion. Delete every editable
+   Mode and confirm the inviting empty state, Voice to Text Dictation, and silent
+   Cycle Modes no-op all remain usable.
+9. During direct selection, menu selection, queued cycle confirmation, deferred
+   cycle error, and all concurrent operations above, keep typing in TextEdit.
+   Confirm neither menu nor Badge activation moves the insertion point or makes
+   FoldWise frontmost.
+
+Pass when the complete library is keyboard- and VoiceOver-operable, long and
+fallback content stays coherent, stable identity survives mutable presentation,
+deleted and legacy attribution remain truthful, every active-session snapshot is
+frozen, and zero Modes remains a valid Voice to Text configuration. Any failure
+blocks the release.
+
+### 13. Transaction failure and Configuration recovery
+
+Record the resolved `config.json` path before this section. Keep an untouched
+copy of the valid candidate configuration and restore normal directory
+permissions after every injected failure.
+
+1. With Settings, both Mode menus, the Badge, and a resolvable History row
+   visible, open a complete Add/Edit/Duplicate draft, make the configuration
+   directory read-only, and press Save. Confirm the entire draft and validation
+   state remain open with Retry and Cancel while disk bytes, live selection,
+   Settings, menu checks, Badge idle identity, and History resolution stay on
+   the last commit. Trigger a Cycle Modes press and confirm the same committed
+   state is also the next command's starting point. The Badge must show the
+   non-activating “couldn't switch Mode” error for its normal dwell; if the
+   pipeline owns the Badge, the error must appear once after idle. Restore write
+   access, use Retry successfully, and confirm the next press commits normally.
+2. Quit FoldWise, replace `config.json` with malformed bytes, and relaunch. Confirm
+   the original bytes remain untouched, Settings opens to Configuration recovery,
+   every configuration mutation is disabled, and Voice to Text still completes a
+   real Dictation. Quit without resetting and relaunch once more to prove the
+   recovery state and original bytes persist.
+3. Reset from the recovery banner. Confirm a timestamped backup contains the
+   exact rejected bytes before fresh schema-1 defaults appear. Relaunch and verify
+   Casual then Email, Casual selected, and normal edits and Dictation work.
+4. Repeat steps 2–3 with an otherwise valid file whose `schema_version` is an
+   unsupported value. Confirm the banner names the unsupported version and the
+   unsupported file is never silently rewritten before Reset.
+
+Pass when failed transactions leave all projections and dispatch on one committed
+state, recovery preserves rejected input across relaunch, Voice to Text remains
+operational, Reset backs up before replacement, and fresh defaults relaunch as a
+normal writable configuration. Any failure blocks the release.
+
 ## Finish and record evidence
 
-Re-enable any permission changed during the procedure, restore the desired ASR
-engine and Mode, and confirm Ollama and audio playback are in their original
-state. Record failures with the numbered section, exact candidate, macOS version,
-selected models, and observed versus expected result. A failed required section
-blocks the release; do not retry it until it happens to pass without diagnosing
-the failure.
+Re-enable any permission changed during the procedure, restore configuration
+directory permissions, the desired ASR engine and Mode, and confirm Ollama and
+audio playback are in their original state.
+
+The release evidence must record:
+
+- candidate version and commit, build/signing identity, test date, tester, Mac
+  model, and exact macOS version;
+- selected ASR and per-Mode Ollama models, including the unavailable-model case;
+- Microphone, Accessibility, and Input Monitoring grants before and after each
+  permission-recovery step;
+- the resolved configuration path and backup filenames created during recovery;
+- one pass/fail row per numbered section and step, with observed versus expected
+  behavior and links to screenshots, VoiceOver notes, or logs where useful.
+
+Every required step is release-blocking. Record a failure immediately and stop
+calling that candidate releasable; do not repeat it until it happens to pass
+without first diagnosing the cause and producing a new candidate or documented
+environment correction.

@@ -8,16 +8,23 @@ import XCTest
 @testable import FoldWiseVoiceKit
 
 final class HotkeyDispatcherTests: XCTestCase {
-    private enum Callback: Equatable { case press, release, toggle }
+    private enum Callback: Equatable { case press, release, toggle, cycle }
 
     private var fired: [Callback] = []
 
-    private func makeDispatcher(ptt: String, toggle: String? = nil) throws -> HotkeyDispatcher {
+    private func makeDispatcher(
+        ptt: String,
+        toggle: String? = nil,
+        cycle: String? = nil,
+        isSuspended: @escaping () -> Bool = { false }
+    ) throws -> HotkeyDispatcher {
         try HotkeyDispatcher(
-            pttKey: ptt, toggleKey: toggle,
+            pttKey: ptt, toggleKey: toggle, cycleKey: cycle,
+            isSuspended: isSuspended,
             onPress: { self.fired.append(.press) },
             onRelease: { self.fired.append(.release) },
-            onToggle: { self.fired.append(.toggle) }
+            onToggle: { self.fired.append(.toggle) },
+            onCycle: { self.fired.append(.cycle) }
         )
     }
 
@@ -68,6 +75,71 @@ final class HotkeyDispatcherTests: XCTestCase {
         XCTAssertEqual(fired, [.toggle])
     }
 
+    func testToggleAndCycleIgnoreDuplicateDownAndRearmOnKeyUp() throws {
+        let dispatcher = try makeDispatcher(ptt: "f19", toggle: "f13", cycle: "f14")
+        dispatcher.process(key(105, down: true))
+        dispatcher.process(key(105, down: true))
+        dispatcher.process(key(105, down: false))
+        dispatcher.process(key(105, down: true))
+        dispatcher.process(key(107, down: true))
+        dispatcher.process(key(107, down: true, isRepeat: true))
+        dispatcher.process(key(107, down: false))
+        dispatcher.process(key(107, down: true))
+
+        XCTAssertEqual(fired, [.toggle, .toggle, .cycle, .cycle])
+    }
+
+    func testCaptureSuspendsEveryCommandWithoutExecutingCapturedEvent() throws {
+        var suspended = true
+        let dispatcher = try makeDispatcher(
+            ptt: "f19", toggle: "f13", cycle: "f14",
+            isSuspended: { suspended }
+        )
+        dispatcher.process(key(80, down: true))
+        dispatcher.process(key(105, down: true))
+        dispatcher.process(key(107, down: true))
+        suspended = false
+        dispatcher.process(key(80, down: false))
+        dispatcher.process(key(105, down: false))
+        dispatcher.process(key(107, down: false))
+        dispatcher.process(key(107, down: true))
+
+        XCTAssertEqual(fired, [.cycle])
+    }
+
+    func testCaptureSuspensionReleasesAnActivePushToTalkHold() throws {
+        var suspended = false
+        let dispatcher = try makeDispatcher(
+            ptt: "f19",
+            isSuspended: { suspended }
+        )
+
+        dispatcher.process(key(80, down: true))
+        suspended = true
+        dispatcher.process(key(80, down: false))
+        suspended = false
+        dispatcher.process(key(80, down: true))
+        dispatcher.process(key(80, down: false))
+
+        XCTAssertEqual(fired, [.press, .release, .press, .release])
+    }
+
+    func testRuntimeCollisionDispatchesOnlyHighestPriorityCommand() throws {
+        let dispatcher = try makeDispatcher(ptt: "f13", toggle: "F13", cycle: " f13 ")
+        dispatcher.process(key(105, down: true))
+        dispatcher.process(key(105, down: false))
+
+        XCTAssertEqual(fired, [.press, .release])
+    }
+
+    func testRuntimeCollisionPrefersToggleOverModeCycle() throws {
+        let dispatcher = try makeDispatcher(ptt: "f13", toggle: "f14", cycle: " F14 ")
+        dispatcher.process(key(107, down: true))
+        dispatcher.process(key(107, down: false))
+
+        XCTAssertEqual(fired, [.toggle])
+    }
+
     func testModifierPttHoldAndReleaseViaFlagsChanged() throws {
         // alt_r (keycode 61) — the production default. Down carries the
         // generic mask plus the key's own device bit; release clears both.
@@ -89,6 +161,40 @@ final class HotkeyDispatcherTests: XCTestCase {
         XCTAssertEqual(fired, [.press, .release])
     }
 
+    func testModifierOnlyCycleIgnoresDuplicateDownAndRearmsOnRelease() throws {
+        let dispatcher = try makeDispatcher(ptt: "alt_r", cycle: "shift_r")
+        let shiftRDown = CGEventFlags(rawValue: CGEventFlags.maskShift.rawValue | 0x0004)
+
+        dispatcher.process(.flagsChanged(keycode: 60, flags: shiftRDown))
+        dispatcher.process(.flagsChanged(keycode: 60, flags: shiftRDown))
+        dispatcher.process(.flagsChanged(keycode: 60, flags: []))
+        dispatcher.process(.flagsChanged(keycode: 60, flags: shiftRDown))
+
+        XCTAssertEqual(fired, [.cycle, .cycle])
+    }
+
+    func testLatchingModifierCycleFiresOnceForEveryPhysicalPress() throws {
+        let dispatcher = try makeDispatcher(ptt: "alt_r", cycle: "caps_lock")
+
+        dispatcher.process(.flagsChanged(keycode: 57, flags: .maskAlphaShift))
+        dispatcher.process(.flagsChanged(keycode: 57, flags: []))
+
+        XCTAssertEqual(fired, [.cycle, .cycle])
+    }
+
+    func testLatchingModifierToggleFiresOnceForEveryPhysicalPress() throws {
+        let dispatcher = try makeDispatcher(ptt: "alt_r", toggle: "caps_lock")
+
+        dispatcher.process(.flagsChanged(keycode: 57, flags: .maskAlphaShift))
+        dispatcher.process(.flagsChanged(keycode: 57, flags: []))
+
+        XCTAssertEqual(fired, [.toggle, .toggle])
+    }
+
+    func testLatchingModifierIsRejectedForPushToTalk() {
+        XCTAssertThrowsError(try makeDispatcher(ptt: "caps_lock"))
+    }
+
     func testCharacterSpecMatchesByTypedCharacterNotKeycode() throws {
         // A single-character hotkey matches whatever key produces that
         // character, regardless of keycode.
@@ -100,11 +206,13 @@ final class HotkeyDispatcherTests: XCTestCase {
     }
 }
 
+@MainActor
 final class HotkeyListenerConfigurationTests: XCTestCase {
     func testValidKeysAreAcceptedWithoutStartingTheListener() throws {
         _ = try HotkeyListener(
             pttKey: "alt_r",
             toggleKey: "f19",
+            cycleKey: "esc",
             onPress: {},
             onRelease: {},
             onToggle: {}
@@ -129,5 +237,127 @@ final class HotkeyListenerConfigurationTests: XCTestCase {
             onRelease: {},
             onToggle: {}
         ))
+    }
+
+    func testUnknownModeCycleKeyIsRejectedBeforeStartingTheListener() {
+        XCTAssertThrowsError(try HotkeyListener(
+            pttKey: "alt_r",
+            toggleKey: nil,
+            cycleKey: "unknown",
+            onPress: {},
+            onRelease: {},
+            onToggle: {}
+        ))
+    }
+
+    func testStopReleasesAnActivePushToTalkHold() throws {
+        var callbacks: [String] = []
+        let dispatcher = try HotkeyDispatcher(
+            pttKey: "f19",
+            toggleKey: nil,
+            onPress: { callbacks.append("press") },
+            onRelease: { callbacks.append("release") },
+            onToggle: {}
+        )
+        let listener = HotkeyListener(dispatcher: dispatcher)
+
+        dispatcher.process(.key(keycode: 80, character: nil, down: true, isRepeat: false))
+        listener.stop()
+        listener.stop()
+
+        XCTAssertEqual(callbacks, ["press", "release"])
+    }
+
+    func testStopDoesNotReleaseWhenPushToTalkIsIdle() throws {
+        var releaseCount = 0
+        let dispatcher = try HotkeyDispatcher(
+            pttKey: "f19",
+            toggleKey: nil,
+            onPress: {},
+            onRelease: { releaseCount += 1 },
+            onToggle: {}
+        )
+        let listener = HotkeyListener(dispatcher: dispatcher)
+
+        listener.stop()
+
+        XCTAssertEqual(releaseCount, 0)
+    }
+}
+
+@MainActor
+final class HotkeyListenerHealthCoordinatorTests: XCTestCase {
+    private final class CannedHealthEffects: HotkeyListenerHealthEffects {
+        var permissionGranted: Bool
+        var globalHealthy: Bool
+        var events: [String] = []
+
+        init(permissionGranted: Bool = false, globalHealthy: Bool = false) {
+            self.permissionGranted = permissionGranted
+            self.globalHealthy = globalHealthy
+        }
+
+        func acquireGlobal() -> Bool {
+            events.append("acquire global")
+            globalHealthy = permissionGranted
+            return permissionGranted
+        }
+
+        func isGlobalHealthy() -> Bool {
+            globalHealthy
+        }
+
+        func releaseGlobal() {
+            events.append("release global")
+            globalHealthy = false
+        }
+
+        func installFocusedAppOnly() {
+            events.append("install focused")
+        }
+
+        func removeFocusedAppOnly() {
+            events.append("remove focused")
+        }
+    }
+
+    func testPermissionGrantAndRevocationTransitionWithoutRestartingCoordinator() {
+        let effects = CannedHealthEffects()
+        let coordinator = HotkeyListenerHealthCoordinator(
+            effects: effects,
+            onHealthChange: { effects.events.append("health \($0)") }
+        )
+
+        XCTAssertEqual(coordinator.start(), .becameFocusedAppOnly)
+        effects.permissionGranted = true
+        XCTAssertEqual(coordinator.check(), .becameGlobal)
+        effects.globalHealthy = false
+        XCTAssertEqual(coordinator.check(), .becameFocusedAppOnly)
+        XCTAssertEqual(coordinator.check(), .becameGlobal)
+
+        XCTAssertEqual(
+            effects.events,
+            [
+                "acquire global", "install focused", "health focusedAppOnly",
+                "acquire global", "remove focused", "health global",
+                "release global", "install focused", "health focusedAppOnly",
+                "acquire global", "remove focused", "health global",
+            ]
+        )
+    }
+
+    func testHealthyGlobalListenerNeedsNoTransition() {
+        let effects = CannedHealthEffects(permissionGranted: true, globalHealthy: true)
+        var healthChanges: [ShortcutListenerHealth] = []
+        let coordinator = HotkeyListenerHealthCoordinator(
+            effects: effects,
+            onHealthChange: { healthChanges.append($0) }
+        )
+
+        XCTAssertEqual(coordinator.start(), .becameGlobal)
+        XCTAssertEqual(coordinator.check(), .unchanged)
+        coordinator.stop()
+
+        XCTAssertEqual(healthChanges, [.global])
     }
 }

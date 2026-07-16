@@ -1,301 +1,252 @@
-// Round-trip tests for the hand-rolled modes.json serializer: load → save →
-// reload must preserve everything the app cares about, including the on-disk
-// mode order that JSONSerialization would otherwise lose.
-//
-// Nothing in this test target may touch Transcriber/AsrManager: constructing
-// them downloads the ~600 MB Parakeet model, which must never happen in tests.
-
 import XCTest
 @testable import FoldWiseVoiceKit
 
 final class ConfigRoundTripTests: XCTestCase {
-    /// XCTest instantiates the case once per test method, so each test gets
-    /// its own scratch directory.
-    private let dir = FileManager.default.temporaryDirectory
-        .appendingPathComponent("foldwise-tests-\(UUID().uuidString)")
+    private struct EncodingState: Equatable {
+        let bytesMatch: Bool
+        let hasOneTrailingNewline: Bool
+        let keysAreSorted: Bool
+    }
+
+    private struct FallbackState: Equatable {
+        let icon: String?
+        let model: String?
+        let asrModel: String
+    }
+
+    private struct ShortcutState: Equatable {
+        let pushToTalk: String
+        let toggle: String?
+        let cycle: String?
+    }
+
+    private let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("foldwise-config-roundtrip-tests-\(UUID().uuidString)")
 
     override func setUpWithError() throws {
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
     override func tearDownWithError() throws {
-        try FileManager.default.removeItem(at: dir)
+        try FileManager.default.removeItem(at: directory)
     }
 
-    private func write(_ json: String) throws -> URL {
-        let url = dir.appendingPathComponent("modes.json")
-        try Data(json.utf8).write(to: url)
-        return url
+    private var path: URL {
+        directory.appendingPathComponent("config.json")
     }
 
-    private let fixture = """
+    func testSaveIsDeterministicSortedJSONWithOneTrailingNewline() throws {
+        let config = Config.defaultConfig(path: path)
+
+        try config.save()
+        let first = try Data(contentsOf: path)
+        try Config.load(from: path).save()
+        let second = try Data(contentsOf: path)
+
+        let text = try XCTUnwrap(String(data: first, encoding: .utf8))
+        let activeSelectionIndex = try XCTUnwrap(text.range(of: #""active_selection""#)?.lowerBound)
+        let appearanceIndex = try XCTUnwrap(text.range(of: #""appearance""#)?.lowerBound)
+        XCTAssertEqual(
+            EncodingState(
+                bytesMatch: first == second,
+                hasOneTrailingNewline: first.suffix(1) == Data([0x0A])
+                    && first.suffix(2) != Data([0x0A, 0x0A]),
+                keysAreSorted: activeSelectionIndex < appearanceIndex
+            ),
+            EncodingState(bytesMatch: true, hasOneTrailingNewline: true, keysAreSorted: true)
+        )
+    }
+
+    func testUnknownRuntimeFallbackValuesRoundTripUnchanged() throws {
+        let json = ConfigSchemaFixture.valid
+            .replacingOccurrences(of: "wand.and.sparkles", with: "unknown.symbol")
+            .replacingOccurrences(of: "qwen2.5:3b", with: "unknown-ollama")
+            .replacingOccurrences(of: "unknown-asr", with: "future-asr")
+        try Data(json.utf8).write(to: path)
+
+        let config = try Config.load(from: path)
+        try config.save()
+        let reloaded = try Config.load(from: path)
+
+        XCTAssertEqual(
+            FallbackState(
+                icon: reloaded.orderedModes.first?.icon,
+                model: reloaded.orderedModes.first?.llmModel,
+                asrModel: reloaded.asrModel
+            ),
+            FallbackState(icon: "unknown.symbol", model: "unknown-ollama", asrModel: "future-asr")
+        )
+    }
+
+    func testShortcutCollisionRemainsLoadable() throws {
+        let json = ConfigSchemaFixture.valid
+            .replacingOccurrences(of: #""toggle_hotkey": null"#, with: #""toggle_hotkey": "alt_r""#)
+            .replacingOccurrences(of: #""mode_cycle_hotkey": null"#, with: #""mode_cycle_hotkey": "alt_r""#)
+        try Data(json.utf8).write(to: path)
+
+        let config = try Config.load(from: path)
+
+        XCTAssertEqual(
+            ShortcutState(
+                pushToTalk: config.hotkey,
+                toggle: config.toggleHotkey,
+                cycle: config.modeCycleHotkey
+            ),
+            ShortcutState(pushToTalk: "alt_r", toggle: "alt_r", cycle: "alt_r")
+        )
+    }
+
+    func testLoadRejectsUnknownTopLevelField() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""schema_version": 1,"#,
+            with: #""schema_version": 1, "unknown": true,"#
+        ))
+    }
+
+    func testLoadRejectsMissingModeField() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""icon": "wand.and.sparkles","#,
+            with: ""
+        ))
+    }
+
+    func testLoadRejectsInvalidTransformation() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""transformation": "in_place""#,
+            with: #""transformation": "other""#
+        ))
+    }
+
+    func testLoadRejectsMalformedModeID() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""id": "11111111-1111-4111-8111-111111111111""#,
+            with: #""id": "not-a-uuid""#
+        ))
+    }
+
+    func testLoadRejectsDanglingSelectedModeID() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""mode_id": "11111111-1111-4111-8111-111111111111""#,
+            with: #""mode_id": "22222222-2222-4222-8222-222222222222""#
+        ))
+    }
+
+    func testLoadRejectsUnnormalizedModeName() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""name": "Casual""#,
+            with: #""name": "  Casual  ""#
+        ))
+    }
+
+    func testLoadRejectsUnsupportedRetention() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""retention_days": 30"#,
+            with: #""retention_days": 12"#
+        ))
+    }
+
+    func testLoadRejectsInvalidAppearance() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""appearance": "dark""#,
+            with: #""appearance": "sepia""#
+        ))
+    }
+
+    func testLoadRejectsMissingTopLevelField() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""schema_version": 1,"#,
+            with: ""
+        ))
+    }
+
+    func testLoadRejectsUnknownModeField() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""id": "11111111-1111-4111-8111-111111111111""#,
+            with: #""id": "11111111-1111-4111-8111-111111111111", "extra": true"#
+        ))
+    }
+
+    func testLoadRejectsUnnormalizedTopLevelValue() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""asr_model": "unknown-asr""#,
+            with: #""asr_model": " unknown-asr ""#
+        ))
+    }
+
+    func testLoadRejectsWrongFieldType() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""pause_audio": true"#,
+            with: #""pause_audio": "true""#
+        ))
+    }
+
+    func testLoadRejectsDuplicateModeIDs() throws {
+        let data = try duplicatedModeFixture(
+            id: "11111111-1111-4111-8111-111111111111",
+            name: "Another Mode"
+        )
+        try data.write(to: path)
+
+        assertThrowsConfigError(.invalid, try Config.load(from: path))
+    }
+
+    func testLoadRejectsDuplicateNormalizedModeNames() throws {
+        let data = try duplicatedModeFixture(
+            id: "22222222-2222-4222-8222-222222222222",
+            name: "casual"
+        )
+        try data.write(to: path)
+
+        assertThrowsConfigError(.invalid, try Config.load(from: path))
+    }
+
+    private func assertLoadRejects(_ json: String) throws {
+        try Data(json.utf8).write(to: path)
+        assertThrowsConfigError(.invalid, try Config.load(from: path))
+    }
+
+    private func duplicatedModeFixture(id: String, name: String) throws -> Data {
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(ConfigSchemaFixture.valid.utf8))
+                as? [String: Any]
+        )
+        var modes = try XCTUnwrap(object["modes"] as? [[String: Any]])
+        var second = try XCTUnwrap(modes.first)
+        second["id"] = id
+        second["name"] = name
+        modes.append(second)
+        object["modes"] = modes
+        return try JSONSerialization.data(withJSONObject: object)
+    }
+}
+
+enum ConfigSchemaFixture {
+    static let valid = """
     {
-      "active_mode": "Middle",
-      "hotkey": "cmd_r",
-      "toggle_hotkey": null,
-      "pause_audio": false,
-      "hud_position": [100, 200],
-      "hud_style": "minimal",
-      "modes": {
-        "Zebra": {
-          "asr_model": "custom-model",
-          "llm_model": "llama3.2:3b",
-          "system_prompt": "Say \\"hi\\"\\nplease",
-          "vocab": ["FoldWise", "Ollama"]
-        },
-        "Alpha": {
-          "asr_model": "custom-model",
-          "llm_model": null,
-          "system_prompt": null,
-          "vocab": []
-        },
-        "Middle": {
-          "asr_model": "other-model",
-          "llm_model": "",
-          "system_prompt": null,
-          "vocab": []
+      "active_selection": {"mode_id": "11111111-1111-4111-8111-111111111111", "type": "mode"},
+      "appearance": "dark",
+      "asr_model": "unknown-asr",
+      "badge_position": [123.5, 456.0],
+      "hotkey": "alt_r",
+      "input_device": null,
+      "mode_cycle_hotkey": null,
+      "modes": [
+        {
+          "icon": "wand.and.sparkles",
+          "id": "11111111-1111-4111-8111-111111111111",
+          "llm_model": "qwen2.5:3b",
+          "name": "Casual",
+          "system_prompt": "Keep my wording.",
+          "transformation": "in_place",
+          "vocabulary": ["FoldWise"]
         }
-      }
+      ],
+      "pause_audio": true,
+      "retention_days": 30,
+      "save_history": true,
+      "schema_version": 1,
+      "sidebar_collapsed": false,
+      "toggle_hotkey": null
     }
     """
-
-    private func roundTrip(_ json: String) throws -> Config {
-        let url = try write(json)
-        let config = try Config.load(from: url)
-        try config.save()
-        return try Config.load(from: url)
-    }
-
-    func testModeOrderSurvivesNonAlphabetically() throws {
-        let reloaded = try roundTrip(fixture)
-        XCTAssertEqual(reloaded.modeOrder, ["Zebra", "Alpha", "Middle"])
-    }
-
-    func testScalarFieldsSurvive() throws {
-        let reloaded = try roundTrip(fixture)
-        XCTAssertEqual(reloaded.activeMode, "Middle")
-        XCTAssertEqual(reloaded.hotkey, "cmd_r")
-        XCTAssertNil(reloaded.toggleHotkey)
-        XCTAssertFalse(reloaded.pauseAudio)
-    }
-
-    func testExplicitInputDeviceSurvivesRoundTripWhenUnavailable() throws {
-        let json = fixture.replacingOccurrences(
-            of: #""pause_audio": false,"#,
-            with: #""pause_audio": false, "input_device": "USB-opaque-uid","#
-        )
-
-        let reloaded = try roundTrip(json)
-
-        XCTAssertEqual(reloaded.inputDevice, "USB-opaque-uid")
-    }
-
-    func testSystemDefaultWritesNullOnRoundTrip() throws {
-        let url = try write(fixture)
-        let config = try Config.load(from: url)
-
-        try config.save()
-
-        let object = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
-        )
-        XCTAssertTrue(object["input_device"] is NSNull)
-    }
-
-    func testAppearanceValuesSurviveRoundTrip() throws {
-        for appearance in AppearancePreference.allCases {
-            let json = fixture.replacingOccurrences(
-                of: #""pause_audio": false,"#,
-                with: #""pause_audio": false, "appearance": "\#(appearance.rawValue)","#
-            )
-
-            XCTAssertEqual(try roundTrip(json).appearance, appearance)
-        }
-    }
-
-    func testInvalidAppearanceNormalizesToSystemOnSave() throws {
-        let url = try write(fixture.replacingOccurrences(
-            of: #""pause_audio": false,"#,
-            with: #""pause_audio": false, "appearance": "sepia","#
-        ))
-        let config = try Config.load(from: url)
-
-        try config.save()
-
-        let object = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
-        )
-        XCTAssertEqual(object["appearance"] as? String, "system")
-    }
-
-    func testIntegerBadgePositionNormalizesToDoubles() throws {
-        // Still stored under the legacy "hud_position" key (PRD #103), so a
-        // pre-redesign config keeps its pill placement.
-        let reloaded = try roundTrip(fixture)
-        XCTAssertEqual(reloaded.badgePosition, [100.0, 200.0])
-    }
-
-    func testSidebarCollapsedDefaultsToFalseWhenAbsent() throws {
-        // The fixture predates the sidebar preference (PRD #103): the sidebar
-        // opens expanded, and the retired "hud_style" key is ignored.
-        let reloaded = try roundTrip(fixture)
-        XCTAssertFalse(reloaded.sidebarCollapsed)
-    }
-
-    func testSidebarCollapsedRoundTripsWhenOn() throws {
-        let json = """
-        {
-          "active_mode": "Only",
-          "hotkey": "alt_r",
-          "pause_audio": true,
-          "sidebar_collapsed": true,
-          "modes": {
-            "Only": {
-              "asr_model": "m",
-              "llm_model": null,
-              "system_prompt": null,
-              "vocab": []
-            }
-          }
-        }
-        """
-        let reloaded = try roundTrip(json)
-        XCTAssertTrue(reloaded.sidebarCollapsed)
-    }
-
-    func testUnknownASRModelIsPreservedOnRoundTripUntilPicked() throws {
-        // The field is now live (ADR-0006), but an unknown/fossil id is still
-        // preserved on save — it is only overwritten once the user picks a
-        // catalog model — so an old config survives a round-trip untouched.
-        let reloaded = try roundTrip(fixture)
-        XCTAssertEqual(reloaded.modes["Zebra"]?.asrModel, "custom-model")
-        XCTAssertEqual(reloaded.modes["Middle"]?.asrModel, "other-model")
-    }
-
-    func testEscapedStringsSurvive() throws {
-        let reloaded = try roundTrip(fixture)
-        XCTAssertEqual(reloaded.modes["Zebra"]?.systemPrompt, "Say \"hi\"\nplease")
-        XCTAssertEqual(reloaded.modes["Zebra"]?.vocab, ["FoldWise", "Ollama"])
-    }
-
-    func testSavedFileIsValidJSONWithTrailingNewline() throws {
-        let url = try write(fixture)
-        let config = try Config.load(from: url)
-        try config.save()
-        let text = try String(contentsOf: url, encoding: .utf8)
-        XCTAssertTrue(text.hasSuffix("\n"))
-        let data = try XCTUnwrap(text.data(using: .utf8))
-        XCTAssertNoThrow(try JSONSerialization.jsonObject(with: data))
-    }
-
-    func testSaveHistoryDefaultsToTrueWhenAbsent() throws {
-        // The fixture carries no `save_history` key: history is saved by
-        // default (PRD #78), so a config predating the setting reads as on.
-        let reloaded = try roundTrip(fixture)
-        XCTAssertTrue(reloaded.saveHistory)
-    }
-
-    func testSaveHistoryRoundTripsWhenOff() throws {
-        let json = """
-        {
-          "active_mode": "Only",
-          "hotkey": "alt_r",
-          "pause_audio": true,
-          "save_history": false,
-          "modes": {
-            "Only": {
-              "asr_model": "m",
-              "llm_model": null,
-              "system_prompt": null,
-              "vocab": []
-            }
-          }
-        }
-        """
-        let reloaded = try roundTrip(json)
-        XCTAssertFalse(reloaded.saveHistory)
-    }
-
-    func testRetentionDefaultsTo30DaysWhenAbsent() throws {
-        // The fixture carries no `retention_days` key: a config predating the
-        // setting reads as the 30-day default (PRD #78).
-        let reloaded = try roundTrip(fixture)
-        XCTAssertEqual(reloaded.historyRetention, .thirtyDays)
-    }
-
-    func testRetentionRoundTripsWhenSet() throws {
-        let json = """
-        {
-          "active_mode": "Only",
-          "hotkey": "alt_r",
-          "pause_audio": true,
-          "retention_days": 7,
-          "modes": {
-            "Only": {
-              "asr_model": "m",
-              "llm_model": null,
-              "system_prompt": null,
-              "vocab": []
-            }
-          }
-        }
-        """
-        let reloaded = try roundTrip(json)
-        XCTAssertEqual(reloaded.historyRetention, .sevenDays)
-    }
-
-    func testRetentionRoundTripsNinetyDays() throws {
-        let json = """
-        {
-          "active_mode": "Only",
-          "hotkey": "alt_r",
-          "pause_audio": true,
-          "retention_days": 90,
-          "modes": {
-            "Only": {
-              "asr_model": "m",
-              "llm_model": null,
-              "system_prompt": null,
-              "vocab": []
-            }
-          }
-        }
-        """
-        let reloaded = try roundTrip(json)
-        XCTAssertEqual(reloaded.historyRetention, .ninetyDays)
-    }
-
-    func testRetentionRoundTripsForever() throws {
-        // `.forever` persists as the sentinel `retention_days: 0`; confirm the
-        // sentinel survives save/load rather than collapsing to the default.
-        let json = """
-        {
-          "active_mode": "Only",
-          "hotkey": "alt_r",
-          "pause_audio": true,
-          "retention_days": 0,
-          "modes": {
-            "Only": {
-              "asr_model": "m",
-              "llm_model": null,
-              "system_prompt": null,
-              "vocab": []
-            }
-          }
-        }
-        """
-        let reloaded = try roundTrip(json)
-        XCTAssertEqual(reloaded.historyRetention, .forever)
-    }
-
-    func testSaveIsStableAcrossRepeatedRoundTrips() throws {
-        let url = try write(fixture)
-        let config = try Config.load(from: url)
-        try config.save()
-        let first = try String(contentsOf: url, encoding: .utf8)
-        let reloaded = try Config.load(from: url)
-        try reloaded.save()
-        let second = try String(contentsOf: url, encoding: .utf8)
-        XCTAssertEqual(first, second)
-    }
 }

@@ -32,7 +32,9 @@ final class HomeProjectionTests: XCTestCase {
     }
 
     private func project(_ entries: [HistoryEntry]) -> HomeProjection {
-        HomeProjection.project(entries, now: now, calendar: calendar, locale: locale)
+        HomeProjection.project(
+            .init(entries: entries), now: now, calendar: calendar, locale: locale
+        )
     }
 
     func testNoEntriesProjectsEmpty() {
@@ -84,6 +86,34 @@ final class HomeProjectionTests: XCTestCase {
         XCTAssertEqual(
             projection.sections.first?.rows.first?.presentation.compactModeName,
             "my extremely lon"
+        )
+    }
+
+    func testRecentHistoryResolvesCurrentModeIdentity() {
+        let modeID = ModeID.random()
+        var source = entry("hi", mode: "Recorded Name", minutesAgo: 1)
+        source.modeID = modeID
+        let current = Mode(
+            id: modeID,
+            name: "Current Name",
+            icon: "envelope",
+            asrModel: ASRModelCatalog.defaultID,
+            llmModel: "qwen2.5:3b",
+            transformation: .expanding,
+            systemPrompt: "Prompt",
+            vocabulary: []
+        )
+
+        let row = HomeProjection.project(
+            .init(entries: [source], modes: [current]),
+            now: now,
+            calendar: calendar,
+            locale: locale
+        ).sections.first?.rows.first
+
+        XCTAssertEqual(
+            [row?.presentation.fullModeName, row?.presentation.modeIcon],
+            ["Current Name", "envelope"]
         )
     }
 

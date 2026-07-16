@@ -4,15 +4,20 @@ enum DictationRowCommand: Equatable {
     case copyDisplayed
     case copyRaw
     case toggleFlag
-    case rerunPolish(modeName: String)
+    case rerunPolish(modeID: ModeID)
     case delete
+}
+
+struct DictationRowPolishMode: Equatable {
+    let id: ModeID
+    let name: String
 }
 
 /// Capabilities available only on History's More menu. A nil value means the
 /// row is being rendered on Home and has no More action.
 struct DictationRowMoreCapabilities: Equatable {
     let canCopyRaw: Bool
-    let polishModeNames: [String]
+    let polishModes: [DictationRowPolishMode]
 }
 
 struct DictationRowActionComposition: Equatable {
@@ -66,13 +71,13 @@ struct DictationRowActionComposition: Equatable {
             command: .toggleFlag,
             isDestructive: false
         )))
-        if !moreCapabilities.polishModeNames.isEmpty {
+        if !moreCapabilities.polishModes.isEmpty {
             actions.append(.submenu(
                 label: "Re-run Polish",
-                commands: moreCapabilities.polishModeNames.map { modeName in
+                commands: moreCapabilities.polishModes.map { mode in
                     LabeledCommand(
-                        label: modeName,
-                        command: .rerunPolish(modeName: modeName),
+                        label: mode.name,
+                        command: .rerunPolish(modeID: mode.id),
                         isDestructive: false
                     )
                 }

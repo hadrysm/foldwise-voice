@@ -1,11 +1,4 @@
-// Load and save modes.json — same file and format as the retired Python app.
-// `asr_model` selects the ASR model globally (ADR-0006): `asrModel` reads the
-// first mode and `setASRModel` writes every mode, mirroring the LLM-model
-// convention. An unknown/fossil id is preserved on disk and resolved to
-// Parakeet at read time (ASRModelCatalog), not overwritten until the user picks.
-
 import Foundation
-import os
 
 let MIN_CHARS_FOR_LLM = 40
 let OLLAMA_CHAT_URL = "http://localhost:11434/v1/chat/completions"
@@ -13,436 +6,1003 @@ let OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
 let OLLAMA_PULL_URL = "http://localhost:11434/api/pull"
 let OLLAMA_DELETE_URL = "http://localhost:11434/api/delete"
 
-enum AppearancePreference: String, CaseIterable {
+enum AppearancePreference: String, CaseIterable, Codable {
     case system
     case light
     case dark
 }
 
-struct Mode {
+struct ModeID: RawRepresentable, Hashable, Codable, CustomStringConvertible {
+    let rawValue: String
+
+    init?(rawValue: String) {
+        guard let uuid = UUID(uuidString: rawValue),
+              uuid.uuidString.lowercased() == rawValue
+        else { return nil }
+        self.rawValue = rawValue
+    }
+
+    static func random() -> ModeID {
+        ModeID(uncheckedRawValue: UUID().uuidString.lowercased())
+    }
+
+    var description: String {
+        rawValue
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        guard let id = ModeID(rawValue: value) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Mode ID must be a canonical lowercase hyphenated UUID."
+            )
+        }
+        self = id
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    private init(uncheckedRawValue: String) {
+        rawValue = uncheckedRawValue
+    }
+}
+
+enum DictationSelection: Hashable {
+    case voiceToText
+    case mode(ModeID)
+}
+
+enum ModeTransformation: String, Codable {
+    case inPlace = "in_place"
+    case expanding
+}
+
+struct Mode: Equatable {
+    let id: ModeID?
     var name: String
+    var icon: String
+    /// Transitional runtime projection. Schema 1 persists ASR selection once,
+    /// at the top level; keeping it on the Pipeline value avoids coupling the
+    /// Dictation slice to the configuration serializer.
     var asrModel: String
     var llmModel: String?
     var systemPrompt: String?
     var vocab: [String]
-    /// In-place vs Expanding calibration (ADR-0004): an In-place Mode's polish
-    /// tracks the transcript closely (`false`); an Expanding Mode legitimately
-    /// restructures and grows it (`true`). Sizes the Polish token cap and, in
-    /// #72, calibrates the off-task check. Internal and NOT persisted — there is
-    /// no config-schema change — so it is re-derived from the Mode name on load.
-    /// Defaults to `true` (loose): an unknown/user-defined Mode skews
-    /// generative, and a false fallback (discarding a good polish) is worse than
-    /// letting a mildly off-task reply through — the output is inert either way.
-    var expands: Bool = true
+    var transformation: ModeTransformation
+
+    init(
+        id: ModeID? = nil,
+        name: String,
+        icon: String = "text.bubble",
+        asrModel: String,
+        llmModel: String?,
+        systemPrompt: String?,
+        vocab: [String],
+        expands: Bool = true
+    ) {
+        self.id = id
+        self.name = name
+        self.icon = icon
+        self.asrModel = asrModel
+        self.llmModel = llmModel
+        self.systemPrompt = systemPrompt
+        self.vocab = vocab
+        transformation = expands ? .expanding : .inPlace
+    }
+
+    init(
+        id: ModeID,
+        name: String,
+        icon: String,
+        asrModel: String,
+        llmModel: String,
+        transformation: ModeTransformation,
+        systemPrompt: String,
+        vocabulary: [String]
+    ) {
+        self.id = id
+        self.name = name
+        self.icon = icon
+        self.asrModel = asrModel
+        self.llmModel = llmModel
+        self.transformation = transformation
+        self.systemPrompt = systemPrompt
+        vocab = vocabulary
+    }
+
+    var expands: Bool {
+        transformation == .expanding
+    }
 
     var usesLLM: Bool {
         !(llmModel ?? "").isEmpty
     }
 
-    /// Whether the Polish stage actually runs for `transcript`: an LLM Mode
-    /// whose transcript clears the minimum length. The single gate shared by the
-    /// live session's Badge `.polishing` emit and the Polish decision
-    /// (`Polish.run`), so the two can never disagree about whether polishing
-    /// happens — and the short-input skip is defined in exactly one place.
     func willPolish(_ transcript: String) -> Bool {
         usesLLM && transcript.count > MIN_CHARS_FOR_LLM
     }
 
-    /// Built-in In-place Mode names. Every other Mode — a built-in Expanding
-    /// Mode (Email, Bullets) or any user-defined Mode — is Expanding. This is
-    /// the single source of truth for `expands`, applied both when building the
-    /// defaults and when loading, since the flag is never written to disk.
-    static func expands(forName name: String) -> Bool {
-        !["Clean", "Voice to Text"].contains(name)
+    static func voiceToText(asrModel: String) -> Mode {
+        Mode(
+            name: "Voice to Text", icon: "waveform", asrModel: asrModel,
+            llmModel: nil, systemPrompt: nil, vocab: [], expands: false
+        )
+    }
+}
+
+enum ConfigError: LocalizedError {
+    case invalid(String)
+    case readOnlyRecovery
+
+    var errorDescription: String? {
+        switch self {
+        case let .invalid(message): message
+        case .readOnlyRecovery:
+            "Configuration is read-only until it is reset or FoldWise Voice quits."
+        }
     }
 }
 
 final class Config {
-    var activeMode: String {
-        didSet { if oldValue != activeMode { pendingChanges.insert(.activeMode) } }
-    }
-
-    var hotkey: String {
-        didSet { if oldValue != hotkey { pendingChanges.insert(.hotkeys) } }
-    }
-
-    var toggleHotkey: String? {
-        didSet { if oldValue != toggleHotkey { pendingChanges.insert(.hotkeys) } }
-    }
-
-    var pauseAudio: Bool
-
-    /// `nil` follows the live macOS default input; a string preserves the
-    /// user's explicit Core Audio UID even while that device is unavailable.
-    var inputDevice: String? {
-        didSet { if oldValue != inputDevice { pendingChanges.insert(.inputDevice) } }
-    }
-
-    /// Last successfully persisted value, used to publish only a net change.
-    private var committedAppearance: AppearancePreference
-    var appearance: AppearancePreference {
-        didSet {
-            if appearance == committedAppearance {
-                pendingChanges.remove(.appearance)
-            } else {
-                pendingChanges.insert(.appearance)
-            }
-        }
-    }
-
-    /// Master "Save dictation history" switch (PRD #78). When false the
-    /// Pipeline records nothing and no `history.jsonl` is written. Persisted in
-    /// modes.json; like `pauseAudio` nobody re-reads it through change
-    /// propagation, so it has no `ChangeSet` member — the Pipeline reads it
-    /// fresh when the dictation session stops (frozen at stop time alongside
-    /// `mode`), not at session start.
-    var saveHistory: Bool
-    /// How long history is kept before the launch sweep prunes it (PRD #78).
-    /// Persisted in modes.json as a day count; like `saveHistory` nobody
-    /// re-reads it through change propagation, so it has no `ChangeSet` member —
-    /// the launch sweep reads it once at startup.
-    var historyRetention: RetentionWindow
-    /// The Badge's screen anchor. Persisted under the legacy "hud_position"
-    /// key so an existing config keeps its pill placement across the redesign
-    /// (PRD #103) — the JSON key is grandfathered, the vocabulary is not.
-    var badgePosition: [Double]?
-    /// The user's sidebar intent — collapsed to the icon rail or expanded
-    /// (PRD #103). Only the settings window reads it (at open), so like
-    /// `badgePosition` it persists silently with no ChangeSet member.
-    var sidebarCollapsed: Bool
-
-    private(set) var modeOrder: [String]
-    var modes: [String: Mode]
-    let path: URL
-
-    init(
-        activeMode: String, hotkey: String, toggleHotkey: String?, pauseAudio: Bool,
-        inputDevice: String? = nil,
-        appearance: AppearancePreference = .system,
-        saveHistory: Bool = true, historyRetention: RetentionWindow = .default,
-        badgePosition: [Double]?, sidebarCollapsed: Bool = false,
-        modeOrder: [String], modes: [String: Mode], path: URL
-    ) {
-        self.activeMode = activeMode
-        self.hotkey = hotkey
-        self.toggleHotkey = toggleHotkey
-        self.pauseAudio = pauseAudio
-        self.inputDevice = inputDevice
-        committedAppearance = appearance
-        self.appearance = appearance
-        self.saveHistory = saveHistory
-        self.historyRetention = historyRetention
-        self.badgePosition = badgePosition
-        self.sidebarCollapsed = sidebarCollapsed
-        self.modeOrder = modeOrder
-        self.modes = modes
-        self.path = path
-    }
-
-    var mode: Mode {
-        // load() guarantees at least one mode, but modes.json is hand-editable
-        // and `modes` is mutable — degrade to raw dictation rather than crash
-        // if the invariant is ever broken.
-        if let m = modes[activeMode] { return m }
-        // Local copy: Logger messages are autoclosures, where the formatter's
-        // redundantSelf rule and the compiler's explicit-self rule collide.
-        let requested = activeMode
-        if let first = modeOrder.first, let m = modes[first] {
-            Log.config.error("""
-            Active mode '\(requested, privacy: .public)' not in modes.json — \
-            using '\(first, privacy: .public)'
-            """)
-            return m
-        }
-        Log.config.error("modes.json has no usable modes — using built-in raw dictation")
-        return Mode(name: "Voice to Text", asrModel: "", llmModel: nil, systemPrompt: nil, vocab: [])
-    }
-
-    /// The Ollama model used by LLM modes (they share one by convention).
-    var llmModel: String? {
-        for name in modeOrder {
-            if let m = modes[name], m.usesLLM { return m.llmModel }
-        }
-        return nil
-    }
-
-    /// Point every LLM-enabled mode at `model`.
-    func setLLMModel(_ model: String) {
-        for name in modeOrder where modes[name]?.usesLLM == true {
-            modes[name]?.llmModel = model
-        }
-    }
-
-    /// The globally-selected ASR model (ADR-0006): every mode carries one by
-    /// the `setASRModel` convention, so the first mode's value is the choice.
-    var asrModel: String {
-        for name in modeOrder {
-            if let m = modes[name] { return m.asrModel }
-        }
-        return ASRModelCatalog.defaultID
-    }
-
-    /// Point every mode at `id`, minting the user's explicit choice across the
-    /// schema's per-mode slots. Records `.asrModel` for the dispatcher only on a
-    /// genuine change, so re-selecting the current model notifies no one.
-    func setASRModel(_ id: String) {
-        guard asrModel != id else { return }
-        for name in modeOrder {
-            modes[name]?.asrModel = id
-        }
-        pendingChanges.insert(.asrModel)
-    }
-
-    func setActiveMode(_ name: String) {
-        guard modes[name] != nil else { return }
-        activeMode = name
-    }
-
-    // MARK: - change propagation
-
-    /// One member per thing subscribers *act on*, not per property: both
-    /// hotkeys share `.hotkeys` because the listener can only rebind both at
-    /// once, and properties nobody re-reads (`badgePosition`,
-    /// `sidebarCollapsed`, `pauseAudio`) have no member at all — persisting
-    /// them notifies no one.
-    struct ChangeSet: OptionSet {
+    struct ChangeSet: OptionSet, Equatable {
         let rawValue: Int
 
-        static let activeMode = ChangeSet(rawValue: 1 << 0)
+        static let selection = ChangeSet(rawValue: 1 << 0)
         static let hotkeys = ChangeSet(rawValue: 1 << 1)
         static let asrModel = ChangeSet(rawValue: 1 << 2)
         static let inputDevice = ChangeSet(rawValue: 1 << 3)
         static let appearance = ChangeSet(rawValue: 1 << 4)
+        static let modeLibrary = ChangeSet(rawValue: 1 << 5)
     }
 
-    /// Changed keys accumulated by the tracked properties' `didSet`s,
-    /// delivered and cleared by `saveAndNotify()`.
-    private var pendingChanges: ChangeSet = []
+    struct Preferences: Equatable {
+        var selection: DictationSelection
+        var hotkey: String
+        var toggleHotkey: String?
+        var pauseAudio: Bool
+        var inputDevice: String?
+        var asrModel: String
+        var appearance: AppearancePreference
+        var saveHistory: Bool
+        var historyRetention: RetentionWindow
+        var sidebarCollapsed: Bool
+    }
+
+    fileprivate struct Values: Equatable {
+        var selection: DictationSelection
+        var hotkey: String
+        var toggleHotkey: String?
+        var modeCycleHotkey: String?
+        var pauseAudio: Bool
+        var inputDevice: String?
+        var asrModel: String
+        var appearance: AppearancePreference
+        var saveHistory: Bool
+        var historyRetention: RetentionWindow
+        var badgePosition: [Double]?
+        var sidebarCollapsed: Bool
+        var orderedModes: [Mode]
+    }
+
+    struct Recovery: Equatable {
+        let message: String
+        fileprivate let originalData: Data
+    }
+
+    private var values: Values
+    private(set) var recovery: Recovery?
+    let path: URL
+
     /// Observers are app-lifetime singletons, so this list is append-only.
     private var observers: [(ChangeSet) -> Void] = []
+
+    private init(values: Values, path: URL, recovery: Recovery? = nil) {
+        self.values = values
+        self.path = path
+        self.recovery = recovery
+    }
+
+    /// Schema-1 construction seam used by injected feature tests. Production
+    /// loading still goes through `loadOrCreate(at:)`; this initializer keeps
+    /// fixtures on the same stable-ID selection and ordered-library contract.
+    /// Invalid fixture input is a programmer error, so reject it during
+    /// construction rather than allowing an impossible live Config state.
+    init(
+        preferences: Preferences,
+        modeCycleHotkey: String? = nil,
+        badgePosition: [Double]?,
+        orderedModes: [Mode],
+        path: URL
+    ) {
+        let candidate = Self.normalized(Values(
+            selection: preferences.selection,
+            hotkey: preferences.hotkey,
+            toggleHotkey: preferences.toggleHotkey,
+            modeCycleHotkey: modeCycleHotkey,
+            pauseAudio: preferences.pauseAudio,
+            inputDevice: preferences.inputDevice,
+            asrModel: preferences.asrModel,
+            appearance: preferences.appearance,
+            saveHistory: preferences.saveHistory,
+            historyRetention: preferences.historyRetention,
+            badgePosition: badgePosition,
+            sidebarCollapsed: preferences.sidebarCollapsed,
+            orderedModes: orderedModes
+        ))
+        precondition(
+            (try? Self.validate(candidate, requireNormalized: true)) != nil,
+            "Invalid schema-1 Config fixture."
+        )
+        values = candidate
+        self.path = path
+        recovery = nil
+    }
+
+    var selection: DictationSelection {
+        values.selection
+    }
+
+    var hotkey: String {
+        values.hotkey
+    }
+
+    var toggleHotkey: String? {
+        values.toggleHotkey
+    }
+
+    var modeCycleHotkey: String? {
+        values.modeCycleHotkey
+    }
+
+    var pauseAudio: Bool {
+        values.pauseAudio
+    }
+
+    var inputDevice: String? {
+        values.inputDevice
+    }
+
+    var asrModel: String {
+        values.asrModel
+    }
+
+    var appearance: AppearancePreference {
+        values.appearance
+    }
+
+    var saveHistory: Bool {
+        values.saveHistory
+    }
+
+    var historyRetention: RetentionWindow {
+        values.historyRetention
+    }
+
+    var badgePosition: [Double]? {
+        values.badgePosition
+    }
+
+    var sidebarCollapsed: Bool {
+        values.sidebarCollapsed
+    }
+
+    var orderedModes: [Mode] {
+        values.orderedModes
+    }
+
+    var isReadOnly: Bool {
+        recovery != nil
+    }
+
+    var preferences: Preferences {
+        Preferences(
+            selection: selection,
+            hotkey: hotkey,
+            toggleHotkey: toggleHotkey,
+            pauseAudio: pauseAudio,
+            inputDevice: inputDevice,
+            asrModel: asrModel,
+            appearance: appearance,
+            saveHistory: saveHistory,
+            historyRetention: historyRetention,
+            sidebarCollapsed: sidebarCollapsed
+        )
+    }
+
+    var mode: Mode {
+        switch selection {
+        case .voiceToText:
+            .voiceToText(asrModel: asrModel)
+        case let .mode(id):
+            mode(id: id) ?? .voiceToText(asrModel: asrModel)
+        }
+    }
+
+    func mode(id: ModeID) -> Mode? {
+        orderedModes.first { $0.id == id }
+    }
+
+    func modeCycleSuccessor(after id: ModeID) -> ModeID? {
+        guard orderedModes.count > 1,
+              let currentIndex = orderedModes.firstIndex(where: { $0.id == id })
+        else { return nil }
+        let nextIndex = orderedModes.index(after: currentIndex)
+        let successorIndex = nextIndex == orderedModes.endIndex
+            ? orderedModes.startIndex
+            : nextIndex
+        return orderedModes[successorIndex].id
+    }
 
     @MainActor
     func onChange(_ observer: @escaping (ChangeSet) -> Void) {
         observers.append(observer)
     }
 
-    /// The mutate → persist → notify transaction. A failed save throws
-    /// before the pending set is touched, so nobody is told about a change
-    /// that never reached disk — and a later retry still carries it.
+    /// Builds and validates a complete candidate, persists it atomically, then
+    /// makes it observable. No live value changes when validation or writing fails.
     @MainActor
-    func saveAndNotify() throws {
-        try save()
-        let changes = pendingChanges
-        committedAppearance = appearance
-        pendingChanges = []
+    private func update(
+        activating: () -> Void = {},
+        _ body: (inout Values) throws -> Void
+    ) throws {
+        guard recovery == nil else { throw ConfigError.readOnlyRecovery }
+        var candidate = values
+        try body(&candidate)
+        candidate = Self.normalized(candidate)
+        try Self.validate(candidate, requireNormalized: true)
+        try Self.persist(candidate, to: path)
+        activating()
+        let changes = Self.changes(from: values, to: candidate)
+        values = candidate
+        publish(changes)
+    }
+
+    @MainActor
+    func select(_ selection: DictationSelection) throws {
+        try update { $0.selection = selection }
+    }
+
+    @MainActor
+    func apply(_ preferences: Preferences) throws {
+        try update { candidate in
+            candidate.selection = preferences.selection
+            candidate.hotkey = preferences.hotkey
+            candidate.toggleHotkey = preferences.toggleHotkey
+            candidate.pauseAudio = preferences.pauseAudio
+            candidate.inputDevice = preferences.inputDevice
+            candidate.asrModel = preferences.asrModel
+            candidate.appearance = preferences.appearance
+            candidate.saveHistory = preferences.saveHistory
+            candidate.historyRetention = preferences.historyRetention
+            candidate.sidebarCollapsed = preferences.sidebarCollapsed
+        }
+    }
+
+    @MainActor
+    func replaceModes(_ modes: [Mode], selection: DictationSelection) throws {
+        try update {
+            $0.orderedModes = modes
+            $0.selection = selection
+        }
+    }
+
+    @MainActor
+    func saveMode(_ mode: Mode) throws {
+        guard let id = mode.id,
+              let index = orderedModes.firstIndex(where: { $0.id == id })
+        else { throw ConfigError.invalid("Mode does not exist.") }
+        try update { $0.orderedModes[index] = mode }
+    }
+
+    @MainActor
+    func setASRModel(_ id: String) throws {
+        try update { $0.asrModel = id }
+    }
+
+    @MainActor
+    func setInputDevice(_ uid: String?) throws {
+        try update { $0.inputDevice = uid }
+    }
+
+    @MainActor
+    func setBadgePosition(_ position: [Double]?) throws {
+        try update { $0.badgePosition = position }
+    }
+
+    @MainActor
+    func setAppearance(_ appearance: AppearancePreference) throws {
+        try update { $0.appearance = appearance }
+    }
+
+    @MainActor
+    func setHotkey(_ hotkey: String) throws {
+        try update { $0.hotkey = hotkey }
+    }
+
+    @MainActor
+    func setShortcutBindings(
+        _ bindings: ShortcutBindings,
+        activating: () -> Void = {}
+    ) throws {
+        try update(activating: activating) {
+            $0.hotkey = bindings.pushToTalk
+            $0.toggleHotkey = bindings.toggleRecording
+            $0.modeCycleHotkey = bindings.modeCycle
+        }
+    }
+
+    @MainActor
+    func setSaveHistory(_ saveHistory: Bool) throws {
+        try update { $0.saveHistory = saveHistory }
+    }
+
+    @MainActor
+    func setHistoryRetention(_ retention: RetentionWindow) throws {
+        try update { $0.historyRetention = retention }
+    }
+
+    func save() throws {
+        guard recovery == nil else { throw ConfigError.readOnlyRecovery }
+        try Self.validate(values, requireNormalized: true)
+        try Self.persist(values, to: path)
+    }
+
+    func save(to url: URL) throws {
+        try Self.validate(values, requireNormalized: true)
+        try Self.persist(values, to: url)
+    }
+
+    /// Recovery reset first preserves the rejected bytes, then atomically
+    /// replaces config.json and publishes the fresh committed state.
+    @MainActor
+    @discardableResult
+    func resetRecovery(now: Date = Date()) throws -> URL {
+        guard let recovery else { throw ConfigError.invalid("Configuration is not in recovery.") }
+        let backup = Self.backupURL(for: path, now: now)
+        try recovery.originalData.write(to: backup, options: .atomic)
+        let defaults = Self.defaultValues()
+        try Self.persist(defaults, to: path)
+        let changes = Self.changes(from: values, to: defaults)
+        values = defaults
+        self.recovery = nil
+        publish(changes)
+        return backup
+    }
+
+    private func publish(_ changes: ChangeSet) {
         guard !changes.isEmpty else { return }
         for observer in observers {
             observer(changes)
         }
     }
 
-    // MARK: - persistence
-
-    func save() throws {
-        var top: [(String, Any?)] = [
-            ("active_mode", activeMode),
-            ("hotkey", hotkey),
-            ("toggle_hotkey", toggleHotkey),
-            ("pause_audio", pauseAudio),
-            ("input_device", inputDevice),
-            ("appearance", appearance.rawValue),
-            ("save_history", saveHistory),
-            ("retention_days", historyRetention.days),
-            ("hud_position", badgePosition),
-            ("sidebar_collapsed", sidebarCollapsed),
-        ]
-        var modesJSON = "{\n"
-        for (i, name) in modeOrder.enumerated() {
-            guard let m = modes[name] else { continue }
-            let fields: [(String, Any?)] = [
-                ("asr_model", m.asrModel),
-                ("llm_model", m.llmModel),
-                ("system_prompt", m.systemPrompt),
-                ("vocab", m.vocab),
-            ]
-            modesJSON += "    \(Self.jsonString(name)): {\n"
-            modesJSON += fields.map { "      \(Self.jsonString($0.0)): \(Self.jsonValue($0.1))" }
-                .joined(separator: ",\n")
-            modesJSON += "\n    }" + (i < modeOrder.count - 1 ? ",\n" : "\n")
+    private static func changes(from old: Values, to new: Values) -> ChangeSet {
+        var result: ChangeSet = []
+        if old.selection != new.selection { result.insert(.selection) }
+        if old.hotkey != new.hotkey || old.toggleHotkey != new.toggleHotkey
+            || old.modeCycleHotkey != new.modeCycleHotkey {
+            result.insert(.hotkeys)
         }
-        modesJSON += "  }"
-        top.append(("modes", RawJSON(text: modesJSON)))
-
-        var out = "{\n"
-        out += top.map { "  \(Self.jsonString($0.0)): \(Self.jsonValue($0.1))" }
-            .joined(separator: ",\n")
-        out += "\n}\n"
-        try Data(out.utf8).write(to: path, options: .atomic)
+        if old.asrModel != new.asrModel { result.insert(.asrModel) }
+        if old.inputDevice != new.inputDevice { result.insert(.inputDevice) }
+        if old.appearance != new.appearance { result.insert(.appearance) }
+        if !libraryEqual(old.orderedModes, new.orderedModes) { result.insert(.modeLibrary) }
+        return result
     }
 
-    private struct RawJSON { let text: String }
-
-    private static func jsonString(_ s: String) -> String {
-        // Serializing a single-element string array can't realistically fail,
-        // but a save must never crash dictation — degrade to "" instead.
-        guard let data = try? JSONSerialization.data(withJSONObject: [s]),
-              var text = String(data: data, encoding: .utf8)
-        else { return "\"\"" }
-        text.removeFirst() // [
-        text.removeLast() // ]
-        return text
-    }
-
-    private static func jsonValue(_ v: Any?) -> String {
-        switch v {
-        case nil: "null"
-        case let raw as RawJSON: raw.text
-        case let s as String: jsonString(s)
-        case let b as Bool: b ? "true" : "false"
-        case let i as Int: String(i)
-        case let arr as [String]:
-            "[" + arr.map { jsonString($0) }.joined(separator: ", ") + "]"
-        case let arr as [Double]:
-            "[" + arr.map { String(format: "%.1f", $0) }.joined(separator: ", ") + "]"
-        default: "null"
+    private static func libraryEqual(_ lhs: [Mode], _ rhs: [Mode]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        return zip(lhs, rhs).allSatisfy { left, right in
+            left.id == right.id
+                && left.name == right.name
+                && left.icon == right.icon
+                && left.llmModel == right.llmModel
+                && left.systemPrompt == right.systemPrompt
+                && left.vocab == right.vocab
+                && left.transformation == right.transformation
         }
     }
 
-    // MARK: - loading
+    // MARK: - Schema 1 persistence
 
     static func load(from url: URL) throws -> Config {
         let data = try Data(contentsOf: url)
-        guard let raw = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let modesRaw = raw["modes"] as? [String: Any], !modesRaw.isEmpty
-        else {
-            throw NSError(
-                domain: "FoldWiseVoice", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "\(url.path): 'modes' must contain at least one mode"]
-            )
+        try validateKeys(in: data)
+        let dto: DTO
+        do {
+            dto = try JSONDecoder().decode(DTO.self, from: data)
+        } catch {
+            throw ConfigError.invalid("Invalid configuration: \(error.localizedDescription)")
         }
-
-        var modes: [String: Mode] = [:]
-        for (name, any) in modesRaw {
-            let m = any as? [String: Any] ?? [:]
-            modes[name] = Mode(
-                name: name,
-                asrModel: (m["asr_model"] as? String) ?? ASRModelCatalog.defaultID,
-                llmModel: m["llm_model"] as? String,
-                systemPrompt: m["system_prompt"] as? String,
-                vocab: (m["vocab"] as? [String]) ?? [],
-                expands: Mode.expands(forName: name)
-            )
+        guard dto.schemaVersion == 1 else {
+            throw ConfigError.invalid("Unsupported schema_version \(dto.schemaVersion).")
         }
-
-        let order = modeOrder(in: String(data: data, encoding: .utf8) ?? "", names: Array(modes.keys))
-
-        var active = raw["active_mode"] as? String ?? ""
-        if modes[active] == nil { active = order[0] }
-
-        var badgePosition: [Double]?
-        if let pos = raw["hud_position"] as? [Any], pos.count == 2,
-           let x = pos[0] as? Double ?? (pos[0] as? Int).map(Double.init),
-           let y = pos[1] as? Double ?? (pos[1] as? Int).map(Double.init) {
-            badgePosition = [x, y]
+        guard let retention = RetentionWindow(rawValue: dto.retentionDays) else {
+            throw ConfigError.invalid("retention_days is not supported.")
         }
-
-        return Config(
-            activeMode: active,
-            hotkey: (raw["hotkey"] as? String) ?? "alt_r",
-            toggleHotkey: raw["toggle_hotkey"] as? String,
-            pauseAudio: (raw["pause_audio"] as? Bool) ?? true,
-            inputDevice: raw["input_device"] as? String,
-            appearance: AppearancePreference(rawValue: raw["appearance"] as? String ?? "")
-                ?? .system,
-            saveHistory: (raw["save_history"] as? Bool) ?? true,
-            historyRetention: RetentionWindow(
-                days: (raw["retention_days"] as? Int) ?? RetentionWindow.default.days
-            ),
-            badgePosition: badgePosition,
-            sidebarCollapsed: (raw["sidebar_collapsed"] as? Bool) ?? false,
-            modeOrder: order,
-            modes: modes,
-            path: url
-        )
-    }
-
-    /// JSONSerialization loses key order; recover the modes' on-disk order by
-    /// locating each `"<name>":` after the "modes" key in the raw text.
-    private static func modeOrder(in text: String, names: [String]) -> [String] {
-        guard let modesKey = text.range(of: "\"modes\"") else { return names.sorted() }
-        let tail = text[modesKey.upperBound...]
-        var positions: [(String, String.Index)] = []
-        for name in names {
-            let quoted = jsonString(name)
-            if let r = tail.range(of: quoted) {
-                positions.append((name, r.lowerBound))
-            } else {
-                positions.append((name, tail.endIndex))
+        let selection: DictationSelection
+        switch dto.activeSelection.type {
+        case .voiceToText:
+            guard dto.activeSelection.modeID == nil else {
+                throw ConfigError.invalid("Voice to Text selection cannot contain mode_id.")
             }
+            selection = .voiceToText
+        case .mode:
+            guard let id = dto.activeSelection.modeID else {
+                throw ConfigError.invalid("Mode selection requires mode_id.")
+            }
+            selection = .mode(id)
         }
-        return positions.sorted { $0.1 < $1.1 }.map(\.0)
-    }
-
-    /// Resolution order: --config arg, $FOLDWISE_CONFIG, ./modes.json,
-    /// ../modes.json (running from swift/), Application Support.
-    static func resolvePath(cliPath: String?) -> URL {
-        let fm = FileManager.default
-        if let p = cliPath { return URL(fileURLWithPath: p) }
-        if let p = ProcessInfo.processInfo.environment["FOLDWISE_CONFIG"], !p.isEmpty {
-            return URL(fileURLWithPath: p)
+        let modes = dto.modes.map {
+            Mode(
+                id: $0.id,
+                name: $0.name,
+                icon: $0.icon,
+                asrModel: dto.asrModel,
+                llmModel: $0.llmModel,
+                transformation: $0.transformation,
+                systemPrompt: $0.systemPrompt,
+                vocabulary: $0.vocabulary
+            )
         }
-        let cwd = URL(fileURLWithPath: fm.currentDirectoryPath)
-        for candidate in [cwd.appendingPathComponent("modes.json"),
-                          cwd.deletingLastPathComponent().appendingPathComponent("modes.json")]
-            where fm.fileExists(atPath: candidate.path) {
-            return candidate
-        }
-        let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("FoldWise Voice", isDirectory: true)
-        try? fm.createDirectory(at: support, withIntermediateDirectories: true)
-        return support.appendingPathComponent("modes.json")
+        let values = Values(
+            selection: selection,
+            hotkey: dto.hotkey,
+            toggleHotkey: dto.toggleHotkey,
+            modeCycleHotkey: dto.modeCycleHotkey,
+            pauseAudio: dto.pauseAudio,
+            inputDevice: dto.inputDevice,
+            asrModel: dto.asrModel,
+            appearance: dto.appearance,
+            saveHistory: dto.saveHistory,
+            historyRetention: retention,
+            badgePosition: dto.badgePosition,
+            sidebarCollapsed: dto.sidebarCollapsed,
+            orderedModes: modes
+        )
+        try validate(values, requireNormalized: true)
+        return Config(values: values, path: url)
     }
 
     static func loadOrCreate(at url: URL) -> Config {
-        if let config = try? load(from: url) { return config }
-        let defaults = defaultConfig(path: url)
-        try? defaults.save()
-        return defaults
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: url.path) else {
+            let config = defaultConfig(path: url)
+            do {
+                try config.save()
+                return config
+            } catch {
+                return recoveryConfig(
+                    path: url,
+                    originalData: Data(),
+                    message: "FoldWise Voice couldn't create config.json: \(error.localizedDescription)"
+                )
+            }
+        }
+        do {
+            return try load(from: url)
+        } catch {
+            let original: Data
+            do {
+                original = try Data(contentsOf: url)
+            } catch let readError {
+                let detail = readError.localizedDescription
+                Log.config.error(
+                    "Could not preserve rejected config.json bytes: \(detail, privacy: .public)"
+                )
+                original = Data()
+            }
+            return recoveryConfig(
+                path: url,
+                originalData: original,
+                message: error.localizedDescription
+            )
+        }
     }
 
     static func defaultConfig(path: URL) -> Config {
+        Config(values: defaultValues(), path: path)
+    }
+
+    private static func defaultValues() -> Values {
         let asr = ASRModelCatalog.defaultID
-        let clean = Mode(
-            name: "Clean", asrModel: asr, llmModel: "qwen2.5:3b",
+        let casualID = ModeID.random()
+        let casual = Mode(
+            id: casualID,
+            name: "Casual",
+            icon: "wand.and.sparkles",
+            asrModel: asr,
+            llmModel: "qwen2.5:3b",
+            transformation: .inPlace,
             systemPrompt: "You clean up dictated speech. Fix punctuation, capitalization, "
                 + "and obvious transcription errors. Remove filler words (um, uh, "
                 + "like, you know). Do NOT change meaning, add content, or answer "
                 + "questions. Output ONLY the cleaned text.",
-            vocab: ["FoldWise", "Ollama", "Anthropic"],
-            expands: Mode.expands(forName: "Clean")
-        )
-        let raw = Mode(
-            name: "Voice to Text", asrModel: asr, llmModel: nil, systemPrompt: nil,
-            vocab: [], expands: Mode.expands(forName: "Voice to Text")
+            vocabulary: []
         )
         let email = Mode(
-            name: "Email", asrModel: asr, llmModel: "qwen2.5:3b",
+            id: .random(),
+            name: "Email",
+            icon: "envelope",
+            asrModel: asr,
+            llmModel: "qwen2.5:3b",
+            transformation: .expanding,
             systemPrompt: "Rewrite this dictation as a clear, concise, professional email "
                 + "body. Output only the email text.",
-            vocab: [], expands: Mode.expands(forName: "Email")
+            vocabulary: []
         )
-        let bullets = Mode(
-            name: "Bullets", asrModel: asr, llmModel: "qwen2.5:3b",
-            systemPrompt: "Convert this dictation into a tight bulleted list, one idea per "
-                + "bullet. Output only the list.",
-            vocab: [], expands: Mode.expands(forName: "Bullets")
-        )
-        return Config(
-            activeMode: "Clean", hotkey: "alt_r", toggleHotkey: nil, pauseAudio: true,
+        return Values(
+            selection: .mode(casualID),
+            hotkey: "alt_r",
+            toggleHotkey: nil,
+            modeCycleHotkey: nil,
+            pauseAudio: true,
+            inputDevice: nil,
+            asrModel: asr,
+            appearance: .system,
+            saveHistory: true,
+            historyRetention: .default,
             badgePosition: nil,
-            modeOrder: ["Voice to Text", "Clean", "Email", "Bullets"],
-            modes: ["Voice to Text": raw, "Clean": clean, "Email": email, "Bullets": bullets],
-            path: path
+            sidebarCollapsed: false,
+            orderedModes: [casual, email]
         )
+    }
+
+    private static func recoveryConfig(path: URL, originalData: Data, message: String) -> Config {
+        var defaults = defaultValues()
+        defaults.selection = .voiceToText
+        return Config(
+            values: defaults,
+            path: path,
+            recovery: Recovery(message: message, originalData: originalData)
+        )
+    }
+
+    private static func persist(_ values: Values, to url: URL) throws {
+        let dto = DTO(values: values)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        var data = try encoder.encode(dto)
+        data.append(0x0A)
+        try data.write(to: url, options: .atomic)
+    }
+
+    private static func normalized(_ source: Values) -> Values {
+        var result = source
+        result.hotkey = source.hotkey.trimmingCharacters(in: .whitespacesAndNewlines)
+        result.toggleHotkey = cleanedOptional(source.toggleHotkey)
+        result.modeCycleHotkey = cleanedOptional(source.modeCycleHotkey)
+        result.inputDevice = cleanedOptional(source.inputDevice)
+        result.asrModel = source.asrModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        result.orderedModes = source.orderedModes.map { sourceMode in
+            var mode = sourceMode
+            mode.name = ModeTextPolicy.cleanName(sourceMode.name)
+            mode.icon = sourceMode.icon.trimmingCharacters(in: .whitespacesAndNewlines)
+            mode.llmModel = cleanedOptional(sourceMode.llmModel)
+            mode.systemPrompt = cleanedOptional(sourceMode.systemPrompt)
+            mode.vocab = ModeTextPolicy.cleanVocabulary(sourceMode.vocab)
+            mode.asrModel = result.asrModel
+            return mode
+        }
+        return result
+    }
+
+    private static func validate(_ values: Values, requireNormalized: Bool) throws {
+        guard !values.hotkey.isEmpty else { throw ConfigError.invalid("hotkey cannot be empty.") }
+        try validateShortcut(values.hotkey, field: "hotkey")
+        try validateOptionalShortcut(values.toggleHotkey, field: "toggle_hotkey")
+        try validateOptionalShortcut(values.modeCycleHotkey, field: "mode_cycle_hotkey")
+        guard !values.asrModel.isEmpty else { throw ConfigError.invalid("asr_model cannot be empty.") }
+        if requireNormalized {
+            guard values.hotkey == values.hotkey.trimmingCharacters(in: .whitespacesAndNewlines),
+                  values.toggleHotkey == cleanedOptional(values.toggleHotkey),
+                  values.modeCycleHotkey == cleanedOptional(values.modeCycleHotkey),
+                  values.inputDevice == cleanedOptional(values.inputDevice),
+                  values.asrModel
+                  == values.asrModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            else { throw ConfigError.invalid("Top-level string fields must be normalized.") }
+        }
+        if let position = values.badgePosition {
+            guard position.count == 2, position.allSatisfy(\.isFinite) else {
+                throw ConfigError.invalid("badge_position must contain two finite numbers.")
+            }
+        }
+
+        var ids = Set<ModeID>()
+        var names = Set<String>()
+        for mode in values.orderedModes {
+            guard let id = mode.id else { throw ConfigError.invalid("Every Mode requires an id.") }
+            guard ids.insert(id).inserted else { throw ConfigError.invalid("Mode IDs must be unique.") }
+            let cleanedName = ModeTextPolicy.cleanName(mode.name)
+            guard !cleanedName.isEmpty else { throw ConfigError.invalid("Mode name cannot be empty.") }
+            if requireNormalized, cleanedName != mode.name {
+                throw ConfigError.invalid("Mode names must use normalized whitespace and Unicode.")
+            }
+            guard names.insert(ModeTextPolicy.comparisonKey(cleanedName)).inserted else {
+                throw ConfigError.invalid("Mode names must be unique.")
+            }
+            guard !mode.icon.isEmpty else { throw ConfigError.invalid("Mode icon cannot be empty.") }
+            guard let model = mode.llmModel, !model.isEmpty else {
+                throw ConfigError.invalid("Mode llm_model cannot be empty.")
+            }
+            guard let prompt = mode.systemPrompt, !prompt.isEmpty else {
+                throw ConfigError.invalid("Mode system_prompt cannot be empty.")
+            }
+            if requireNormalized {
+                guard model == model.trimmingCharacters(in: .whitespacesAndNewlines),
+                      prompt == prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                      mode.icon == mode.icon.trimmingCharacters(in: .whitespacesAndNewlines),
+                      mode.vocab == ModeTextPolicy.cleanVocabulary(mode.vocab)
+                else { throw ConfigError.invalid("Mode fields must be normalized.") }
+            }
+        }
+
+        switch values.selection {
+        case .voiceToText:
+            break
+        case let .mode(id):
+            guard ids.contains(id) else {
+                throw ConfigError.invalid("active_selection refers to a missing Mode.")
+            }
+        }
+        if values.orderedModes.isEmpty, values.selection != .voiceToText {
+            throw ConfigError.invalid("Zero Modes requires Voice to Text selection.")
+        }
+    }
+
+    private static func validateShortcut(_ value: String, field: String) throws {
+        do {
+            _ = try KeyMap.parse(value)
+        } catch {
+            throw ConfigError.invalid("\(field) is invalid: \(error.localizedDescription)")
+        }
+    }
+
+    private static func validateOptionalShortcut(_ value: String?, field: String) throws {
+        guard let value else { return }
+        guard !value.isEmpty else { throw ConfigError.invalid("\(field) cannot be empty.") }
+        try validateShortcut(value, field: field)
+    }
+
+    private static func cleanedOptional(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    private static func backupURL(for path: URL, now: Date) -> URL {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let stamp = formatter.string(from: now)
+            .replacingOccurrences(of: ":", with: "-")
+        let directory = path.deletingLastPathComponent()
+        let base = path.lastPathComponent + ".backup-" + stamp
+        var candidate = directory.appendingPathComponent(base)
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = directory.appendingPathComponent("\(base)-\(suffix)")
+            suffix += 1
+        }
+        return candidate
+    }
+
+    private static func validateKeys(in data: Data) throws {
+        let object: Any
+        do {
+            object = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw ConfigError.invalid("Malformed JSON: \(error.localizedDescription)")
+        }
+        guard let top = object as? [String: Any] else {
+            throw ConfigError.invalid("Configuration must be a JSON object.")
+        }
+        let topKeys: Set = [
+            "schema_version", "active_selection", "hotkey", "toggle_hotkey",
+            "mode_cycle_hotkey", "pause_audio", "input_device", "asr_model",
+            "appearance", "save_history", "retention_days", "badge_position",
+            "sidebar_collapsed", "modes",
+        ]
+        guard Set(top.keys) == topKeys else {
+            throw ConfigError.invalid("Configuration has unknown or missing top-level fields.")
+        }
+        guard let selection = top["active_selection"] as? [String: Any],
+              let type = selection["type"] as? String
+        else { throw ConfigError.invalid("active_selection must be an object.") }
+        let selectionKeys: Set<String> = type == "mode" ? ["type", "mode_id"] : ["type"]
+        guard Set(selection.keys) == selectionKeys else {
+            throw ConfigError.invalid("active_selection has unknown or missing fields.")
+        }
+        guard let modes = top["modes"] as? [Any] else {
+            throw ConfigError.invalid("modes must be an array.")
+        }
+        let modeKeys: Set = [
+            "id", "name", "icon", "llm_model", "transformation", "system_prompt", "vocabulary",
+        ]
+        for value in modes {
+            guard let mode = value as? [String: Any], Set(mode.keys) == modeKeys else {
+                throw ConfigError.invalid("Each Mode has unknown or missing fields.")
+            }
+        }
+    }
+
+    /// Resolution order: explicit CLI path, environment override, config.json
+    /// in the working directories, then Application Support.
+    static func resolvePath(cliPath: String?) -> URL {
+        let fileManager = FileManager.default
+        if let cliPath { return URL(fileURLWithPath: cliPath) }
+        if let environmentPath = ProcessInfo.processInfo.environment["FOLDWISE_CONFIG"],
+           !environmentPath.isEmpty {
+            return URL(fileURLWithPath: environmentPath)
+        }
+        let workingDirectory = URL(fileURLWithPath: fileManager.currentDirectoryPath)
+        for candidate in [
+            workingDirectory.appendingPathComponent("config.json"),
+            workingDirectory.deletingLastPathComponent().appendingPathComponent("config.json"),
+        ] where fileManager.fileExists(atPath: candidate.path) {
+            return candidate
+        }
+        let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("FoldWise Voice", isDirectory: true)
+        do {
+            try fileManager.createDirectory(at: support, withIntermediateDirectories: true)
+        } catch {
+            let detail = error.localizedDescription
+            Log.config.error(
+                "Could not create the configuration directory: \(detail, privacy: .public)"
+            )
+        }
+        return support.appendingPathComponent("config.json")
+    }
+}
+
+private extension Config {
+    struct DTO: Codable {
+        let schemaVersion: Int
+        let activeSelection: SelectionDTO
+        let hotkey: String
+        let toggleHotkey: String?
+        let modeCycleHotkey: String?
+        let pauseAudio: Bool
+        let inputDevice: String?
+        let asrModel: String
+        let appearance: AppearancePreference
+        let saveHistory: Bool
+        let retentionDays: Int
+        let badgePosition: [Double]?
+        let sidebarCollapsed: Bool
+        let modes: [ModeDTO]
+
+        enum CodingKeys: String, CodingKey {
+            case schemaVersion = "schema_version"
+            case activeSelection = "active_selection"
+            case hotkey
+            case toggleHotkey = "toggle_hotkey"
+            case modeCycleHotkey = "mode_cycle_hotkey"
+            case pauseAudio = "pause_audio"
+            case inputDevice = "input_device"
+            case asrModel = "asr_model"
+            case appearance
+            case saveHistory = "save_history"
+            case retentionDays = "retention_days"
+            case badgePosition = "badge_position"
+            case sidebarCollapsed = "sidebar_collapsed"
+            case modes
+        }
+
+        fileprivate init(values: Values) {
+            schemaVersion = 1
+            activeSelection = SelectionDTO(values.selection)
+            hotkey = values.hotkey
+            toggleHotkey = values.toggleHotkey
+            modeCycleHotkey = values.modeCycleHotkey
+            pauseAudio = values.pauseAudio
+            inputDevice = values.inputDevice
+            asrModel = values.asrModel
+            appearance = values.appearance
+            saveHistory = values.saveHistory
+            retentionDays = values.historyRetention.rawValue
+            badgePosition = values.badgePosition
+            sidebarCollapsed = values.sidebarCollapsed
+            modes = values.orderedModes.compactMap(ModeDTO.init)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(schemaVersion, forKey: .schemaVersion)
+            try container.encode(activeSelection, forKey: .activeSelection)
+            try container.encode(hotkey, forKey: .hotkey)
+            try encode(toggleHotkey, in: &container, forKey: .toggleHotkey)
+            try encode(modeCycleHotkey, in: &container, forKey: .modeCycleHotkey)
+            try container.encode(pauseAudio, forKey: .pauseAudio)
+            try encode(inputDevice, in: &container, forKey: .inputDevice)
+            try container.encode(asrModel, forKey: .asrModel)
+            try container.encode(appearance, forKey: .appearance)
+            try container.encode(saveHistory, forKey: .saveHistory)
+            try container.encode(retentionDays, forKey: .retentionDays)
+            if let badgePosition {
+                try container.encode(badgePosition, forKey: .badgePosition)
+            } else {
+                try container.encodeNil(forKey: .badgePosition)
+            }
+            try container.encode(sidebarCollapsed, forKey: .sidebarCollapsed)
+            try container.encode(modes, forKey: .modes)
+        }
+
+        private func encode(
+            _ value: String?,
+            in container: inout KeyedEncodingContainer<CodingKeys>,
+            forKey key: CodingKeys
+        ) throws {
+            if let value {
+                try container.encode(value, forKey: key)
+            } else {
+                try container.encodeNil(forKey: key)
+            }
+        }
+    }
+
+    struct SelectionDTO: Codable {
+        enum Kind: String, Codable {
+            case voiceToText = "voice_to_text"
+            case mode
+        }
+
+        let type: Kind
+        let modeID: ModeID?
+
+        enum CodingKeys: String, CodingKey {
+            case type
+            case modeID = "mode_id"
+        }
+
+        init(_ selection: DictationSelection) {
+            switch selection {
+            case .voiceToText:
+                type = .voiceToText
+                modeID = nil
+            case let .mode(id):
+                type = .mode
+                modeID = id
+            }
+        }
+    }
+
+    struct ModeDTO: Codable {
+        let id: ModeID
+        let name: String
+        let icon: String
+        let llmModel: String
+        let transformation: ModeTransformation
+        let systemPrompt: String
+        let vocabulary: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case name
+            case icon
+            case llmModel = "llm_model"
+            case transformation
+            case systemPrompt = "system_prompt"
+            case vocabulary
+        }
+
+        init?(_ mode: Mode) {
+            guard let id = mode.id,
+                  let llmModel = mode.llmModel,
+                  let systemPrompt = mode.systemPrompt
+            else { return nil }
+            self.id = id
+            name = mode.name
+            icon = mode.icon
+            self.llmModel = llmModel
+            transformation = mode.transformation
+            self.systemPrompt = systemPrompt
+            vocabulary = mode.vocab
+        }
     }
 }

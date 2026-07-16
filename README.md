@@ -42,7 +42,7 @@ While running:
   while you dictate; everything resumes when you stop. Toggle in Settings.
 - **Settings** — pick/install Ollama models with speed & quality guidance,
   pick/install the speech-recognition model, switch modes, and record hotkeys.
-  Every change saves straight to `modes.json`.
+  Every change saves atomically to `config.json`.
 
 ## Visual tokens
 
@@ -88,50 +88,30 @@ keycaps and tooltips.
   audio into text. Always runs, fully offline after the one-time model download.
 - **Stage 2 (LLM)** — Ollama receives the *text* transcript (never audio) via
   its OpenAI-compatible API and rewrites it per the active mode's system
-  prompt. Optional: modes with `"llm_model": null` skip it entirely.
+  prompt. Voice to Text skips this stage; an editable Mode whose assigned model
+  becomes unavailable keeps its instructions and falls back to the raw transcript.
 
-## Modes (`modes.json`)
+## Modes and configuration
 
-Edit `modes.json` (or use Settings) to configure hotkeys and modes. Ships with:
+FoldWise stores its versioned configuration in `config.json`. Manage Modes and
+preferences through Settings; unsupported or damaged files open in a read-only
+recovery state rather than being overwritten. A fresh configuration ships with:
 
 | Mode | LLM | What it does |
 |---|---|---|
 | Voice to Text | — | raw transcript, no LLM |
-| Clean | qwen2.5:3b | fixes punctuation, removes filler words (um, uh…) |
+| Casual | qwen2.5:3b | keeps wording while cleaning up the transcript |
 | Email | qwen2.5:3b | rewrites dictation as a professional email body |
-| Bullets | qwen2.5:3b | converts dictation into a bulleted list |
 
-Top-level settings:
+Manage Mode names, icons, per-Mode Ollama models, transformation behavior,
+prompts, vocabulary, order, and shortcuts in Settings. Voice to Text is a
+protected system selection outside the editable library; ASR selection remains
+global. Stable Mode IDs preserve selection and History attribution through
+rename, reorder, editing, and deletion.
 
-- `active_mode` — mode used at startup (or pass `--mode`).
-- `hotkey` — push-to-talk key, held while speaking. Default `alt_r` (right
-  Option). Any [pynput key name](https://pynput.readthedocs.io/en/latest/keyboard.html#pynput.keyboard.Key)
-  (`cmd_r`, `f19`, `ctrl_r`, …) or a single character.
-- `toggle_hotkey` — optional tap-to-start / tap-to-stop key (e.g. `"f19"`).
-  `null` disables it.
-- `pause_audio` — pause Spotify / Apple Music and mute other output while
-  dictating (default `true`).
-- `hud_position` — saved HUD anchor (`[center_x, bottom_y]` in screen
-  points); written automatically when you drag the pill. `null` = default
-  bottom-center.
-
-Per-mode fields:
-
-- `llm_model` — Ollama model tag (`llama3.2:3b`, `qwen2.5:7b`, …) or `null`
-  for raw transcription.
-- `system_prompt` — instruction the LLM applies to your transcript.
-- `vocab` — names/terms the LLM must preserve (e.g. product names).
-- `asr_model` — speech-recognition model catalog id. Selection is global, so
-  Settings writes the chosen id to every mode. Unknown ids from older configs
-  remain stored and safely fall back to Parakeet until a model is selected.
-
-The retired `hud_style` key is accepted in older files but ignored; the current
-Badge presentation is fixed by the implemented design system.
-
-Add a mode by copying an existing block under `"modes"` and restarting.
-
-`modes.json` is git-ignored and generated on first run — it holds local machine
-state (HUD position, hotkey, model picks), so it won't appear in a fresh clone.
+`config.json` is generated on first run and holds local machine state, so it
+doesn't appear in a fresh clone. Configuration changes are validated and saved
+atomically before becoming visible in the running app.
 
 Transcripts shorter than ~40 characters skip the LLM to keep short
 dictations snappy.
@@ -144,7 +124,7 @@ python3 scripts/build_swift_app.py --dmg   # → dist/FoldWise-Voice-<version>.d
 
 This builds a self-contained **FoldWise Voice.app** in a drag-to-Applications
 disk image. Unlike the locally installed bundle, it has no repo paths baked
-in: on first launch the app creates its own `modes.json` in
+in: on first launch the app creates its own `config.json` in
 `~/Library/Application Support/FoldWise Voice/`, so it works on any Apple
 Silicon Mac running macOS 14+. Recipients still install Ollama themselves if
 they want LLM modes; plain dictation needs nothing else.
@@ -228,8 +208,6 @@ each release gets a .dmg built and attached automatically
 - Push-to-talk uses a plain key (right Option by default) — holding it while
   typing other keys may trigger app shortcuts. Pick a dedicated key like
   `f19` if that bothers you (Settings → Keyboard Shortcuts).
-- Model changes in Settings apply to all LLM modes at once; per-mode models
-  can still be set by editing `modes.json` directly.
-- The locally installed bundle points at this repo's `modes.json` — deleting
+- The locally installed bundle points at this repo's `config.json` — deleting
   or moving the repo breaks it (re-run `scripts/build_swift_app.py` after
   moving). The .dmg build has no such dependency.

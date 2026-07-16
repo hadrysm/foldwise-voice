@@ -21,11 +21,11 @@ struct HomeView: View {
     private let calendar: Calendar
     private let locale: Locale
     private let notificationCenter: NotificationCenter
-    private let project: ([HistoryEntry], Date, Calendar, Locale) -> HomeProjection
+    private let project: (HomeProjection.Input, Date, Calendar, Locale) -> HomeProjection
 
-    /// Both projections are memoized off `historyEntries` — SettingsModel has
-    /// dozens of unrelated @Published fields, and recomputing a whole-history
-    /// scan on every publish would put it on the render path (cf. StatsPane).
+    /// Both projections are memoized off their actual inputs — SettingsModel
+    /// has dozens of unrelated @Published fields, and recomputing a whole-
+    /// history scan on every publish would put it on the render path.
     @State private var stats = UsageStats.empty
     @State private var projection = HomeProjection(sections: [])
 
@@ -39,7 +39,7 @@ struct HomeView: View {
         calendar: Calendar = .current,
         locale: Locale = .current,
         notificationCenter: NotificationCenter = .default,
-        project: @escaping ([HistoryEntry], Date, Calendar, Locale) -> HomeProjection = {
+        project: @escaping (HomeProjection.Input, Date, Calendar, Locale) -> HomeProjection = {
             HomeProjection.project($0, now: $1, calendar: $2, locale: $3)
         }
     ) {
@@ -53,17 +53,21 @@ struct HomeView: View {
 
     var body: some View {
         main
-            .onChange(of: model.historyEntries, initial: true) { _, entries in
-                stats = UsageStatsAggregator.aggregate(entries)
-                refreshProjection(entries)
+            .onChange(of: projectionInput, initial: true) { _, input in
+                stats = UsageStatsAggregator.aggregate(input.entries)
+                refreshProjection(input)
             }
             .onReceive(notificationCenter.publisher(for: .NSCalendarDayChanged)) { _ in
-                refreshProjection(model.historyEntries)
+                refreshProjection(projectionInput)
             }
     }
 
-    private func refreshProjection(_ entries: [HistoryEntry]) {
-        projection = project(entries, now(), calendar, locale)
+    private var projectionInput: HomeProjection.Input {
+        HomeProjection.Input(entries: model.historyEntries, modes: model.modes)
+    }
+
+    private func refreshProjection(_ input: HomeProjection.Input) {
+        projection = project(input, now(), calendar, locale)
     }
 
     // MARK: - main column

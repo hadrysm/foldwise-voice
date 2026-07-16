@@ -3,7 +3,7 @@
 // the 190pt labeled list and the 52pt icon rail (tooltip chips on hover), and
 // six panes — Home, Modes, Models, History, Stats, Settings. The old Speech
 // pane lives inside Models; Configuration and Sound merged into Settings.
-// Every change saves straight to modes.json; there is no Save button.
+// Preferences save immediately; Mode drafts use the editor's explicit Save.
 
 import AppKit
 import SwiftUI
@@ -116,6 +116,37 @@ struct SettingsView: View {
             }
         }
         .frame(minWidth: 880, minHeight: 640)
+        .sheet(isPresented: modeEditorPresented) {
+            ModeEditorSheet(model: model)
+        }
+        .alert(
+            model.modePendingDeletion?.title ?? "Delete Mode?",
+            isPresented: modeDeletionPresented,
+            presenting: model.modePendingDeletion
+        ) { _ in
+            Button("Delete", role: .destructive) { model.onConfirmModeDeletion?() }
+            Button("Cancel", role: .cancel) { model.onCancelModeDeletion?() }
+        } message: { deletion in
+            Text(deletion.message)
+        }
+    }
+
+    private var modeEditorPresented: Binding<Bool> {
+        Binding(
+            get: { model.modeEditor != nil },
+            set: { isPresented in
+                if !isPresented { model.onCancelModeEditor?() }
+            }
+        )
+    }
+
+    private var modeDeletionPresented: Binding<Bool> {
+        Binding(
+            get: { model.modePendingDeletion != nil },
+            set: { _ in
+                // Alert actions own dismissal so a failed delete remains available for retry.
+            }
+        )
     }
 
     private var sidebarMode: SidebarMode {
@@ -145,6 +176,7 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             .keyboardShortcut("\\", modifiers: .command)
             .help("Toggle sidebar (⌘\\)")
+            .disabled(model.configurationReadOnly)
             Text("FoldWise Voice")
                 .font(Theme.ui(12.5, .semibold))
                 .foregroundStyle(Theme.textTertiary)
@@ -306,6 +338,7 @@ struct SettingsView: View {
     }
 
     private func toggleSidebar() {
+        guard !model.configurationReadOnly else { return }
         if sidebarMode == .rail {
             clearRailHover()
         }
@@ -379,20 +412,27 @@ struct SettingsView: View {
 
     private var content: some View {
         VStack(spacing: 0) {
-            switch model.pane {
-            case .home:
-                HomeView(model: model)
-            case .modes:
-                paneScroll("Modes") { modesPane }
-            case .models:
-                paneScroll("Models") { ModelsCombinedPane(model: model) }
-            case .history:
-                paneScroll("History") { HistoryPane(model: model) }
-            case .stats:
-                paneScroll("Stats") { StatsPane(model: model) }
-            case .settings:
-                paneScroll("Settings") { settingsPane }
+            if let message = model.configurationRecoveryMessage {
+                recoveryBanner(message)
+                hairline(.horizontal)
             }
+            Group {
+                switch model.pane {
+                case .home:
+                    HomeView(model: model)
+                case .modes:
+                    paneScroll("Modes") { modesPane }
+                case .models:
+                    paneScroll("Models") { ModelsCombinedPane(model: model) }
+                case .history:
+                    paneScroll("History") { HistoryPane(model: model) }
+                case .stats:
+                    paneScroll("Stats") { StatsPane(model: model) }
+                case .settings:
+                    paneScroll("Settings") { settingsPane }
+                }
+            }
+            .disabled(configurationPaneIsReadOnly)
             if !model.status.isEmpty {
                 hairline(.horizontal)
                 Text(model.status)
@@ -403,6 +443,34 @@ struct SettingsView: View {
                     .padding(.vertical, 6)
             }
         }
+    }
+
+    private var configurationPaneIsReadOnly: Bool {
+        guard model.configurationReadOnly else { return false }
+        return [.modes, .models, .history, .settings].contains(model.pane)
+    }
+
+    private func recoveryBanner(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Configuration recovery")
+                    .font(Theme.ui(13, .semibold))
+                Text(message)
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.textSecondary)
+                Text("Voice to Text remains available. Configuration changes are disabled.")
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            Spacer()
+            Button("Quit") { model.onQuitRecovery?() }
+            Button("Reset Configuration") { model.onResetConfiguration?() }
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(14)
     }
 
     private func paneScroll(_ title: String, @ViewBuilder body: () -> some View) -> some View {
@@ -426,44 +494,241 @@ struct SettingsView: View {
 
     private var modesPane: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("The active mode decides how your dictation is processed after transcription.")
-                .font(Theme.ui(12))
-                .foregroundStyle(Theme.textSecondary)
+            HStack(alignment: .firstTextBaseline, spacing: 16) {
+                Text("Your Dictation selection decides how speech is processed after transcription.")
+                    .font(Theme.ui(12))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Button("Add Mode", systemImage: "plus") { model.onAddMode?() }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityHint("Opens a new unsaved Mode draft")
+            }
+            sectionHeader("System")
             Card {
-                ForEach(Array(model.modeNames.enumerated()), id: \.element) { i, name in
-                    if i > 0 { Divider().padding(.leading, 14) }
-                    Button {
-                        model.activeMode = name
-                        model.onCommit?()
-                    } label: {
-                        CardRow(
-                            title: name,
-                            subtitle: model.llmModes.contains(name)
-                                ? "Polished with \(model.selectedModel.isEmpty ? "Ollama" : model.selectedModel)"
-                                : "Raw transcription — no LLM"
-                        ) {
-                            Image(
-                                systemName: model.activeMode == name
-                                    ? "checkmark.circle.fill"
-                                    : "circle"
-                            )
-                            .foregroundStyle(
-                                model.activeMode == name
-                                    ? AnyShapeStyle(Theme.accent)
-                                    : AnyShapeStyle(Theme.textTertiary)
-                            )
+                modeSelectionButton(model.modeSelection.systemItem)
+            }
+            HStack(alignment: .top, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionHeader("Your Modes")
+                    if model.modeSelection.editableItems.isEmpty {
+                        Card {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Build your first Polish workflow")
+                                    .font(Theme.ui(13, .semibold))
+                                Text("Add a Mode with its own model and writing instructions.")
+                                    .font(Theme.ui(11))
+                                    .foregroundStyle(Theme.textSecondary)
+                                Button("Add Mode") { model.onAddMode?() }
+                                    .padding(.top, 4)
+                            }
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .contentShape(Rectangle())
+                    } else {
+                        Card {
+                            ForEach(
+                                Array(model.modeSelection.editableItems.enumerated()),
+                                id: \.element.id
+                            ) { index, item in
+                                if index > 0 { Divider().padding(.leading, 14) }
+                                modeLibraryRow(item, index: index)
+                            }
+                        }
                     }
-                    .buttonStyle(.plain)
+                }
+                .frame(maxWidth: 310)
+                modeDetail
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+    }
+
+    private var modeDetail: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Mode details")
+            if let mode = model.selectedEditableMode,
+               let item = model.selectedEditableModeItem,
+               let id = mode.id,
+               let modeIndex = model.modes.firstIndex(where: { $0.id == id }) {
+                let actions = ModeLibraryActionPresentation(
+                    modeName: mode.name,
+                    index: modeIndex,
+                    modeCount: model.modes.count
+                )
+                Card {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 10) {
+                            Image(systemName: item.icon)
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundStyle(Theme.accent)
+                                .frame(width: 28)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(mode.name)
+                                    .font(Theme.ui(16, .semibold))
+                                Text(mode.transformation == .inPlace ? "Keep wording" : "Reshape")
+                                    .font(Theme.ui(11))
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                            Spacer()
+                            HStack(spacing: 8) {
+                                Button("Edit") { model.onEditMode?(id) }
+                                    .accessibilityLabel("Edit \(mode.name)")
+                                Button("Duplicate") { model.onDuplicateMode?(id) }
+                                    .accessibilityLabel(actions.duplicateLabel)
+                            }
+                        }
+                        Divider()
+                        modeDetailField("AI model", mode.llmModel ?? "Unavailable")
+                        modeDetailField("Polish instructions", mode.systemPrompt ?? "")
+                        modeDetailField(
+                            "Preserved vocabulary",
+                            mode.vocab.isEmpty ? "None" : mode.vocab.joined(separator: ", ")
+                        )
+                        if let installed = model.installed,
+                           !installed.contains(where: { $0.name == mode.llmModel }) {
+                            unavailableModelNotice(mode.llmModel ?? "This model")
+                        }
+                        Divider()
+                        HStack(spacing: 8) {
+                            Button("Move up", systemImage: "arrow.up") {
+                                model.onMoveMode?(id, .up)
+                            }
+                            .disabled(!actions.canMoveUp)
+                            .accessibilityLabel(actions.moveUpLabel)
+                            .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                            Button("Move down", systemImage: "arrow.down") {
+                                model.onMoveMode?(id, .down)
+                            }
+                            .disabled(!actions.canMoveDown)
+                            .accessibilityLabel(actions.moveDownLabel)
+                            .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                            Spacer()
+                            Button("Delete", role: .destructive) {
+                                model.onRequestModeDeletion?(id)
+                            }
+                            .accessibilityLabel(actions.deleteLabel)
+                            .accessibilityHint(actions.deleteHint)
+                        }
+                    }
+                    .padding(16)
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Details for \(mode.name)")
+            } else {
+                Card {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Choose a Mode")
+                            .font(Theme.ui(13, .semibold))
+                        Text("Select a Mode to review or edit its Polish instructions.")
+                            .font(Theme.ui(11))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            HStack {
-                Button("Edit modes.json…") { model.onEditFile?() }
-                Text("Prompts and vocabulary live in the config file.")
+        }
+    }
+
+    private func modeDetailField(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(Theme.ui(10, .bold))
+                .foregroundStyle(Theme.textTertiary)
+                .textCase(.uppercase)
+            Text(value)
+                .font(Theme.ui(12))
+                .foregroundStyle(Theme.textPrimary)
+                .textSelection(.enabled)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func unavailableModelNotice(_ name: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(name) isn't installed. Polish will use the raw transcript.")
                     .font(Theme.ui(11))
-                    .foregroundStyle(Theme.textSecondary)
+                Button("Open Models") { model.pane = .models }
+                    .buttonStyle(.link)
             }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(
+            "Unavailable model \(name). Polish will use the raw transcript. Open Models to install it."
+        )
+    }
+
+    private func modeSelectionButton(_ item: ModeSelectionItem) -> some View {
+        Button {
+            model.onSelectMode?(item.id)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: item.icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(item.isSelected ? Theme.accent : Theme.textSecondary)
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name)
+                        .font(Theme.ui(13, .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text(item.summary)
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer(minLength: 16)
+                Image(systemName: item.isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(item.isSelected ? Theme.accent : Theme.textTertiary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(item.accessibilityLabel)
+        .accessibilityValue(item.accessibilityValue)
+        .accessibilityHint(item.accessibilityHint)
+    }
+
+    @ViewBuilder
+    private func modeLibraryRow(_ item: ModeSelectionItem, index: Int) -> some View {
+        if case let .mode(id) = item.id {
+            let actions = ModeLibraryActionPresentation(
+                modeName: item.name,
+                index: index,
+                modeCount: model.modeSelection.editableItems.count
+            )
+            HStack(spacing: 2) {
+                modeSelectionButton(item)
+                Button {
+                    model.onMoveMode?(id, .up)
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .frame(width: 22, height: 28)
+                }
+                .buttonStyle(.plain)
+                .disabled(!actions.canMoveUp)
+                .help(actions.moveUpLabel)
+                .accessibilityLabel(actions.moveUpLabel)
+                Button {
+                    model.onMoveMode?(id, .down)
+                } label: {
+                    Image(systemName: "arrow.down")
+                        .frame(width: 22, height: 28)
+                }
+                .buttonStyle(.plain)
+                .disabled(!actions.canMoveDown)
+                .help(actions.moveDownLabel)
+                .accessibilityLabel(actions.moveDownLabel)
+            }
+            .padding(.trailing, 10)
         }
     }
 
@@ -500,6 +765,21 @@ struct SettingsView: View {
                         shortcutChip(key: model.toggleKey, field: .toggle)
                     }
                 }
+                Divider().padding(.leading, 14)
+                CardRow(
+                    title: "Cycle Modes",
+                    subtitle: "Selects the next Mode for your next dictation"
+                ) {
+                    HStack(spacing: 8) {
+                        if !model.cycleKey.isEmpty {
+                            resetButton(icon: "xmark", help: "Remove shortcut") {
+                                model.cycleKey = ""
+                                model.onCommit?()
+                            }
+                        }
+                        shortcutChip(key: model.cycleKey, field: .cycle)
+                    }
+                }
             }
             Text(
                 "Click a shortcut, then press the key you want — a modifier "
@@ -507,6 +787,24 @@ struct SettingsView: View {
             )
             .font(Theme.ui(11))
             .foregroundStyle(Theme.textSecondary)
+            if model.shortcutListenerHealth == .focusedAppOnly {
+                HStack(spacing: 8) {
+                    Text(
+                        "Shortcuts currently work only while FoldWise is focused. "
+                            + "Allow Input Monitoring or Accessibility for global use."
+                    )
+                    .font(Theme.ui(11))
+                    .foregroundStyle(.orange)
+                    Button("Open System Settings…") {
+                        model.onOpenShortcutPermissions?()
+                    }
+                    .buttonStyle(.link)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "Shortcut permission limited. Shortcuts work only while FoldWise is focused."
+                )
+            }
 
             sectionHeader("Input")
             inputDeviceRoster
@@ -793,6 +1091,22 @@ struct SettingsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(field.command.title) shortcut")
+        .accessibilityValue(shortcutAccessibilityValue(key: key, field: field))
+        .accessibilityHint(
+            model.recordingField == field
+                ? "Press a key to assign it. The captured key will not run a command."
+                : "Activate to capture a key. Activate again to cancel."
+        )
+    }
+
+    private func shortcutAccessibilityValue(
+        key: String,
+        field: SettingsModel.RecordingField
+    ) -> String {
+        if model.recordingField == field { return "Capturing" }
+        if key.isEmpty { return "Not assigned" }
+        return "Assigned to \(keycapLabel(key))"
     }
 }
 

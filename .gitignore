@@ -7,6 +7,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Runtime user config: the app rewrites it (HUD position, model picks, hotkey)
+# Runtime user config: the app rewrites it (Badge position, model picks, hotkeys)
 # and generates it on first run. Defaults live in Config.swift, not this file.
 modes.json
+config.json

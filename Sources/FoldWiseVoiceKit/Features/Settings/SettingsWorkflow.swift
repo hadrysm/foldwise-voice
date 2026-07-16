@@ -31,14 +31,12 @@ protocol SettingsUpdateChecking {
 /// Deterministic settings decisions shared by the SwiftUI/AppKit shell.
 @MainActor
 final class SettingsWorkflow {
-    typealias Persist = @MainActor () throws -> Void
     typealias ScheduleStatusClear = @MainActor ((@MainActor () -> Void)?) -> Void
     typealias Copy = @MainActor (String) -> Void
 
     private let config: Config
     private let model: SettingsModel
     private let historyStore: HistoryStore
-    private let persist: Persist
     private let now: () -> Date
     private let scheduleStatusClear: ScheduleStatusClear
     private let llmModels: any LLMModelManaging
@@ -49,6 +47,8 @@ final class SettingsWorkflow {
     private let reprocessor: HistoryReprocessor
     private let updates: any SettingsUpdateChecking
     private let reportUpdate: (String) -> Void
+    private let updateHotkeys: (ShortcutBindings) throws -> Void
+    private let captureGate: ShortcutCaptureGate
     private var llmRefreshID: UUID?
     private var llmMutationID: UUID?
     private var asrDownloadID: UUID?
@@ -59,7 +59,6 @@ final class SettingsWorkflow {
         config: Config,
         model: SettingsModel,
         historyStore: HistoryStore,
-        persist: @escaping Persist,
         now: @escaping () -> Date,
         scheduleStatusClear: @escaping ScheduleStatusClear,
         copy: @escaping Copy,
@@ -67,13 +66,14 @@ final class SettingsWorkflow {
         calendar: Calendar = .current,
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
         updates: (any SettingsUpdateChecking)? = nil,
-        reportUpdate: @escaping (String) -> Void = { _ in }
+        reportUpdate: @escaping (String) -> Void = { _ in },
+        updateHotkeys: ((ShortcutBindings) throws -> Void)? = nil,
+        captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
     ) {
         self.init(
             config: config,
             model: model,
             historyStore: historyStore,
-            persist: persist,
             now: now,
             scheduleStatusClear: scheduleStatusClear,
             llmModels: LiveLLMModelManager(),
@@ -83,7 +83,9 @@ final class SettingsWorkflow {
             calendar: calendar,
             polish: polish,
             updates: updates,
-            reportUpdate: reportUpdate
+            reportUpdate: reportUpdate,
+            updateHotkeys: updateHotkeys,
+            captureGate: captureGate
         )
     }
 
@@ -91,7 +93,6 @@ final class SettingsWorkflow {
         config: Config,
         model: SettingsModel,
         historyStore: HistoryStore,
-        persist: @escaping Persist,
         now: @escaping () -> Date,
         scheduleStatusClear: @escaping ScheduleStatusClear,
         llmModels: any LLMModelManaging,
@@ -101,12 +102,13 @@ final class SettingsWorkflow {
         calendar: Calendar = .current,
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
         updates: (any SettingsUpdateChecking)? = nil,
-        reportUpdate: @escaping (String) -> Void = { _ in }
+        reportUpdate: @escaping (String) -> Void = { _ in },
+        updateHotkeys: ((ShortcutBindings) throws -> Void)? = nil,
+        captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
     ) {
         self.config = config
         self.model = model
         self.historyStore = historyStore
-        self.persist = persist
         self.now = now
         self.scheduleStatusClear = scheduleStatusClear
         self.llmModels = llmModels
@@ -117,13 +119,14 @@ final class SettingsWorkflow {
         reprocessor = HistoryReprocessor(store: historyStore, polish: polish)
         self.updates = updates ?? LiveSettingsUpdateChecker()
         self.reportUpdate = reportUpdate
+        self.updateHotkeys = updateHotkeys ?? { try config.setShortcutBindings($0) }
+        self.captureGate = captureGate
+        observeConfigChanges()
     }
 
     func populatePreferences() {
-        model.modeNames = config.modeOrder
-        model.llmModes = Set(config.modeOrder.filter { config.modes[$0]?.usesLLM == true })
-        model.activeMode = config.activeMode
-        model.selectedModel = config.llmModel ?? ""
+        model.configurationRecoveryMessage = config.recovery?.message
+        populateModes()
         model.asrModel = config.asrModel
         model.asrDownloaded = [ASRModelCatalog.defaultID]
         if ASRModelCatalog.entry(for: config.asrModel) != nil {
@@ -133,14 +136,34 @@ final class SettingsWorkflow {
         model.asrDownloadError = ""
         model.asrDeleting = nil
         model.asrDeleteError = ""
-        model.pttKey = config.hotkey
-        model.toggleKey = config.toggleHotkey ?? ""
+        populateShortcutBindings()
         model.pauseAudio = config.pauseAudio
         model.appearance = config.appearance
         model.saveHistory = config.saveHistory
         model.retention = config.historyRetention
         model.sidebar = SidebarPresentation(prefersCollapsed: config.sidebarCollapsed)
         model.status = ""
+    }
+
+    private func populateModes() {
+        model.modeSelection = ModePresentationFactory.projection(
+            modes: config.orderedModes,
+            selection: config.selection
+        )
+        model.modes = config.orderedModes
+        model.selectedModel = config.mode.llmModel ?? ""
+    }
+
+    private func observeConfigChanges() {
+        config.onChange { [weak self] changes in
+            guard let self else { return }
+            if changes.contains(.modeLibrary) {
+                populateModes()
+            } else if changes.contains(.selection) {
+                model.modeSelection = model.modeSelection.selecting(config.selection)
+                model.selectedModel = config.mode.llmModel ?? ""
+            }
+        }
     }
 
     func populateHistory() {
@@ -178,32 +201,225 @@ final class SettingsWorkflow {
         }
     }
 
-    func beginRecording(_ field: SettingsModel.RecordingField) {
+    @discardableResult
+    func beginRecording(_ field: SettingsModel.RecordingField) -> Bool {
+        if model.recordingField == field {
+            cancelRecording()
+            return false
+        }
         model.recordingField = field
+        captureGate.isCapturing = true
+        return true
     }
 
     func finishRecording(with key: String?) {
         guard let field = model.recordingField else { return }
-        model.recordingField = nil
-        guard let key, !key.isEmpty else { return }
+        guard let key, !key.isEmpty else {
+            cancelRecording()
+            return
+        }
         switch field {
         case .ptt:
             model.pttKey = key
         case .toggle:
             model.toggleKey = key
+        case .cycle:
+            model.cycleKey = key
         }
-        commit()
+        commit(changedShortcut: field)
+        model.recordingField = nil
+        captureGate.isCapturing = false
     }
 
-    func selectLLMModel(_ name: String) {
-        model.selectedModel = name
-        commit()
+    func cancelRecording() {
+        populateShortcutBindings()
+        model.recordingField = nil
+        captureGate.isCapturing = false
+    }
+
+    func selectMode(_ selection: DictationSelection) {
+        do {
+            try config.select(selection)
+            setStatus("Dictation selection updated ✓", isError: false, clearAfter: true)
+        } catch {
+            populateModes()
+            setStatus(
+                "⚠️ couldn’t select Mode: \(error.localizedDescription)",
+                isError: true
+            )
+        }
+    }
+
+    func beginAddMode() {
+        guard !config.isReadOnly else { return }
+        model.modeEditor = ModeEditorState(
+            purpose: .add,
+            draft: ModeEditorDraft(
+                name: "",
+                icon: "wand.and.sparkles",
+                model: model.installed?.first?.name ?? "",
+                transformation: .inPlace,
+                systemPrompt: "",
+                vocabularyText: ""
+            )
+        )
+    }
+
+    func beginEditMode(_ id: ModeID) {
+        guard !config.isReadOnly, let mode = config.mode(id: id) else { return }
+        model.modeEditor = editorState(for: mode, purpose: .edit(id), name: mode.name)
+    }
+
+    func beginDuplicateMode(_ id: ModeID) {
+        guard !config.isReadOnly, let mode = config.mode(id: id) else { return }
+        let name = ModeEditorPolicy.duplicateName(
+            for: mode.name,
+            existingNames: config.orderedModes.map(\.name)
+        )
+        model.modeEditor = editorState(for: mode, purpose: .duplicate(id), name: name)
+    }
+
+    private func editorState(
+        for mode: Mode,
+        purpose: ModeEditorPurpose,
+        name: String
+    ) -> ModeEditorState {
+        let modelName = mode.llmModel ?? ""
+        return ModeEditorState(
+            purpose: purpose,
+            draft: ModeEditorDraft(
+                name: name,
+                icon: mode.icon,
+                model: modelName,
+                transformation: mode.transformation,
+                systemPrompt: mode.systemPrompt ?? "",
+                vocabularyText: mode.vocab.joined(separator: "\n")
+            )
+        )
+    }
+
+    func saveModeEditor() {
+        guard var editor = model.modeEditor else { return }
+        let editingID: ModeID? = if case let .edit(id) = editor.purpose { id } else { nil }
+        let evaluation = ModeEditorPolicy.evaluate(
+            editor.draft,
+            existingModes: config.orderedModes,
+            editingID: editingID,
+            installedModels: model.installed.map { Set($0.map(\.name)) }
+        )
+        editor.issues = evaluation.issues
+        editor.persistenceError = nil
+        guard let submission = evaluation.submission else {
+            model.modeEditor = editor
+            return
+        }
+
+        do {
+            switch editor.purpose {
+            case .add:
+                let id = ModeID.random()
+                let mode = makeMode(id: id, from: submission)
+                try config.replaceModes(
+                    config.orderedModes + [mode],
+                    selection: .mode(id)
+                )
+            case let .duplicate(sourceID):
+                let id = ModeID.random()
+                let mode = makeMode(id: id, from: submission)
+                guard let candidate = ModeLibraryPolicy.insertingDuplicate(
+                    mode,
+                    after: sourceID,
+                    in: config.orderedModes
+                ) else {
+                    throw ConfigError.invalid("Source Mode no longer exists.")
+                }
+                try config.replaceModes(candidate.modes, selection: candidate.selection)
+            case let .edit(id):
+                guard config.mode(id: id) != nil else {
+                    throw ConfigError.invalid("Mode no longer exists.")
+                }
+                try config.saveMode(makeMode(id: id, from: submission))
+            }
+            model.modeEditor = nil
+        } catch {
+            editor.persistenceError = "Couldn't save Mode: \(error.localizedDescription)"
+            model.modeEditor = editor
+        }
+    }
+
+    func cancelModeEditor() {
+        model.modeEditor = nil
+    }
+
+    func moveMode(_ id: ModeID, direction: ModeMoveDirection) {
+        guard !config.isReadOnly,
+              let candidate = ModeLibraryPolicy.moving(
+                  id,
+                  direction: direction,
+                  in: config.orderedModes,
+                  selection: config.selection
+              )
+        else { return }
+        do {
+            try config.replaceModes(candidate.modes, selection: candidate.selection)
+            setStatus("Mode order updated ✓", isError: false, clearAfter: true)
+        } catch {
+            populateModes()
+            setStatus("⚠️ couldn't reorder Mode: \(error.localizedDescription)", isError: true)
+        }
+    }
+
+    func requestModeDeletion(_ id: ModeID) {
+        guard !config.isReadOnly, let mode = config.mode(id: id) else { return }
+        let modelName = mode.llmModel ?? "referenced AI model"
+        model.modePendingDeletion = ModeDeletionState(
+            id: id,
+            title: "Delete \(mode.name)?",
+            message: "Your History will remain. The \(modelName) AI model will not be uninstalled."
+        )
+    }
+
+    func confirmModeDeletion() {
+        guard let pending = model.modePendingDeletion,
+              let candidate = ModeLibraryPolicy.deleting(
+                  pending.id,
+                  from: config.orderedModes,
+                  selection: config.selection
+              )
+        else {
+            model.modePendingDeletion = nil
+            return
+        }
+        do {
+            try config.replaceModes(candidate.modes, selection: candidate.selection)
+            model.modePendingDeletion = nil
+            setStatus("Mode deleted ✓", isError: false, clearAfter: true)
+        } catch {
+            populateModes()
+            setStatus("⚠️ couldn't delete Mode: \(error.localizedDescription)", isError: true)
+        }
+    }
+
+    func cancelModeDeletion() {
+        model.modePendingDeletion = nil
+    }
+
+    private func makeMode(id: ModeID, from submission: ModeEditorSubmission) -> Mode {
+        Mode(
+            id: id,
+            name: submission.name,
+            icon: submission.icon,
+            asrModel: config.asrModel,
+            llmModel: submission.model,
+            transformation: submission.transformation,
+            systemPrompt: submission.systemPrompt,
+            vocabulary: submission.vocabulary
+        )
     }
 
     func selectInputDevice(_ uid: String?) {
-        config.inputDevice = uid
         do {
-            try persist()
+            try config.setInputDevice(uid)
             setStatus("Saved ✓", isError: false, clearAfter: true)
         } catch {
             setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
@@ -229,9 +445,9 @@ final class SettingsWorkflow {
         case .toggleFlag:
             flagHistory(entry)
             return nil
-        case let .rerunPolish(modeName):
+        case let .rerunPolish(modeID):
             return Task { @MainActor in
-                await rerunPolish(entry, modeName: modeName)
+                await rerunPolish(entry, modeID: modeID)
             }
         case .delete:
             deleteHistory(entry)
@@ -250,8 +466,11 @@ final class SettingsWorkflow {
         model.historyEntries = historyStore.load()
     }
 
-    func rerunPolish(_ entry: HistoryEntry, modeName: String) async {
-        guard let mode = config.modes[modeName] else { return }
+    func rerunPolish(_ entry: HistoryEntry, modeID: ModeID) async {
+        guard let mode = config.mode(id: modeID) else {
+            setStatus("⚠️ Mode is no longer available. Choose another Mode.", isError: true)
+            return
+        }
         await reprocessor.rerunPolish(entry, mode: mode)
         model.historyEntries = historyStore.load()
     }
@@ -309,7 +528,6 @@ final class SettingsWorkflow {
                 model.pullError = "Couldn't install \(name): \(error)"
             } else {
                 model.customModel = ""
-                selectLLMModel(name)
                 refreshLLMModels()
             }
         }
@@ -403,40 +621,77 @@ final class SettingsWorkflow {
         }
     }
 
-    func commit() {
+    func commit(changedShortcut: SettingsModel.RecordingField? = nil) {
         let ptt = model.pttKey.trimmingCharacters(in: .whitespaces)
         let toggle = model.toggleKey.trimmingCharacters(in: .whitespaces)
+        let cycle = model.cycleKey.trimmingCharacters(in: .whitespaces)
         do {
             _ = try KeyMap.parse(ptt)
             if !toggle.isEmpty { _ = try KeyMap.parse(toggle) }
+            if !cycle.isEmpty { _ = try KeyMap.parse(cycle) }
         } catch {
+            populateShortcutBindings()
             setStatus("⚠️ \(error.localizedDescription)", isError: true)
             return
         }
 
-        if !model.selectedModel.isEmpty {
-            config.setLLMModel(model.selectedModel)
+        let bindings = ShortcutBindings(
+            pushToTalk: ptt,
+            toggleRecording: toggle.isEmpty ? nil : toggle,
+            modeCycle: cycle.isEmpty ? nil : cycle
+        )
+        let committedBindings = ShortcutBindings(
+            pushToTalk: config.hotkey,
+            toggleRecording: config.toggleHotkey,
+            modeCycle: config.modeCycleHotkey
+        )
+        let changedCommands = ShortcutCommand.precedence.filter {
+            bindings.value(for: $0) != committedBindings.value(for: $0)
         }
-        if !model.asrModel.isEmpty {
-            config.setASRModel(model.asrModel)
+        if !changedCommands.isEmpty {
+            let commands = if let changedShortcut {
+                [changedShortcut.command] + changedCommands.filter { $0 != changedShortcut.command }
+            } else {
+                changedCommands
+            }
+            do {
+                for command in commands {
+                    try bindings.validateAssignment(for: command)
+                }
+            } catch {
+                populateShortcutBindings()
+                setStatus("⚠️ \(error.localizedDescription)", isError: true)
+                return
+            }
+            do {
+                try updateHotkeys(bindings)
+            } catch {
+                populateShortcutBindings()
+                setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
+                return
+            }
         }
-        config.setActiveMode(model.activeMode)
-        config.hotkey = ptt
-        config.toggleHotkey = toggle.isEmpty ? nil : toggle
-        config.pauseAudio = model.pauseAudio
-        config.appearance = model.appearance
-        config.saveHistory = model.saveHistory
-        let retentionChanged = config.historyRetention != model.retention
-        config.historyRetention = model.retention
-        // Transient auto-collapse never mutates `prefersCollapsed`, so only
-        // the explicit sidebar toggle can overwrite the user's saved intent.
-        config.sidebarCollapsed = model.sidebar.prefersCollapsed
 
-        do {
-            try persist()
-        } catch {
-            setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
-            return
+        let retentionChanged = config.historyRetention != model.retention
+        var preferences = config.preferences
+        if !model.asrModel.isEmpty { preferences.asrModel = model.asrModel }
+        preferences.hotkey = bindings.pushToTalk
+        preferences.toggleHotkey = bindings.toggleRecording
+        preferences.pauseAudio = model.pauseAudio
+        preferences.appearance = model.appearance
+        preferences.saveHistory = model.saveHistory
+        preferences.historyRetention = model.retention
+        // Transient auto-collapse never mutates this preference.
+        preferences.sidebarCollapsed = model.sidebar.prefersCollapsed
+
+        if config.isReadOnly || preferences != config.preferences {
+            do {
+                try config.apply(preferences)
+            } catch {
+                populatePreferences()
+                setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
+                return
+            }
         }
 
         if retentionChanged {
@@ -446,6 +701,12 @@ final class SettingsWorkflow {
             model.historyEntries = historyStore.load()
         }
         setStatus("Saved ✓", isError: false, clearAfter: true)
+    }
+
+    private func populateShortcutBindings() {
+        model.pttKey = config.hotkey
+        model.toggleKey = config.toggleHotkey ?? ""
+        model.cycleKey = config.modeCycleHotkey ?? ""
     }
 
     private func setStatus(_ text: String, isError: Bool, clearAfter: Bool = false) {

@@ -101,6 +101,84 @@ final class DictationRowPresentationTests: XCTestCase {
         )
     }
 
+    func testResolvedModeIDUsesCurrentName() {
+        let modeID = ModeID.random()
+        let presentation = presentation(
+            modeName: "Recorded Name", modeID: modeID,
+            modes: [mode(id: modeID, name: "Current Name", icon: "envelope")]
+        )
+
+        XCTAssertEqual(presentation.fullModeName, "Current Name")
+    }
+
+    func testResolvedModeIDUsesCurrentIcon() {
+        let modeID = ModeID.random()
+        let presentation = presentation(
+            modeName: "Recorded Name", modeID: modeID,
+            modes: [mode(id: modeID, name: "Current Name", icon: "envelope")]
+        )
+
+        XCTAssertEqual(presentation.modeIcon, "envelope")
+    }
+
+    func testResolvedUnknownIconUsesNeutralFallback() {
+        let modeID = ModeID.random()
+        let presentation = presentation(
+            modeName: "Recorded Name", modeID: modeID,
+            modes: [mode(id: modeID, name: "Current Name", icon: "unknown.symbol")]
+        )
+
+        XCTAssertEqual(presentation.modeIcon, "text.bubble")
+    }
+
+    func testDeletedModeIDUsesRecordedName() {
+        let presentation = presentation(modeName: "Recorded Name", modeID: .random())
+
+        XCTAssertEqual(presentation.fullModeName, "Recorded Name")
+    }
+
+    func testDeletedModeIDUsesNeutralIcon() {
+        let presentation = presentation(modeName: "Recorded Name", modeID: .random())
+
+        XCTAssertEqual(presentation.modeIcon, "text.bubble")
+    }
+
+    func testDeletedModeIDIsMarkedDeleted() {
+        let presentation = presentation(modeName: "Recorded Name", modeID: .random())
+
+        XCTAssertTrue(presentation.isDeletedMode)
+    }
+
+    func testDeletedModeAccessibilityIncludesAnnotation() {
+        let presentation = presentation(modeName: "Recorded Name", modeID: .random())
+
+        XCTAssertTrue(presentation.accessibilityDescription.contains("Deleted Mode"))
+    }
+
+    func testLegacyNameOnlyAttributionUsesRecordedName() {
+        let presentation = presentation(modeName: "Legacy Name", modeID: nil)
+
+        XCTAssertEqual(presentation.fullModeName, "Legacy Name")
+    }
+
+    func testLegacyNameOnlyAttributionUsesNeutralIcon() {
+        let presentation = presentation(modeName: "Legacy Name", modeID: nil)
+
+        XCTAssertEqual(presentation.modeIcon, "text.bubble")
+    }
+
+    func testLegacyNameOnlyAttributionIsNotMarkedDeleted() {
+        let presentation = presentation(modeName: "Legacy Name", modeID: nil)
+
+        XCTAssertFalse(presentation.isDeletedMode)
+    }
+
+    func testLegacyNameOnlyAccessibilityOmitsDeletedAnnotation() {
+        let presentation = presentation(modeName: "Legacy Name", modeID: nil)
+
+        XCTAssertFalse(presentation.accessibilityDescription.contains("Deleted Mode"))
+    }
+
     func testTimeFormatterCacheKeepsTimeZonesIndependent() throws {
         let entry = HistoryEntry(
             id: UUID(),
@@ -125,5 +203,47 @@ final class DictationRowPresentationTests: XCTestCase {
         let cachedUTC = DictationRowPresentation(entry: entry, calendar: utc)
 
         XCTAssertEqual([firstUTC.time, plusTwo.time, cachedUTC.time], ["08:35", "10:35", "08:35"])
+    }
+
+    private func entry(modeName: String, modeID: ModeID?) -> HistoryEntry {
+        HistoryEntry(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1_783_499_700),
+            text: "Words",
+            rawText: "Words",
+            isPolished: false,
+            modeName: modeName,
+            modeID: modeID,
+            wordCount: 1,
+            sourceApp: nil,
+            durationMs: nil,
+            flagged: false,
+            flagReason: nil
+        )
+    }
+
+    private func mode(id: ModeID, name: String, icon: String) -> Mode {
+        Mode(
+            id: id,
+            name: name,
+            icon: icon,
+            asrModel: ASRModelCatalog.defaultID,
+            llmModel: "qwen2.5:3b",
+            transformation: .expanding,
+            systemPrompt: "Current prompt",
+            vocabulary: []
+        )
+    }
+
+    private func presentation(
+        modeName: String,
+        modeID: ModeID?,
+        modes: [Mode] = []
+    ) -> DictationRowPresentation {
+        DictationRowPresentation(
+            entry: entry(modeName: modeName, modeID: modeID),
+            modes: modes,
+            calendar: calendar
+        )
     }
 }

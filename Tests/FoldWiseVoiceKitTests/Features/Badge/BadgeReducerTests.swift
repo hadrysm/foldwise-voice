@@ -73,6 +73,47 @@ final class BadgeReducerTests: XCTestCase {
         XCTAssertEqual(reduce(.working(status: nil), .pipeline(.idle)).state, .idle)
     }
 
+    func testModeSelectionFailureDefersToPipelineOwnedFeedback() {
+        XCTAssertEqual(
+            [
+                reduce(.idle, .modeSelectionFailed),
+                reduce(.recording, .modeSelectionFailed),
+                reduce(.working(status: nil), .modeSelectionFailed),
+            ],
+            [
+                BadgeTransition(
+                    state: .error(message: "couldn’t select Mode"), command: nil
+                ),
+                BadgeTransition(
+                    state: .recording,
+                    command: nil,
+                    deferredModeSelectionError: true
+                ),
+                BadgeTransition(
+                    state: .working(status: nil),
+                    command: nil,
+                    deferredModeSelectionError: true
+                ),
+            ]
+        )
+    }
+
+    func testDeferredModeSelectionFailureAppearsAfterPipelineReturnsToIdle() {
+        let deferred = reduce(.recording, .modeSelectionFailed)
+
+        XCTAssertEqual(
+            BadgeReducer.reduce(
+                deferred.state,
+                .pipeline(.idle),
+                deferredModeSelectionError: deferred.deferredModeSelectionError
+            ),
+            BadgeTransition(
+                state: .error(message: "couldn’t select Mode"),
+                command: nil
+            )
+        )
+    }
+
     // MARK: - clicks
 
     func testClickWhileRecordingRequestsStopAndStaysRecording() {
@@ -120,5 +161,19 @@ final class BadgeReducerTests: XCTestCase {
         XCTAssertTrue(BadgeState.working(status: nil).showsRibbons)
         XCTAssertFalse(BadgeState.working(status: nil).ribbonsFollowMic)
         XCTAssertFalse(BadgeState.idle.showsRibbons)
+    }
+
+    func testPipelineAndErrorFeedbackOwnModeCyclePresentation() {
+        XCTAssertEqual(
+            [
+                BadgeState.idle.ownsModeCyclePresentation,
+                BadgeState.hover.ownsModeCyclePresentation,
+                BadgeState.recording.ownsModeCyclePresentation,
+                BadgeState.working(status: nil).ownsModeCyclePresentation,
+                BadgeState.done.ownsModeCyclePresentation,
+                BadgeState.error(message: "x").ownsModeCyclePresentation,
+            ],
+            [false, false, true, true, true, true]
+        )
     }
 }
