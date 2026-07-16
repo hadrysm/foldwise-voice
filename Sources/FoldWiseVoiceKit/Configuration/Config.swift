@@ -171,7 +171,6 @@ final class Config {
         var saveHistory: Bool
         var historyRetention: RetentionWindow
         var sidebarCollapsed: Bool
-        var llmModel: String?
     }
 
     fileprivate struct Values: Equatable {
@@ -336,8 +335,7 @@ final class Config {
             appearance: appearance,
             saveHistory: saveHistory,
             historyRetention: historyRetention,
-            sidebarCollapsed: sidebarCollapsed,
-            llmModel: llmModel
+            sidebarCollapsed: sidebarCollapsed
         )
     }
 
@@ -425,10 +423,17 @@ final class Config {
             candidate.saveHistory = preferences.saveHistory
             candidate.historyRetention = preferences.historyRetention
             candidate.sidebarCollapsed = preferences.sidebarCollapsed
-            if let llmModel = preferences.llmModel, !llmModel.isEmpty {
-                for index in candidate.orderedModes.indices {
-                    candidate.orderedModes[index].llmModel = llmModel
-                }
+        }
+    }
+
+    /// The current Models pane remains a global control until the per-Mode
+    /// editor lands. Keep that explicit action separate from ordinary
+    /// preference commits so those commits preserve per-Mode assignments.
+    @MainActor
+    func setLLMModel(_ model: String) throws {
+        try update { candidate in
+            for index in candidate.orderedModes.indices {
+                candidate.orderedModes[index].llmModel = model
             }
         }
     }

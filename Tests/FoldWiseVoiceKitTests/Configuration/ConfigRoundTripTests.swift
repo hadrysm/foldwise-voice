@@ -96,82 +96,127 @@ final class ConfigRoundTripTests: XCTestCase {
         )
     }
 
-    func testStrictSchemaRejectsUnknownMissingAndInvalidValues() throws {
-        let invalidFixtures = [
-            ConfigSchemaFixture.valid.replacingOccurrences(
-                of: #""schema_version": 1,"#,
-                with: #""schema_version": 1, "unknown": true,"#
-            ),
-            ConfigSchemaFixture.valid.replacingOccurrences(of: #""icon": "wand.and.sparkles","#, with: ""),
-            ConfigSchemaFixture.valid.replacingOccurrences(
-                of: #""transformation": "in_place""#,
-                with: #""transformation": "other""#
-            ),
-            ConfigSchemaFixture.valid.replacingOccurrences(
-                of: #""id": "11111111-1111-4111-8111-111111111111""#,
-                with: #""id": "not-a-uuid""#
-            ),
-            ConfigSchemaFixture.valid.replacingOccurrences(
-                of: #""mode_id": "11111111-1111-4111-8111-111111111111""#,
-                with: #""mode_id": "22222222-2222-4222-8222-222222222222""#
-            ),
-            ConfigSchemaFixture.valid.replacingOccurrences(of: #""name": "Casual""#, with: #""name": "  Casual  ""#),
-            ConfigSchemaFixture.valid.replacingOccurrences(
-                of: #""retention_days": 30"#,
-                with: #""retention_days": 12"#
-            ),
-            ConfigSchemaFixture.valid.replacingOccurrences(
-                of: #""appearance": "dark""#,
-                with: #""appearance": "sepia""#
-            ),
-            ConfigSchemaFixture.valid.replacingOccurrences(of: #""schema_version": 1,"#, with: ""),
-            ConfigSchemaFixture.valid.replacingOccurrences(
-                of: #""id": "11111111-1111-4111-8111-111111111111""#,
-                with: #""id": "11111111-1111-4111-8111-111111111111", "extra": true"#
-            ),
-            ConfigSchemaFixture.valid.replacingOccurrences(
-                of: #""asr_model": "unknown-asr""#,
-                with: #""asr_model": " unknown-asr ""#
-            ),
-        ]
-
-        var rejected: [Bool] = []
-        for json in invalidFixtures {
-            try Data(json.utf8).write(to: path)
-            rejected.append(didThrow { _ = try Config.load(from: path) })
-        }
-        XCTAssertEqual(rejected, Array(repeating: true, count: invalidFixtures.count))
+    func testLoadRejectsUnknownTopLevelField() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""schema_version": 1,"#,
+            with: #""schema_version": 1, "unknown": true,"#
+        ))
     }
 
-    func testDuplicateIDsAndNormalizedNamesRejectWholeFile() throws {
+    func testLoadRejectsMissingModeField() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""icon": "wand.and.sparkles","#,
+            with: ""
+        ))
+    }
+
+    func testLoadRejectsInvalidTransformation() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""transformation": "in_place""#,
+            with: #""transformation": "other""#
+        ))
+    }
+
+    func testLoadRejectsMalformedModeID() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""id": "11111111-1111-4111-8111-111111111111""#,
+            with: #""id": "not-a-uuid""#
+        ))
+    }
+
+    func testLoadRejectsDanglingSelectedModeID() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""mode_id": "11111111-1111-4111-8111-111111111111""#,
+            with: #""mode_id": "22222222-2222-4222-8222-222222222222""#
+        ))
+    }
+
+    func testLoadRejectsUnnormalizedModeName() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""name": "Casual""#,
+            with: #""name": "  Casual  ""#
+        ))
+    }
+
+    func testLoadRejectsUnsupportedRetention() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""retention_days": 30"#,
+            with: #""retention_days": 12"#
+        ))
+    }
+
+    func testLoadRejectsInvalidAppearance() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""appearance": "dark""#,
+            with: #""appearance": "sepia""#
+        ))
+    }
+
+    func testLoadRejectsMissingTopLevelField() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""schema_version": 1,"#,
+            with: ""
+        ))
+    }
+
+    func testLoadRejectsUnknownModeField() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""id": "11111111-1111-4111-8111-111111111111""#,
+            with: #""id": "11111111-1111-4111-8111-111111111111", "extra": true"#
+        ))
+    }
+
+    func testLoadRejectsUnnormalizedTopLevelValue() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""asr_model": "unknown-asr""#,
+            with: #""asr_model": " unknown-asr ""#
+        ))
+    }
+
+    func testLoadRejectsWrongFieldType() throws {
+        try assertLoadRejects(ConfigSchemaFixture.valid.replacingOccurrences(
+            of: #""pause_audio": true"#,
+            with: #""pause_audio": "true""#
+        ))
+    }
+
+    func testLoadRejectsDuplicateModeIDs() throws {
+        let data = try duplicatedModeFixture(
+            id: "11111111-1111-4111-8111-111111111111",
+            name: "Another Mode"
+        )
+        try data.write(to: path)
+
+        assertThrowsConfigError(.invalid, try Config.load(from: path))
+    }
+
+    func testLoadRejectsDuplicateNormalizedModeNames() throws {
+        let data = try duplicatedModeFixture(
+            id: "22222222-2222-4222-8222-222222222222",
+            name: "casual"
+        )
+        try data.write(to: path)
+
+        assertThrowsConfigError(.invalid, try Config.load(from: path))
+    }
+
+    private func assertLoadRejects(_ json: String) throws {
+        try Data(json.utf8).write(to: path)
+        assertThrowsConfigError(.invalid, try Config.load(from: path))
+    }
+
+    private func duplicatedModeFixture(id: String, name: String) throws -> Data {
         var object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(ConfigSchemaFixture.valid.utf8))
                 as? [String: Any]
         )
         var modes = try XCTUnwrap(object["modes"] as? [[String: Any]])
         var second = try XCTUnwrap(modes.first)
+        second["id"] = id
+        second["name"] = name
         modes.append(second)
         object["modes"] = modes
-        try JSONSerialization.data(withJSONObject: object).write(to: path)
-        let duplicateIDRejected = didThrow { _ = try Config.load(from: path) }
-
-        second["id"] = "22222222-2222-4222-8222-222222222222"
-        second["name"] = "casual"
-        modes[1] = second
-        object["modes"] = modes
-        try JSONSerialization.data(withJSONObject: object).write(to: path)
-        let duplicateNameRejected = didThrow { _ = try Config.load(from: path) }
-
-        XCTAssertEqual([duplicateIDRejected, duplicateNameRejected], [true, true])
-    }
-
-    private func didThrow(_ operation: () throws -> Void) -> Bool {
-        do {
-            try operation()
-            return false
-        } catch {
-            return true
-        }
+        return try JSONSerialization.data(withJSONObject: object)
     }
 }
 

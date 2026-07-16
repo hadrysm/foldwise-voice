@@ -400,7 +400,6 @@ final class SettingsWorkflowTests: XCTestCase {
         model.saveHistory = true
         model.retention = .ninetyDays
         model.sidebar = SidebarPresentation(prefersCollapsed: false)
-        model.selectedModel = "llama3.2:3b"
         model.asrModel = "whisper-small"
 
         workflow.commit()
@@ -412,10 +411,30 @@ final class SettingsWorkflowTests: XCTestCase {
                 activeMode: "Voice to Text", hotkey: "F7", toggleHotkey: nil,
                 pauseAudio: true, appearance: .light,
                 saveHistory: true, retention: .ninetyDays,
-                sidebarCollapsed: false, llmModel: "llama3.2:3b", asrModel: "whisper-small",
-                persistedHotkey: "F7", persistedLLMModel: "llama3.2:3b",
+                sidebarCollapsed: false, llmModel: "qwen2.5:3b", asrModel: "whisper-small",
+                persistedHotkey: "F7", persistedLLMModel: "qwen2.5:3b",
                 persistedASRModel: "whisper-small", persistedAppearance: .light
             )
+        )
+    }
+
+    func testCommitPreservesDistinctPerModeModelAssignments() throws {
+        let config = Config.defaultConfig(
+            path: dir.appendingPathComponent("per-mode-models-config.json")
+        )
+        var email = try XCTUnwrap(config.orderedModes.last)
+        email.llmModel = "llama3.2:3b"
+        try config.saveMode(email)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        model.pttKey = "F7"
+
+        workflow.commit()
+
+        XCTAssertEqual(
+            config.orderedModes.map(\.llmModel),
+            ["qwen2.5:3b", "llama3.2:3b"]
         )
     }
 
@@ -1000,6 +1019,22 @@ final class SettingsWorkflowTests: XCTestCase {
         workflow.selectLLMModel("llama3.2:3b")
 
         XCTAssertEqual(config.llmModel, "llama3.2:3b")
+    }
+
+    func testSelectingLLMModelUpdatesEveryModeFromTheGlobalPane() {
+        let config = Config.defaultConfig(
+            path: dir.appendingPathComponent("global-model-config.json")
+        )
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+
+        workflow.selectLLMModel("llama3.2:3b")
+
+        XCTAssertEqual(
+            config.orderedModes.map(\.llmModel),
+            ["llama3.2:3b", "llama3.2:3b"]
+        )
     }
 
     func testRefreshingLLMModelsPublishesTheBoundaryResult() async {

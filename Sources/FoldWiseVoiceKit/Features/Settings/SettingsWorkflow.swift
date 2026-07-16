@@ -191,8 +191,14 @@ final class SettingsWorkflow {
     }
 
     func selectLLMModel(_ name: String) {
-        model.selectedModel = name
-        commit()
+        do {
+            try config.setLLMModel(name)
+            model.selectedModel = name
+            setStatus("Saved ✓", isError: false, clearAfter: true)
+        } catch {
+            model.selectedModel = config.llmModel ?? ""
+            setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
+        }
     }
 
     func selectInputDevice(_ uid: String?) {
@@ -411,7 +417,6 @@ final class SettingsWorkflow {
         let retentionChanged = config.historyRetention != model.retention
         let selectedModeID = config.orderedModes.first { $0.name == model.activeMode }?.id
         var preferences = config.preferences
-        if !model.selectedModel.isEmpty { preferences.llmModel = model.selectedModel }
         if !model.asrModel.isEmpty { preferences.asrModel = model.asrModel }
         if model.activeMode == "Voice to Text" {
             preferences.selection = .voiceToText

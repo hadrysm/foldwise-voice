@@ -13,7 +13,6 @@ final class ConfigChangePropagationTests: XCTestCase {
         let selection: DictationSelection
         let notifications: [Config.ChangeSet]
         let data: Data?
-        let rejected: Bool
     }
 
     private let directory = FileManager.default.temporaryDirectory
@@ -98,14 +97,14 @@ final class ConfigChangePropagationTests: XCTestCase {
         var received: [Config.ChangeSet] = []
         config.onChange { received.append($0) }
 
-        let rejected = didThrow { try config.select(.mode(emailID)) }
+        XCTAssertThrowsError(try config.select(.mode(emailID)))
 
         XCTAssertEqual(
             FailedState(
                 selection: config.selection, notifications: received,
-                data: nil, rejected: rejected
+                data: nil
             ),
-            FailedState(selection: original, notifications: [], data: nil, rejected: true)
+            FailedState(selection: original, notifications: [], data: nil)
         )
     }
 
@@ -128,18 +127,17 @@ final class ConfigChangePropagationTests: XCTestCase {
             )
         }
 
-        let rejected = didThrow { try config.select(.mode(emailID)) }
+        XCTAssertThrowsError(try config.select(.mode(emailID)))
 
         XCTAssertEqual(
             FailedState(
                 selection: config.selection,
                 notifications: received,
-                data: try Data(contentsOf: path),
-                rejected: rejected
+                data: try Data(contentsOf: path)
             ),
             FailedState(
                 selection: originalSelection, notifications: [],
-                data: originalData, rejected: true
+                data: originalData
             )
         )
     }
@@ -152,14 +150,5 @@ final class ConfigChangePropagationTests: XCTestCase {
         try config.select(config.selection)
 
         XCTAssertTrue(received.isEmpty)
-    }
-
-    private func didThrow(_ operation: () throws -> Void) -> Bool {
-        do {
-            try operation()
-            return false
-        } catch {
-            return true
-        }
     }
 }

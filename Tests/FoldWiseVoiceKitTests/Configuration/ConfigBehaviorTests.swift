@@ -34,7 +34,6 @@ final class ConfigBehaviorTests: XCTestCase {
         let selection: DictationSelection?
         let data: Data?
         let notifications: [Config.ChangeSet]
-        let rejected: Bool
     }
 
     private let directory = FileManager.default.temporaryDirectory
@@ -139,11 +138,11 @@ final class ConfigBehaviorTests: XCTestCase {
             CommitState(
                 modes: config.orderedModes,
                 selection: try Config.load(from: path).selection,
-                data: nil, notifications: [], rejected: false
+                data: nil, notifications: []
             ),
             CommitState(
                 modes: [], selection: .voiceToText,
-                data: nil, notifications: [], rejected: false
+                data: nil, notifications: []
             )
         )
     }
@@ -152,16 +151,19 @@ final class ConfigBehaviorTests: XCTestCase {
         let config = Config.defaultConfig(path: path)
         let original = config.orderedModes
 
-        let rejected = didThrow { try config.replaceModes([], selection: config.selection) }
+        assertThrowsConfigError(
+            .invalid,
+            try config.replaceModes([], selection: config.selection)
+        )
 
         XCTAssertEqual(
             CommitState(
                 modes: config.orderedModes, selection: nil,
-                data: nil, notifications: [], rejected: rejected
+                data: nil, notifications: []
             ),
             CommitState(
                 modes: original, selection: nil,
-                data: nil, notifications: [], rejected: true
+                data: nil, notifications: []
             )
         )
     }
@@ -176,17 +178,16 @@ final class ConfigBehaviorTests: XCTestCase {
 
         var duplicate = try XCTUnwrap(config.orderedModes.last)
         duplicate.name = "casual"
-        let rejected = didThrow { try config.saveMode(duplicate) }
+        assertThrowsConfigError(.invalid, try config.saveMode(duplicate))
 
         XCTAssertEqual(
             CommitState(
                 modes: config.orderedModes, selection: nil,
-                data: try Data(contentsOf: path), notifications: received,
-                rejected: rejected
+                data: try Data(contentsOf: path), notifications: received
             ),
             CommitState(
                 modes: originalModes, selection: nil,
-                data: originalData, notifications: [], rejected: true
+                data: originalData, notifications: []
             )
         )
     }
@@ -200,14 +201,5 @@ final class ConfigBehaviorTests: XCTestCase {
             selection: config.selection, name: config.activeMode, icon: config.mode.icon,
             transformation: config.mode.transformation, usesLLM: config.mode.usesLLM
         )
-    }
-
-    private func didThrow(_ operation: () throws -> Void) -> Bool {
-        do {
-            try operation()
-            return false
-        } catch {
-            return true
-        }
     }
 }

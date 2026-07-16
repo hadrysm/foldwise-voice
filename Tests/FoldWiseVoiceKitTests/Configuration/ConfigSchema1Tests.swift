@@ -16,7 +16,6 @@ final class ConfigSchema1Tests: XCTestCase {
         let selection: DictationSelection
         let usesLLM: Bool
         let originalData: Data
-        let mutationRejected: Bool
         let messageMatches: Bool
     }
 
@@ -121,16 +120,16 @@ final class ConfigSchema1Tests: XCTestCase {
 
         let config = Config.loadOrCreate(at: path)
 
-        let rejected = didThrow { try config.select(.voiceToText) }
+        assertThrowsConfigError(.readOnlyRecovery, try config.select(.voiceToText))
         XCTAssertEqual(
             RecoveryState(
                 readOnly: config.isReadOnly, selection: config.selection,
                 usesLLM: config.mode.usesLLM, originalData: try Data(contentsOf: path),
-                mutationRejected: rejected, messageMatches: true
+                messageMatches: true
             ),
             RecoveryState(
                 readOnly: true, selection: .voiceToText, usesLLM: false,
-                originalData: original, mutationRejected: true, messageMatches: true
+                originalData: original, messageMatches: true
             )
         )
     }
@@ -143,16 +142,16 @@ final class ConfigSchema1Tests: XCTestCase {
 
         let config = Config.loadOrCreate(at: path)
 
+        assertThrowsConfigError(.readOnlyRecovery, try config.select(.voiceToText))
         XCTAssertEqual(
             RecoveryState(
                 readOnly: config.isReadOnly, selection: config.selection,
                 usesLLM: config.mode.usesLLM, originalData: try Data(contentsOf: path),
-                mutationRejected: true,
                 messageMatches: config.recovery?.message.contains("Unsupported schema_version 2") == true
             ),
             RecoveryState(
                 readOnly: true, selection: .voiceToText, usesLLM: false,
-                originalData: original, mutationRejected: true, messageMatches: true
+                originalData: original, messageMatches: true
             )
         )
     }
@@ -176,14 +175,5 @@ final class ConfigSchema1Tests: XCTestCase {
                 activeMode: "Casual", relaunchedMode: "Casual"
             )
         )
-    }
-
-    private func didThrow(_ operation: () throws -> Void) -> Bool {
-        do {
-            try operation()
-            return false
-        } catch {
-            return true
-        }
     }
 }
