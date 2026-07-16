@@ -426,18 +426,6 @@ final class Config {
         }
     }
 
-    /// The current Models pane remains a global control until the per-Mode
-    /// editor lands. Keep that explicit action separate from ordinary
-    /// preference commits so those commits preserve per-Mode assignments.
-    @MainActor
-    func setLLMModel(_ model: String) throws {
-        try update { candidate in
-            for index in candidate.orderedModes.indices {
-                candidate.orderedModes[index].llmModel = model
-            }
-        }
-    }
-
     @MainActor
     func replaceModes(_ modes: [Mode], selection: DictationSelection) throws {
         try update {
@@ -715,11 +703,11 @@ final class Config {
         result.asrModel = source.asrModel.trimmingCharacters(in: .whitespacesAndNewlines)
         result.orderedModes = source.orderedModes.map { sourceMode in
             var mode = sourceMode
-            mode.name = cleanName(sourceMode.name)
+            mode.name = ModeTextPolicy.cleanName(sourceMode.name)
             mode.icon = sourceMode.icon.trimmingCharacters(in: .whitespacesAndNewlines)
             mode.llmModel = cleanedOptional(sourceMode.llmModel)
             mode.systemPrompt = cleanedOptional(sourceMode.systemPrompt)
-            mode.vocab = cleanVocabulary(sourceMode.vocab)
+            mode.vocab = ModeTextPolicy.cleanVocabulary(sourceMode.vocab)
             mode.asrModel = result.asrModel
             return mode
         }
@@ -752,12 +740,12 @@ final class Config {
         for mode in values.orderedModes {
             guard let id = mode.id else { throw ConfigError.invalid("Every Mode requires an id.") }
             guard ids.insert(id).inserted else { throw ConfigError.invalid("Mode IDs must be unique.") }
-            let cleanedName = cleanName(mode.name)
+            let cleanedName = ModeTextPolicy.cleanName(mode.name)
             guard !cleanedName.isEmpty else { throw ConfigError.invalid("Mode name cannot be empty.") }
             if requireNormalized, cleanedName != mode.name {
                 throw ConfigError.invalid("Mode names must use normalized whitespace and Unicode.")
             }
-            guard names.insert(comparisonKey(cleanedName)).inserted else {
+            guard names.insert(ModeTextPolicy.comparisonKey(cleanedName)).inserted else {
                 throw ConfigError.invalid("Mode names must be unique.")
             }
             guard !mode.icon.isEmpty else { throw ConfigError.invalid("Mode icon cannot be empty.") }
@@ -771,7 +759,7 @@ final class Config {
                 guard model == model.trimmingCharacters(in: .whitespacesAndNewlines),
                       prompt == prompt.trimmingCharacters(in: .whitespacesAndNewlines),
                       mode.icon == mode.icon.trimmingCharacters(in: .whitespacesAndNewlines),
-                      mode.vocab == cleanVocabulary(mode.vocab)
+                      mode.vocab == ModeTextPolicy.cleanVocabulary(mode.vocab)
                 else { throw ConfigError.invalid("Mode fields must be normalized.") }
             }
         }
@@ -801,30 +789,6 @@ final class Config {
         guard let value else { return }
         guard !value.isEmpty else { throw ConfigError.invalid("\(field) cannot be empty.") }
         try validateShortcut(value, field: field)
-    }
-
-    private static func cleanName(_ value: String) -> String {
-        value.precomposedStringWithCanonicalMapping
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
-    }
-
-    private static func cleanVocabulary(_ values: [String]) -> [String] {
-        var seen = Set<String>()
-        var result: [String] = []
-        for value in values {
-            let cleaned = cleanName(value)
-            guard !cleaned.isEmpty, seen.insert(comparisonKey(cleaned)).inserted else { continue }
-            result.append(cleaned)
-        }
-        return result
-    }
-
-    private static func comparisonKey(_ value: String) -> String {
-        value.folding(
-            options: .caseInsensitive,
-            locale: Locale(identifier: "en_US_POSIX")
-        )
     }
 
     private static func cleanedOptional(_ value: String?) -> String? {

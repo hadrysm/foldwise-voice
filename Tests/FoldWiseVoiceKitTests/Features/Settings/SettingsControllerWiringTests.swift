@@ -93,6 +93,34 @@ final class SettingsControllerWiringTests: XCTestCase {
         XCTAssertEqual(config.hotkey, "F8")
     }
 
+    func testModeEditorCallbacksReachAtomicWorkflow() throws {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("mode-editor-history.jsonl"))
+        let config = makeConfig()
+        let controller = SettingsController(
+            config: config, historyStore: store, statsStore: WiringStatsStore()
+        )
+        controller.model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+
+        controller.model.onAddMode?()
+        var editor = try XCTUnwrap(controller.model.modeEditor)
+        editor.draft.name = "Meeting notes"
+        editor.draft.systemPrompt = "Turn the transcript into concise meeting notes."
+        controller.model.modeEditor = editor
+        controller.model.onSaveModeEditor?()
+
+        let saved = try XCTUnwrap(config.orderedModes.first)
+        let savedID = try XCTUnwrap(saved.id)
+        XCTAssertEqual(
+            [
+                saved.name,
+                saved.llmModel,
+                config.selection == .mode(savedID) ? "selected" : "not selected",
+                controller.model.modeEditor == nil ? "dismissed" : "open",
+            ],
+            ["Meeting notes", "qwen2.5:3b", "selected", "dismissed"]
+        )
+    }
+
     func testInputDeviceProjectionInitializesSettingsModel() {
         let store = JSONLHistoryStore(url: dir.appendingPathComponent("input-history.jsonl"))
         let config = makeConfig()

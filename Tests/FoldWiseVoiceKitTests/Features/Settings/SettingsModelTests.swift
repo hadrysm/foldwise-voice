@@ -48,6 +48,29 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertFalse(model.selectedModelInstalled)
     }
 
+    func testSelectedEditableModePresentationUsesProjectedIconFallback() {
+        let model = SettingsModel()
+        let id = ModeID.random()
+        let mode = Mode(
+            id: id,
+            name: "Custom",
+            icon: "symbol.that.is.not.available",
+            asrModel: ASRModelCatalog.defaultID,
+            llmModel: "qwen2.5:3b",
+            transformation: .inPlace,
+            systemPrompt: "Keep wording.",
+            vocabulary: []
+        )
+        model.modes = [mode]
+        model.modeSelection = ModePresentationFactory.projection(
+            modes: [mode],
+            selection: .mode(id)
+        )
+
+        XCTAssertEqual(model.selectedEditableMode?.id, id)
+        XCTAssertEqual(model.selectedEditableModeItem?.icon, "text.bubble")
+    }
+
     private func installed(_ name: String) -> OllamaClient.InstalledModel {
         OllamaClient.InstalledModel(name: name, sizeBytes: 1)
     }

@@ -1,6 +1,6 @@
 // Owns the settings NSWindow and mediates between SettingsModel (UI state)
-// and Config/OllamaClient/UpdateChecker. Every change commits straight to
-// config.json; there is no Save button.
+// and Config/OllamaClient/UpdateChecker. Preferences commit immediately;
+// Mode drafts commit only through the editor's Save action.
 
 import AppKit
 import SwiftUI
@@ -71,7 +71,10 @@ final class SettingsController {
         }
         model.onRecord = { [weak self] field in self?.startRecording(field) }
         model.onSelectMode = { [weak self] selection in self?.workflow.selectMode(selection) }
-        model.onSelectModel = { [weak self] name in self?.workflow.selectLLMModel(name) }
+        model.onAddMode = { [weak self] in self?.workflow.beginAddMode() }
+        model.onEditMode = { [weak self] id in self?.workflow.beginEditMode(id) }
+        model.onSaveModeEditor = { [weak self] in self?.workflow.saveModeEditor() }
+        model.onCancelModeEditor = { [weak self] in self?.workflow.cancelModeEditor() }
         model.onInstallModel = { [weak self] name in self?.workflow.installLLMModel(name) }
         model.onDeleteModel = { [weak self] name in self?.workflow.deleteLLMModel(name) }
         model.onRefreshModels = { [weak self] in self?.workflow.refreshLLMModels() }
@@ -79,10 +82,6 @@ final class SettingsController {
         model.onDownloadASRModel = { [weak self] id in self?.workflow.downloadASRModel(id) }
         model.onCancelASRDownload = { [weak self] in self?.workflow.cancelASRDownload() }
         model.onDeleteASRModel = { [weak self] id in self?.workflow.deleteASRModel(id) }
-        model.onEditFile = { [weak self] in
-            guard let self else { return }
-            NSWorkspace.shared.open(config.path)
-        }
         model.onCheckUpdates = { [weak self] in self?.workflow.checkForUpdates() }
         model.onHistoryCommand = { [weak self] entry, command in
             self?.workflow.performHistoryCommand(command, for: entry)

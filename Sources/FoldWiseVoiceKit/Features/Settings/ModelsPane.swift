@@ -14,9 +14,8 @@ struct ModelsPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(
-                "The polish model rewrites your transcript (cleanup, email, bullets). "
-                    + "It applies to every mode that uses an LLM. Speed and quality are "
-                    + "rated for dictation on Apple Silicon."
+                "Install Polish models here, then assign one to each Mode in its editor. "
+                    + "Speed and quality are rated for dictation on Apple Silicon."
             )
             .font(Theme.ui(12))
             .foregroundStyle(Theme.textSecondary)
@@ -40,10 +39,6 @@ struct ModelsPane: View {
                     ForEach(Array((model.installed ?? []).enumerated()), id: \.element.id) { i, installed in
                         if i > 0 { Divider().padding(.leading, 14) }
                         installedRow(installed)
-                    }
-                    if !model.selectedModel.isEmpty && !model.selectedModelInstalled {
-                        if !(model.installed ?? []).isEmpty { Divider().padding(.leading, 14) }
-                        missingSelectedRow
                     }
                 }
 
@@ -108,14 +103,15 @@ struct ModelsPane: View {
     }
 
     /// Body of the confirmation alert: the space freed, plus the raw-text
-    /// warning when the row is the model Polish currently uses.
+    /// warning when one or more Modes reference this model.
     private func uninstallMessage(for target: OllamaClient.InstalledModel) -> String {
         var message = target.sizeText.isEmpty
             ? "This permanently removes \(target.name) from Ollama."
             : "This permanently removes \(target.name) and frees \(target.sizeText)."
-        if target.name == model.selectedModel {
-            message += " It's your current Polish model, so dictation will insert "
-                + "raw text until you choose another."
+        let affected = model.modes.filter { $0.llmModel == target.name }.map(\.name)
+        if !affected.isEmpty {
+            message += " It's used by \(affected.joined(separator: ", ")), so those Modes "
+                + "will use raw text until another model is assigned."
         }
         return message
     }
@@ -131,53 +127,31 @@ struct ModelsPane: View {
         }
     }
 
-    /// The installed row is two independent, non-nested controls sharing the
-    /// card row's padding: the row-body select `Button` (title, ratings,
-    /// checkmark) and, at the trailing edge, the kebab overflow `Menu`. Keeping
-    /// the `Menu` a sibling of the `Button` — never nested inside it — avoids the
-    /// macOS click-bleed where opening the menu would also select the model.
+    /// Installed models are inventory, not a shared selection. Assignment lives
+    /// in the Mode editor; this row therefore exposes information and uninstall only.
     private func installedRow(_ installed: OllamaClient.InstalledModel) -> some View {
         let entry = ModelCatalog.entry(for: installed.name)
-        let selected = installed.name == model.selectedModel
         let deleting = model.deletingModel == installed.name
         return HStack(alignment: .center, spacing: 12) {
-            Button {
-                model.onSelectModel?(installed.name)
-            } label: {
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(installed.name
-                            + (installed.sizeText.isEmpty ? "" : "  ·  \(installed.sizeText)"))
-                            .font(Theme.ui(13, .semibold))
-                            .foregroundStyle(Theme.textPrimary)
-                        if let blurb = entry?.blurb, !blurb.isEmpty {
-                            Text(blurb).font(Theme.ui(11)).foregroundStyle(Theme.textSecondary)
-                        }
-                    }
-                    Spacer(minLength: 16)
-                    if deleting {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("Uninstalling…")
-                                .font(Theme.ui(11))
-                                .foregroundStyle(Theme.textSecondary)
-                        }
-                    } else {
-                        modelRatings(installed.name)
-                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(
-                                selected
-                                    ? AnyShapeStyle(Theme.accent)
-                                    : AnyShapeStyle(Theme.textTertiary)
-                            )
-                    }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(installed.name
+                    + (installed.sizeText.isEmpty ? "" : "  ·  \(installed.sizeText)"))
+                    .font(Theme.ui(13, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                if let blurb = entry?.blurb, !blurb.isEmpty {
+                    Text(blurb).font(Theme.ui(11)).foregroundStyle(Theme.textSecondary)
                 }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .disabled(deleting)
-
-            if !deleting {
+            Spacer(minLength: 16)
+            if deleting {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Uninstalling…")
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            } else {
+                modelRatings(installed.name)
                 uninstallMenu(for: installed)
             }
         }
@@ -209,19 +183,6 @@ struct ModelsPane: View {
         .fixedSize()
         .disabled(model.pullingModel != nil || model.deletingModel != nil)
         .accessibilityLabel("More actions for \(installed.name)")
-    }
-
-    private var missingSelectedRow: some View {
-        CardRow(
-            title: model.selectedModel,
-            subtitle: "Configured in config.json but not installed — polishing falls back "
-                + "to the raw transcript until it is."
-        ) {
-            HStack(spacing: 12) {
-                modelRatings(model.selectedModel)
-                installButton(for: model.selectedModel)
-            }
-        }
     }
 
     private func libraryRow(_ entry: ModelCatalog.Entry) -> some View {

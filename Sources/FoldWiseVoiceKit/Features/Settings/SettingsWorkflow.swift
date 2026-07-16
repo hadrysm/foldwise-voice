@@ -117,7 +117,6 @@ final class SettingsWorkflow {
     func populatePreferences() {
         model.configurationRecoveryMessage = config.recovery?.message
         populateModes()
-        model.selectedModel = config.llmModel ?? ""
         model.asrModel = config.asrModel
         model.asrDownloaded = [ASRModelCatalog.defaultID]
         if ASRModelCatalog.entry(for: config.asrModel) != nil {
@@ -143,6 +142,7 @@ final class SettingsWorkflow {
             selection: config.selection
         )
         model.modes = config.orderedModes
+        model.selectedModel = config.mode.llmModel ?? ""
     }
 
     private func observeConfigChanges() {
@@ -152,6 +152,7 @@ final class SettingsWorkflow {
                 populateModes()
             } else if changes.contains(.selection) {
                 model.modeSelection = model.modeSelection.selecting(config.selection)
+                model.selectedModel = config.mode.llmModel ?? ""
             }
         }
     }
@@ -208,17 +209,6 @@ final class SettingsWorkflow {
         commit()
     }
 
-    func selectLLMModel(_ name: String) {
-        do {
-            try config.setLLMModel(name)
-            model.selectedModel = name
-            setStatus("Saved ✓", isError: false, clearAfter: true)
-        } catch {
-            model.selectedModel = config.llmModel ?? ""
-            setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
-        }
-    }
-
     func selectMode(_ selection: DictationSelection) {
         do {
             try config.select(selection)
@@ -230,6 +220,92 @@ final class SettingsWorkflow {
                 isError: true
             )
         }
+    }
+
+    func beginAddMode() {
+        guard !config.isReadOnly else { return }
+        model.modeEditor = ModeEditorState(
+            purpose: .add,
+            draft: ModeEditorDraft(
+                name: "",
+                icon: "wand.and.sparkles",
+                model: model.installed?.first?.name ?? "",
+                transformation: .inPlace,
+                systemPrompt: "",
+                vocabularyText: ""
+            )
+        )
+    }
+
+    func beginEditMode(_ id: ModeID) {
+        guard !config.isReadOnly, let mode = config.mode(id: id) else { return }
+        let modelName = mode.llmModel ?? ""
+        model.modeEditor = ModeEditorState(
+            purpose: .edit(id),
+            draft: ModeEditorDraft(
+                name: mode.name,
+                icon: mode.icon,
+                model: modelName,
+                transformation: mode.transformation,
+                systemPrompt: mode.systemPrompt ?? "",
+                vocabularyText: mode.vocab.joined(separator: "\n")
+            )
+        )
+    }
+
+    func saveModeEditor() {
+        guard var editor = model.modeEditor else { return }
+        let editingID: ModeID? = if case let .edit(id) = editor.purpose { id } else { nil }
+        let evaluation = ModeEditorPolicy.evaluate(
+            editor.draft,
+            existingModes: config.orderedModes,
+            editingID: editingID,
+            installedModels: Set(model.installed?.map(\.name) ?? [])
+        )
+        editor.issues = evaluation.issues
+        editor.persistenceError = nil
+        guard let submission = evaluation.submission else {
+            model.modeEditor = editor
+            return
+        }
+
+        do {
+            switch editor.purpose {
+            case .add:
+                let id = ModeID.random()
+                let mode = makeMode(id: id, from: submission)
+                try config.replaceModes(
+                    config.orderedModes + [mode],
+                    selection: .mode(id)
+                )
+            case let .edit(id):
+                guard config.mode(id: id) != nil else {
+                    throw ConfigError.invalid("Mode no longer exists.")
+                }
+                try config.saveMode(makeMode(id: id, from: submission))
+            }
+            model.modeEditor = nil
+        } catch {
+            editor.persistenceError = "Couldn't save Mode: \(error.localizedDescription)"
+            model.modeEditor = editor
+        }
+    }
+
+    func cancelModeEditor() {
+        model.modeEditor = nil
+    }
+
+    private func makeMode(id: ModeID, from submission: ModeEditorSubmission) -> Mode {
+        Mode(
+            id: id,
+            name: submission.name,
+            icon: submission.icon,
+            asrModel: config.asrModel,
+            llmModel: submission.model,
+            transformation: submission.transformation,
+            systemPrompt: submission.systemPrompt,
+            vocabulary: submission.vocabulary
+        )
     }
 
     func selectInputDevice(_ uid: String?) {
@@ -343,7 +419,6 @@ final class SettingsWorkflow {
                 model.pullError = "Couldn't install \(name): \(error)"
             } else {
                 model.customModel = ""
-                selectLLMModel(name)
                 refreshLLMModels()
             }
         }

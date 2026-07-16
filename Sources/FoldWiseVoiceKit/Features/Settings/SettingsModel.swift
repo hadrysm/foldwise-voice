@@ -102,6 +102,7 @@ final class SettingsModel: ObservableObject {
         modes: [], selection: .voiceToText
     )
     @Published var modes: [Mode] = []
+    @Published var modeEditor: ModeEditorState?
     /// Loaded from the HistoryStore when the window opens and re-read after a
     /// delete or clear-all, so the History pane reflects the store live.
     @Published var historyEntries: [HistoryEntry] = []
@@ -117,13 +118,15 @@ final class SettingsModel: ObservableObject {
     var onSelectInputDevice: ((String?) -> Void)?
     var onRecord: ((RecordingField) -> Void)?
     var onSelectMode: ((DictationSelection) -> Void)?
-    var onSelectModel: ((String) -> Void)?
+    var onAddMode: (() -> Void)?
+    var onEditMode: ((ModeID) -> Void)?
+    var onSaveModeEditor: (() -> Void)?
+    var onCancelModeEditor: (() -> Void)?
     var onInstallModel: ((String) -> Void)?
     var onDeleteModel: ((String) -> Void)?
     var onRefreshModels: (() -> Void)?
-    /// Speech pane, the ASR analogues of `onSelectModel` / `onInstallModel`
-    /// (ADR-0006): select an already-downloaded model as active; download an
-    /// available one's weights so it becomes selectable.
+    /// Speech pane actions select an already-downloaded model as active or
+    /// download an available model's weights.
     var onSelectASRModel: ((String) -> Void)?
     var onDownloadASRModel: ((String) -> Void)?
     /// Abort an in-flight download/prepare and return the row to its pre-download
@@ -132,7 +135,6 @@ final class SettingsModel: ObservableObject {
     /// Delete a downloaded model's on-disk weights to reclaim space (#95). If it
     /// was active, dictation falls back to Parakeet until another is selected.
     var onDeleteASRModel: ((String) -> Void)?
-    var onEditFile: (() -> Void)?
     var onCheckUpdates: (() -> Void)?
     /// One semantic row-action seam. Clear All remains collection-level.
     var onHistoryCommand: ((HistoryEntry, DictationRowCommand) -> Void)?
@@ -152,5 +154,19 @@ final class SettingsModel: ObservableObject {
     var selectedModelInstalled: Bool {
         guard let installed, !installed.isEmpty else { return true }
         return installed.contains { $0.name == selectedModel }
+    }
+
+    var selectedEditableMode: Mode? {
+        guard case let .mode(id) = selectedEditableModeItem?.id else {
+            return nil
+        }
+        return modes.first { $0.id == id }
+    }
+
+    var selectedEditableModeItem: ModeSelectionItem? {
+        guard let item = modeSelection.items.first(where: \.isSelected), !item.isProtected else {
+            return nil
+        }
+        return item
     }
 }

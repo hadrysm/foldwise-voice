@@ -95,6 +95,43 @@ final class SettingsWorkflowTests: XCTestCase {
         let statusIsError: Bool
     }
 
+    private struct AddEditorOpening: Equatable {
+        let editor: ModeEditorState?
+        let modes: [Mode]
+        let selection: DictationSelection
+    }
+
+    private struct InvalidEditorSave: Equatable {
+        let draft: ModeEditorDraft?
+        let issues: ModeEditorIssues?
+        let modeNames: [String]
+        let selection: DictationSelection
+    }
+
+    private struct AddedModeResult: Equatable {
+        let editorDismissed: Bool
+        let names: [String]
+        let models: [String?]
+        let addedTransformation: ModeTransformation?
+        let addedPrompt: String?
+        let addedVocabulary: [String]?
+        let addedHasNewID: Bool
+        let selectionMatchesAddedID: Bool
+        let persistedMatchesLive: Bool
+        let projectedSelection: DictationSelection?
+    }
+
+    private struct EditorRetryResult: Equatable {
+        let failedDraft: ModeEditorDraft?
+        let failedActionTitle: String?
+        let failedErrorIsVisible: Bool
+        let failedModeNames: [String]
+        let failedSelection: DictationSelection
+        let retryDismissed: Bool
+        let retryModeNames: [String]
+        let retryPersisted: Bool
+    }
+
     private struct LLMInstallState: Equatable {
         let selectedModel: String
         let persistedModel: String?
@@ -378,6 +415,298 @@ final class SettingsWorkflowTests: XCTestCase {
                 projected: original,
                 reportsSelectionFailure: true,
                 statusIsError: true
+            )
+        )
+    }
+
+    func testBeginAddModeOpensIsolatedDraftUsingInstalledModel() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        model.installed = [.init(name: "llama3.2:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.beginAddMode()
+
+        XCTAssertEqual(
+            AddEditorOpening(
+                editor: model.modeEditor,
+                modes: config.orderedModes,
+                selection: config.selection
+            ),
+            AddEditorOpening(
+                editor: ModeEditorState(
+                    purpose: .add,
+                    draft: ModeEditorDraft(
+                        name: "",
+                        icon: "wand.and.sparkles",
+                        model: "llama3.2:3b",
+                        transformation: .inPlace,
+                        systemPrompt: "",
+                        vocabularyText: ""
+                    )
+                ),
+                modes: config.orderedModes,
+                selection: config.selection
+            )
+        )
+    }
+
+    func testBeginEditModeCopiesStableModeWhenModelBecameUnavailable() throws {
+        let config = makeConfig()
+        let mode = try XCTUnwrap(config.orderedModes.first)
+        let modeID = try XCTUnwrap(mode.id)
+        let model = SettingsModel()
+        model.installed = [.init(name: "llama3.2:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.beginEditMode(modeID)
+
+        XCTAssertEqual(
+            model.modeEditor,
+            ModeEditorState(
+                purpose: .edit(modeID),
+                draft: ModeEditorDraft(
+                    name: "Clean",
+                    icon: "text.bubble",
+                    model: "qwen2.5:3b",
+                    transformation: .inPlace,
+                    systemPrompt: "Polish",
+                    vocabularyText: ""
+                )
+            )
+        )
+    }
+
+    func testSaveModeEditorReportsAllValidationWithoutChangingConfig() throws {
+        let config = makeConfig()
+        let model = SettingsModel()
+        model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.beginAddMode()
+        var editor = try XCTUnwrap(model.modeEditor)
+        editor.draft.name = "  clean  "
+        editor.draft.model = "missing:latest"
+        editor.draft.systemPrompt = "  \n  "
+        model.modeEditor = editor
+
+        workflow.saveModeEditor()
+
+        XCTAssertEqual(
+            InvalidEditorSave(
+                draft: model.modeEditor?.draft,
+                issues: model.modeEditor?.issues,
+                modeNames: config.orderedModes.map(\.name),
+                selection: config.selection
+            ),
+            InvalidEditorSave(
+                draft: editor.draft,
+                issues: ModeEditorIssues(
+                    name: "A Mode named 'clean' already exists.",
+                    model: "missing:latest isn't installed. Install it in Models before saving.",
+                    systemPrompt: "Enter Polish instructions."
+                ),
+                modeNames: ["Clean"],
+                selection: config.selection
+            )
+        )
+    }
+
+    func testCancelModeEditorDiscardsDraftWithoutChangingConfig() throws {
+        let config = makeConfig()
+        let originalModes = config.orderedModes
+        let originalSelection = config.selection
+        let model = SettingsModel()
+        model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.beginAddMode()
+        var editor = try XCTUnwrap(model.modeEditor)
+        editor.draft.name = "Discard me"
+        editor.draft.systemPrompt = "Discard these instructions"
+        model.modeEditor = editor
+
+        workflow.cancelModeEditor()
+
+        XCTAssertEqual(
+            AddEditorOpening(
+                editor: model.modeEditor,
+                modes: config.orderedModes,
+                selection: config.selection
+            ),
+            AddEditorOpening(
+                editor: nil,
+                modes: originalModes,
+                selection: originalSelection
+            )
+        )
+    }
+
+    func testSaveAddAppendsNormalizesActivatesAndPersistsOneMode() throws {
+        let config = makeConfig()
+        let originalID = try XCTUnwrap(config.orderedModes.first?.id)
+        let model = SettingsModel()
+        model.installed = [
+            .init(name: "qwen2.5:3b", sizeBytes: 42),
+            .init(name: "llama3.2:3b", sizeBytes: 42),
+        ]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginAddMode()
+        var editor = try XCTUnwrap(model.modeEditor)
+        editor.draft = ModeEditorDraft(
+            name: "  Team   Update ",
+            icon: "person.3",
+            model: " llama3.2:3b ",
+            transformation: .expanding,
+            systemPrompt: "  Turn this into a concise update.  ",
+            vocabularyText: " FoldWise\nfoldwise\nBuenos Aires "
+        )
+        model.modeEditor = editor
+
+        workflow.saveModeEditor()
+
+        let added = try XCTUnwrap(config.orderedModes.last)
+        let addedID = try XCTUnwrap(added.id)
+        let persisted = try Config.load(from: config.path)
+        XCTAssertEqual(
+            AddedModeResult(
+                editorDismissed: model.modeEditor == nil,
+                names: config.orderedModes.map(\.name),
+                models: config.orderedModes.map(\.llmModel),
+                addedTransformation: added.transformation,
+                addedPrompt: added.systemPrompt,
+                addedVocabulary: added.vocab,
+                addedHasNewID: addedID != originalID,
+                selectionMatchesAddedID: config.selection == .mode(addedID),
+                persistedMatchesLive: persisted.orderedModes == config.orderedModes
+                    && persisted.selection == config.selection,
+                projectedSelection: model.modeSelection.items.first(where: \.isSelected)?.id
+            ),
+            AddedModeResult(
+                editorDismissed: true,
+                names: ["Clean", "Team Update"],
+                models: ["qwen2.5:3b", "llama3.2:3b"],
+                addedTransformation: .expanding,
+                addedPrompt: "Turn this into a concise update.",
+                addedVocabulary: ["FoldWise", "Buenos Aires"],
+                addedHasNewID: true,
+                selectionMatchesAddedID: true,
+                persistedMatchesLive: true,
+                projectedSelection: .mode(addedID)
+            )
+        )
+    }
+
+    func testSaveEditPreservesStableIDAndSelectionChangedWhileDraftWasOpen() throws {
+        let config = makeConfig()
+        let modeID = try XCTUnwrap(config.orderedModes.first?.id)
+        let model = SettingsModel()
+        model.installed = [.init(name: "llama3.2:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginEditMode(modeID)
+        workflow.selectMode(.voiceToText)
+        var editor = try XCTUnwrap(model.modeEditor)
+        editor.draft.name = "  Renamed   Mode  "
+        editor.draft.model = "llama3.2:3b"
+        editor.draft.transformation = .expanding
+        editor.draft.systemPrompt = "Reshape this while preserving meaning."
+        model.modeEditor = editor
+
+        workflow.saveModeEditor()
+
+        let edited = try XCTUnwrap(config.orderedModes.first)
+        let persisted = try Config.load(from: config.path)
+        XCTAssertEqual(
+            [
+                edited.id?.rawValue,
+                edited.name,
+                edited.llmModel,
+                edited.transformation.rawValue,
+                config.selection == .voiceToText ? "voice_to_text" : "mode",
+                persisted.selection == .voiceToText ? "voice_to_text" : "mode",
+                model.modeEditor == nil ? "dismissed" : "open",
+            ],
+            [
+                modeID.rawValue,
+                "Renamed Mode",
+                "llama3.2:3b",
+                ModeTransformation.expanding.rawValue,
+                "voice_to_text",
+                "voice_to_text",
+                "dismissed",
+            ]
+        )
+    }
+
+    func testSaveEditChangesOnlyTargetModesModelAssignment() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("owned-models.json"))
+        let firstID = try XCTUnwrap(config.orderedModes.first?.id)
+        let model = SettingsModel()
+        model.installed = [
+            .init(name: "qwen2.5:3b", sizeBytes: 42),
+            .init(name: "llama3.2:3b", sizeBytes: 42),
+        ]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.beginEditMode(firstID)
+        var editor = try XCTUnwrap(model.modeEditor)
+        editor.draft.model = "llama3.2:3b"
+        model.modeEditor = editor
+
+        workflow.saveModeEditor()
+
+        XCTAssertEqual(
+            config.orderedModes.map(\.llmModel),
+            ["llama3.2:3b", "qwen2.5:3b"]
+        )
+    }
+
+    func testFailedSaveRetainsCompleteDraftAndRetryCommitsIt() throws {
+        let config = makeFailingConfig()
+        let originalSelection = config.selection
+        let model = SettingsModel()
+        model.installed = [.init(name: "qwen2.5:3b", sizeBytes: 42)]
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.beginAddMode()
+        var editor = try XCTUnwrap(model.modeEditor)
+        editor.draft.name = "Retry Mode"
+        editor.draft.systemPrompt = "Keep this complete draft."
+        editor.draft.vocabularyText = "FoldWise\nBuenos Aires"
+        model.modeEditor = editor
+
+        workflow.saveModeEditor()
+
+        let failedEditor = try XCTUnwrap(model.modeEditor)
+        let failedModeNames = config.orderedModes.map(\.name)
+        try FileManager.default.createDirectory(
+            at: config.path.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        workflow.saveModeEditor()
+        let persisted = try Config.load(from: config.path)
+
+        XCTAssertEqual(
+            EditorRetryResult(
+                failedDraft: failedEditor.draft,
+                failedActionTitle: failedEditor.saveActionTitle,
+                failedErrorIsVisible: failedEditor.persistenceError?.contains(
+                    "Couldn't save Mode"
+                ) == true,
+                failedModeNames: failedModeNames,
+                failedSelection: originalSelection,
+                retryDismissed: model.modeEditor == nil,
+                retryModeNames: config.orderedModes.map(\.name),
+                retryPersisted: persisted.orderedModes == config.orderedModes
+                    && persisted.selection == config.selection
+            ),
+            EditorRetryResult(
+                failedDraft: editor.draft,
+                failedActionTitle: "Retry",
+                failedErrorIsVisible: true,
+                failedModeNames: ["Clean"],
+                failedSelection: originalSelection,
+                retryDismissed: true,
+                retryModeNames: ["Clean", "Retry Mode"],
+                retryPersisted: true
             )
         )
     }
@@ -756,6 +1085,22 @@ final class SettingsWorkflowTests: XCTestCase {
 
         XCTAssertTrue(model.status.hasPrefix("⚠️ save failed:"))
         XCTAssertTrue(model.statusIsError)
+    }
+
+    func testConfigurationRecoveryDoesNotOpenModeEditor() throws {
+        let path = dir.appendingPathComponent("invalid-mode-editor-config.json")
+        let original = Data("invalid".utf8)
+        try original.write(to: path)
+        let config = Config.loadOrCreate(at: path)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.beginAddMode()
+
+        XCTAssertEqual(
+            [model.modeEditor == nil, try Data(contentsOf: path) == original],
+            [true, true]
+        )
     }
 
     func testNoOpCommitDoesNotNotifyConfigObservers() {
@@ -1180,33 +1525,6 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual([model.historyEntries.first?.text, model.currentStreak.map(String.init)], ["stored words", "1"])
     }
 
-    func testSelectingLLMModelPersistsTheChoice() {
-        let config = makeConfig()
-        let model = SettingsModel()
-        let workflow = makeWorkflow(config: config, model: model)
-        workflow.populatePreferences()
-
-        workflow.selectLLMModel("llama3.2:3b")
-
-        XCTAssertEqual(config.llmModel, "llama3.2:3b")
-    }
-
-    func testSelectingLLMModelUpdatesEveryModeFromTheGlobalPane() {
-        let config = Config.defaultConfig(
-            path: dir.appendingPathComponent("global-model-config.json")
-        )
-        let model = SettingsModel()
-        let workflow = makeWorkflow(config: config, model: model)
-        workflow.populatePreferences()
-
-        workflow.selectLLMModel("llama3.2:3b")
-
-        XCTAssertEqual(
-            config.orderedModes.map(\.llmModel),
-            ["llama3.2:3b", "llama3.2:3b"]
-        )
-    }
-
     func testRefreshingLLMModelsPublishesTheBoundaryResult() async {
         let config = makeConfig()
         let model = SettingsModel()
@@ -1244,7 +1562,7 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(model.installed?.map(\.name), ["newest"])
     }
 
-    func testInstallingLLMModelSelectsAndRefreshesIt() async {
+    func testInstallingLLMModelRefreshesInventoryWithoutReassigningModes() async {
         let config = makeConfig()
         let model = SettingsModel()
         model.customModel = "llama3.2:3b"
@@ -1265,7 +1583,7 @@ final class SettingsWorkflowTests: XCTestCase {
                 installed: model.installed?.map(\.name)
             ),
             LLMInstallCompletion(
-                selectedModel: "llama3.2:3b", persistedModel: "llama3.2:3b",
+                selectedModel: "qwen2.5:3b", persistedModel: "qwen2.5:3b",
                 pullingModel: nil, customModel: "", installed: ["llama3.2:3b"]
             )
         )

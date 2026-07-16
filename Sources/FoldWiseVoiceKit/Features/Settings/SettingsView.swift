@@ -3,7 +3,7 @@
 // the 190pt labeled list and the 52pt icon rail (tooltip chips on hover), and
 // six panes — Home, Modes, Models, History, Stats, Settings. The old Speech
 // pane lives inside Models; Configuration and Sound merged into Settings.
-// Every change saves straight to config.json; there is no Save button.
+// Preferences save immediately; Mode drafts use the editor's explicit Save.
 
 import AppKit
 import SwiftUI
@@ -116,6 +116,18 @@ struct SettingsView: View {
             }
         }
         .frame(minWidth: 880, minHeight: 640)
+        .sheet(isPresented: modeEditorPresented) {
+            ModeEditorSheet(model: model)
+        }
+    }
+
+    private var modeEditorPresented: Binding<Bool> {
+        Binding(
+            get: { model.modeEditor != nil },
+            set: { isPresented in
+                if !isPresented { model.onCancelModeEditor?() }
+            }
+        )
     }
 
     private var sidebarMode: SidebarMode {
@@ -463,30 +475,142 @@ struct SettingsView: View {
 
     private var modesPane: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Your Dictation selection decides how speech is processed after transcription.")
-                .font(Theme.ui(12))
-                .foregroundStyle(Theme.textSecondary)
+            HStack(alignment: .firstTextBaseline, spacing: 16) {
+                Text("Your Dictation selection decides how speech is processed after transcription.")
+                    .font(Theme.ui(12))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Button("Add Mode", systemImage: "plus") { model.onAddMode?() }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityHint("Opens a new unsaved Mode draft")
+            }
             sectionHeader("System")
             Card {
                 modeSelectionButton(model.modeSelection.systemItem)
             }
-            sectionHeader("Your Modes")
-            Card {
-                ForEach(
-                    Array(model.modeSelection.editableItems.enumerated()),
-                    id: \.element.id
-                ) { index, item in
-                    if index > 0 { Divider().padding(.leading, 14) }
-                    modeSelectionButton(item)
+            HStack(alignment: .top, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionHeader("Your Modes")
+                    if model.modeSelection.editableItems.isEmpty {
+                        Card {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Build your first Polish workflow")
+                                    .font(Theme.ui(13, .semibold))
+                                Text("Add a Mode with its own model and writing instructions.")
+                                    .font(Theme.ui(11))
+                                    .foregroundStyle(Theme.textSecondary)
+                                Button("Add Mode") { model.onAddMode?() }
+                                    .padding(.top, 4)
+                            }
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    } else {
+                        Card {
+                            ForEach(
+                                Array(model.modeSelection.editableItems.enumerated()),
+                                id: \.element.id
+                            ) { index, item in
+                                if index > 0 { Divider().padding(.leading, 14) }
+                                modeSelectionButton(item)
+                            }
+                        }
+                    }
                 }
-            }
-            HStack {
-                Button("Edit config.json…") { model.onEditFile?() }
-                Text("Prompts and vocabulary live in the config file.")
-                    .font(Theme.ui(11))
-                    .foregroundStyle(Theme.textSecondary)
+                .frame(maxWidth: 310)
+                modeDetail
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
+    }
+
+    private var modeDetail: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Mode details")
+            if let mode = model.selectedEditableMode,
+               let item = model.selectedEditableModeItem,
+               let id = mode.id {
+                Card {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 10) {
+                            Image(systemName: item.icon)
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundStyle(Theme.accent)
+                                .frame(width: 28)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(mode.name)
+                                    .font(Theme.ui(16, .semibold))
+                                Text(mode.transformation == .inPlace ? "Keep wording" : "Reshape")
+                                    .font(Theme.ui(11))
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                            Spacer()
+                            Button("Edit") { model.onEditMode?(id) }
+                                .accessibilityLabel("Edit \(mode.name)")
+                        }
+                        Divider()
+                        modeDetailField("AI model", mode.llmModel ?? "Unavailable")
+                        modeDetailField("Polish instructions", mode.systemPrompt ?? "")
+                        modeDetailField(
+                            "Preserved vocabulary",
+                            mode.vocab.isEmpty ? "None" : mode.vocab.joined(separator: ", ")
+                        )
+                        if let installed = model.installed,
+                           !installed.contains(where: { $0.name == mode.llmModel }) {
+                            unavailableModelNotice(mode.llmModel ?? "This model")
+                        }
+                    }
+                    .padding(16)
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Details for \(mode.name)")
+            } else {
+                Card {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Choose a Mode")
+                            .font(Theme.ui(13, .semibold))
+                        Text("Select a Mode to review or edit its Polish instructions.")
+                            .font(Theme.ui(11))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func modeDetailField(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(Theme.ui(10, .bold))
+                .foregroundStyle(Theme.textTertiary)
+                .textCase(.uppercase)
+            Text(value)
+                .font(Theme.ui(12))
+                .foregroundStyle(Theme.textPrimary)
+                .textSelection(.enabled)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func unavailableModelNotice(_ name: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(name) isn't installed. Polish will use the raw transcript.")
+                    .font(Theme.ui(11))
+                Button("Open Models") { model.pane = .models }
+                    .buttonStyle(.link)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(
+            "Unavailable model \(name). Polish will use the raw transcript. Open Models to install it."
+        )
     }
 
     private func modeSelectionButton(_ item: ModeSelectionItem) -> some View {
