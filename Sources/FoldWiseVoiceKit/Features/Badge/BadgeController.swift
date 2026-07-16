@@ -34,12 +34,14 @@ final class BadgeController: NSObject {
     var onRecord: (() -> Void)?
 
     private var panel: BadgePanel?
+    private weak var activeModeMenu: NSMenu?
     private var moveObserver: NSObjectProtocol?
     private var levelTimer: Timer?
     private var secondsTimer: Timer?
     private var dwellTimer: Timer?
     private var unhoverWork: DispatchWorkItem?
     private var saveWork: DispatchWorkItem?
+    private var deferredModeSelectionError = false
     private var programmaticMove = false
     private var smoother = LevelSmoother()
     /// Pill anchor: (capsule center-x, bottom-y) in screen points.
@@ -56,7 +58,14 @@ final class BadgeController: NSObject {
         model.hotkeyLabel = KeyMap.pretty(config.hotkey)
         config.onChange { [weak self] changes in
             guard let self else { return }
-            if changes.contains(.selection) { model.activeModeName = config.activeMode }
+            if changes.contains(.selection) || changes.contains(.modeLibrary) {
+                model.activeModeName = config.activeMode
+            }
+            if changes.contains(.modeLibrary), let menu = activeModeMenu {
+                rebuildModeMenu(menu)
+            } else if changes.contains(.selection), let menu = activeModeMenu {
+                refreshModeMenuChecks(menu)
+            }
             if changes.contains(.hotkeys) { model.hotkeyLabel = KeyMap.pretty(config.hotkey) }
             panel?.isMovableByWindowBackground = !config.isReadOnly
         }
@@ -80,6 +89,10 @@ final class BadgeController: NSObject {
         handle(.pipeline(phase))
     }
 
+    func showModeSelectionError() {
+        handle(.modeSelectionFailed)
+    }
+
     func hide() {
         stopTimers()
         unhoverWork?.cancel()
@@ -91,10 +104,22 @@ final class BadgeController: NSObject {
     private func handle(_ event: BadgeEvent) {
         ensurePanel()
         let transition = BadgeReducer.reduce(model.state, event)
-        if transition.command == .stopRecording { onStop?() }
-        guard transition.state != model.state else { return }
-        enter(transition.state)
-        panel?.orderFrontRegardless()
+        switch transition.command {
+        case .stopRecording:
+            onStop?()
+        case .deferModeSelectionError:
+            deferredModeSelectionError = true
+        case nil:
+            break
+        }
+        if transition.state != model.state {
+            enter(transition.state)
+            panel?.orderFrontRegardless()
+        }
+        if model.state == .idle, deferredModeSelectionError {
+            deferredModeSelectionError = false
+            handle(.modeSelectionFailed)
+        }
     }
 
     /// Make `state` current: swap the model, re-fit the pill, and start the
@@ -165,22 +190,45 @@ final class BadgeController: NSObject {
     /// stale. NSMenu never activates the app, so focus stays put.
     private func popUpModeMenu() {
         let menu = NSMenu()
-        for name in config.modeOrder {
-            let item = NSMenuItem(
-                title: name, action: #selector(modeMenuItemPicked(_:)), keyEquivalent: ""
-            )
-            item.target = self
-            item.state = name == config.activeMode ? .on : .off
-            item.isEnabled = !config.isReadOnly
-            menu.addItem(item)
-        }
+        rebuildModeMenu(menu)
+        activeModeMenu = menu
+        defer { activeModeMenu = nil }
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
+    private func rebuildModeMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let projection = ModePresentationFactory.projection(
+            modes: config.orderedModes,
+            selection: config.selection
+        )
+        for (index, projectionItem) in projection.items.enumerated() {
+            if index == 1 { menu.addItem(.separator()) }
+            let item = ModePresentationFactory.menuItem(
+                for: projectionItem,
+                target: self,
+                action: #selector(modeMenuItemPicked(_:))
+            )
+            item.isEnabled = !config.isReadOnly
+            menu.addItem(item)
+        }
+    }
+
+    private func refreshModeMenuChecks(_ menu: NSMenu) {
+        for item in menu.items {
+            guard let selection = item.representedObject as? DictationSelection else { continue }
+            let isSelected = selection == config.selection
+            item.state = isSelected ? .on : .off
+            item.setAccessibilityValue(isSelected ? "Selected" : "Not selected")
+        }
+    }
+
     @objc private func modeMenuItemPicked(_ item: NSMenuItem) {
+        guard let selection = item.representedObject as? DictationSelection else { return }
         do {
-            try config.setActiveMode(item.title)
+            try config.select(selection)
         } catch {
+            showModeSelectionError()
             Log.config.error(
                 "Could not select Mode from the Badge: \(error.localizedDescription, privacy: .public)"
             )

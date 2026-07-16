@@ -73,6 +73,25 @@ final class BadgeReducerTests: XCTestCase {
         XCTAssertEqual(reduce(.working(status: nil), .pipeline(.idle)).state, .idle)
     }
 
+    func testModeSelectionFailureDefersToPipelineOwnedFeedback() {
+        XCTAssertEqual(
+            [
+                reduce(.idle, .modeSelectionFailed),
+                reduce(.recording, .modeSelectionFailed),
+                reduce(.working(status: nil), .modeSelectionFailed),
+            ],
+            [
+                BadgeTransition(
+                    state: .error(message: "couldn’t select Mode"), command: nil
+                ),
+                BadgeTransition(state: .recording, command: .deferModeSelectionError),
+                BadgeTransition(
+                    state: .working(status: nil), command: .deferModeSelectionError
+                ),
+            ]
+        )
+    }
+
     // MARK: - clicks
 
     func testClickWhileRecordingRequestsStopAndStaysRecording() {

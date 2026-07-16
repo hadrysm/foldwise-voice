@@ -463,36 +463,21 @@ struct SettingsView: View {
 
     private var modesPane: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("The active mode decides how your dictation is processed after transcription.")
+            Text("Your Dictation selection decides how speech is processed after transcription.")
                 .font(Theme.ui(12))
                 .foregroundStyle(Theme.textSecondary)
+            sectionHeader("System")
             Card {
-                ForEach(Array(model.modeNames.enumerated()), id: \.element) { i, name in
-                    if i > 0 { Divider().padding(.leading, 14) }
-                    Button {
-                        model.activeMode = name
-                        model.onCommit?()
-                    } label: {
-                        CardRow(
-                            title: name,
-                            subtitle: model.llmModes.contains(name)
-                                ? "Polished with \(model.selectedModel.isEmpty ? "Ollama" : model.selectedModel)"
-                                : "Raw transcription — no LLM"
-                        ) {
-                            Image(
-                                systemName: model.activeMode == name
-                                    ? "checkmark.circle.fill"
-                                    : "circle"
-                            )
-                            .foregroundStyle(
-                                model.activeMode == name
-                                    ? AnyShapeStyle(Theme.accent)
-                                    : AnyShapeStyle(Theme.textTertiary)
-                            )
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+                modeSelectionButton(model.modeSelection.systemItem)
+            }
+            sectionHeader("Your Modes")
+            Card {
+                ForEach(
+                    Array(model.modeSelection.editableItems.enumerated()),
+                    id: \.element.id
+                ) { index, item in
+                    if index > 0 { Divider().padding(.leading, 14) }
+                    modeSelectionButton(item)
                 }
             }
             HStack {
@@ -502,6 +487,40 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.textSecondary)
             }
         }
+    }
+
+    private func modeSelectionButton(_ item: ModeSelectionItem) -> some View {
+        Button {
+            model.onSelectMode?(item.id)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: item.icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(item.isSelected ? Theme.accent : Theme.textSecondary)
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name)
+                        .font(Theme.ui(13, .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text(item.summary)
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer(minLength: 16)
+                Image(systemName: item.isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(item.isSelected ? Theme.accent : Theme.textTertiary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(item.accessibilityLabel)
+        .accessibilityValue(item.accessibilityValue)
+        .accessibilityHint(item.accessibilityHint)
     }
 
     // MARK: - settings (keyboard shortcuts + input + sound + appearance + updates)

@@ -31,9 +31,6 @@ final class SettingsWorkflowTests: XCTestCase {
         let saveHistory: Bool
         let retention: RetentionWindow
         let sidebarCollapsed: Bool
-        let activeMode: String
-        let modeNames: [String]
-        let llmModes: Set<String>
         let selectedModel: String
         let asrModel: String
         let status: String
@@ -82,6 +79,20 @@ final class SettingsWorkflowTests: XCTestCase {
         let hasSaveFailurePrefix: Bool
         let isError: Bool
         let clearScheduled: Bool
+    }
+
+    private struct SelectionState: Equatable {
+        let committed: DictationSelection
+        let projected: DictationSelection?
+        let persisted: DictationSelection
+        let statusIsError: Bool
+    }
+
+    private struct FailedSelectionState: Equatable {
+        let committed: DictationSelection
+        let projected: DictationSelection?
+        let reportsSelectionFailure: Bool
+        let statusIsError: Bool
     }
 
     private struct LLMInstallState: Equatable {
@@ -286,8 +297,7 @@ final class SettingsWorkflowTests: XCTestCase {
             PreferenceState(
                 pttKey: "F5", toggleKey: "F6", pauseAudio: false, appearance: .dark,
                 saveHistory: false, retention: .sevenDays,
-                sidebarCollapsed: true, activeMode: "Clean",
-                modeNames: ["Voice to Text", "Clean"], llmModes: ["Clean"],
+                sidebarCollapsed: true,
                 selectedModel: "qwen2.5:3b", asrModel: ASRModelCatalog.defaultID,
                 status: ""
             )
@@ -303,6 +313,73 @@ final class SettingsWorkflowTests: XCTestCase {
         try config.replaceModes([], selection: .voiceToText)
 
         XCTAssertTrue(model.modes.isEmpty)
+    }
+
+    func testExternalSelectionChangesRefreshOpenModesProjection() throws {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+
+        try config.select(.voiceToText)
+
+        XCTAssertEqual(
+            model.modeSelection.items.first(where: \.isSelected)?.id,
+            .voiceToText
+        )
+    }
+
+    func testSelectingModeCommitsStableIDAndRefreshesProjection() throws {
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("selection.json"))
+        try config.save()
+        let emailID = try XCTUnwrap(config.orderedModes.last?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+
+        workflow.selectMode(.mode(emailID))
+
+        XCTAssertEqual(
+            SelectionState(
+                committed: config.selection,
+                projected: model.modeSelection.items.first(where: \.isSelected)?.id,
+                persisted: try Config.load(from: config.path).selection,
+                statusIsError: model.statusIsError
+            ),
+            SelectionState(
+                committed: .mode(emailID),
+                projected: .mode(emailID),
+                persisted: .mode(emailID),
+                statusIsError: false
+            )
+        )
+    }
+
+    func testFailedModeSelectionKeepsCommittedProjectionAndReportsRecovery() throws {
+        let path = dir.appendingPathComponent("missing/selection.json")
+        let config = Config.defaultConfig(path: path)
+        let original = config.selection
+        let emailID = try XCTUnwrap(config.orderedModes.last?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+
+        workflow.selectMode(.mode(emailID))
+
+        XCTAssertEqual(
+            FailedSelectionState(
+                committed: config.selection,
+                projected: model.modeSelection.items.first(where: \.isSelected)?.id,
+                reportsSelectionFailure: model.status.contains("couldn’t select Mode"),
+                statusIsError: model.statusIsError
+            ),
+            FailedSelectionState(
+                committed: original,
+                projected: original,
+                reportsSelectionFailure: true,
+                statusIsError: true
+            )
+        )
     }
 
     func testPopulateMakesPersistedASRModelAvailableAndClearsTransientState() throws {
@@ -403,7 +480,7 @@ final class SettingsWorkflowTests: XCTestCase {
             copy: { _ in }
         )
         workflow.populatePreferences()
-        model.activeMode = "Voice to Text"
+        workflow.selectMode(.voiceToText)
         model.pttKey = "  F7  "
         model.toggleKey = " "
         model.pauseAudio = true
@@ -458,11 +535,13 @@ final class SettingsWorkflowTests: XCTestCase {
         let workflow = makeWorkflow(config: config, model: model)
 
         workflow.populatePreferences()
-        model.activeMode = "Email"
         workflow.commit()
 
         XCTAssertTrue(model.configurationReadOnly)
-        XCTAssertEqual(model.activeMode, "Voice to Text")
+        XCTAssertEqual(
+            model.modeSelection.items.first(where: \.isSelected)?.id,
+            .voiceToText
+        )
         XCTAssertTrue(model.statusIsError)
         XCTAssertEqual(try Data(contentsOf: path), original)
     }
@@ -1457,9 +1536,6 @@ final class SettingsWorkflowTests: XCTestCase {
             saveHistory: model.saveHistory,
             retention: model.retention,
             sidebarCollapsed: model.sidebar.prefersCollapsed,
-            activeMode: model.activeMode,
-            modeNames: model.modeNames,
-            llmModes: model.llmModes,
             selectedModel: model.selectedModel,
             asrModel: model.asrModel,
             status: model.status

@@ -117,7 +117,6 @@ final class SettingsWorkflow {
     func populatePreferences() {
         model.configurationRecoveryMessage = config.recovery?.message
         populateModes()
-        model.activeMode = config.activeMode
         model.selectedModel = config.llmModel ?? ""
         model.asrModel = config.asrModel
         model.asrDownloaded = [ASRModelCatalog.defaultID]
@@ -139,15 +138,21 @@ final class SettingsWorkflow {
     }
 
     private func populateModes() {
-        model.modeNames = config.modeOrder
-        model.llmModes = Set(config.modeOrder.filter { config.modes[$0]?.usesLLM == true })
+        model.modeSelection = ModePresentationFactory.projection(
+            modes: config.orderedModes,
+            selection: config.selection
+        )
         model.modes = config.orderedModes
     }
 
     private func observeConfigChanges() {
         config.onChange { [weak self] changes in
-            guard changes.contains(.modeLibrary) else { return }
-            self?.populateModes()
+            guard let self else { return }
+            if changes.contains(.modeLibrary) {
+                populateModes()
+            } else if changes.contains(.selection) {
+                model.modeSelection = model.modeSelection.selecting(config.selection)
+            }
         }
     }
 
@@ -211,6 +216,19 @@ final class SettingsWorkflow {
         } catch {
             model.selectedModel = config.llmModel ?? ""
             setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
+        }
+    }
+
+    func selectMode(_ selection: DictationSelection) {
+        do {
+            try config.select(selection)
+            setStatus("Dictation selection updated ✓", isError: false, clearAfter: true)
+        } catch {
+            populateModes()
+            setStatus(
+                "⚠️ couldn’t select Mode: \(error.localizedDescription)",
+                isError: true
+            )
         }
     }
 
@@ -431,14 +449,8 @@ final class SettingsWorkflow {
         }
 
         let retentionChanged = config.historyRetention != model.retention
-        let selectedModeID = config.orderedModes.first { $0.name == model.activeMode }?.id
         var preferences = config.preferences
         if !model.asrModel.isEmpty { preferences.asrModel = model.asrModel }
-        if model.activeMode == "Voice to Text" {
-            preferences.selection = .voiceToText
-        } else if let selectedModeID {
-            preferences.selection = .mode(selectedModeID)
-        }
         preferences.hotkey = ptt
         preferences.toggleHotkey = toggle.isEmpty ? nil : toggle
         preferences.pauseAudio = model.pauseAudio

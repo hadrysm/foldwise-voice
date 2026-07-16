@@ -8,10 +8,12 @@ final class MenuBarController: NSObject {
     private let config: Config
     private let onSettings: () -> Void
     private let onCheckForUpdates: () -> Void
+    private let onModeSelectionError: () -> Void
     private let onQuit: () -> Void
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var modeItems: [NSMenuItem] = []
+    private let modeEndSeparator: NSMenuItem = .separator()
     /// Hidden until UpdateChecker reports a newer release.
     private let updateItem = NSMenuItem(
         title: "Update Available…",
@@ -24,18 +26,22 @@ final class MenuBarController: NSObject {
         config: Config,
         onSettings: @escaping () -> Void,
         onCheckForUpdates: @escaping () -> Void,
+        onModeSelectionError: @escaping () -> Void,
         onQuit: @escaping () -> Void
     ) {
         self.config = config
         self.onSettings = onSettings
         self.onCheckForUpdates = onCheckForUpdates
+        self.onModeSelectionError = onModeSelectionError
         self.onQuit = onQuit
         super.init()
         build()
         // Wherever the active mode is changed — here, the Badge's mode menu,
         // or Settings — the checkmarks follow.
         config.onChange { [weak self] changes in
-            if changes.contains(.selection) || changes.contains(.modeLibrary) {
+            if changes.contains(.modeLibrary) {
+                self?.rebuildModeItems()
+            } else if changes.contains(.selection) {
                 self?.refreshModeChecks()
             }
         }
@@ -64,9 +70,45 @@ final class MenuBarController: NSObject {
 
     private func refreshModeChecks() {
         for item in modeItems {
-            item.state = item.title == config.activeMode ? .on : .off
+            guard let selection = item.representedObject as? DictationSelection else { continue }
+            let isSelected = selection == config.selection
+            item.state = isSelected ? .on : .off
+            item.setAccessibilityValue(isSelected ? "Selected" : "Not selected")
             item.isEnabled = !config.isReadOnly
         }
+    }
+
+    private func rebuildModeItems() {
+        guard let menu = statusItem.menu else { return }
+        for item in modeItems {
+            menu.removeItem(item)
+        }
+        modeItems = []
+        let insertionIndex = menu.index(of: modeEndSeparator)
+        guard insertionIndex >= 0 else { return }
+
+        let projection = ModePresentationFactory.projection(
+            modes: config.orderedModes,
+            selection: config.selection
+        )
+        var nextIndex = insertionIndex
+        for (index, projectionItem) in projection.items.enumerated() {
+            if index == 1 {
+                let separator = NSMenuItem.separator()
+                menu.insertItem(separator, at: nextIndex)
+                modeItems.append(separator)
+                nextIndex += 1
+            }
+            let item = ModePresentationFactory.menuItem(
+                for: projectionItem,
+                target: self,
+                action: #selector(switchMode(_:))
+            )
+            menu.insertItem(item, at: nextIndex)
+            modeItems.append(item)
+            nextIndex += 1
+        }
+        refreshModeChecks()
     }
 
     private func build() {
@@ -89,18 +131,7 @@ final class MenuBarController: NSObject {
         updateSeparator.isHidden = true
         menu.addItem(updateSeparator)
 
-        modeItems = []
-        for name in config.modeOrder {
-            let item = NSMenuItem(
-                title: name, action: #selector(switchMode(_:)), keyEquivalent: ""
-            )
-            item.target = self
-            item.isEnabled = !config.isReadOnly
-            menu.addItem(item)
-            modeItems.append(item)
-        }
-
-        menu.addItem(.separator())
+        menu.addItem(modeEndSeparator)
         let settings = NSMenuItem(
             title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ","
         )
@@ -122,13 +153,15 @@ final class MenuBarController: NSObject {
         menu.addItem(quit)
 
         statusItem.menu = menu
-        refreshModeChecks()
+        rebuildModeItems()
     }
 
     @objc private func switchMode(_ sender: NSMenuItem) {
+        guard let selection = sender.representedObject as? DictationSelection else { return }
         do {
-            try config.setActiveMode(sender.title)
+            try config.select(selection)
         } catch {
+            onModeSelectionError()
             Log.config.error(
                 "Could not select Mode from the menu bar: \(error.localizedDescription, privacy: .public)"
             )

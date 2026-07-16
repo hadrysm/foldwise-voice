@@ -45,7 +45,6 @@ final class SettingsModel: ObservableObject {
 
     @Published var pane: Pane = .home
     @Published var updateState: UpdateState = .idle
-    @Published var activeMode = ""
     @Published var selectedModel = ""
     /// The active ASR model's catalog id (ADR-0006). Speech-pane state below.
     @Published var asrModel = ASRModelCatalog.defaultID
@@ -99,8 +98,9 @@ final class SettingsModel: ObservableObject {
     @Published var recordingField: RecordingField?
     @Published var configurationRecoveryMessage: String?
 
-    var modeNames: [String] = []
-    var llmModes: Set<String> = []
+    @Published var modeSelection = ModePresentationFactory.projection(
+        modes: [], selection: .voiceToText
+    )
     @Published var modes: [Mode] = []
     /// Loaded from the HistoryStore when the window opens and re-read after a
     /// delete or clear-all, so the History pane reflects the store live.
@@ -116,6 +116,7 @@ final class SettingsModel: ObservableObject {
     var onCommit: (() -> Void)?
     var onSelectInputDevice: ((String?) -> Void)?
     var onRecord: ((RecordingField) -> Void)?
+    var onSelectMode: ((DictationSelection) -> Void)?
     var onSelectModel: ((String) -> Void)?
     var onInstallModel: ((String) -> Void)?
     var onDeleteModel: ((String) -> Void)?

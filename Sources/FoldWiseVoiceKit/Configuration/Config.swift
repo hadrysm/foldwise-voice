@@ -52,7 +52,7 @@ struct ModeID: RawRepresentable, Hashable, Codable, CustomStringConvertible {
     }
 }
 
-enum DictationSelection: Equatable {
+enum DictationSelection: Hashable {
     case voiceToText
     case mode(ModeID)
 }

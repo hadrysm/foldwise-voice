@@ -69,6 +69,7 @@ enum BadgeState: Equatable {
 
 enum BadgeEvent: Equatable {
     case pipeline(PipelineState)
+    case modeSelectionFailed
     case hoverChanged(Bool)
     /// A click anywhere on the pill (the hover buttons handle themselves).
     case clicked
@@ -79,6 +80,7 @@ enum BadgeEvent: Equatable {
 /// Side effect a transition asks the controller to perform.
 enum BadgeCommand: Equatable {
     case stopRecording
+    case deferModeSelectionError
 }
 
 struct BadgeTransition: Equatable {
@@ -91,6 +93,13 @@ enum BadgeReducer {
         switch event {
         case let .pipeline(phase):
             BadgeTransition(state: map(phase, from: state), command: nil)
+        case .modeSelectionFailed:
+            switch state {
+            case .idle, .hover:
+                BadgeTransition(state: .error(message: "couldn’t select Mode"), command: nil)
+            case .recording, .working, .done, .error:
+                BadgeTransition(state: state, command: .deferModeSelectionError)
+            }
         case let .hoverChanged(over):
             switch (state, over) {
             case (.idle, true): BadgeTransition(state: .hover, command: nil)

@@ -195,6 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             config: config,
             onSettings: { [weak self] in self?.settings.show() },
             onCheckForUpdates: { [weak self] in self?.checkForUpdatesManually() },
+            onModeSelectionError: { [weak self] in self?.badge.showModeSelectionError() },
             onQuit: { [weak self] in self?.quit() }
         )
         settings.onUpdateAvailable = { [weak self] version in

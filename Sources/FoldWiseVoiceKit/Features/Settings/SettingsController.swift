@@ -70,6 +70,7 @@ final class SettingsController {
             self?.workflow.selectInputDevice(uid)
         }
         model.onRecord = { [weak self] field in self?.startRecording(field) }
+        model.onSelectMode = { [weak self] selection in self?.workflow.selectMode(selection) }
         model.onSelectModel = { [weak self] name in self?.workflow.selectLLMModel(name) }
         model.onInstallModel = { [weak self] name in self?.workflow.installLLMModel(name) }
         model.onDeleteModel = { [weak self] name in self?.workflow.deleteLLMModel(name) }
