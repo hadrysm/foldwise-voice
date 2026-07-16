@@ -1,4 +1,25 @@
-# Config owns change propagation via a hand-rolled changed-key notification
+# Config owns transactional persistence and change propagation
+
+## Status
+
+Accepted (2026-07-05). Amended (2026-07-16) by the user-managed Mode-library
+schema decision.
+
+## Amendment: persist candidates before changing live state
+
+Config remains the single owner of persistence and typed change propagation, but
+the initial public configuration schema replaces mutate-then-save with candidate
+transactions. Every Config-owned mutation builds and validates a complete
+candidate, atomically persists it, then swaps the live in-memory state and
+notifies observers. Validation or write failure leaves the file, live state, and
+observers unchanged. This applies to Mode-library CRUD and ordering, direct Mode
+selection, shortcut cycling, and existing settings mutations.
+
+This amendment supersedes the original contract in which public mutable
+properties accumulated pending keys before `saveAndNotify()`. The typed
+`ChangeSet` and app-lifetime observer model remain; the transaction computes the
+net change between committed and candidate values instead of tracking mutations
+that have not yet persisted.
 
 Persistence and change-propagation are unified behind Config: mutating a tracked
 property records a changed-key set, and `saveAndNotify()` persists to disk and

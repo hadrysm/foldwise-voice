@@ -30,10 +30,17 @@ and differences in case or surrounding whitespace.
 _Avoid_: duplicate shortcut, hotkey conflict
 
 **Mode cycle** — The optional global command that advances the active selection
-through the visible order of editable Modes, wrapping at the end. Voice to Text
-is outside the order; the command has no effect when no different selection is
-available.
+through the visible order of editable Modes, wrapping at the end. From Voice to
+Text it enters the order at the first Mode; the command has no effect when no
+different Mode is available.
 _Avoid_: switch mode, next mode
+
+**Configuration recovery state** — The restricted state entered when
+`config.json` exists but is malformed or uses an unsupported schema. The
+original file remains untouched, configuration is read-only, and only Voice to
+Text is usable with built-in runtime defaults until an explicit reset backs up
+and replaces the file.
+_Avoid_: safe mode, fallback configuration
 
 ## Dictation pipeline
 
@@ -57,10 +64,25 @@ transcripts, and it falls back to the raw transcript whenever Ollama is
 unreachable.
 _Avoid_: clean, format, LLM step
 
-**Mode** — A named dictation profile that decides whether and how to polish:
-its LLM model, system prompt, and preserved vocabulary. E.g. "Voice to Text"
-(raw), "Casual", "Email", "Bullets".
+**Voice to Text** — The permanent system selection that inserts the raw
+transcript without Polish. It remains available even when there are no Modes
+and sits outside the editable Mode library and its cycle order.
+
+**Dictation selection** — The choice used by the next Dictation session: either
+Voice to Text or a specific Mode. “Active Mode” applies only when the selected
+choice is actually a Mode.
+
+**Mode** — A named dictation profile that decides how to Polish: its LLM model,
+system prompt, and preserved vocabulary. Its identity survives rename, editing,
+and reordering; duplicating one creates a distinct Mode. Its display name is
+unique within the editable library regardless of case or incidental whitespace.
+E.g. "Casual", "Email", "Bullets".
 _Avoid_: profile, preset
+
+**Mode attribution** — The Mode identity recorded for a History entry, consisting
+of an optional stable Mode ID plus the Mode name captured by that Dictation
+session. The captured name remains the fallback when the Mode cannot be resolved.
+_Avoid_: mode reference, history mode
 
 **In-place Mode** — A Mode whose Polish output tracks the transcript closely:
 same words, same rough length, fixed punctuation/casing. E.g. "Casual". Off-task
