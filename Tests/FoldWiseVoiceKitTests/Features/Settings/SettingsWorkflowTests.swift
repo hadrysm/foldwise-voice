@@ -934,7 +934,25 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(model.historyEntries.map(\.id), [kept.id])
     }
 
-    func testRerunPolishMissingModeKeepsEntryAndShowsRecoverableError() async {
+    func testRerunPolishMissingModeKeepsEntryUnchanged() async {
+        let result = await rerunPolishWithMissingMode()
+
+        XCTAssertEqual(result.persistedText, "unchanged words")
+    }
+
+    func testRerunPolishMissingModeShowsRecoverableError() async {
+        let result = await rerunPolishWithMissingMode()
+
+        XCTAssertEqual(
+            result.status,
+            WorkflowStatus(
+                message: "⚠️ Mode is no longer available. Choose another Mode.",
+                isError: true
+            )
+        )
+    }
+
+    private func rerunPolishWithMissingMode() async -> MissingModeResult {
         let store = JSONLHistoryStore(url: dir.appendingPathComponent("rerun-missing-mode.jsonl"))
         let row = entry(createdAt: Date(), text: "unchanged words")
         store.append(row)
@@ -944,9 +962,9 @@ final class SettingsWorkflowTests: XCTestCase {
 
         await workflow.rerunPolish(row, modeID: .random())
 
-        XCTAssertEqual(
-            [store.load().first?.text, model.statusIsError.description],
-            ["unchanged words", "true"]
+        return MissingModeResult(
+            persistedText: store.load().first?.text,
+            status: WorkflowStatus(message: model.status, isError: model.statusIsError)
         )
     }
 
@@ -1587,6 +1605,16 @@ final class SettingsWorkflowTests: XCTestCase {
 
     private func makeFailingConfig() -> Config {
         makeConfig(path: dir.appendingPathComponent("missing/config.json"))
+    }
+
+    private struct WorkflowStatus: Equatable {
+        let message: String
+        let isError: Bool
+    }
+
+    private struct MissingModeResult {
+        let persistedText: String?
+        let status: WorkflowStatus
     }
 
     private func entry(createdAt: Date, text: String) -> HistoryEntry {

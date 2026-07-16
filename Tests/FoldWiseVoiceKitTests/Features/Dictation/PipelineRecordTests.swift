@@ -7,6 +7,17 @@ import XCTest
 @testable import FoldWiseVoiceKit
 
 final class PipelineRecordTests: XCTestCase {
+    private struct ModeAttribution: Equatable {
+        let name: String
+        let id: ModeID?
+    }
+
+    private struct ModeChangeResult {
+        let startedMode: Mode
+        let receivedMode: Mode?
+        let recordedAttributions: [ModeAttribution]
+    }
+
     private let cleanMode = Mode(
         name: "Clean", asrModel: "", llmModel: "llama3", systemPrompt: nil, vocab: [],
         expands: false
@@ -99,7 +110,31 @@ final class PipelineRecordTests: XCTestCase {
         XCTAssertEqual(entry.sourceApp, "TextEdit")
     }
 
-    func testSessionFreezesCompleteModeWhenRecordingStarts() async throws {
+    func testSessionUsesCompleteModeSnapshotFromRecordingStart() async throws {
+        let result = try await runSessionsAcrossModeChange()
+
+        XCTAssertEqual(result.receivedMode, result.startedMode)
+    }
+
+    func testSessionRecordsModeAttributionFromRecordingStart() async throws {
+        let result = try await runSessionsAcrossModeChange()
+
+        XCTAssertEqual(
+            result.recordedAttributions.first,
+            ModeAttribution(name: "Started Mode", id: result.startedMode.id)
+        )
+    }
+
+    func testModeChangeAfterRecordingStartAppliesToNextSession() async throws {
+        let result = try await runSessionsAcrossModeChange()
+
+        XCTAssertEqual(
+            result.recordedAttributions.last,
+            ModeAttribution(name: "Voice to Text", id: nil)
+        )
+    }
+
+    private func runSessionsAcrossModeChange() async throws -> ModeChangeResult {
         let modeID = ModeID.random()
         let startedMode = Mode(
             id: modeID,
@@ -150,9 +185,13 @@ final class PipelineRecordTests: XCTestCase {
         pipeline.stopRecording()
         await pipeline.awaitPendingJob()
 
-        XCTAssertEqual(receivedMode.value, startedMode)
-        XCTAssertEqual(recorded.entries.map(\.modeName), ["Started Mode", "Voice to Text"])
-        XCTAssertEqual(recorded.entries.map(\.modeID), [modeID, nil])
+        return ModeChangeResult(
+            startedMode: startedMode,
+            receivedMode: receivedMode.value,
+            recordedAttributions: recorded.entries.map {
+                ModeAttribution(name: $0.modeName, id: $0.modeID)
+            }
+        )
     }
 
     // MARK: - only completed sessions are recorded
