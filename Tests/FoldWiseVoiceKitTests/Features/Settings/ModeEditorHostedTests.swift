@@ -5,7 +5,7 @@ import XCTest
 
 @MainActor
 final class ModeEditorHostedTests: XCTestCase {
-    func testHostedEditorUsesApprovedSheetGeometryAcrossValidationStates() {
+    func testHostedEditorUsesApprovedSheetGeometryWithValidationErrors() {
         let model = SettingsModel()
         model.installed = []
         model.modeEditor = ModeEditorState(
@@ -33,7 +33,7 @@ final class ModeEditorHostedTests: XCTestCase {
         XCTAssertEqual(hosting.fittingSize, NSSize(width: 820, height: 570))
     }
 
-    func testHostedModesPaneRendersSelectedAndEmptyLibraries() {
+    func testHostedModesPaneKeepsMinimumWidthForSelectedAndEmptyLibraries() {
         let selectedModel = SettingsModel()
         selectedModel.pane = .modes
         let modeID = ModeID.random()

@@ -100,6 +100,27 @@ final class ModeEditorPolicyTests: XCTestCase {
         )
     }
 
+    func testEvaluateReportsPendingModelInventoryWithoutCallingModelUnavailable() {
+        let evaluation = ModeEditorPolicy.evaluate(
+            ModeEditorDraft(
+                name: "Notes",
+                icon: "text.bubble",
+                model: "qwen2.5:3b",
+                transformation: .inPlace,
+                systemPrompt: "Keep wording.",
+                vocabularyText: ""
+            ),
+            existingModes: [],
+            editingID: nil,
+            installedModels: nil
+        )
+
+        XCTAssertEqual(
+            evaluation.issues.model,
+            "Installed AI models are still loading. Try again in a moment."
+        )
+    }
+
     func testEditingDraftClearsTransientValidationAndPersistenceState() {
         var state = ModeEditorState(
             purpose: .add,
@@ -181,7 +202,17 @@ final class ModeEditorPolicyTests: XCTestCase {
             ]
         )
         XCTAssertEqual(
-            presentation.validationLabels,
+            [
+                ModeEditorAccessibilityPresentation.validationLabel(
+                    field: "Name", message: state.issues.name
+                ),
+                ModeEditorAccessibilityPresentation.validationLabel(
+                    field: "AI model", message: state.issues.model
+                ),
+                ModeEditorAccessibilityPresentation.validationLabel(
+                    field: "System prompt", message: state.issues.systemPrompt
+                ),
+            ],
             [
                 "Name validation error: A Mode named 'Example' already exists.",
                 "AI model validation error: missing:latest isn't installed.",

@@ -260,7 +260,7 @@ final class SettingsWorkflow {
             editor.draft,
             existingModes: config.orderedModes,
             editingID: editingID,
-            installedModels: Set(model.installed?.map(\.name) ?? [])
+            installedModels: model.installed.map { Set($0.map(\.name)) }
         )
         editor.issues = evaluation.issues
         editor.persistenceError = nil

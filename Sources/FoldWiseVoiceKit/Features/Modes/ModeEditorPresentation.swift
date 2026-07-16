@@ -87,7 +87,6 @@ struct ModeEditorAccessibilityPresentation: Equatable {
     let nameValue: String
     let iconValue: String
     let transformationValue: String
-    let validationLabels: [String]
     let persistenceErrorLabel: String?
     let saveAction: ModeEditorActionPresentation
     let cancelAction: ModeEditorActionPresentation
@@ -98,11 +97,6 @@ struct ModeEditorAccessibilityPresentation: Equatable {
         transformationValue = ModeTransformationChoice.all.first {
             $0.transformation == state.draft.transformation
         }?.title ?? ""
-        validationLabels = [
-            Self.validationLabel(field: "Name", message: state.issues.name),
-            Self.validationLabel(field: "AI model", message: state.issues.model),
-            Self.validationLabel(field: "System prompt", message: state.issues.systemPrompt),
-        ].compactMap { $0 }
         persistenceErrorLabel = state.persistenceError.map { "Save error: \($0)" }
         saveAction = ModeEditorActionPresentation(
             title: state.saveActionTitle,

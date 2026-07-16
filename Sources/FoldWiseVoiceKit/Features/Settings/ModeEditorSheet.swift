@@ -93,7 +93,14 @@ struct ModeEditorSheet: View {
 
             editorField("AI model") {
                 Picker("AI model", selection: draftBinding(\.model, fallback: "")) {
-                    if editor.draft.model.isEmpty, installedModelNames.isEmpty {
+                    if model.installed == nil {
+                        Text(
+                            editor.draft.model.isEmpty
+                                ? "Checking installed models…"
+                                : editor.draft.model
+                        )
+                        .tag(editor.draft.model)
+                    } else if editor.draft.model.isEmpty, installedModelNames.isEmpty {
                         Text("No installed models").tag("")
                     } else if !editor.draft.model.isEmpty,
                               !installedModelNames.contains(editor.draft.model) {

@@ -511,6 +511,21 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
+    func testSaveModeEditorReportsPendingModelInventoryWithoutCallingModelUnavailable() throws {
+        let config = makeConfig()
+        let modeID = try XCTUnwrap(config.orderedModes.first?.id)
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.beginEditMode(modeID)
+
+        workflow.saveModeEditor()
+
+        XCTAssertEqual(
+            model.modeEditor?.issues.model,
+            "Installed AI models are still loading. Try again in a moment."
+        )
+    }
+
     func testCancelModeEditorDiscardsDraftWithoutChangingConfig() throws {
         let config = makeConfig()
         let originalModes = config.orderedModes

@@ -90,7 +90,7 @@ enum ModeEditorPolicy {
         _ draft: ModeEditorDraft,
         existingModes: [Mode],
         editingID: ModeID?,
-        installedModels: Set<String>
+        installedModels: Set<String>?
     ) -> ModeEditorEvaluation {
         let name = ModeTextPolicy.cleanName(draft.name)
         let model = draft.model.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -105,9 +105,11 @@ enum ModeEditorPolicy {
         }) {
             issues.name = "A Mode named '\(name)' already exists."
         }
-        if model.isEmpty {
+        if installedModels == nil {
+            issues.model = "Installed AI models are still loading. Try again in a moment."
+        } else if model.isEmpty {
             issues.model = "Choose an installed AI model."
-        } else if !installedModels.contains(model) {
+        } else if let installedModels, !installedModels.contains(model) {
             issues.model = "\(model) isn't installed. Install it in Models before saving."
         }
         if prompt.isEmpty {
