@@ -39,9 +39,11 @@ final class BadgeController: NSObject {
     private var levelTimer: Timer?
     private var secondsTimer: Timer?
     private var dwellTimer: Timer?
+    private var modeCycleTimer: Timer?
     private var unhoverWork: DispatchWorkItem?
     private var saveWork: DispatchWorkItem?
     private var deferredModeSelectionError = false
+    private var modeCycleState = BadgeModeCycleState.idle()
     private var programmaticMove = false
     private var smoother = LevelSmoother()
     /// Pill anchor: (capsule center-x, bottom-y) in screen points.
@@ -60,6 +62,9 @@ final class BadgeController: NSObject {
             guard let self else { return }
             if changes.contains(.selection) || changes.contains(.modeLibrary) {
                 model.activeModeName = config.activeMode
+            }
+            if changes.contains(.modeLibrary) {
+                refreshModeCyclePresentations()
             }
             if changes.contains(.modeLibrary), let menu = activeModeMenu {
                 rebuildModeMenu(menu)
@@ -86,7 +91,29 @@ final class BadgeController: NSObject {
 
     /// Fold a pipeline phase into the state machine.
     func apply(_ phase: PipelineState) {
+        if phase.ownsBadge {
+            handleModeCycle(.badgeBecameBusy, fitPresentation: false)
+        }
         handle(.pipeline(phase))
+    }
+
+    func confirmModeCycle(_ transition: ModeCycleTransition) {
+        let projection = ModePresentationFactory.projection(
+            modes: config.orderedModes,
+            selection: config.selection
+        )
+        guard let from = modeCycleItem(for: transition.from, in: projection),
+              let to = modeCycleItem(for: .mode(transition.to), in: projection)
+        else {
+            Log.hotkey.error("Could not resolve committed Mode cycle for Badge feedback.")
+            return
+        }
+        if model.state == .hover { enter(.idle) }
+        handleModeCycle(.committed(from: from, to: to))
+    }
+
+    func showModeCycleError() {
+        handleModeCycle(.failed)
     }
 
     func showModeSelectionError() {
@@ -102,6 +129,7 @@ final class BadgeController: NSObject {
     // MARK: - reducer plumbing
 
     private func handle(_ event: BadgeEvent) {
+        if case .hoverChanged = event, !modeCycleState.allowsHover { return }
         ensurePanel()
         let transition = BadgeReducer.reduce(
             model.state,
@@ -116,10 +144,80 @@ final class BadgeController: NSObject {
         }
     }
 
+    private func handleModeCycle(
+        _ event: BadgeModeCycleEvent,
+        fitPresentation: Bool = true
+    ) {
+        let transition = BadgeModeCycleReducer.reduce(modeCycleState, event)
+        modeCycleState = transition.state
+        model.modeCycleDisplay = transition.state.display
+        let showsError = transition.effects.contains { effect in
+            if case .showError = effect { return true }
+            return false
+        }
+        if fitPresentation, !showsError {
+            let width = transition.state.display == nil
+                ? model.state.width
+                : BadgeModeCycleReducer.expandedWidth
+            setSize(
+                CGSize(width: width, height: Theme.badgeHeight),
+                animate: !transition.state.reducedMotion
+            )
+        }
+        for effect in transition.effects {
+            perform(effect)
+        }
+    }
+
+    private func perform(_ effect: BadgeModeCycleEffect) {
+        switch effect {
+        case .cancelScheduled:
+            modeCycleTimer?.invalidate()
+            modeCycleTimer = nil
+        case let .send(event):
+            DispatchQueue.main.async { [weak self] in self?.handleModeCycle(event) }
+        case let .schedule(event, delay):
+            modeCycleTimer?.invalidate()
+            modeCycleTimer = Timer.scheduledTimer(
+                withTimeInterval: delay,
+                repeats: false
+            ) { [weak self] _ in
+                Task { @MainActor in self?.handleModeCycle(event) }
+            }
+        case let .showError(message):
+            enter(.error(message: message))
+            panel?.orderFrontRegardless()
+        }
+    }
+
+    private func modeCycleItem(
+        for selection: DictationSelection,
+        in projection: ModeSelectionProjection
+    ) -> BadgeModeCycleItem? {
+        guard let item = projection.items.first(where: { $0.id == selection }) else {
+            return nil
+        }
+        return BadgeModeCycleItem(selection: item.id, name: item.name, icon: item.icon)
+    }
+
+    private func refreshModeCyclePresentations() {
+        let projection = ModePresentationFactory.projection(
+            modes: config.orderedModes,
+            selection: config.selection
+        )
+        let items = projection.items.map {
+            BadgeModeCycleItem(selection: $0.id, name: $0.name, icon: $0.icon)
+        }
+        handleModeCycle(.presentationsChanged(items))
+    }
+
     /// Make `state` current: swap the model, re-fit the pill, and start the
     /// state's timers (recording seconds + mic level, or a dwell that returns
     /// the pill to idle).
     private func enter(_ state: BadgeState) {
+        if state.ownsModeCyclePresentation, modeCycleState.badgeIsAvailable {
+            handleModeCycle(.badgeBecameBusy, fitPresentation: false)
+        }
         let wasRecording = model.state == .recording
         model.state = state
         setSize(CGSize(width: state.width, height: Theme.badgeHeight))
@@ -134,6 +232,9 @@ final class BadgeController: NSObject {
             dwellTimer = Timer.scheduledTimer(withTimeInterval: dwell, repeats: false) { [weak self] _ in
                 Task { @MainActor in self?.handle(.dwellElapsed) }
             }
+        }
+        if state == .idle, !modeCycleState.badgeIsAvailable {
+            handleModeCycle(.badgeBecameAvailable)
         }
     }
 
@@ -165,7 +266,10 @@ final class BadgeController: NSObject {
             onClick: { [weak self] in self?.handle(.clicked) },
             onChangeMode: { [weak self] in self?.popUpModeMenu() },
             onRecord: { [weak self] in self?.onRecord?() },
-            onOpenApp: { [weak self] in self?.onOpenApp() }
+            onOpenApp: { [weak self] in self?.onOpenApp() },
+            onReduceMotionChanged: { [weak self] reduced in
+                self?.handleModeCycle(.reduceMotionChanged(reduced))
+            }
         )
         p.contentView = NSHostingView(rootView: view)
 
@@ -251,18 +355,16 @@ final class BadgeController: NSObject {
     private func setSize(_ size: CGSize, animate: Bool = true) {
         guard let panel else { return }
         let a = anchor ?? defaultAnchor()
-        var x = a.x - size.width / 2
-        var y = a.y
-        if let f = screenFrame(at: a) {
-            x = max(f.minX + 4, min(x, f.maxX - size.width - 4))
-            y = max(f.minY + 4, min(y, f.maxY - size.height - 4))
-        }
-        let frame = NSRect(x: x, y: y, width: size.width, height: size.height)
+        let frame = BadgeFramePolicy.frame(
+            size: size,
+            anchor: a,
+            screen: screenFrame(at: a)
+        )
         guard frame != panel.frame else { return }
         programmaticMove = true
         if animate {
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.3
+                ctx.duration = BadgeModeCycleReducer.resizeDuration
                 ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.2, 1)
                 panel.animator().setFrame(frame, display: true)
             } completionHandler: { [weak self] in
@@ -353,5 +455,17 @@ final class BadgeController: NSObject {
         stopRecordingTimers()
         dwellTimer?.invalidate()
         dwellTimer = nil
+        modeCycleTimer?.invalidate()
+        modeCycleTimer = nil
+    }
+}
+
+private extension PipelineState {
+    var ownsBadge: Bool {
+        switch self {
+        case .idle: false
+        case .listening, .downloadingModel, .loadingModel, .transcribing,
+             .polishing, .inserted, .clipboard, .error: true
+        }
     }
 }

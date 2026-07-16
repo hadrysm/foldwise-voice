@@ -2,13 +2,14 @@
 // adaptive capsule with a violet/ribbon identity that survives both appearances,
 // static idle glyph, hover action row, and the silk-ribbon recording
 // canvas. GPU-driven via TimelineView + Canvas — no main-thread drawing loop.
-// All state transitions come from `BadgeReducer` via the controller; this
+// All state transitions come from the Badge reducers via the controller; this
 // file only renders `BadgeModel`.
 
 import SwiftUI
 
 final class BadgeModel: ObservableObject {
     @Published var state: BadgeState = .idle
+    @Published var modeCycleDisplay: BadgeModeCycleDisplay?
     @Published var recordingSeconds = 0
     @Published var activeModeName = ""
     /// Pretty label of the dictation hotkey ("right ⌥"), for the mic tooltip.
@@ -19,12 +20,14 @@ final class BadgeModel: ObservableObject {
 }
 
 struct BadgeView: View {
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @ObservedObject var model: BadgeModel
     var onHover: (Bool) -> Void
     var onClick: () -> Void
     var onChangeMode: () -> Void
     var onRecord: () -> Void
     var onOpenApp: () -> Void
+    var onReduceMotionChanged: (Bool) -> Void = { _ in }
 
     var body: some View {
         ZStack {
@@ -40,6 +43,10 @@ struct BadgeView: View {
         .onHover(perform: onHover)
         .onTapGesture(perform: onClick)
         .animation(Theme.badgeCrossFade, value: model.state)
+        .onAppear { onReduceMotionChanged(accessibilityReduceMotion) }
+        .onChange(of: accessibilityReduceMotion) { _, reduced in
+            onReduceMotionChanged(reduced)
+        }
     }
 
     private var borderColor: Color {
@@ -52,43 +59,47 @@ struct BadgeView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch model.state {
-        case .idle:
-            BadgeIdleGlyph()
-        case .hover:
-            hoverActions
-        case .recording:
-            HStack(spacing: 10) {
-                RibbonCanvas(live: true, amplitude: { model.amplitude })
-                    .frame(height: 20)
-                Text(timerText)
-                    .font(Theme.mono(11, .medium))
-                    .foregroundStyle(Theme.Badge.timerText)
-            }
-            .padding(.horizontal, 13)
-        case .working:
-            HStack(spacing: 10) {
-                RibbonCanvas(live: false, amplitude: { 0.18 })
-                    .frame(height: 20)
-                if model.state.statusText != nil {
-                    statusLine
-                } else {
-                    BadgeSpinner()
+        if let modeCycleDisplay = model.modeCycleDisplay {
+            BadgeModeCycleReel(display: modeCycleDisplay)
+        } else {
+            switch model.state {
+            case .idle:
+                BadgeIdleGlyph()
+            case .hover:
+                hoverActions
+            case .recording:
+                HStack(spacing: 10) {
+                    RibbonCanvas(live: true, amplitude: { model.amplitude })
+                        .frame(height: 20)
+                    Text(timerText)
+                        .font(Theme.mono(11, .medium))
+                        .foregroundStyle(Theme.Badge.timerText)
                 }
-            }
-            .padding(.horizontal, 13)
-        case .done:
-            HStack(spacing: 7) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Theme.Badge.iconEmphasized)
-                Text("inserted")
-                    .font(Theme.mono(11, .medium))
-                    .foregroundStyle(Theme.Badge.timerText)
-            }
-        case .error:
-            statusLine
                 .padding(.horizontal, 13)
+            case .working:
+                HStack(spacing: 10) {
+                    RibbonCanvas(live: false, amplitude: { 0.18 })
+                        .frame(height: 20)
+                    if model.state.statusText != nil {
+                        statusLine
+                    } else {
+                        BadgeSpinner()
+                    }
+                }
+                .padding(.horizontal, 13)
+            case .done:
+                HStack(spacing: 7) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Theme.Badge.iconEmphasized)
+                    Text("inserted")
+                        .font(Theme.mono(11, .medium))
+                        .foregroundStyle(Theme.Badge.timerText)
+                }
+            case .error:
+                statusLine
+                    .padding(.horizontal, 13)
+            }
         }
     }
 
@@ -125,6 +136,51 @@ struct BadgeView: View {
             .help("Open FoldWise")
         }
         .padding(.horizontal, 6)
+    }
+}
+
+private struct BadgeModeCycleReel: View {
+    let display: BadgeModeCycleDisplay
+
+    var body: some View {
+        ZStack {
+            if let outgoing = display.outgoing {
+                row(outgoing)
+                    .opacity(display.outgoingOpacity)
+                    .offset(y: display.outgoingOffset)
+            }
+            row(display.destination)
+                .opacity(display.incomingOpacity)
+                .offset(y: display.incomingOffset)
+        }
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+        .animation(display.animatesSwap ? animation : nil, value: display.phase)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(display.accessibilityLabel)
+        .accessibilityValue("Selected Mode")
+    }
+
+    private var animation: Animation {
+        switch display.motion {
+        case .standard:
+            .timingCurve(0.4, 0, 0.2, 1, duration: BadgeModeCycleReducer.swapDuration)
+        case .reduced:
+            .easeOut(duration: BadgeModeCycleReducer.reducedSwapDuration)
+        }
+    }
+
+    private func row(_ item: BadgeModeCycleItem) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: item.icon)
+                .font(.system(size: 12, weight: .semibold))
+            Text(item.name)
+                .font(Theme.ui(12, .semibold))
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .foregroundStyle(Theme.Badge.iconEmphasized)
     }
 }
 

@@ -155,7 +155,7 @@ Run the relevant sections earlier when a boundary changes:
 | Parakeet, Whisper, model storage, or ASR dispatch | 2 and 4; always exercise both ASR engines |
 | Ollama transport or Polish integration | 5 |
 | Clipboard or Accessibility insertion | 2 and 6 |
-| Badge, menu bar, or AppKit window behavior | 7 |
+| Badge, menu bar, or AppKit window behavior | 7 and 11 |
 | Audio ducking or restoration | 8 |
 | Home or History Dictation-row presentation and interaction | 10 |
 
@@ -273,7 +273,8 @@ clipboard is overwritten after a successful synthetic paste.
 ### 7. Badge and menu behavior
 
 1. With TextEdit frontmost, hover the Badge and use its Mode picker. Confirm the
-   active Mode checkmark also updates in the menu-bar menu and Settings.
+   active Mode checkmark also updates in the menu-bar menu and Settings, with no
+   Mode-cycle reel for this direct selection.
 2. Use the Badge microphone button for a dictation, then use its open-app button.
 3. Drag the Badge, relaunch the app, and confirm its position is retained and
    remains on-screen.
@@ -394,29 +395,44 @@ step says global; return to Settings only to change a binding or the Mode order.
    Push to Talk and the committed shortcut and selection remain unchanged.
    Repeat against Toggle Recording, then assign a distinct Cycle Modes key.
 3. With TextEdit frontmost, press and release the Cycle Modes key once. Confirm
-   Settings and both Mode menus select the next editable Mode. Use rapid
-   discrete presses through wraparound and confirm every press is honored in
-   order. Hold the key and confirm OS autorepeat does not advance again.
+   Settings and both Mode menus select the next editable Mode before the Badge
+   reel begins. Confirm the Badge remains centered on its existing screen anchor,
+   grows from 88 × 38 points to 176 × 38 points, and reels the old icon/name up
+   while the complete new icon/name enters from below. Use rapid discrete presses
+   through wraparound and confirm every committed intermediate Mode appears FIFO,
+   the final Mode remains for about 900 ms, and the Badge then returns to its
+   static 88 × 38 point idle glyph. Hold the key and confirm OS autorepeat does
+   not advance again.
 4. Reorder the Modes in Settings, return focus to TextEdit, and press once.
    Confirm cycling immediately follows the new visible order. Select Voice to
    Text and confirm the next press enters at the first Mode. Reduce the library
    to one already-selected Mode, then zero Modes, and confirm presses are silent
    no-ops in both cases.
-5. Start a dictation, press Cycle Modes while speaking, then finish it. Confirm
-   the current result and History attribution use the start-time Mode while the
-   next dictation uses the newly committed selection.
-6. Deny both Input Monitoring and Accessibility. Confirm Settings explains that
+5. Start an idle Mode reel, then immediately begin a dictation. Confirm recording
+   feedback cancels the reel without a visual overlap. Press Cycle Modes several
+   times while recording and working, then finish the session. Confirm the current
+   result and History attribution use the start-time Mode; after inserted/error
+   feedback finishes, one reel starts at the last Mode fully shown before the
+   interruption and ends at the final committed Mode. The next dictation must use
+   that final Mode.
+6. In **System Settings → Accessibility → Display**, enable **Reduce motion**.
+   Repeat a single press and rapid wraparound presses. Confirm the whole icon/name
+   row crossfades with no vertical travel, width changes without traveling, the
+   900 ms final dwell remains, and TextEdit keeps focus. Disable Reduce motion and
+   confirm the vertical reel returns.
+7. Deny both Input Monitoring and Accessibility. Confirm Settings explains that
    shortcuts work only while FoldWise is focused and offers the correct System
    Settings route. Verify focused-app operation, then grant either effective
    permission while FoldWise stays running. Keep TextEdit frontmost and confirm
    global cycling recovers without relaunching or resaving the shortcut.
-7. Quit and relaunch. Confirm the binding and selected stable Mode survive and
+8. Quit and relaunch. Confirm the binding and selected stable Mode survive and
    one background press advances exactly once without activating FoldWise or
    moving focus from TextEdit.
 
 Pass when capture, collision policy, edge dispatch, live order, start-time
-freezing, persistence, focused fallback, automatic global recovery, and focus
-retention all match the steps. Any failure blocks the release.
+freezing, persistence, FIFO/reduced-motion Badge feedback, focused fallback,
+automatic global recovery, and focus retention all match the steps. Any failure
+blocks the release.
 
 ## Finish and record evidence
 

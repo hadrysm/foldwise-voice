@@ -162,4 +162,18 @@ final class BadgeReducerTests: XCTestCase {
         XCTAssertFalse(BadgeState.working(status: nil).ribbonsFollowMic)
         XCTAssertFalse(BadgeState.idle.showsRibbons)
     }
+
+    func testPipelineAndErrorFeedbackOwnModeCyclePresentation() {
+        XCTAssertEqual(
+            [
+                BadgeState.idle.ownsModeCyclePresentation,
+                BadgeState.hover.ownsModeCyclePresentation,
+                BadgeState.recording.ownsModeCyclePresentation,
+                BadgeState.working(status: nil).ownsModeCyclePresentation,
+                BadgeState.done.ownsModeCyclePresentation,
+                BadgeState.error(message: "x").ownsModeCyclePresentation,
+            ],
+            [false, false, true, true, true, true]
+        )
+    }
 }

@@ -191,10 +191,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         badge.onRecord = { [weak self] in self?.pipeline.toggleRecording() }
         modeCycleCommand = ModeCycleCommand(
             config: config,
-            onFailure: { error in
+            onCommitted: { [weak self] transition in
+                self?.badge.confirmModeCycle(transition)
+            },
+            onFailure: { [weak self] error in
                 Log.hotkey.error(
                     "Mode cycle failed: \(error.localizedDescription, privacy: .public)"
                 )
+                self?.badge.showModeCycleError()
             }
         )
         hotkeys = HotkeyBindingCoordinator(
