@@ -143,8 +143,8 @@ struct SettingsView: View {
     private var modeDeletionPresented: Binding<Bool> {
         Binding(
             get: { model.modePendingDeletion != nil },
-            set: { isPresented in
-                if !isPresented { model.onCancelModeDeletion?() }
+            set: { _ in
+                // Alert actions own dismissal so a failed delete remains available for retry.
             }
         )
     }

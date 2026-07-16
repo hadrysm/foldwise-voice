@@ -86,6 +86,50 @@ final class ModeEditorHostedTests: XCTestCase {
         XCTAssertEqual(moved, .down)
     }
 
+    func testHostedDeletionAlertKeepsConfirmationWhenDeleteFails() {
+        let model = SettingsModel()
+        let pending = ModeDeletionState(
+            id: .random(),
+            title: "Delete Example?",
+            message: "History remains and the AI model is not uninstalled."
+        )
+        model.modePendingDeletion = pending
+        var confirmations = 0
+        var cancellations = 0
+        model.onConfirmModeDeletion = { confirmations += 1 }
+        model.onCancelModeDeletion = {
+            cancellations += 1
+            model.modePendingDeletion = nil
+        }
+        let hosting = hostSettings(model)
+        let window = makeWindow(hosting)
+        let observer = SheetObserver {
+            DispatchQueue.main.async {
+                guard let button = Self.button(
+                    named: "Delete",
+                    in: window.attachedSheet?.contentView
+                ) else {
+                    XCTFail("The deletion alert did not expose its destructive action.")
+                    NSApp.abortModal()
+                    return
+                }
+                button.performClick(nil)
+                DispatchQueue.main.async { NSApp.abortModal() }
+            }
+        }
+        window.delegate = observer
+
+        showInKeyWindow(window, hosting: hosting)
+        NSApp.runModal(for: window)
+        window.delegate = nil
+        window.orderOut(nil)
+
+        XCTAssertEqual(
+            [confirmations, cancellations, model.modePendingDeletion == pending ? 1 : 0],
+            [1, 0, 1]
+        )
+    }
+
     private func hostSettings(_ model: SettingsModel) -> NSHostingView<SettingsView> {
         let hosting = NSHostingView(rootView: SettingsView(model: model))
         hosting.frame = NSRect(x: 0, y: 0, width: 980, height: 720)
@@ -107,6 +151,12 @@ final class ModeEditorHostedTests: XCTestCase {
     }
 
     private func hostInKeyWindow(_ hosting: NSHostingView<SettingsView>) -> NSWindow {
+        let window = makeWindow(hosting)
+        showInKeyWindow(window, hosting: hosting)
+        return window
+    }
+
+    private func makeWindow(_ hosting: NSHostingView<SettingsView>) -> NSWindow {
         let window = NSWindow(
             contentRect: hosting.frame,
             styleMask: [.titled],
@@ -114,11 +164,25 @@ final class ModeEditorHostedTests: XCTestCase {
             defer: false
         )
         window.contentView = hosting
+        return window
+    }
+
+    private func showInKeyWindow(
+        _ window: NSWindow,
+        hosting: NSHostingView<SettingsView>
+    ) {
         NSApp.finishLaunching()
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         hosting.layoutSubtreeIfNeeded()
-        return window
+    }
+
+    private static func button(named title: String, in view: NSView?) -> NSButton? {
+        guard let view else { return nil }
+        if let button = view as? NSButton, button.title == title {
+            return button
+        }
+        return view.subviews.lazy.compactMap { button(named: title, in: $0) }.first
     }
 
     private func sendMoveDownShortcut(to window: NSWindow) {
@@ -141,5 +205,18 @@ final class ModeEditorHostedTests: XCTestCase {
         }
         NSApp.runModal(for: window)
         window.contentView?.layoutSubtreeIfNeeded()
+    }
+}
+
+@MainActor
+private final class SheetObserver: NSObject, NSWindowDelegate {
+    private let onBegin: () -> Void
+
+    init(onBegin: @escaping () -> Void) {
+        self.onBegin = onBegin
+    }
+
+    func windowWillBeginSheet(_: Notification) {
+        onBegin()
     }
 }
