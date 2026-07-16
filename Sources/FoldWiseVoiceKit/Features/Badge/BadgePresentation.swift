@@ -245,6 +245,9 @@ enum BadgeModeCycleReducer {
             }
 
         case .dwellElapsed:
+            guard case .settled = state.display else {
+                return BadgeModeCycleTransition(state: state, effects: effects)
+            }
             state.display = nil
             state.queued = []
             state.visiblyConfirmed = nil
@@ -252,6 +255,9 @@ enum BadgeModeCycleReducer {
 
         case let .reduceMotionChanged(reducedMotion):
             state.reducedMotion = reducedMotion
+            if case .swapping = state.display {
+                return BadgeModeCycleTransition(state: state, effects: effects)
+            }
             state.display = state.display.map {
                 replacingMotion(in: $0, with: reducedMotion ? .reduced : .standard)
             }

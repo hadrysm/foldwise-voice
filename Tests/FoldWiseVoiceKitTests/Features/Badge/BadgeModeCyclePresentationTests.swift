@@ -29,16 +29,12 @@ final class BadgeModeCyclePresentationTests: XCTestCase {
         )
     }
 
-    func testConfirmationMetricsMatchAcceptedBadgeContract() {
-        XCTAssertEqual(
-            [
-                BadgeModeCycleReducer.expandedWidth,
-                BadgeModeCycleReducer.resizeDuration,
-                BadgeModeCycleReducer.swapDuration,
-                BadgeModeCycleReducer.settledDwell,
-            ],
-            [176, 0.300, 0.260, 0.900]
-        )
+    func testConfirmationUsesAcceptedExpandedWidth() {
+        XCTAssertEqual(BadgeModeCycleReducer.expandedWidth, 176)
+    }
+
+    func testConfirmationUsesAcceptedResizeDuration() {
+        XCTAssertEqual(BadgeModeCycleReducer.resizeDuration, 0.300)
     }
 
     func testStandardSwapAndSettledDwellUseAcceptedDurations() {
@@ -271,7 +267,7 @@ final class BadgeModeCyclePresentationTests: XCTestCase {
         )
     }
 
-    func testReduceMotionUsesCrossfadeWithoutTravelAndKeepsSettledDwell() {
+    func testReduceMotionUsesAcceptedSwapAndDwellDurations() {
         var state = BadgeModeCycleState.idle(reducedMotion: true)
         state = BadgeModeCycleReducer.reduce(
             state, .committed(from: casual, to: email)
@@ -299,6 +295,40 @@ final class BadgeModeCyclePresentationTests: XCTestCase {
                     effects: [.schedule(.dwellElapsed, after: 0.900)]
                 ),
             ]
+        )
+    }
+
+    func testReducedMotionCrossfadeUsesAcceptedOpacityStates() {
+        let prepared = BadgeModeCycleDisplay.prepared(
+            from: casual, to: email, motion: .reduced
+        )
+        let swapping = BadgeModeCycleDisplay.swapping(
+            from: casual, to: email, motion: .reduced
+        )
+
+        XCTAssertEqual(
+            [
+                prepared.outgoingOpacity, prepared.incomingOpacity,
+                swapping.outgoingOpacity, swapping.incomingOpacity,
+            ],
+            [1, 0, 0, 1]
+        )
+    }
+
+    func testReducedMotionHasNoVerticalTravel() {
+        let prepared = BadgeModeCycleDisplay.prepared(
+            from: casual, to: email, motion: .reduced
+        )
+        let swapping = BadgeModeCycleDisplay.swapping(
+            from: casual, to: email, motion: .reduced
+        )
+
+        XCTAssertEqual(
+            [
+                prepared.outgoingOffset, prepared.incomingOffset,
+                swapping.outgoingOffset, swapping.incomingOffset,
+            ],
+            [0, 0, 0, 0]
         )
     }
 
@@ -340,6 +370,23 @@ final class BadgeModeCyclePresentationTests: XCTestCase {
         )
     }
 
+    func testStaleDwellTimerCannotClearNextSwap() {
+        var state = BadgeModeCycleState(
+            display: .settled(email, motion: .standard),
+            visiblyConfirmed: email
+        )
+        state = BadgeModeCycleReducer.reduce(
+            state, .committed(from: email, to: meeting)
+        ).state
+
+        let staleTimer = BadgeModeCycleReducer.reduce(state, .dwellElapsed)
+
+        XCTAssertEqual(
+            staleTimer,
+            BadgeModeCycleTransition(state: state, effects: [])
+        )
+    }
+
     func testLiveReduceMotionChangeUpdatesActivePresentation() {
         let state = BadgeModeCycleState(
             display: .prepared(from: casual, to: email, motion: .standard),
@@ -353,6 +400,31 @@ final class BadgeModeCyclePresentationTests: XCTestCase {
         XCTAssertEqual(
             transition.state.display,
             .prepared(from: casual, to: email, motion: .reduced)
+        )
+    }
+
+    func testLiveReduceMotionChangeKeepsInFlightSwapAndTimerPaired() {
+        let state = BadgeModeCycleState(
+            display: .swapping(from: casual, to: email, motion: .standard),
+            visiblyConfirmed: casual
+        )
+
+        let transition = BadgeModeCycleReducer.reduce(
+            state, .reduceMotionChanged(true)
+        )
+
+        XCTAssertEqual(
+            transition,
+            BadgeModeCycleTransition(
+                state: BadgeModeCycleState(
+                    display: .swapping(
+                        from: casual, to: email, motion: .standard
+                    ),
+                    visiblyConfirmed: casual,
+                    reducedMotion: true
+                ),
+                effects: []
+            )
         )
     }
 
