@@ -23,7 +23,7 @@ final class TranscriberDispatcherTests: XCTestCase {
     }
 
     private func makeConfig() -> Config {
-        Config.defaultConfig(path: dir.appendingPathComponent("modes.json"))
+        Config.defaultConfig(path: dir.appendingPathComponent("config.json"))
     }
 
     func testTranscribeDelegatesToTheEngine() async throws {
@@ -150,7 +150,7 @@ final class TranscriberDispatcherTests: XCTestCase {
 
     func testResolvesTheParakeetEngineForAnUnknownFossilID() throws {
         // A stored MLX fossil resolves to Parakeet without being rewritten.
-        let config = Config.defaultConfig(path: dir.appendingPathComponent("modes.json"))
+        let config = Config.defaultConfig(path: dir.appendingPathComponent("config.json"))
         try config.setASRModel("mlx-community/whisper-large-v3-turbo")
         var engines: [ASRModelCatalog.Engine] = []
         _ = TranscriberDispatcher(config: config) { engine in

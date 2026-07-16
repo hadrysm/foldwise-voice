@@ -4,6 +4,36 @@ import XCTest
 
 @MainActor
 final class SettingsWorkflowTests: XCTestCase {
+    private final class DispatchingListener: HotkeyListening {
+        var onHealthChange: ((ShortcutListenerHealth) -> Void)?
+        private(set) var isStarted = false
+        private let callbacks: HotkeyCallbacks
+        private let startError: Error?
+
+        init(callbacks: HotkeyCallbacks, startError: Error? = nil) {
+            self.callbacks = callbacks
+            self.startError = startError
+        }
+
+        func start() throws {
+            if let startError { throw startError }
+            isStarted = true
+        }
+
+        func stop() {
+            isStarted = false
+        }
+
+        func dispatchCycle() {
+            guard isStarted, !callbacks.isSuspended() else { return }
+            callbacks.onCycle()
+        }
+    }
+
+    private struct ListenerFailure: LocalizedError {
+        let errorDescription: String? = "listener activation failed"
+    }
+
     private final class NonPersistingHistoryStore: HistoryStore {
         private let entries: [HistoryEntry]
 
@@ -209,6 +239,17 @@ final class SettingsWorkflowTests: XCTestCase {
         let badge: BadgeController
         let badgeMenu: NSMenu
         let historyEntry: HistoryEntry
+    }
+
+    private struct ListenerRollbackResult: Equatable {
+        let liveBinding: String?
+        let settingsBinding: String
+        let persistedBinding: String?
+        let liveSurfacesUnchanged: Bool
+        let oldListenerActive: Bool
+        let candidateDestroyed: Bool
+        let dispatchCount: Int
+        let reportsActivationFailure: Bool
     }
 
     private struct SettingsModeState: Equatable {
@@ -916,7 +957,7 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(
             UnselectedDeletionResult(
                 names: config.orderedModes.map(\.name),
-                activeMode: config.activeMode,
+                activeMode: config.mode.name,
                 selection: config.selection
             ),
             UnselectedDeletionResult(
@@ -1036,6 +1077,77 @@ final class SettingsWorkflowTests: XCTestCase {
                 retryID: deletedID,
                 errorMatchesOperation: true,
                 fileExists: false
+            )
+        )
+    }
+
+    func testListenerActivationFailureKeepsEverySurfaceAndOldDispatchCommitted() throws {
+        let config = makeConfig()
+        try config.save()
+        try config.setShortcutBindings(ShortcutBindings(
+            pushToTalk: config.hotkey,
+            toggleRecording: config.toggleHotkey,
+            modeCycle: "F8"
+        ))
+        let model = SettingsModel()
+        let surfaces = try makeLiveModeSurfaces(config)
+        let committedSurfaceState = liveModeSurfaceState(surfaces, config: config)
+        var listeners: [DispatchingListener] = []
+        var dispatchCount = 0
+        let coordinator = HotkeyBindingCoordinator(
+            config: config,
+            callbacks: HotkeyCallbacks(
+                isSuspended: { false },
+                onPress: {},
+                onRelease: {},
+                onToggle: {},
+                onCycle: { dispatchCount += 1 },
+                onHealthChange: { _ in }
+            ),
+            prepare: { _, callbacks in
+                let listener = DispatchingListener(
+                    callbacks: callbacks,
+                    startError: listeners.isEmpty ? nil : ListenerFailure()
+                )
+                listeners.append(listener)
+                return listener
+            }
+        )
+        try coordinator.start()
+        defer { coordinator.stop() }
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            updateHotkeys: { try coordinator.update($0) }
+        )
+        workflow.populatePreferences()
+
+        model.cycleKey = "F9"
+        workflow.commit(changedShortcut: .cycle)
+        listeners.forEach { $0.dispatchCycle() }
+
+        XCTAssertEqual(
+            ListenerRollbackResult(
+                liveBinding: config.modeCycleHotkey,
+                settingsBinding: model.cycleKey,
+                persistedBinding: try Config.load(from: config.path).modeCycleHotkey,
+                liveSurfacesUnchanged: liveModeSurfaceState(surfaces, config: config)
+                    == committedSurfaceState,
+                oldListenerActive: listeners.first?.isStarted == true,
+                candidateDestroyed: listeners.last?.isStarted == false,
+                dispatchCount: dispatchCount,
+                reportsActivationFailure: model.status.contains("listener activation failed")
+                    && model.statusIsError
+            ),
+            ListenerRollbackResult(
+                liveBinding: "F8",
+                settingsBinding: "F8",
+                persistedBinding: "F8",
+                liveSurfacesUnchanged: true,
+                oldListenerActive: true,
+                candidateDestroyed: true,
+                dispatchCount: 1,
+                reportsActivationFailure: true
             )
         )
     }
@@ -1328,8 +1440,8 @@ final class SettingsWorkflowTests: XCTestCase {
                 activeMode: "Voice to Text", hotkey: "F7", toggleHotkey: nil,
                 pauseAudio: true, appearance: .light,
                 saveHistory: true, retention: .ninetyDays,
-                sidebarCollapsed: false, llmModel: "qwen2.5:3b", asrModel: "whisper-small",
-                persistedHotkey: "F7", persistedLLMModel: "qwen2.5:3b",
+                sidebarCollapsed: false, llmModel: nil, asrModel: "whisper-small",
+                persistedHotkey: "F7", persistedLLMModel: nil,
                 persistedASRModel: "whisper-small", persistedAppearance: .light
             )
         )
@@ -1972,6 +2084,53 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
+    func testRerunPolishFreezesEditAtExecutionStartAndUsesItForNextRun() async throws {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("rerun-edited-mode.jsonl"))
+        var row = entry(createdAt: Date(), text: "earlier words")
+        row.rawText = "hey can you send the quarterly numbers over to the finance team when you get a chance"
+        store.append(row)
+        let config = makeConfig()
+        let mode = try XCTUnwrap(config.orderedModes.first)
+        let modeID = try XCTUnwrap(mode.id)
+        var edited = mode
+        edited.name = "Edited Clean"
+        edited.icon = "pencil.circle"
+        edited.llmModel = "edited-model"
+        edited.systemPrompt = "Use the edited instructions."
+        edited.vocab = ["FoldWise"]
+        edited.transformation = .expanding
+        let model = SettingsModel()
+        let polishing = expectation(description: "reprocessing started")
+        polishing.assertForOverFulfill = false
+        let finishPolishing = Latch()
+        let receivedMode = ModeCapture()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            polish: { _, snapshot in
+                receivedMode.value = snapshot
+                polishing.fulfill()
+                await finishPolishing.wait()
+                return "Hey, can you send the quarterly numbers over to the finance team when you get a chance?"
+            }
+        )
+
+        let firstTask = Task { await workflow.rerunPolish(row, modeID: modeID) }
+        await fulfillment(of: [polishing])
+        try config.saveMode(edited)
+        await finishPolishing.open()
+        await firstTask.value
+        let firstSnapshot = receivedMode.value
+
+        await workflow.rerunPolish(row, modeID: modeID)
+
+        XCTAssertEqual(
+            [firstSnapshot, receivedMode.value],
+            [Optional(mode), Optional(edited)]
+        )
+    }
+
     func testDeleteHistoryPublishesRemainingPersistedEntries() {
         let store = JSONLHistoryStore(url: dir.appendingPathComponent("delete-history.jsonl"))
         let removed = entry(createdAt: Date(), text: "remove me")
@@ -2121,7 +2280,7 @@ final class SettingsWorkflowTests: XCTestCase {
 
         XCTAssertEqual(
             LLMInstallCompletion(
-                selectedModel: model.selectedModel, persistedModel: config.llmModel,
+                selectedModel: model.selectedModel, persistedModel: config.mode.llmModel,
                 pullingModel: model.pullingModel, customModel: model.customModel,
                 installed: model.installed?.map(\.name)
             ),
@@ -2169,7 +2328,7 @@ final class SettingsWorkflowTests: XCTestCase {
 
         XCTAssertEqual(
             LLMInstallState(
-                selectedModel: model.selectedModel, persistedModel: config.llmModel,
+                selectedModel: model.selectedModel, persistedModel: config.mode.llmModel,
                 pullingModel: model.pullingModel, progressStatus: model.pullStatus,
                 progressFraction: model.pullFraction, error: model.pullError,
                 customModel: model.customModel, installed: model.installed?.map(\.name)
@@ -2405,7 +2564,7 @@ final class SettingsWorkflowTests: XCTestCase {
 
     private func configState(_ config: Config, persisted: Config) -> ConfigState {
         ConfigState(
-            activeMode: config.activeMode,
+            activeMode: config.mode.name,
             hotkey: config.hotkey,
             toggleHotkey: config.toggleHotkey,
             pauseAudio: config.pauseAudio,
@@ -2413,10 +2572,10 @@ final class SettingsWorkflowTests: XCTestCase {
             saveHistory: config.saveHistory,
             retention: config.historyRetention,
             sidebarCollapsed: config.sidebarCollapsed,
-            llmModel: config.llmModel,
+            llmModel: config.mode.llmModel,
             asrModel: config.asrModel,
             persistedHotkey: persisted.hotkey,
-            persistedLLMModel: persisted.llmModel,
+            persistedLLMModel: persisted.mode.llmModel,
             persistedASRModel: persisted.asrModel,
             persistedAppearance: persisted.appearance
         )
@@ -2506,6 +2665,7 @@ final class SettingsWorkflowTests: XCTestCase {
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
         updates: (any SettingsUpdateChecking)? = nil,
         reportUpdate: @escaping (String) -> Void = { _ in },
+        updateHotkeys: ((ShortcutBindings) throws -> Void)? = nil,
         captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
     ) -> SettingsWorkflow {
         let historyStore = historyStore
@@ -2530,6 +2690,7 @@ final class SettingsWorkflowTests: XCTestCase {
                 polish: polish,
                 updates: updates ?? CannedUpdateChecker(result: .failed),
                 reportUpdate: reportUpdate,
+                updateHotkeys: updateHotkeys,
                 captureGate: captureGate
             )
         }
@@ -2548,6 +2709,7 @@ final class SettingsWorkflowTests: XCTestCase {
             polish: polish,
             updates: updates ?? CannedUpdateChecker(result: .failed),
             reportUpdate: reportUpdate,
+            updateHotkeys: updateHotkeys,
             captureGate: captureGate
         )
     }
@@ -2586,21 +2748,32 @@ final class SettingsWorkflowTests: XCTestCase {
     }
 
     private func makeConfig(path: URL? = nil) -> Config {
-        let modes = [
-            "Voice to Text": Mode(
-                name: "Voice to Text", asrModel: ASRModelCatalog.defaultID,
-                llmModel: nil, systemPrompt: nil, vocab: []
-            ),
-            "Clean": Mode(
-                name: "Clean", asrModel: ASRModelCatalog.defaultID,
-                llmModel: "qwen2.5:3b", systemPrompt: "Polish", vocab: [], expands: false
-            ),
-        ]
+        let cleanID = ModeID.random()
+        let modes = [Mode(
+            id: cleanID,
+            name: "Clean",
+            icon: "text.bubble",
+            asrModel: ASRModelCatalog.defaultID,
+            llmModel: "qwen2.5:3b",
+            transformation: .inPlace,
+            systemPrompt: "Polish",
+            vocabulary: []
+        )]
         return Config(
-            activeMode: "Clean", hotkey: "F5", toggleHotkey: "F6", pauseAudio: false,
-            appearance: .dark,
-            saveHistory: false, historyRetention: .sevenDays, badgePosition: nil,
-            sidebarCollapsed: true, modeOrder: ["Voice to Text", "Clean"], modes: modes,
+            preferences: Config.Preferences(
+                selection: .mode(cleanID),
+                hotkey: "F5",
+                toggleHotkey: "F6",
+                pauseAudio: false,
+                inputDevice: nil,
+                asrModel: ASRModelCatalog.defaultID,
+                appearance: .dark,
+                saveHistory: false,
+                historyRetention: .sevenDays,
+                sidebarCollapsed: true
+            ),
+            badgePosition: nil,
+            orderedModes: modes,
             path: path ?? dir.appendingPathComponent("config.json")
         )
     }

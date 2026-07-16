@@ -65,7 +65,7 @@ private func roundTrip(_ json: String) throws -> Config {
 
 func testModeOrderSurvivesNonAlphabetically() throws {
     let reloaded = try roundTrip(fixture)
-    XCTAssertEqual(reloaded.modeOrder, ["Zebra", "Alpha", "Middle"])
+    XCTAssertEqual(reloaded.orderedModes.map(\.name), ["Zebra", "Alpha", "Middle"])
 }
 ```
 
@@ -157,7 +157,7 @@ change is reverted; it is not retried, quarantined, or silently excluded.
 
 A module should be **deep**: a small public surface hiding significant complexity.
 `Config` is the house example — a handful of members (`load(from:)`,
-`loadOrCreate(at:)`, `save()`, `mode`, `setActiveMode(_:)`) conceal a hand-rolled
+`loadOrCreate(at:)`, `save()`, `mode`, `select(_:)`) conceal a hand-rolled
 JSON serializer, mode-order preservation, validation, and fallback rules. Callers
 get "load my config" without knowing any of that exists.
 

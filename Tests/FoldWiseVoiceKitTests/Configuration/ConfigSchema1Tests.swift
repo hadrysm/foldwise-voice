@@ -26,6 +26,13 @@ final class ConfigSchema1Tests: XCTestCase {
         let relaunchedMode: String
     }
 
+    private struct RecoveryDictationState: Equatable {
+        let originalData: Data
+        let modeName: String?
+        let modeID: ModeID?
+        let text: String?
+    }
+
     private let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("foldwise-config-schema-tests-\(UUID().uuidString)")
 
@@ -156,6 +163,43 @@ final class ConfigSchema1Tests: XCTestCase {
         )
     }
 
+    func testRecoveryRunsVoiceToTextWithoutTouchingRejectedFile() async throws {
+        let original = Data("{ definitely not JSON".utf8)
+        try original.write(to: path)
+        let config = Config.loadOrCreate(at: path)
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success("recovery dictation remains available")
+        let recorded = RecordSpy()
+        let pipeline = Pipeline(
+            config: config,
+            recorder: FakeRecorder(),
+            transcriber: transcriber,
+            insert: { _ in true },
+            record: { recorded.record($0) },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        let entry = recorded.entries.first
+        XCTAssertEqual(
+            RecoveryDictationState(
+                originalData: try Data(contentsOf: path),
+                modeName: entry?.modeName,
+                modeID: entry?.modeID,
+                text: entry?.text
+            ),
+            RecoveryDictationState(
+                originalData: original,
+                modeName: "Voice to Text",
+                modeID: nil,
+                text: "recovery dictation remains available"
+            )
+        )
+    }
+
     func testResetBacksUpRejectedBytesBeforeWritingFreshDefaults() throws {
         let original = Data("invalid configuration".utf8)
         try original.write(to: path)
@@ -167,8 +211,8 @@ final class ConfigSchema1Tests: XCTestCase {
         XCTAssertEqual(
             ResetState(
                 backupData: try Data(contentsOf: backup), readOnly: config.isReadOnly,
-                activeMode: config.activeMode,
-                relaunchedMode: try Config.load(from: path).activeMode
+                activeMode: config.mode.name,
+                relaunchedMode: try Config.load(from: path).mode.name
             ),
             ResetState(
                 backupData: original, readOnly: false,

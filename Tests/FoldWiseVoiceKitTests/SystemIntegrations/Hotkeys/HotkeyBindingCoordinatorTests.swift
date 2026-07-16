@@ -100,6 +100,35 @@ final class HotkeyBindingCoordinatorTests: XCTestCase {
         )
     }
 
+    func testClearingModeCycleBindingPersistsAndReplacesDispatchListener() throws {
+        let path = directory.appendingPathComponent("config.json")
+        let config = Config.defaultConfig(path: path)
+        try config.save()
+        try config.setShortcutBindings(bindings(config, cycle: "F8"))
+        var events: [String] = []
+        var generation = 0
+        let coordinator = HotkeyBindingCoordinator(
+            config: config,
+            callbacks: emptyCallbacks,
+            prepare: { bindings, _ in
+                generation += 1
+                events.append("prepare \(generation) \(bindings.modeCycle ?? "none")")
+                return CannedListener(name: "\(generation)", events: { events.append($0) })
+            }
+        )
+        try coordinator.start()
+
+        try coordinator.update(bindings(config, cycle: nil))
+
+        XCTAssertEqual(
+            events,
+            ["prepare 1 F8", "start 1", "prepare 2 none", "start 2", "stop 1"]
+        )
+        XCTAssertNil(coordinator.bindings.modeCycle)
+        XCTAssertNil(config.modeCycleHotkey)
+        XCTAssertNil(try Config.load(from: path).modeCycleHotkey)
+    }
+
     func testPreparationFailureLeavesOldListenerAndConfigUntouched() throws {
         let config = Config.defaultConfig(path: directory.appendingPathComponent("config.json"))
         try config.save()

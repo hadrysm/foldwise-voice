@@ -57,7 +57,7 @@ final class ConfigBehaviorTests: XCTestCase {
         XCTAssertEqual(
             DefaultState(
                 names: config.orderedModes.map(\.name),
-                activeName: config.activeMode,
+                activeName: config.mode.name,
                 icons: config.orderedModes.map(\.icon),
                 transformations: config.orderedModes.map(\.transformation),
                 vocabulary: config.orderedModes.map(\.vocab),
@@ -219,7 +219,7 @@ final class ConfigBehaviorTests: XCTestCase {
 
     private func selectedState(_ config: Config) -> SelectedState {
         SelectedState(
-            selection: config.selection, name: config.activeMode, icon: config.mode.icon,
+            selection: config.selection, name: config.mode.name, icon: config.mode.icon,
             transformation: config.mode.transformation, usesLLM: config.mode.usesLLM
         )
     }

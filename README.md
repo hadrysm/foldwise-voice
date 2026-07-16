@@ -88,9 +88,10 @@ keycaps and tooltips.
   audio into text. Always runs, fully offline after the one-time model download.
 - **Stage 2 (LLM)** — Ollama receives the *text* transcript (never audio) via
   its OpenAI-compatible API and rewrites it per the active mode's system
-  prompt. Optional: modes with `"llm_model": null` skip it entirely.
+  prompt. Voice to Text skips this stage; an editable Mode whose assigned model
+  becomes unavailable keeps its instructions and falls back to the raw transcript.
 
-## Modes (`config.json`)
+## Modes and configuration
 
 FoldWise stores its versioned configuration in `config.json`. Manage Modes and
 preferences through Settings; unsupported or damaged files open in a read-only
@@ -102,32 +103,11 @@ recovery state rather than being overwritten. A fresh configuration ships with:
 | Casual | qwen2.5:3b | keeps wording while cleaning up the transcript |
 | Email | qwen2.5:3b | rewrites dictation as a professional email body |
 
-Top-level settings:
-
-- `active_selection` — Voice to Text or the stable UUID of an editable Mode.
-- `schema_version` — currently `1`.
-- `hotkey` — push-to-talk key, held while speaking. Default `alt_r` (right
-  Option). Any [pynput key name](https://pynput.readthedocs.io/en/latest/keyboard.html#pynput.keyboard.Key)
-  (`cmd_r`, `f19`, `ctrl_r`, …) or a single character.
-- `toggle_hotkey` — optional tap-to-start / tap-to-stop key (e.g. `"f19"`).
-  `null` disables it.
-- `pause_audio` — pause Spotify / Apple Music and mute other output while
-  dictating (default `true`).
-- `badge_position` — saved Badge anchor (`[center_x, bottom_y]` in screen
-  points); written automatically when you drag the pill. `null` = default
-  bottom-center.
-
-Per-mode fields:
-
-- `id` — immutable canonical UUID used for selection and attribution.
-- `icon` — SF Symbol name used across FoldWise surfaces.
-- `llm_model` — Ollama model tag (`llama3.2:3b`, `qwen2.5:7b`, …).
-- `transformation` — explicit `in_place` or `expanding` behavior.
-- `system_prompt` — instruction the LLM applies to your transcript.
-- `vocabulary` — ordered names and terms the LLM must preserve.
-
-ASR selection remains global in the top-level `asr_model` field. Voice to Text
-is a protected system selection outside the editable Mode array.
+Manage Mode names, icons, per-Mode Ollama models, transformation behavior,
+prompts, vocabulary, order, and shortcuts in Settings. Voice to Text is a
+protected system selection outside the editable library; ASR selection remains
+global. Stable Mode IDs preserve selection and History attribution through
+rename, reorder, editing, and deletion.
 
 `config.json` is generated on first run and holds local machine state, so it
 doesn't appear in a fresh clone. Configuration changes are validated and saved
@@ -228,7 +208,6 @@ each release gets a .dmg built and attached automatically
 - Push-to-talk uses a plain key (right Option by default) — holding it while
   typing other keys may trigger app shortcuts. Pick a dedicated key like
   `f19` if that bothers you (Settings → Keyboard Shortcuts).
-- Model changes in the current Settings pane apply to all LLM modes at once.
 - The locally installed bundle points at this repo's `config.json` — deleting
   or moving the repo breaks it (re-run `scripts/build_swift_app.py` after
   moving). The .dmg build has no such dependency.

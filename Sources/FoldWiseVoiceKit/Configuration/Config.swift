@@ -207,62 +207,30 @@ final class Config {
         self.recovery = recovery
     }
 
-    /// Compatibility construction for existing feature tests and thin shells.
-    /// Voice to Text is removed from the editable array as the values are built.
+    /// Schema-1 construction seam used by injected feature tests. Production
+    /// loading still goes through `loadOrCreate(at:)`; this initializer keeps
+    /// fixtures on the same stable-ID selection and ordered-library contract.
     init(
-        activeMode: String,
-        hotkey: String,
-        toggleHotkey: String?,
-        pauseAudio: Bool,
-        inputDevice: String? = nil,
-        appearance: AppearancePreference = .system,
-        saveHistory: Bool = true,
-        historyRetention: RetentionWindow = .default,
+        preferences: Preferences,
+        modeCycleHotkey: String? = nil,
         badgePosition: [Double]?,
-        sidebarCollapsed: Bool = false,
-        modeOrder: [String],
-        modes: [String: Mode],
+        orderedModes: [Mode],
         path: URL
     ) {
-        let asrModel = modeOrder.compactMap { modes[$0]?.asrModel }.first { !$0.isEmpty }
-            ?? ASRModelCatalog.defaultID
-        var editable: [Mode] = []
-        for name in modeOrder where name != "Voice to Text" {
-            guard let source = modes[name] else { continue }
-            var mode = Mode(
-                id: source.id ?? .random(),
-                name: source.name,
-                icon: source.icon,
-                asrModel: asrModel,
-                llmModel: source.llmModel,
-                systemPrompt: source.systemPrompt,
-                vocab: source.vocab,
-                expands: source.expands
-            )
-            mode.transformation = source.transformation
-            editable.append(mode)
-        }
-        let selection: DictationSelection = if activeMode == "Voice to Text" {
-            .voiceToText
-        } else if let id = editable.first(where: { $0.name == activeMode })?.id {
-            .mode(id)
-        } else {
-            .voiceToText
-        }
         values = Values(
-            selection: selection,
-            hotkey: hotkey,
-            toggleHotkey: toggleHotkey,
-            modeCycleHotkey: nil,
-            pauseAudio: pauseAudio,
-            inputDevice: inputDevice,
-            asrModel: asrModel,
-            appearance: appearance,
-            saveHistory: saveHistory,
-            historyRetention: historyRetention,
+            selection: preferences.selection,
+            hotkey: preferences.hotkey,
+            toggleHotkey: preferences.toggleHotkey,
+            modeCycleHotkey: modeCycleHotkey,
+            pauseAudio: preferences.pauseAudio,
+            inputDevice: preferences.inputDevice,
+            asrModel: preferences.asrModel,
+            appearance: preferences.appearance,
+            saveHistory: preferences.saveHistory,
+            historyRetention: preferences.historyRetention,
             badgePosition: badgePosition,
-            sidebarCollapsed: sidebarCollapsed,
-            orderedModes: editable
+            sidebarCollapsed: preferences.sidebarCollapsed,
+            orderedModes: orderedModes
         )
         self.path = path
         recovery = nil
@@ -339,25 +307,6 @@ final class Config {
         )
     }
 
-    /// Temporary name projections keep the existing surfaces operational while
-    /// stable-ID menu and editor work lands in the following slices.
-    var activeMode: String {
-        switch selection {
-        case .voiceToText: "Voice to Text"
-        case let .mode(id): mode(id: id)?.name ?? "Voice to Text"
-        }
-    }
-
-    var modeOrder: [String] {
-        ["Voice to Text"] + orderedModes.map(\.name)
-    }
-
-    var modes: [String: Mode] {
-        var projection = Dictionary(uniqueKeysWithValues: orderedModes.map { ($0.name, $0) })
-        projection["Voice to Text"] = .voiceToText(asrModel: asrModel)
-        return projection
-    }
-
     var mode: Mode {
         switch selection {
         case .voiceToText:
@@ -365,10 +314,6 @@ final class Config {
         case let .mode(id):
             mode(id: id) ?? .voiceToText(asrModel: asrModel)
         }
-    }
-
-    var llmModel: String? {
-        orderedModes.first(where: \.usesLLM)?.llmModel
     }
 
     func mode(id: ModeID) -> Mode? {
@@ -408,16 +353,6 @@ final class Config {
         let changes = Self.changes(from: values, to: candidate)
         values = candidate
         publish(changes)
-    }
-
-    @MainActor
-    func setActiveMode(_ name: String) throws {
-        if name == "Voice to Text" {
-            try update { $0.selection = .voiceToText }
-            return
-        }
-        guard let id = orderedModes.first(where: { $0.name == name })?.id else { return }
-        try update { $0.selection = .mode(id) }
     }
 
     @MainActor

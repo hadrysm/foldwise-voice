@@ -56,12 +56,12 @@ final class BadgeController: NSObject {
         if let pos = config.badgePosition, pos.count == 2 {
             anchor = CGPoint(x: pos[0], y: pos[1])
         }
-        model.activeModeName = config.activeMode
+        model.activeModeName = config.mode.name
         model.hotkeyLabel = KeyMap.pretty(config.hotkey)
         config.onChange { [weak self] changes in
             guard let self else { return }
             if changes.contains(.selection) || changes.contains(.modeLibrary) {
-                model.activeModeName = config.activeMode
+                model.activeModeName = config.mode.name
             }
             if changes.contains(.modeLibrary) {
                 refreshModeCyclePresentations()

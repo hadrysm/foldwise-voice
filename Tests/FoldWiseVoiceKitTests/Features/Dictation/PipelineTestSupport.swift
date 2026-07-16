@@ -187,13 +187,60 @@ func makeTestConfig(
     ),
     pauseAudio: Bool = false
 ) -> Config {
-    Config(
-        activeMode: mode.name, hotkey: "alt_r", toggleHotkey: nil, pauseAudio: pauseAudio,
-        badgePosition: nil, modeOrder: [mode.name], modes: [mode.name: mode],
+    let fixture = mode.configFixture
+    return Config(
+        preferences: Config.Preferences(
+            selection: fixture.selection,
+            hotkey: "alt_r",
+            toggleHotkey: nil,
+            pauseAudio: pauseAudio,
+            inputDevice: nil,
+            asrModel: fixture.asrModel,
+            appearance: .system,
+            saveHistory: true,
+            historyRetention: .default,
+            sidebarCollapsed: false
+        ),
+        badgePosition: nil,
+        orderedModes: fixture.orderedModes,
         path: FileManager.default.temporaryDirectory
             .appendingPathComponent("foldwise-pipeline-tests-\(UUID().uuidString)")
             .appendingPathComponent("config.json")
     )
+}
+
+private struct ModeConfigFixture {
+    let selection: DictationSelection
+    let asrModel: String
+    let orderedModes: [Mode]
+}
+
+private extension Mode {
+    var configFixture: ModeConfigFixture {
+        let fixtureASRModel = asrModel.isEmpty ? ASRModelCatalog.defaultID : asrModel
+        guard let llmModel, !llmModel.isEmpty else {
+            return ModeConfigFixture(
+                selection: .voiceToText,
+                asrModel: fixtureASRModel,
+                orderedModes: []
+            )
+        }
+        let id = id ?? .random()
+        return ModeConfigFixture(
+            selection: .mode(id),
+            asrModel: fixtureASRModel,
+            orderedModes: [Mode(
+                id: id,
+                name: name,
+                icon: icon,
+                asrModel: fixtureASRModel,
+                llmModel: llmModel,
+                transformation: transformation,
+                systemPrompt: systemPrompt ?? "Polish this transcript.",
+                vocabulary: vocab
+            )]
+        )
+    }
 }
 
 func preparePersistence(for config: Config, in testCase: XCTestCase) throws {

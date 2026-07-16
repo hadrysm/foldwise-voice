@@ -97,7 +97,6 @@ private func acquireInstanceLock(port: UInt16) -> Bool {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let configPath: String?
-    let modeOverride: String?
 
     // Standard AppKit delayed-init: these exist for the app's whole life but
     // can only be built in applicationDidFinishLaunching. Optionals would
@@ -115,24 +114,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shortcutCaptureGate = ShortcutCaptureGate()
     // swiftlint:enable implicitly_unwrapped_optional
 
-    init(configPath: String?, modeOverride: String?) {
+    init(configPath: String?) {
         self.configPath = configPath
-        self.modeOverride = modeOverride
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let acquiredInstanceLock = acquireInstanceLock(port: lockPort)
         let url = Config.resolvePath(cliPath: configPath)
         config = Config.loadOrCreate(at: url)
-        if let modeOverride {
-            do {
-                try config.setActiveMode(modeOverride)
-            } catch {
-                Log.config.error(
-                    "Could not apply the requested startup Mode: \(error.localizedDescription, privacy: .public)"
-                )
-            }
-        }
         appearanceReactor = AppearanceReactor(config: config)
 
         guard acquiredInstanceLock else {
@@ -386,13 +375,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 public enum FoldWiseVoiceApp {
     public static func main() {
         var cliConfig: String?
-        var cliMode: String?
         var printConfig = false
         var argIterator = CommandLine.arguments.dropFirst().makeIterator()
         while let arg = argIterator.next() {
             switch arg {
             case "--config": cliConfig = argIterator.next()
-            case "--mode": cliMode = argIterator.next()
             case "--print-config": printConfig = true
             default: break
             }
@@ -412,7 +399,7 @@ public enum FoldWiseVoiceApp {
 
         MainActor.assumeIsolated {
             let app = NSApplication.shared
-            let delegate = AppDelegate(configPath: cliConfig, modeOverride: cliMode)
+            let delegate = AppDelegate(configPath: cliConfig)
             app.delegate = delegate
             app.setActivationPolicy(.accessory)
             app.run()

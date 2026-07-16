@@ -266,13 +266,20 @@ final class SettingsControllerWiringTests: XCTestCase {
 
     private func makeConfig() -> Config {
         Config(
-            activeMode: "Voice to Text", hotkey: "F5", toggleHotkey: nil, pauseAudio: false,
-            badgePosition: nil, modeOrder: ["Voice to Text"],
-            modes: ["Voice to Text": Mode(
-                name: "Voice to Text", asrModel: "", llmModel: nil,
-                systemPrompt: nil, vocab: []
-            )],
-            path: dir.appendingPathComponent("modes.json")
+            preferences: Config.Preferences(
+                selection: .voiceToText,
+                hotkey: "F5",
+                toggleHotkey: nil,
+                pauseAudio: false,
+                inputDevice: nil,
+                asrModel: ASRModelCatalog.defaultID,
+                appearance: .system,
+                saveHistory: true,
+                historyRetention: .default,
+                sidebarCollapsed: false
+            ),
+            badgePosition: nil, orderedModes: [],
+            path: dir.appendingPathComponent("config.json")
         )
     }
 

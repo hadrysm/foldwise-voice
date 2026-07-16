@@ -542,7 +542,8 @@ final class AudioRecorderDevicePolicyTests: XCTestCase {
         var publications = 0
         recorder.onInputStateChange = { _ in publications += 1 }
 
-        try config.setActiveMode("Email")
+        let emailID = try XCTUnwrap(config.orderedModes.last?.id)
+        try config.select(.mode(emailID))
         try config.setInputDevice(usb.uid)
 
         XCTAssertEqual(recorder.inputState.effectiveDevice, usb)
