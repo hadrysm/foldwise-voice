@@ -210,6 +210,8 @@ final class Config {
     /// Schema-1 construction seam used by injected feature tests. Production
     /// loading still goes through `loadOrCreate(at:)`; this initializer keeps
     /// fixtures on the same stable-ID selection and ordered-library contract.
+    /// Invalid fixture input is a programmer error, so reject it during
+    /// construction rather than allowing an impossible live Config state.
     init(
         preferences: Preferences,
         modeCycleHotkey: String? = nil,
@@ -217,7 +219,7 @@ final class Config {
         orderedModes: [Mode],
         path: URL
     ) {
-        values = Values(
+        let candidate = Self.normalized(Values(
             selection: preferences.selection,
             hotkey: preferences.hotkey,
             toggleHotkey: preferences.toggleHotkey,
@@ -231,7 +233,12 @@ final class Config {
             badgePosition: badgePosition,
             sidebarCollapsed: preferences.sidebarCollapsed,
             orderedModes: orderedModes
+        ))
+        precondition(
+            (try? Self.validate(candidate, requireNormalized: true)) != nil,
+            "Invalid schema-1 Config fixture."
         )
+        values = candidate
         self.path = path
         recovery = nil
     }

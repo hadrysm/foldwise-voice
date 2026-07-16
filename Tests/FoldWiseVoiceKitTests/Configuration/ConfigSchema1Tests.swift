@@ -33,6 +33,17 @@ final class ConfigSchema1Tests: XCTestCase {
         let text: String?
     }
 
+    private struct RecoveryLifecycleState: Equatable {
+        let firstLaunchReadOnly: Bool
+        let relaunchReadOnly: Bool
+        let rejectedData: Data
+        let dictation: RecoveryDictationState
+        let backupData: Data
+        let resetReadOnly: Bool
+        let resetNames: [String]
+        let relaunchedName: String
+    }
+
     private let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("foldwise-config-schema-tests-\(UUID().uuidString)")
 
@@ -166,6 +177,7 @@ final class ConfigSchema1Tests: XCTestCase {
     func testRecoveryRunsVoiceToTextWithoutTouchingRejectedFile() async throws {
         let original = Data("{ definitely not JSON".utf8)
         try original.write(to: path)
+        _ = Config.loadOrCreate(at: path)
         let config = Config.loadOrCreate(at: path)
         let transcriber = FakeTranscriber()
         transcriber.result = .success("recovery dictation remains available")
@@ -196,6 +208,71 @@ final class ConfigSchema1Tests: XCTestCase {
                 modeName: "Voice to Text",
                 modeID: nil,
                 text: "recovery dictation remains available"
+            )
+        )
+    }
+
+    func testUnsupportedRecoveryRunsDictationAndResetsAcrossRelaunch() async throws {
+        let original = Data(ConfigSchemaFixture.valid
+            .replacingOccurrences(of: #""schema_version": 1"#, with: #""schema_version": 2"#)
+            .utf8)
+        try original.write(to: path)
+        let firstLaunch = Config.loadOrCreate(at: path)
+        let relaunched = Config.loadOrCreate(at: path)
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success("unsupported recovery dictation")
+        let recorded = RecordSpy()
+        let pipeline = Pipeline(
+            config: relaunched,
+            recorder: FakeRecorder(),
+            transcriber: transcriber,
+            insert: { _ in true },
+            record: { recorded.record($0) },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        let rejectedData = try Data(contentsOf: path)
+        let relaunchReadOnly = relaunched.isReadOnly
+        let backup = try relaunched.resetRecovery(now: Date(timeIntervalSince1970: 1_700_000_000))
+        let resetNames = relaunched.orderedModes.map(\.name)
+        let resetReadOnly = relaunched.isReadOnly
+        let relaunchedDefaults = try Config.load(from: path)
+        let entry = recorded.entries.first
+
+        XCTAssertEqual(
+            RecoveryLifecycleState(
+                firstLaunchReadOnly: firstLaunch.isReadOnly,
+                relaunchReadOnly: relaunchReadOnly,
+                rejectedData: rejectedData,
+                dictation: RecoveryDictationState(
+                    originalData: rejectedData,
+                    modeName: entry?.modeName,
+                    modeID: entry?.modeID,
+                    text: entry?.text
+                ),
+                backupData: try Data(contentsOf: backup),
+                resetReadOnly: resetReadOnly,
+                resetNames: resetNames,
+                relaunchedName: relaunchedDefaults.mode.name
+            ),
+            RecoveryLifecycleState(
+                firstLaunchReadOnly: true,
+                relaunchReadOnly: true,
+                rejectedData: original,
+                dictation: RecoveryDictationState(
+                    originalData: original,
+                    modeName: "Voice to Text",
+                    modeID: nil,
+                    text: "unsupported recovery dictation"
+                ),
+                backupData: original,
+                resetReadOnly: false,
+                resetNames: ["Casual", "Email"],
+                relaunchedName: "Casual"
             )
         )
     }
