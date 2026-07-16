@@ -31,7 +31,19 @@ final class SettingsModel: ObservableObject {
         }
     }
 
-    enum RecordingField { case ptt, toggle }
+    enum RecordingField {
+        case ptt
+        case toggle
+        case cycle
+
+        var command: ShortcutCommand {
+            switch self {
+            case .ptt: .pushToTalk
+            case .toggle: .toggleRecording
+            case .cycle: .modeCycle
+            }
+        }
+    }
 
     enum UpdateState {
         case idle
@@ -74,6 +86,7 @@ final class SettingsModel: ObservableObject {
     @Published var customModel = ""
     @Published var pttKey = ""
     @Published var toggleKey = ""
+    @Published var cycleKey = ""
     @Published var pauseAudio = true
     @Published var appearance: AppearancePreference = .system
     @Published var inputState = AudioInputState(
@@ -96,6 +109,7 @@ final class SettingsModel: ObservableObject {
     @Published var status = ""
     @Published var statusIsError = false
     @Published var recordingField: RecordingField?
+    @Published var shortcutListenerHealth: ShortcutListenerHealth = .global
     @Published var configurationRecoveryMessage: String?
 
     @Published var modeSelection = ModePresentationFactory.projection(
@@ -118,6 +132,8 @@ final class SettingsModel: ObservableObject {
     var onCommit: (() -> Void)?
     var onSelectInputDevice: ((String?) -> Void)?
     var onRecord: ((RecordingField) -> Void)?
+    var onCancelRecording: (() -> Void)?
+    var onOpenShortcutPermissions: (() -> Void)?
     var onSelectMode: ((DictationSelection) -> Void)?
     var onAddMode: (() -> Void)?
     var onEditMode: ((ModeID) -> Void)?

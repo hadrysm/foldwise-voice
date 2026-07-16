@@ -765,6 +765,21 @@ struct SettingsView: View {
                         shortcutChip(key: model.toggleKey, field: .toggle)
                     }
                 }
+                Divider().padding(.leading, 14)
+                CardRow(
+                    title: "Cycle Modes",
+                    subtitle: "Selects the next Mode for your next dictation"
+                ) {
+                    HStack(spacing: 8) {
+                        if !model.cycleKey.isEmpty {
+                            resetButton(icon: "xmark", help: "Remove shortcut") {
+                                model.cycleKey = ""
+                                model.onCommit?()
+                            }
+                        }
+                        shortcutChip(key: model.cycleKey, field: .cycle)
+                    }
+                }
             }
             Text(
                 "Click a shortcut, then press the key you want — a modifier "
@@ -772,6 +787,24 @@ struct SettingsView: View {
             )
             .font(Theme.ui(11))
             .foregroundStyle(Theme.textSecondary)
+            if model.shortcutListenerHealth == .focusedAppOnly {
+                HStack(spacing: 8) {
+                    Text(
+                        "Shortcuts currently work only while FoldWise is focused. "
+                            + "Allow Input Monitoring or Accessibility for global use."
+                    )
+                    .font(Theme.ui(11))
+                    .foregroundStyle(.orange)
+                    Button("Open System Settings…") {
+                        model.onOpenShortcutPermissions?()
+                    }
+                    .buttonStyle(.link)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "Shortcut permission limited. Shortcuts work only while FoldWise is focused."
+                )
+            }
 
             sectionHeader("Input")
             inputDeviceRoster
@@ -1058,6 +1091,22 @@ struct SettingsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(field.command.title) shortcut")
+        .accessibilityValue(shortcutAccessibilityValue(key: key, field: field))
+        .accessibilityHint(
+            model.recordingField == field
+                ? "Press a key to assign it. The captured key will not run a command."
+                : "Activate to capture a key. Activate again to cancel."
+        )
+    }
+
+    private func shortcutAccessibilityValue(
+        key: String,
+        field: SettingsModel.RecordingField
+    ) -> String {
+        if model.recordingField == field { return "Capturing" }
+        if key.isEmpty { return "Not assigned" }
+        return "Assigned to \(keycapLabel(key))"
     }
 }
 

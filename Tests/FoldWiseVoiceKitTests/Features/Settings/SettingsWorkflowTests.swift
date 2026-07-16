@@ -1442,6 +1442,49 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
+    func testFinishRecordingCommitsCapturedModeCycleKey() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginRecording(.cycle)
+
+        workflow.finishRecording(with: "F9")
+
+        XCTAssertEqual(config.modeCycleHotkey, "F9")
+        XCTAssertEqual(model.cycleKey, "F9")
+        XCTAssertNil(model.recordingField)
+    }
+
+    func testCaptureSuspendsCommandsUntilCommitOrCancel() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let gate = ShortcutCaptureGate()
+        let workflow = makeWorkflow(config: config, model: model, captureGate: gate)
+        workflow.populatePreferences()
+
+        workflow.beginRecording(.cycle)
+        XCTAssertTrue(gate.isCapturing)
+
+        workflow.cancelRecording()
+        XCTAssertFalse(gate.isCapturing)
+    }
+
+    func testCollisionIdentifiesOwnerAndRestoresCommittedShortcut() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        workflow.beginRecording(.cycle)
+
+        workflow.finishRecording(with: " f5 ")
+
+        XCTAssertNil(config.modeCycleHotkey)
+        XCTAssertEqual(model.cycleKey, "")
+        XCTAssertTrue(model.status.contains("Push to Talk"))
+        XCTAssertTrue(model.statusIsError)
+    }
+
     func testFinishRecordingWithoutAKeyCancelsTheEdit() {
         let config = makeConfig()
         let model = SettingsModel()
@@ -2462,7 +2505,8 @@ final class SettingsWorkflowTests: XCTestCase {
         calendar: Calendar = .current,
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
         updates: (any SettingsUpdateChecking)? = nil,
-        reportUpdate: @escaping (String) -> Void = { _ in }
+        reportUpdate: @escaping (String) -> Void = { _ in },
+        captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
     ) -> SettingsWorkflow {
         let historyStore = historyStore
             ?? JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl"))
@@ -2485,7 +2529,8 @@ final class SettingsWorkflowTests: XCTestCase {
                 calendar: calendar,
                 polish: polish,
                 updates: updates ?? CannedUpdateChecker(result: .failed),
-                reportUpdate: reportUpdate
+                reportUpdate: reportUpdate,
+                captureGate: captureGate
             )
         }
         return SettingsWorkflow(
@@ -2502,7 +2547,8 @@ final class SettingsWorkflowTests: XCTestCase {
             calendar: calendar,
             polish: polish,
             updates: updates ?? CannedUpdateChecker(result: .failed),
-            reportUpdate: reportUpdate
+            reportUpdate: reportUpdate,
+            captureGate: captureGate
         )
     }
 

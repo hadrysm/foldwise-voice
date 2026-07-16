@@ -47,6 +47,8 @@ final class SettingsWorkflow {
     private let reprocessor: HistoryReprocessor
     private let updates: any SettingsUpdateChecking
     private let reportUpdate: (String) -> Void
+    private let updateHotkeys: (ShortcutBindings) throws -> Void
+    private let captureGate: ShortcutCaptureGate
     private var llmRefreshID: UUID?
     private var llmMutationID: UUID?
     private var asrDownloadID: UUID?
@@ -64,7 +66,9 @@ final class SettingsWorkflow {
         calendar: Calendar = .current,
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
         updates: (any SettingsUpdateChecking)? = nil,
-        reportUpdate: @escaping (String) -> Void = { _ in }
+        reportUpdate: @escaping (String) -> Void = { _ in },
+        updateHotkeys: ((ShortcutBindings) throws -> Void)? = nil,
+        captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
     ) {
         self.init(
             config: config,
@@ -79,7 +83,9 @@ final class SettingsWorkflow {
             calendar: calendar,
             polish: polish,
             updates: updates,
-            reportUpdate: reportUpdate
+            reportUpdate: reportUpdate,
+            updateHotkeys: updateHotkeys,
+            captureGate: captureGate
         )
     }
 
@@ -96,7 +102,9 @@ final class SettingsWorkflow {
         calendar: Calendar = .current,
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
         updates: (any SettingsUpdateChecking)? = nil,
-        reportUpdate: @escaping (String) -> Void = { _ in }
+        reportUpdate: @escaping (String) -> Void = { _ in },
+        updateHotkeys: ((ShortcutBindings) throws -> Void)? = nil,
+        captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
     ) {
         self.config = config
         self.model = model
@@ -111,6 +119,8 @@ final class SettingsWorkflow {
         reprocessor = HistoryReprocessor(store: historyStore, polish: polish)
         self.updates = updates ?? LiveSettingsUpdateChecker()
         self.reportUpdate = reportUpdate
+        self.updateHotkeys = updateHotkeys ?? { try config.setShortcutBindings($0) }
+        self.captureGate = captureGate
         observeConfigChanges()
     }
 
@@ -126,8 +136,7 @@ final class SettingsWorkflow {
         model.asrDownloadError = ""
         model.asrDeleting = nil
         model.asrDeleteError = ""
-        model.pttKey = config.hotkey
-        model.toggleKey = config.toggleHotkey ?? ""
+        populateShortcutBindings()
         model.pauseAudio = config.pauseAudio
         model.appearance = config.appearance
         model.saveHistory = config.saveHistory
@@ -193,20 +202,37 @@ final class SettingsWorkflow {
     }
 
     func beginRecording(_ field: SettingsModel.RecordingField) {
+        if model.recordingField == field {
+            cancelRecording()
+            return
+        }
         model.recordingField = field
+        captureGate.isCapturing = true
     }
 
     func finishRecording(with key: String?) {
         guard let field = model.recordingField else { return }
-        model.recordingField = nil
-        guard let key, !key.isEmpty else { return }
+        guard let key, !key.isEmpty else {
+            cancelRecording()
+            return
+        }
         switch field {
         case .ptt:
             model.pttKey = key
         case .toggle:
             model.toggleKey = key
+        case .cycle:
+            model.cycleKey = key
         }
-        commit()
+        commit(changedShortcut: field)
+        model.recordingField = nil
+        captureGate.isCapturing = false
+    }
+
+    func cancelRecording() {
+        populateShortcutBindings()
+        model.recordingField = nil
+        captureGate.isCapturing = false
     }
 
     func selectMode(_ selection: DictationSelection) {
@@ -593,22 +619,61 @@ final class SettingsWorkflow {
         }
     }
 
-    func commit() {
+    func commit(changedShortcut: SettingsModel.RecordingField? = nil) {
         let ptt = model.pttKey.trimmingCharacters(in: .whitespaces)
         let toggle = model.toggleKey.trimmingCharacters(in: .whitespaces)
+        let cycle = model.cycleKey.trimmingCharacters(in: .whitespaces)
         do {
             _ = try KeyMap.parse(ptt)
             if !toggle.isEmpty { _ = try KeyMap.parse(toggle) }
+            if !cycle.isEmpty { _ = try KeyMap.parse(cycle) }
         } catch {
             setStatus("⚠️ \(error.localizedDescription)", isError: true)
             return
         }
 
+        let bindings = ShortcutBindings(
+            pushToTalk: ptt,
+            toggleRecording: toggle.isEmpty ? nil : toggle,
+            modeCycle: cycle.isEmpty ? nil : cycle
+        )
+        let committedBindings = ShortcutBindings(
+            pushToTalk: config.hotkey,
+            toggleRecording: config.toggleHotkey,
+            modeCycle: config.modeCycleHotkey
+        )
+        let changedCommands = ShortcutCommand.allCases.filter {
+            bindings.value(for: $0) != committedBindings.value(for: $0)
+        }
+        if !changedCommands.isEmpty {
+            let commands = if let changedShortcut {
+                [changedShortcut.command] + changedCommands.filter { $0 != changedShortcut.command }
+            } else {
+                changedCommands
+            }
+            do {
+                for command in commands {
+                    _ = try bindings.validatingAssignment(for: command)
+                }
+            } catch {
+                populateShortcutBindings()
+                setStatus("⚠️ \(error.localizedDescription)", isError: true)
+                return
+            }
+            do {
+                try updateHotkeys(bindings)
+            } catch {
+                populateShortcutBindings()
+                setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
+                return
+            }
+        }
+
         let retentionChanged = config.historyRetention != model.retention
         var preferences = config.preferences
         if !model.asrModel.isEmpty { preferences.asrModel = model.asrModel }
-        preferences.hotkey = ptt
-        preferences.toggleHotkey = toggle.isEmpty ? nil : toggle
+        preferences.hotkey = bindings.pushToTalk
+        preferences.toggleHotkey = bindings.toggleRecording
         preferences.pauseAudio = model.pauseAudio
         preferences.appearance = model.appearance
         preferences.saveHistory = model.saveHistory
@@ -616,12 +681,14 @@ final class SettingsWorkflow {
         // Transient auto-collapse never mutates this preference.
         preferences.sidebarCollapsed = model.sidebar.prefersCollapsed
 
-        do {
-            try config.apply(preferences)
-        } catch {
-            populatePreferences()
-            setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
-            return
+        if config.isReadOnly || preferences != config.preferences {
+            do {
+                try config.apply(preferences)
+            } catch {
+                populatePreferences()
+                setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
+                return
+            }
         }
 
         if retentionChanged {
@@ -631,6 +698,12 @@ final class SettingsWorkflow {
             model.historyEntries = historyStore.load()
         }
         setStatus("Saved ✓", isError: false, clearAfter: true)
+    }
+
+    private func populateShortcutBindings() {
+        model.pttKey = config.hotkey
+        model.toggleKey = config.toggleHotkey ?? ""
+        model.cycleKey = config.modeCycleHotkey ?? ""
     }
 
     private func setStatus(_ text: String, isError: Bool, clearAfter: Bool = false) {

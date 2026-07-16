@@ -151,7 +151,7 @@ Run the relevant sections earlier when a boundary changes:
 |---|---|
 | Microphone capture or input-device routing | 1, 2, 3, and 9 |
 | Permission onboarding or prompts | 1 and 6; section 1 must use a clean macOS user account |
-| Global hotkey installation or handling | 2 and 3, while another app has focus |
+| Global hotkey installation or handling | 2, 3, and 11, while another app has focus |
 | Parakeet, Whisper, model storage, or ASR dispatch | 2 and 4; always exercise both ASR engines |
 | Ollama transport or Polish integration | 5 |
 | Clipboard or Accessibility insertion | 2 and 6 |
@@ -176,7 +176,8 @@ pre-release run.
    Mode. Note how to stop and restart Ollama on this Mac.
 5. In **Settings → Modes**, identify the raw **Voice to Text** Mode and the
    polished **Clean** Mode. In **Settings → Settings**, identify the configured
-   push-to-talk and toggle hotkeys and enable **Pause other audio**.
+   push-to-talk, toggle, and optional Cycle Modes shortcuts and enable
+   **Pause other audio**.
 6. Close any document containing unsaved work. The procedure deliberately
    changes permission grants, focus, audio playback, and the clipboard.
 
@@ -378,6 +379,44 @@ Pass when Home and History preserve identical row geometry and identity while
 their surface-specific actions, keyboard traversal, More-menu navigation,
 VoiceOver descriptions, Copy announcement, long-content truncation, and flagged
 state all behave as described.
+
+### 11. Cycle Modes shortcut and permission recovery
+
+Record the initial Mode order and selection. Keep TextEdit frontmost whenever a
+step says global; return to Settings only to change a binding or the Mode order.
+
+1. Confirm Cycle Modes starts unassigned. Assign a dedicated function key,
+   cancel capture by clicking its active chip again, repeat and cancel by
+   clicking elsewhere, then assign Escape. Confirm capture itself never starts
+   or stops a dictation and never changes the selected Mode.
+2. Try to assign the effective Push to Talk key using different case, outer
+   whitespace, or a generic left-modifier alias. Confirm the inline error names
+   Push to Talk and the committed shortcut and selection remain unchanged.
+   Repeat against Toggle Recording, then assign a distinct Cycle Modes key.
+3. With TextEdit frontmost, press and release the Cycle Modes key once. Confirm
+   Settings and both Mode menus select the next editable Mode. Use rapid
+   discrete presses through wraparound and confirm every press is honored in
+   order. Hold the key and confirm OS autorepeat does not advance again.
+4. Reorder the Modes in Settings, return focus to TextEdit, and press once.
+   Confirm cycling immediately follows the new visible order. Select Voice to
+   Text and confirm the next press enters at the first Mode. Reduce the library
+   to one already-selected Mode, then zero Modes, and confirm presses are silent
+   no-ops in both cases.
+5. Start a dictation, press Cycle Modes while speaking, then finish it. Confirm
+   the current result and History attribution use the start-time Mode while the
+   next dictation uses the newly committed selection.
+6. Deny both Input Monitoring and Accessibility. Confirm Settings explains that
+   shortcuts work only while FoldWise is focused and offers the correct System
+   Settings route. Verify focused-app operation, then grant either effective
+   permission while FoldWise stays running. Keep TextEdit frontmost and confirm
+   global cycling recovers without relaunching or resaving the shortcut.
+7. Quit and relaunch. Confirm the binding and selected stable Mode survive and
+   one background press advances exactly once without activating FoldWise or
+   moving focus from TextEdit.
+
+Pass when capture, collision policy, edge dispatch, live order, start-time
+freezing, persistence, focused fallback, automatic global recovery, and focus
+retention all match the steps. Any failure blocks the release.
 
 ## Finish and record evidence
 

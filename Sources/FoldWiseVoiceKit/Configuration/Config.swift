@@ -394,13 +394,17 @@ final class Config {
     /// Builds and validates a complete candidate, persists it atomically, then
     /// makes it observable. No live value changes when validation or writing fails.
     @MainActor
-    private func update(_ body: (inout Values) throws -> Void) throws {
+    private func update(
+        activating: () -> Void = {},
+        _ body: (inout Values) throws -> Void
+    ) throws {
         guard recovery == nil else { throw ConfigError.readOnlyRecovery }
         var candidate = values
         try body(&candidate)
         candidate = Self.normalized(candidate)
         try Self.validate(candidate, requireNormalized: true)
         try Self.persist(candidate, to: path)
+        activating()
         let changes = Self.changes(from: values, to: candidate)
         values = candidate
         publish(changes)
@@ -476,6 +480,18 @@ final class Config {
     @MainActor
     func setHotkey(_ hotkey: String) throws {
         try update { $0.hotkey = hotkey }
+    }
+
+    @MainActor
+    func setShortcutBindings(
+        _ bindings: ShortcutBindings,
+        activating: () -> Void = {}
+    ) throws {
+        try update(activating: activating) {
+            $0.hotkey = bindings.pushToTalk
+            $0.toggleHotkey = bindings.toggleRecording
+            $0.modeCycleHotkey = bindings.modeCycle
+        }
     }
 
     @MainActor

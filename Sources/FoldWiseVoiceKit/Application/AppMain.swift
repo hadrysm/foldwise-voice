@@ -109,8 +109,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var badge: BadgeController!
     private var settings: SettingsController!
     private var menuBar: MenuBarController!
-    private var listener: HotkeyListener?
+    private var hotkeys: HotkeyBindingCoordinator!
+    private var modeCycleCommand: ModeCycleCommand!
     private var updateChecker: UpdateChecker!
+    private let shortcutCaptureGate = ShortcutCaptureGate()
     // swiftlint:enable implicitly_unwrapped_optional
 
     init(configPath: String?, modeOverride: String?) {
@@ -181,16 +183,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             config: config, recorder: recorder, transcriber: transcriber,
             record: { historyStore.append($0) }
         )
-        settings = SettingsController(
-            config: config, historyStore: historyStore, statsStore: statsStore,
-            inputDevices: recorder
-        )
         badge = BadgeController(config: config) { [weak self] in
             self?.settings.show()
         }
         badge.recorder = recorder
         badge.onStop = { [weak self] in self?.pipeline.stopRecording() }
         badge.onRecord = { [weak self] in self?.pipeline.toggleRecording() }
+        modeCycleCommand = ModeCycleCommand(
+            config: config,
+            onFailure: { error in
+                Log.hotkey.error(
+                    "Mode cycle failed: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        )
+        hotkeys = HotkeyBindingCoordinator(
+            config: config,
+            callbacks: HotkeyCallbacks(
+                isSuspended: { [weak self] in
+                    self?.shortcutCaptureGate.isCapturing ?? false
+                },
+                onPress: { [weak self] in self?.pipeline.startRecording() },
+                onRelease: { [weak self] in self?.pipeline.stopRecording() },
+                onToggle: { [weak self] in self?.pipeline.toggleRecording() },
+                onCycle: { [weak self] in self?.modeCycleCommand.perform() },
+                onHealthChange: { [weak self] health in
+                    self?.settings?.model.shortcutListenerHealth = health
+                }
+            ),
+            prepare: { bindings, callbacks in
+                let listener = try HotkeyListener(
+                    pttKey: bindings.pushToTalk,
+                    toggleKey: bindings.toggleRecording,
+                    cycleKey: bindings.modeCycle,
+                    isSuspended: callbacks.isSuspended,
+                    onPress: callbacks.onPress,
+                    onRelease: callbacks.onRelease,
+                    onToggle: callbacks.onToggle,
+                    onCycle: callbacks.onCycle
+                )
+                listener.onHealthChange = callbacks.onHealthChange
+                return listener
+            }
+        )
+        settings = SettingsController(
+            config: config, historyStore: historyStore, statsStore: statsStore,
+            inputDevices: recorder, hotkeys: hotkeys, captureGate: shortcutCaptureGate
+        )
         menuBar = MenuBarController(
             config: config,
             onSettings: { [weak self] in self?.settings.show() },
@@ -201,14 +240,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.onUpdateAvailable = { [weak self] version in
             self?.menuBar.showUpdateAvailable(version)
         }
-        // The other config reactors subscribe in their own inits; the hotkey
-        // listener has no controller object, so its subscription lives here.
-        // Rebinding tears down the TCC-sensitive event tap, so it must run
-        // only when a hotkey actually changed.
-        config.onChange { [weak self] changes in
-            if changes.contains(.hotkeys) { self?.startListener() }
-        }
-
         pipeline.onState = { [weak self] state in
             Task { @MainActor in self?.apply(state) }
         }
@@ -220,33 +251,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Permissions.requestAtLaunch()
 
-        startListener()
+        do {
+            try hotkeys.start()
+        } catch {
+            Log.app.error(
+                "Hotkey setup failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
         transcriber.warmup()
 
         // The living idle pill is the ready signal (PRD #103); the hotkey
         // hint lives on Home, rendered from the live config.
         badge.show()
         if config.isReadOnly { settings.show() }
-    }
-
-    private func startListener() {
-        listener?.stop()
-        listener = nil
-        do {
-            let l = try HotkeyListener(
-                pttKey: config.hotkey,
-                toggleKey: config.toggleHotkey,
-                onPress: { [weak self] in self?.pipeline.startRecording() },
-                onRelease: { [weak self] in self?.pipeline.stopRecording() },
-                onToggle: { [weak self] in self?.pipeline.toggleRecording() }
-            )
-            l.start()
-            listener = l
-        } catch {
-            Log.app.error(
-                "Hotkey setup failed: \(error.localizedDescription, privacy: .public)"
-            )
-        }
     }
 
     /// "Check for Updates…" from the menu bar: check immediately and always
@@ -301,7 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() {
-        listener?.stop()
+        hotkeys.stop()
         pipeline.shutdown()
         badge.hide()
         NSApp.terminate(nil)

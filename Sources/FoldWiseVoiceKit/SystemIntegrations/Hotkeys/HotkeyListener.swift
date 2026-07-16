@@ -9,37 +9,54 @@ import CoreGraphics
 import Foundation
 import os
 
-final class HotkeyListener {
+@MainActor
+final class HotkeyListener: HotkeyListening {
     private let dispatcher: HotkeyDispatcher
+    var onHealthChange: ((ShortcutListenerHealth) -> Void)?
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var monitors: [Any] = []
     private var retryTimer: Timer?
+    private lazy var health = HotkeyListenerHealthCoordinator(
+        acquireGlobal: { [weak self] in self?.createTap() ?? false },
+        isGlobalHealthy: { [weak self] in
+            guard let tap = self?.tap else { return false }
+            return CGEvent.tapIsEnabled(tap: tap)
+        },
+        releaseGlobal: { [weak self] in self?.destroyTap() },
+        installFocusedAppOnly: { [weak self] in self?.installMonitors() },
+        removeFocusedAppOnly: { [weak self] in self?.removeMonitors() },
+        onHealthChange: { [weak self] health in self?.onHealthChange?(health) }
+    )
 
     init(
-        pttKey: String, toggleKey: String?,
+        pttKey: String, toggleKey: String?, cycleKey: String? = nil,
+        isSuspended: @escaping () -> Bool = { false },
         onPress: @escaping () -> Void,
         onRelease: @escaping () -> Void,
-        onToggle: @escaping () -> Void
+        onToggle: @escaping () -> Void,
+        onCycle: @escaping () -> Void = {}
     ) throws {
         dispatcher = try HotkeyDispatcher(
             pttKey: pttKey,
             toggleKey: toggleKey,
+            cycleKey: cycleKey,
+            isSuspended: isSuspended,
             onPress: onPress,
             onRelease: onRelease,
-            onToggle: onToggle
+            onToggle: onToggle,
+            onCycle: onCycle
         )
     }
 
-    func start() {
-        if !createTap() {
+    func start() throws {
+        if health.start() == .becameFocusedAppOnly {
             // No effective Input Monitoring / Accessibility grant for the
             // event tap yet. Fall back to NSEvent monitors so the hotkey at
             // least works while the app is frontmost (the global monitor is
             // equally gated, so background keystrokes stay invisible).
             Log.hotkey.warning("CGEventTap unavailable — falling back to NSEvent monitors, will retry")
-            installMonitors()
         }
         // Watchdog, both directions: a grant made in System Settings never
         // revives an already-failed tap (so retry until one succeeds), and a
@@ -47,26 +64,24 @@ final class HotkeyListener {
         // re-signing the binary — leaves a tap that exists but is permanently
         // disabled (so drop back to monitors and keep retrying).
         retryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-            self?.checkTapHealth()
+            Task { @MainActor in self?.checkTapHealth() }
         }
     }
 
     func stop() {
         retryTimer?.invalidate()
         retryTimer = nil
-        destroyTap()
-        removeMonitors()
+        health.stop()
     }
 
     private func checkTapHealth() {
-        if let tap {
-            if CGEvent.tapIsEnabled(tap: tap) { return }
+        switch health.check() {
+        case .becameFocusedAppOnly:
             Log.hotkey.warning("CGEventTap lost — falling back to NSEvent monitors, will retry")
-            destroyTap()
-            installMonitors()
-        } else if createTap() {
+        case .becameGlobal:
             Log.hotkey.info("CGEventTap acquired — hotkey now works in the background")
-            removeMonitors()
+        case .unchanged:
+            break
         }
     }
 

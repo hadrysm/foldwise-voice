@@ -4,7 +4,7 @@
 import CoreGraphics
 import Foundation
 
-enum KeySpec {
+enum KeySpec: Hashable {
     case keycode(CGKeyCode)
     case character(String)
 }
@@ -93,5 +93,9 @@ enum KeyMap {
                     "Unknown hotkey '\(name)'. Use a key name (e.g. 'alt_r', 'cmd_r', 'f19') or a single character.",
             ]
         )
+    }
+
+    static func effectiveIdentity(_ name: String) throws -> KeySpec {
+        try parse(name)
     }
 }

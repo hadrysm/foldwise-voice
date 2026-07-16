@@ -134,6 +134,46 @@ final class PipelineRecordTests: XCTestCase {
         )
     }
 
+    func testModeCycleDuringRecordingChangesOnlyTheNextSession() async throws {
+        let config = Config.defaultConfig(
+            path: FileManager.default.temporaryDirectory
+                .appendingPathComponent("foldwise-pipeline-cycle-tests-\(UUID().uuidString)")
+                .appendingPathComponent("config.json")
+        )
+        try preparePersistence(for: config, in: self)
+        let original = try XCTUnwrap(config.orderedModes.first)
+        let next = try XCTUnwrap(config.orderedModes.last)
+        let recorded = RecordSpy()
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success(longTranscript)
+        let pipeline = Pipeline(
+            config: config,
+            recorder: FakeRecorder(),
+            transcriber: transcriber,
+            polish: { text, _ in text },
+            insert: { _ in true },
+            record: { recorded.record($0) },
+            frontmostApp: { nil }
+        )
+        let cycle = await MainActor.run { ModeCycleCommand(config: config) }
+
+        pipeline.startRecording()
+        await MainActor.run { cycle.perform() }
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(
+            recorded.entries.map { ModeAttribution(name: $0.modeName, id: $0.modeID) },
+            [
+                ModeAttribution(name: original.name, id: original.id),
+                ModeAttribution(name: next.name, id: next.id),
+            ]
+        )
+    }
+
     private func runSessionsAcrossModeChange() async throws -> ModeChangeResult {
         let modeID = ModeID.random()
         let startedMode = Mode(
