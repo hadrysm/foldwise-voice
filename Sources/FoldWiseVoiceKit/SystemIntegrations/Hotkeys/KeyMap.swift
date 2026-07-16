@@ -10,6 +10,8 @@ enum KeySpec: Hashable {
 }
 
 enum KeyMap {
+    private static let capsLockKeycode: CGKeyCode = 57
+
     static let nameToCode: [String: CGKeyCode] = [
         "alt": 58, "alt_l": 58, "alt_r": 61,
         "cmd": 55, "cmd_l": 55, "cmd_r": 54,
@@ -65,6 +67,10 @@ enum KeyMap {
         guard let bits = deviceBits[keycode] else { return true } // caps_lock
         let raw = flags.rawValue
         return raw & bits.own != 0 || raw & (bits.own | bits.sibling) == 0
+    }
+
+    static func isLatchingModifier(keycode: CGKeyCode) -> Bool {
+        keycode == capsLockKeycode
     }
 
     static let prettyNames: [String: String] = [

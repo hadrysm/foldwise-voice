@@ -58,6 +58,13 @@ final class HotkeyDispatcher {
         }
         switch event {
         case let .flagsChanged(keycode, flags):
+            if KeyMap.isLatchingModifier(keycode: keycode) {
+                // Caps Lock reports one flags-changed event when its latch
+                // toggles, rather than separate physical down/up events.
+                dispatch(keycode: keycode, character: nil, down: true)
+                dispatch(keycode: keycode, character: nil, down: false)
+                return
+            }
             let down = KeyMap.isModifierDown(keycode: keycode, flags: flags) ?? false
             dispatch(keycode: keycode, character: nil, down: down)
         case .key(_, _, _, isRepeat: true):

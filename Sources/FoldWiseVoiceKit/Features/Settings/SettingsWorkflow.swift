@@ -201,13 +201,15 @@ final class SettingsWorkflow {
         }
     }
 
-    func beginRecording(_ field: SettingsModel.RecordingField) {
+    @discardableResult
+    func beginRecording(_ field: SettingsModel.RecordingField) -> Bool {
         if model.recordingField == field {
             cancelRecording()
-            return
+            return false
         }
         model.recordingField = field
         captureGate.isCapturing = true
+        return true
     }
 
     func finishRecording(with key: String?) {
@@ -642,7 +644,7 @@ final class SettingsWorkflow {
             toggleRecording: config.toggleHotkey,
             modeCycle: config.modeCycleHotkey
         )
-        let changedCommands = ShortcutCommand.allCases.filter {
+        let changedCommands = ShortcutCommand.precedence.filter {
             bindings.value(for: $0) != committedBindings.value(for: $0)
         }
         if !changedCommands.isEmpty {
@@ -653,7 +655,7 @@ final class SettingsWorkflow {
             }
             do {
                 for command in commands {
-                    _ = try bindings.validatingAssignment(for: command)
+                    try bindings.validateAssignment(for: command)
                 }
             } catch {
                 populateShortcutBindings()

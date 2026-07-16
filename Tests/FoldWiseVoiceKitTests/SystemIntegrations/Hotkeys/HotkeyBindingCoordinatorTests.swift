@@ -3,6 +3,17 @@ import XCTest
 
 @MainActor
 final class HotkeyBindingCoordinatorTests: XCTestCase {
+    private var emptyCallbacks: HotkeyCallbacks {
+        HotkeyCallbacks(
+            isSuspended: { false },
+            onPress: {},
+            onRelease: {},
+            onToggle: {},
+            onCycle: {},
+            onHealthChange: { _ in }
+        )
+    }
+
     private final class CannedListener: HotkeyListening {
         let name: String
         let events: (String) -> Void
@@ -56,7 +67,7 @@ final class HotkeyBindingCoordinatorTests: XCTestCase {
         var generation = 0
         let coordinator = HotkeyBindingCoordinator(
             config: config,
-            callbacks: .empty,
+            callbacks: emptyCallbacks,
             prepare: { bindings, _ in
                 generation += 1
                 events.append("prepare \(generation) \(bindings.modeCycle ?? "none")")
@@ -96,7 +107,7 @@ final class HotkeyBindingCoordinatorTests: XCTestCase {
         var generation = 0
         let coordinator = HotkeyBindingCoordinator(
             config: config,
-            callbacks: .empty,
+            callbacks: emptyCallbacks,
             prepare: { _, _ in
                 generation += 1
                 events.append("prepare \(generation)")
@@ -117,7 +128,7 @@ final class HotkeyBindingCoordinatorTests: XCTestCase {
         var events: [String] = []
         let coordinator = HotkeyBindingCoordinator(
             config: config,
-            callbacks: .empty,
+            callbacks: emptyCallbacks,
             prepare: { _, _ in
                 CannedListener(
                     name: "candidate",
@@ -140,7 +151,7 @@ final class HotkeyBindingCoordinatorTests: XCTestCase {
         var generation = 0
         let coordinator = HotkeyBindingCoordinator(
             config: config,
-            callbacks: .empty,
+            callbacks: emptyCallbacks,
             prepare: { _, _ in
                 generation += 1
                 return CannedListener(name: "\(generation)", events: { events.append($0) })
@@ -162,7 +173,7 @@ final class HotkeyBindingCoordinatorTests: XCTestCase {
         var generation = 0
         let coordinator = HotkeyBindingCoordinator(
             config: config,
-            callbacks: .empty,
+            callbacks: emptyCallbacks,
             prepare: { _, _ in
                 generation += 1
                 return CannedListener(
@@ -185,7 +196,7 @@ final class HotkeyBindingCoordinatorTests: XCTestCase {
         var events: [String] = []
         let coordinator = HotkeyBindingCoordinator(
             config: config,
-            callbacks: .empty,
+            callbacks: emptyCallbacks,
             prepare: { _, _ in
                 CannedListener(name: "active", events: { events.append($0) })
             }
@@ -205,7 +216,7 @@ final class HotkeyBindingCoordinatorTests: XCTestCase {
         var suspensionDuringStart: [Bool] = []
         let coordinator = HotkeyBindingCoordinator(
             config: config,
-            callbacks: .empty,
+            callbacks: emptyCallbacks,
             prepare: { _, preparedCallbacks in
                 callbacks.append(preparedCallbacks)
                 let index = callbacks.count - 1
@@ -264,17 +275,6 @@ final class HotkeyBindingCoordinatorTests: XCTestCase {
         callbacks[1].onHealthChange(.global)
 
         XCTAssertEqual(healthChanges, [.global, .focusedAppOnly, .global])
-    }
-
-    func testEmptyCallbacksAcceptEveryEvent() {
-        let callbacks = HotkeyCallbacks.empty
-
-        XCTAssertFalse(callbacks.isSuspended())
-        callbacks.onPress()
-        callbacks.onRelease()
-        callbacks.onToggle()
-        callbacks.onCycle()
-        callbacks.onHealthChange(.global)
     }
 
     private func bindings(_ config: Config, cycle: String?) -> ShortcutBindings {

@@ -132,7 +132,6 @@ final class SettingsModel: ObservableObject {
     var onCommit: (() -> Void)?
     var onSelectInputDevice: ((String?) -> Void)?
     var onRecord: ((RecordingField) -> Void)?
-    var onCancelRecording: (() -> Void)?
     var onOpenShortcutPermissions: (() -> Void)?
     var onSelectMode: ((DictationSelection) -> Void)?
     var onAddMode: (() -> Void)?

@@ -4,6 +4,15 @@ enum HotkeyListenerHealthTransition: Equatable {
     case becameFocusedAppOnly
 }
 
+@MainActor
+protocol HotkeyListenerHealthEffects: AnyObject {
+    func acquireGlobal() -> Bool
+    func isGlobalHealthy() -> Bool
+    func releaseGlobal()
+    func installFocusedAppOnly()
+    func removeFocusedAppOnly()
+}
+
 /// Owns permission-dependent listener transitions independently of CGEventTap
 /// and NSEvent. The production shell supplies those effects; tests can drive
 /// permission loss and recovery without changing macOS privacy settings.
@@ -15,39 +24,27 @@ final class HotkeyListenerHealthCoordinator {
         case focusedAppOnly
     }
 
-    private let acquireGlobal: () -> Bool
-    private let isGlobalHealthy: () -> Bool
-    private let releaseGlobal: () -> Void
-    private let installFocusedAppOnly: () -> Void
-    private let removeFocusedAppOnly: () -> Void
+    private let effects: any HotkeyListenerHealthEffects
     private let onHealthChange: (ShortcutListenerHealth) -> Void
     private var state = State.stopped
 
     init(
-        acquireGlobal: @escaping () -> Bool,
-        isGlobalHealthy: @escaping () -> Bool,
-        releaseGlobal: @escaping () -> Void,
-        installFocusedAppOnly: @escaping () -> Void,
-        removeFocusedAppOnly: @escaping () -> Void,
+        effects: any HotkeyListenerHealthEffects,
         onHealthChange: @escaping (ShortcutListenerHealth) -> Void
     ) {
-        self.acquireGlobal = acquireGlobal
-        self.isGlobalHealthy = isGlobalHealthy
-        self.releaseGlobal = releaseGlobal
-        self.installFocusedAppOnly = installFocusedAppOnly
-        self.removeFocusedAppOnly = removeFocusedAppOnly
+        self.effects = effects
         self.onHealthChange = onHealthChange
     }
 
     @discardableResult
     func start() -> HotkeyListenerHealthTransition {
         guard case .stopped = state else { return .unchanged }
-        if acquireGlobal() {
+        if effects.acquireGlobal() {
             state = .global
             onHealthChange(.global)
             return .becameGlobal
         }
-        installFocusedAppOnly()
+        effects.installFocusedAppOnly()
         state = .focusedAppOnly
         onHealthChange(.focusedAppOnly)
         return .becameFocusedAppOnly
@@ -58,16 +55,16 @@ final class HotkeyListenerHealthCoordinator {
         switch state {
         case .stopped:
             return .unchanged
-        case .global where isGlobalHealthy():
+        case .global where effects.isGlobalHealthy():
             return .unchanged
         case .global:
-            releaseGlobal()
-            installFocusedAppOnly()
+            effects.releaseGlobal()
+            effects.installFocusedAppOnly()
             state = .focusedAppOnly
             onHealthChange(.focusedAppOnly)
             return .becameFocusedAppOnly
-        case .focusedAppOnly where acquireGlobal():
-            removeFocusedAppOnly()
+        case .focusedAppOnly where effects.acquireGlobal():
+            effects.removeFocusedAppOnly()
             state = .global
             onHealthChange(.global)
             return .becameGlobal
@@ -81,9 +78,9 @@ final class HotkeyListenerHealthCoordinator {
         case .stopped:
             return
         case .global:
-            releaseGlobal()
+            effects.releaseGlobal()
         case .focusedAppOnly:
-            removeFocusedAppOnly()
+            effects.removeFocusedAppOnly()
         }
         state = .stopped
     }

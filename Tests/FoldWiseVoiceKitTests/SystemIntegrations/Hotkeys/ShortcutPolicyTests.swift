@@ -20,7 +20,7 @@ final class ShortcutPolicyTests: XCTestCase {
             modeCycle: "  ALT_L "
         )
 
-        XCTAssertThrowsError(try bindings.validatingAssignment(for: .modeCycle)) { error in
+        XCTAssertThrowsError(try bindings.validateAssignment(for: .modeCycle)) { error in
             XCTAssertEqual(
                 error.localizedDescription,
                 "That key is already assigned to Push to Talk."
@@ -36,8 +36,8 @@ final class ShortcutPolicyTests: XCTestCase {
             pushToTalk: "F6", toggleRecording: "x", modeCycle: " X "
         )
 
-        XCTAssertThrowsError(try pttAndToggle.validatingAssignment(for: .toggleRecording))
-        XCTAssertThrowsError(try toggleAndCycle.validatingAssignment(for: .modeCycle))
+        XCTAssertThrowsError(try pttAndToggle.validateAssignment(for: .toggleRecording))
+        XCTAssertThrowsError(try toggleAndCycle.validateAssignment(for: .modeCycle))
     }
 
     func testExternalCollisionRuntimePrecedenceDisablesLowerPriorityCommands() throws {

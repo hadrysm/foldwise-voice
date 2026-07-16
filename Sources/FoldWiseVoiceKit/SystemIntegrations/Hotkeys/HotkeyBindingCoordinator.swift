@@ -19,15 +19,6 @@ struct HotkeyCallbacks {
     let onToggle: () -> Void
     let onCycle: () -> Void
     let onHealthChange: (ShortcutListenerHealth) -> Void
-
-    static let empty = HotkeyCallbacks(
-        isSuspended: { false },
-        onPress: {},
-        onRelease: {},
-        onToggle: {},
-        onCycle: {},
-        onHealthChange: { _ in }
-    )
 }
 
 @MainActor

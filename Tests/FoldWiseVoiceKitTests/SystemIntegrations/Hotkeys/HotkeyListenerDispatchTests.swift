@@ -132,6 +132,14 @@ final class HotkeyDispatcherTests: XCTestCase {
         XCTAssertEqual(fired, [.press, .release])
     }
 
+    func testRuntimeCollisionPrefersToggleOverModeCycle() throws {
+        let dispatcher = try makeDispatcher(ptt: "f13", toggle: "f14", cycle: " F14 ")
+        dispatcher.process(key(107, down: true))
+        dispatcher.process(key(107, down: false))
+
+        XCTAssertEqual(fired, [.toggle])
+    }
+
     func testModifierPttHoldAndReleaseViaFlagsChanged() throws {
         // alt_r (keycode 61) — the production default. Down carries the
         // generic mask plus the key's own device bit; release clears both.
@@ -161,6 +169,15 @@ final class HotkeyDispatcherTests: XCTestCase {
         dispatcher.process(.flagsChanged(keycode: 60, flags: shiftRDown))
         dispatcher.process(.flagsChanged(keycode: 60, flags: []))
         dispatcher.process(.flagsChanged(keycode: 60, flags: shiftRDown))
+
+        XCTAssertEqual(fired, [.cycle, .cycle])
+    }
+
+    func testLatchingModifierCycleFiresOnceForEveryPhysicalPress() throws {
+        let dispatcher = try makeDispatcher(ptt: "alt_r", cycle: "caps_lock")
+
+        dispatcher.process(.flagsChanged(keycode: 57, flags: .maskAlphaShift))
+        dispatcher.process(.flagsChanged(keycode: 57, flags: []))
 
         XCTAssertEqual(fired, [.cycle, .cycle])
     }
@@ -223,35 +240,56 @@ final class HotkeyListenerConfigurationTests: XCTestCase {
 
 @MainActor
 final class HotkeyListenerHealthCoordinatorTests: XCTestCase {
-    func testPermissionGrantAndRevocationTransitionWithoutRestartingCoordinator() {
-        var permissionGranted = false
-        var globalHealthy = false
+    private final class CannedHealthEffects: HotkeyListenerHealthEffects {
+        var permissionGranted: Bool
+        var globalHealthy: Bool
         var events: [String] = []
+
+        init(permissionGranted: Bool = false, globalHealthy: Bool = false) {
+            self.permissionGranted = permissionGranted
+            self.globalHealthy = globalHealthy
+        }
+
+        func acquireGlobal() -> Bool {
+            events.append("acquire global")
+            globalHealthy = permissionGranted
+            return permissionGranted
+        }
+
+        func isGlobalHealthy() -> Bool {
+            globalHealthy
+        }
+
+        func releaseGlobal() {
+            events.append("release global")
+            globalHealthy = false
+        }
+
+        func installFocusedAppOnly() {
+            events.append("install focused")
+        }
+
+        func removeFocusedAppOnly() {
+            events.append("remove focused")
+        }
+    }
+
+    func testPermissionGrantAndRevocationTransitionWithoutRestartingCoordinator() {
+        let effects = CannedHealthEffects()
         let coordinator = HotkeyListenerHealthCoordinator(
-            acquireGlobal: {
-                events.append("acquire global")
-                globalHealthy = permissionGranted
-                return permissionGranted
-            },
-            isGlobalHealthy: { globalHealthy },
-            releaseGlobal: {
-                events.append("release global")
-                globalHealthy = false
-            },
-            installFocusedAppOnly: { events.append("install focused") },
-            removeFocusedAppOnly: { events.append("remove focused") },
-            onHealthChange: { events.append("health \($0)") }
+            effects: effects,
+            onHealthChange: { effects.events.append("health \($0)") }
         )
 
         XCTAssertEqual(coordinator.start(), .becameFocusedAppOnly)
-        permissionGranted = true
+        effects.permissionGranted = true
         XCTAssertEqual(coordinator.check(), .becameGlobal)
-        globalHealthy = false
+        effects.globalHealthy = false
         XCTAssertEqual(coordinator.check(), .becameFocusedAppOnly)
         XCTAssertEqual(coordinator.check(), .becameGlobal)
 
         XCTAssertEqual(
-            events,
+            effects.events,
             [
                 "acquire global", "install focused", "health focusedAppOnly",
                 "acquire global", "remove focused", "health global",
@@ -262,13 +300,10 @@ final class HotkeyListenerHealthCoordinatorTests: XCTestCase {
     }
 
     func testHealthyGlobalListenerNeedsNoTransition() {
+        let effects = CannedHealthEffects(permissionGranted: true, globalHealthy: true)
         var healthChanges: [ShortcutListenerHealth] = []
         let coordinator = HotkeyListenerHealthCoordinator(
-            acquireGlobal: { true },
-            isGlobalHealthy: { true },
-            releaseGlobal: {},
-            installFocusedAppOnly: {},
-            removeFocusedAppOnly: {},
+            effects: effects,
             onHealthChange: { healthChanges.append($0) }
         )
 

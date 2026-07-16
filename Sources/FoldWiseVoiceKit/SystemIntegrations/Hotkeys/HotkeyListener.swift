@@ -11,6 +11,35 @@ import os
 
 @MainActor
 final class HotkeyListener: HotkeyListening {
+    private final class HealthEffects: HotkeyListenerHealthEffects {
+        weak var listener: HotkeyListener?
+
+        init(listener: HotkeyListener) {
+            self.listener = listener
+        }
+
+        func acquireGlobal() -> Bool {
+            listener?.createTap() ?? false
+        }
+
+        func isGlobalHealthy() -> Bool {
+            guard let tap = listener?.tap else { return false }
+            return CGEvent.tapIsEnabled(tap: tap)
+        }
+
+        func releaseGlobal() {
+            listener?.destroyTap()
+        }
+
+        func installFocusedAppOnly() {
+            listener?.installMonitors()
+        }
+
+        func removeFocusedAppOnly() {
+            listener?.removeMonitors()
+        }
+    }
+
     private let dispatcher: HotkeyDispatcher
     var onHealthChange: ((ShortcutListenerHealth) -> Void)?
 
@@ -19,14 +48,7 @@ final class HotkeyListener: HotkeyListening {
     private var monitors: [Any] = []
     private var retryTimer: Timer?
     private lazy var health = HotkeyListenerHealthCoordinator(
-        acquireGlobal: { [weak self] in self?.createTap() ?? false },
-        isGlobalHealthy: { [weak self] in
-            guard let tap = self?.tap else { return false }
-            return CGEvent.tapIsEnabled(tap: tap)
-        },
-        releaseGlobal: { [weak self] in self?.destroyTap() },
-        installFocusedAppOnly: { [weak self] in self?.installMonitors() },
-        removeFocusedAppOnly: { [weak self] in self?.removeMonitors() },
+        effects: HealthEffects(listener: self),
         onHealthChange: { [weak self] health in self?.onHealthChange?(health) }
     )
 

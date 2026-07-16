@@ -4,10 +4,16 @@ final class ShortcutCaptureGate {
     var isCapturing = false
 }
 
-enum ShortcutCommand: CaseIterable, Hashable {
+enum ShortcutCommand: Hashable {
     case pushToTalk
     case toggleRecording
     case modeCycle
+
+    static let precedence: [ShortcutCommand] = [
+        .pushToTalk,
+        .toggleRecording,
+        .modeCycle,
+    ]
 
     var title: String {
         switch self {
@@ -39,23 +45,22 @@ struct ShortcutBindings: Equatable {
         }
     }
 
-    func validatingAssignment(for command: ShortcutCommand) throws -> ShortcutBindings {
-        guard let assignedValue = value(for: command) else { return self }
+    func validateAssignment(for command: ShortcutCommand) throws {
+        guard let assignedValue = value(for: command) else { return }
         let identity = try KeyMap.effectiveIdentity(assignedValue)
-        for owner in ShortcutCommand.allCases where owner != command {
+        for owner in ShortcutCommand.precedence where owner != command {
             guard let other = value(for: owner) else { continue }
             if try KeyMap.effectiveIdentity(other) == identity {
                 throw ShortcutCollisionError(owner: owner)
             }
         }
-        return self
     }
 
     var effectiveCommands: [ShortcutCommand: KeySpec] {
         get throws {
             var result: [ShortcutCommand: KeySpec] = [:]
             var claimed: Set<KeySpec> = []
-            for command in ShortcutCommand.allCases {
+            for command in ShortcutCommand.precedence {
                 guard let value = value(for: command) else { continue }
                 let identity = try KeyMap.effectiveIdentity(value)
                 guard claimed.insert(identity).inserted else { continue }

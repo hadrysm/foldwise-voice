@@ -86,7 +86,6 @@ final class SettingsController {
             self?.workflow.selectInputDevice(uid)
         }
         model.onRecord = { [weak self] field in self?.startRecording(field) }
-        model.onCancelRecording = { [weak self] in self?.cancelRecording() }
         model.onOpenShortcutPermissions = { Self.openShortcutPermissions() }
         model.onSelectMode = { [weak self] selection in self?.workflow.selectMode(selection) }
         model.onAddMode = { [weak self] in self?.workflow.beginAddMode() }
@@ -189,12 +188,8 @@ final class SettingsController {
     // MARK: - key recording
 
     private func startRecording(_ field: SettingsModel.RecordingField) {
-        if model.recordingField == field {
-            cancelRecording()
-            return
-        }
         stopKeyMonitor()
-        workflow.beginRecording(field)
+        guard workflow.beginRecording(field) else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.keyDown, .flagsChanged, .leftMouseUp, .rightMouseUp]
         ) { [weak self] event in
