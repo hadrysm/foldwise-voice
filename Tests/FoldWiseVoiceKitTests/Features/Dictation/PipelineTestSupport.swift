@@ -4,6 +4,7 @@
 // thread. The polish/insert stages are plain closures passed per-test.
 
 import Foundation
+import XCTest
 @testable import FoldWiseVoiceKit
 
 final class FakeRecorder: AudioRecording {
@@ -151,6 +152,16 @@ final class RecordSpy {
     }
 }
 
+final class ModeCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Mode?
+
+    var value: Mode? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}
+
 final class StateCollector {
     private let lock = NSLock()
     private var collected: [PipelineState] = []
@@ -180,6 +191,15 @@ func makeTestConfig(
         activeMode: mode.name, hotkey: "alt_r", toggleHotkey: nil, pauseAudio: pauseAudio,
         badgePosition: nil, modeOrder: [mode.name], modes: [mode.name: mode],
         path: FileManager.default.temporaryDirectory
-            .appendingPathComponent("foldwise-pipeline-tests-\(UUID().uuidString).json")
+            .appendingPathComponent("foldwise-pipeline-tests-\(UUID().uuidString)")
+            .appendingPathComponent("config.json")
     )
+}
+
+func preparePersistence(for config: Config, in testCase: XCTestCase) throws {
+    let directory = config.path.deletingLastPathComponent()
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    testCase.addTeardownBlock {
+        try FileManager.default.removeItem(at: directory)
+    }
 }

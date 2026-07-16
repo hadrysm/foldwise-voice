@@ -294,6 +294,17 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
+    func testModeLibraryChangesRefreshOpenHistoryInputs() throws {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+
+        try config.replaceModes([], selection: .voiceToText)
+
+        XCTAssertTrue(model.modes.isEmpty)
+    }
+
     func testPopulateMakesPersistedASRModelAvailableAndClearsTransientState() throws {
         let config = makeConfig()
         try config.setASRModel("whisper-small")
@@ -864,7 +875,10 @@ final class SettingsWorkflowTests: XCTestCase {
             }
         )
 
-        let task = workflow.performHistoryCommand(.rerunPolish(modeName: "Clean"), for: row)
+        guard let modeID = config.orderedModes.first?.id else {
+            return XCTFail("expected an editable Mode")
+        }
+        let task = workflow.performHistoryCommand(.rerunPolish(modeID: modeID), for: row)
         await task?.value
 
         XCTAssertEqual(
@@ -889,7 +903,10 @@ final class SettingsWorkflowTests: XCTestCase {
             }
         )
 
-        await workflow.rerunPolish(row, modeName: "Clean")
+        guard let modeID = config.orderedModes.first?.id else {
+            return XCTFail("expected an editable Mode")
+        }
+        await workflow.rerunPolish(row, modeID: modeID)
 
         XCTAssertEqual(model.historyEntries.first?.text, row.rawText)
     }
@@ -909,9 +926,65 @@ final class SettingsWorkflowTests: XCTestCase {
             polish: { _, _ in "Please summarize the quarterly revenue figures for the board report." }
         )
 
-        await workflow.rerunPolish(missing, modeName: "Clean")
+        guard let modeID = config.orderedModes.first?.id else {
+            return XCTFail("expected an editable Mode")
+        }
+        await workflow.rerunPolish(missing, modeID: modeID)
 
         XCTAssertEqual(model.historyEntries.map(\.id), [kept.id])
+    }
+
+    func testRerunPolishMissingModeKeepsEntryAndShowsRecoverableError() async {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("rerun-missing-mode.jsonl"))
+        let row = entry(createdAt: Date(), text: "unchanged words")
+        store.append(row)
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model, historyStore: store)
+
+        await workflow.rerunPolish(row, modeID: .random())
+
+        XCTAssertEqual(
+            [store.load().first?.text, model.statusIsError.description],
+            ["unchanged words", "true"]
+        )
+    }
+
+    func testRerunPolishFreezesModeAtExecutionStartAcrossDeletion() async throws {
+        let store = JSONLHistoryStore(url: dir.appendingPathComponent("rerun-frozen-mode.jsonl"))
+        var row = entry(createdAt: Date(), text: "earlier words")
+        row.rawText = "hey can you send the quarterly numbers over to the finance team when you get a chance"
+        store.append(row)
+        let config = makeConfig()
+        let mode = try XCTUnwrap(config.orderedModes.first)
+        let modeID = try XCTUnwrap(mode.id)
+        let model = SettingsModel()
+        let polishing = expectation(description: "reprocessing started")
+        let finishPolishing = Latch()
+        let receivedMode = ModeCapture()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            polish: { _, snapshot in
+                receivedMode.value = snapshot
+                polishing.fulfill()
+                await finishPolishing.wait()
+                return "Hey, can you send the quarterly numbers over to the finance team when you get a chance?"
+            }
+        )
+
+        let task = Task { await workflow.rerunPolish(row, modeID: modeID) }
+        await fulfillment(of: [polishing])
+        try config.replaceModes([], selection: .voiceToText)
+        await finishPolishing.open()
+        await task.value
+
+        let updated = try XCTUnwrap(store.load().first)
+        XCTAssertEqual(
+            [receivedMode.value?.name, updated.modeName, updated.modeID?.rawValue],
+            ["Clean", "Clean", modeID.rawValue]
+        )
     }
 
     func testDeleteHistoryPublishesRemainingPersistedEntries() {

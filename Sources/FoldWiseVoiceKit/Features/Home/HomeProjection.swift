@@ -8,6 +8,16 @@
 import Foundation
 
 struct HomeProjection: Equatable {
+    struct Input: Equatable {
+        let entries: [HistoryEntry]
+        let modes: [Mode]
+
+        init(entries: [HistoryEntry], modes: [Mode] = []) {
+            self.entries = entries
+            self.modes = modes
+        }
+    }
+
     struct Row: Equatable, Identifiable {
         /// Exact source identity and current persisted state for Home's direct
         /// Copy and Flag actions; the view never looks the entry up by id.
@@ -32,12 +42,12 @@ struct HomeProjection: Equatable {
 
     static let maxRows = 10
     static func project(
-        _ entries: [HistoryEntry],
+        _ input: Input,
         now: Date,
         calendar: Calendar = .current,
         locale: Locale = .current
     ) -> HomeProjection {
-        let latest = entries.sorted { $0.createdAt > $1.createdAt }.prefix(maxRows)
+        let latest = input.entries.sorted { $0.createdAt > $1.createdAt }.prefix(maxRows)
         var order: [Date] = []
         var buckets: [Date: [Row]] = [:]
         for entry in latest {
@@ -45,7 +55,11 @@ struct HomeProjection: Equatable {
             if buckets[day] == nil { order.append(day) }
             buckets[day, default: []].append(Row(
                 entry: entry,
-                presentation: DictationRowPresentation(entry: entry, calendar: calendar)
+                presentation: DictationRowPresentation(
+                    entry: entry,
+                    modes: input.modes,
+                    calendar: calendar
+                )
             ))
         }
         let dayFormatter = makeDayFormatter(calendar: calendar, locale: locale)

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Immutable identity for one saved Dictation session wherever it is rendered.
@@ -12,31 +13,61 @@ struct DictationRowPresentation: Equatable {
     let text: String
     let fullModeName: String
     let compactModeName: String
+    let modeIcon: String
+    let isDeletedMode: Bool
     let polishStatus: PolishStatus
     let isFlagged: Bool
     let accessibilityDescription: String
 
-    init(entry: HistoryEntry, calendar: Calendar = .current) {
+    init(
+        entry: HistoryEntry,
+        modes: [Mode] = [],
+        calendar: Calendar = .current
+    ) {
         let time = Self.time(entry.createdAt, calendar: calendar)
         let text = Self.singleLine(entry.text)
         let status = PolishStatus(entry)
         let flaggedDescription = entry.flagged ? "Flagged" : "Not flagged"
+        let attribution = Self.attribution(for: entry, modes: modes)
 
         self.time = time
         self.text = text
-        fullModeName = entry.modeName
+        fullModeName = attribution.name
         compactModeName = String(
-            entry.modeName.lowercased().prefix(Self.maxCompactModeLength)
+            attribution.name.lowercased().prefix(Self.maxCompactModeLength)
         )
+        modeIcon = attribution.icon
+        isDeletedMode = attribution.isDeleted
         polishStatus = status
         isFlagged = entry.flagged
-        accessibilityDescription = [
+        var accessibilityParts = [
             time,
             text,
-            "Mode \(entry.modeName)",
+            "Mode \(attribution.name)",
             status.label,
             flaggedDescription,
-        ].joined(separator: ", ")
+        ]
+        if attribution.isDeleted {
+            accessibilityParts.insert("Deleted Mode", at: 3)
+        }
+        accessibilityDescription = accessibilityParts.joined(separator: ", ")
+    }
+
+    private static func attribution(
+        for entry: HistoryEntry,
+        modes: [Mode]
+    ) -> (name: String, icon: String, isDeleted: Bool) {
+        guard let modeID = entry.modeID else {
+            return (entry.modeName, "text.bubble", false)
+        }
+        guard let current = modes.first(where: { $0.id == modeID }) else {
+            return (entry.modeName, "text.bubble", true)
+        }
+        let icon = NSImage(
+            systemSymbolName: current.icon,
+            accessibilityDescription: nil
+        ) == nil ? "text.bubble" : current.icon
+        return (current.name, icon, false)
     }
 
     private static func singleLine(_ text: String) -> String {

@@ -101,6 +101,7 @@ final class SettingsModel: ObservableObject {
 
     var modeNames: [String] = []
     var llmModes: Set<String> = []
+    @Published var modes: [Mode] = []
     /// Loaded from the HistoryStore when the window opens and re-read after a
     /// delete or clear-all, so the History pane reflects the store live.
     @Published var historyEntries: [HistoryEntry] = []

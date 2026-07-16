@@ -74,11 +74,16 @@ final class DictationRowInteractionTests: XCTestCase {
     }
 
     func testHistoryActionCompositionContainsConditionalAndDestructiveActions() {
+        let cleanID = ModeID.random()
+        let emailID = ModeID.random()
         let history = DictationRowActionComposition.make(
             presentation: presentation(),
             moreCapabilities: .init(
                 canCopyRaw: true,
-                polishModeNames: ["Clean", "Email"]
+                polishModes: [
+                    .init(id: cleanID, name: "Clean"),
+                    .init(id: emailID, name: "Email"),
+                ]
             )
         )
         XCTAssertEqual(
@@ -97,11 +102,11 @@ final class DictationRowInteractionTests: XCTestCase {
                     )),
                     .submenu(label: "Re-run Polish", commands: [
                         .init(
-                            label: "Clean", command: .rerunPolish(modeName: "Clean"),
+                            label: "Clean", command: .rerunPolish(modeID: cleanID),
                             isDestructive: false
                         ),
                         .init(
-                            label: "Email", command: .rerunPolish(modeName: "Email"),
+                            label: "Email", command: .rerunPolish(modeID: emailID),
                             isDestructive: false
                         ),
                     ]),
@@ -117,7 +122,7 @@ final class DictationRowInteractionTests: XCTestCase {
     func testHistoryActionCompositionOmitsUnavailableRawAndPolishActions() {
         let history = DictationRowActionComposition.make(
             presentation: presentation(isFlagged: false),
-            moreCapabilities: .init(canCopyRaw: false, polishModeNames: [])
+            moreCapabilities: .init(canCopyRaw: false, polishModes: [])
         )
 
         XCTAssertEqual(
@@ -218,7 +223,7 @@ final class DictationRowInteractionTests: XCTestCase {
             presentation: presentation(),
             moreCapabilities: DictationRowMoreCapabilities(
                 canCopyRaw: true,
-                polishModeNames: ["Clean"]
+                polishModes: [.init(id: .random(), name: "Clean")]
             ),
             onCommand: { commands.append($0) },
             interactionState: DictationRowInteractionState(hasMore: true),

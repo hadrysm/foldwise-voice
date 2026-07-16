@@ -16,7 +16,8 @@ struct HistoryEntry: Codable, Identifiable, Equatable {
     var text: String // shown text: polished if Polish survived, else raw
     var rawText: String // pre-Polish transcript, always kept
     var isPolished: Bool // Polish ran AND survived the off-task check
-    var modeName: String
+    var modeName: String // frozen display fallback retained after rename/delete
+    var modeID: ModeID? // nil for Voice to Text and legacy pre-ID rows
     var wordCount: Int?
     var sourceApp: String? // frontmost app at insert time
     var durationMs: Int?

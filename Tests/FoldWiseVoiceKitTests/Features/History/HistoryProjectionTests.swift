@@ -71,6 +71,32 @@ final class HistoryProjectionTests: XCTestCase {
         ))
     }
 
+    func testProjectionResolvesModeAttributionFromCurrentLibrary() {
+        let modeID = ModeID.random()
+        var source = entry(
+            text: "today", rawText: "today", minutesAgo: 60, flagged: false
+        )
+        source.modeID = modeID
+        source.modeName = "Recorded Name"
+        let current = Mode(
+            id: modeID,
+            name: "Current Name",
+            icon: "envelope",
+            asrModel: ASRModelCatalog.defaultID,
+            llmModel: "qwen2.5:3b",
+            transformation: .expanding,
+            systemPrompt: "Prompt",
+            vocabulary: []
+        )
+
+        let row = project([source], modes: [current]).sections.first?.rows.first
+
+        XCTAssertEqual(
+            [row?.presentation.fullModeName, row?.presentation.modeIcon],
+            ["Current Name", "envelope"]
+        )
+    }
+
     func testBlankSearchProjectsEveryEntry() {
         let source = entry(
             text: "one", rawText: "one", minutesAgo: 1, flagged: false
@@ -83,7 +109,7 @@ final class HistoryProjectionTests: XCTestCase {
         XCTAssertTrue(project([]).isEmpty)
     }
 
-    func testCacheExecutesOnlyWhenEntriesSearchOrFlaggedOnlyChanges() {
+    func testCacheExecutesOnlyWhenEntriesFiltersOrModesChange() {
         let source = entry(
             text: "one", rawText: "one", minutesAgo: 1, flagged: false
         )
@@ -109,8 +135,16 @@ final class HistoryProjectionTests: XCTestCase {
         _ = cache.resolve(.init(entries: [source, added], search: "", flaggedOnly: false))
         _ = cache.resolve(.init(entries: [source, added], search: "two", flaggedOnly: false))
         _ = cache.resolve(.init(entries: [source, added], search: "two", flaggedOnly: true))
+        _ = cache.resolve(.init(
+            entries: [source, added], search: "two", flaggedOnly: true,
+            modes: [Mode(
+                id: .random(), name: "Current", icon: "pencil",
+                asrModel: ASRModelCatalog.defaultID, llmModel: "qwen2.5:3b",
+                transformation: .inPlace, systemPrompt: "Prompt", vocabulary: []
+            )]
+        ))
 
-        XCTAssertEqual(executionCount, 4)
+        XCTAssertEqual(executionCount, 5)
     }
 
     func testCacheInvalidatesWhenTheCalendarDayChanges() throws {
@@ -138,10 +172,11 @@ final class HistoryProjectionTests: XCTestCase {
     private func project(
         _ entries: [HistoryEntry],
         search: String = "",
-        flaggedOnly: Bool = false
+        flaggedOnly: Bool = false,
+        modes: [Mode] = []
     ) -> HistoryProjection {
         HistoryProjection.project(
-            .init(entries: entries, search: search, flaggedOnly: flaggedOnly),
+            .init(entries: entries, search: search, flaggedOnly: flaggedOnly, modes: modes),
             now: now,
             calendar: calendar,
             locale: Locale(identifier: "en_US")

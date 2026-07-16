@@ -83,6 +83,7 @@ final class Pipeline {
     /// Owned here rather than read back through the record seam, so the
     /// start/stop guards are self-contained and fakes needn't track it.
     private var recording = false
+    private var recordingMode: Mode?
     private var lastJob: Task<Void, Never>?
     private var jobActive = false
     private var lastEmitted: PipelineState = .idle
@@ -184,11 +185,14 @@ final class Pipeline {
             guard !isShutDown, !recording else { return }
             if config.pauseAudio { ducker.duck() }
             recording = true
+            let mode = config.mode
             do {
                 try recorder.start()
-                emit(.listening(mode: config.activeMode))
+                recordingMode = mode
+                emit(.listening(mode: mode.name))
             } catch {
                 recording = false
+                recordingMode = nil
                 ducker.restore()
                 emit(.error(error.localizedDescription))
             }
@@ -201,9 +205,10 @@ final class Pipeline {
             recording = false
             let samples = recorder.stop()
             ducker.restore()
+            guard let mode = recordingMode else { return }
+            recordingMode = nil
             guard emit(.transcribing) else { return }
-            let mode = config.mode
-            // Frozen at stop time alongside `mode`: whether this session is saved is
+            // Unlike the start-time Mode snapshot, whether this session is saved is
             // decided when the user stops speaking, not read later off the job task.
             let saveHistory = config.saveHistory
             let previous = lastJob
@@ -242,6 +247,7 @@ final class Pipeline {
             guard !isShutDown else { return }
             isShutDown = true
             recording = false
+            recordingMode = nil
             lastJob?.cancel()
             ducker.restore()
             recorder.close()
@@ -253,6 +259,7 @@ final class Pipeline {
         withStateLock {
             guard !isShutDown, recording else { return }
             recording = false
+            recordingMode = nil
             ducker.restore()
             emit(.error(error.localizedDescription))
         }
@@ -343,6 +350,7 @@ final class Pipeline {
             rawText: rawText,
             isPolished: isPolished,
             modeName: mode.name,
+            modeID: mode.id,
             wordCount: text.split(whereSeparator: { $0.isWhitespace }).count,
             sourceApp: sourceApp,
             durationMs: Int(Double(samples.count) / AudioRecorder.sampleRate * 1000),

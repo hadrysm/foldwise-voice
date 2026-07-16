@@ -32,6 +32,7 @@ final class HistoryReprocessor {
         // convention (set to the session's Mode whether or not Polish survived);
         // the row displays it, so leaving it stale would misattribute the text.
         updated.modeName = mode.name
+        updated.modeID = mode.id
         // Same keep-or-fall-back decision as the live session, from the shared
         // `Polish.run` (ADR-0004): the short-input gate and the off-task check
         // are defined once, so Re-run can only ever match what the session does.

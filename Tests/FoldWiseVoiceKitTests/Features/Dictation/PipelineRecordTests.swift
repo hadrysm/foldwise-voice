@@ -99,6 +99,62 @@ final class PipelineRecordTests: XCTestCase {
         XCTAssertEqual(entry.sourceApp, "TextEdit")
     }
 
+    func testSessionFreezesCompleteModeWhenRecordingStarts() async throws {
+        let modeID = ModeID.random()
+        let startedMode = Mode(
+            id: modeID,
+            name: "Started Mode",
+            icon: "pencil",
+            asrModel: ASRModelCatalog.defaultID,
+            llmModel: "started-model",
+            transformation: .inPlace,
+            systemPrompt: "Started prompt",
+            vocabulary: ["FoldWise"]
+        )
+        let changedMode = Mode(
+            id: modeID,
+            name: "Changed Mode",
+            icon: "envelope",
+            asrModel: ASRModelCatalog.defaultID,
+            llmModel: "changed-model",
+            transformation: .expanding,
+            systemPrompt: "Changed prompt",
+            vocabulary: ["Changed"]
+        )
+        let config = makeTestConfig(mode: startedMode)
+        try preparePersistence(for: config, in: self)
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success(longTranscript)
+        let receivedMode = ModeCapture()
+        let recorded = RecordSpy()
+        let pipeline = Pipeline(
+            config: config,
+            recorder: FakeRecorder(),
+            transcriber: transcriber,
+            polish: { text, mode in
+                receivedMode.value = mode
+                return text
+            },
+            insert: { _ in true },
+            record: { recorded.record($0) },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        try await MainActor.run {
+            try config.replaceModes([changedMode], selection: .voiceToText)
+        }
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(receivedMode.value, startedMode)
+        XCTAssertEqual(recorded.entries.map(\.modeName), ["Started Mode", "Voice to Text"])
+        XCTAssertEqual(recorded.entries.map(\.modeID), [modeID, nil])
+    }
+
     // MARK: - only completed sessions are recorded
 
     func testDoesNotRecordWhenCaptureTooShort() async {
@@ -117,6 +173,7 @@ final class PipelineRecordTests: XCTestCase {
         // With saving off, the Pipeline must assemble and hand off nothing —
         // the record seam is never called, so no history file is ever written.
         let config = makeTestConfig()
+        try preparePersistence(for: config, in: self)
         try await MainActor.run { try config.setSaveHistory(false) }
         let entries = await recordSession(config: config, transcript: .success(longTranscript))
         XCTAssertTrue(entries.isEmpty)

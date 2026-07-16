@@ -111,12 +111,12 @@ final class SettingsWorkflow {
         reprocessor = HistoryReprocessor(store: historyStore, polish: polish)
         self.updates = updates ?? LiveSettingsUpdateChecker()
         self.reportUpdate = reportUpdate
+        observeConfigChanges()
     }
 
     func populatePreferences() {
         model.configurationRecoveryMessage = config.recovery?.message
-        model.modeNames = config.modeOrder
-        model.llmModes = Set(config.modeOrder.filter { config.modes[$0]?.usesLLM == true })
+        populateModes()
         model.activeMode = config.activeMode
         model.selectedModel = config.llmModel ?? ""
         model.asrModel = config.asrModel
@@ -136,6 +136,19 @@ final class SettingsWorkflow {
         model.retention = config.historyRetention
         model.sidebar = SidebarPresentation(prefersCollapsed: config.sidebarCollapsed)
         model.status = ""
+    }
+
+    private func populateModes() {
+        model.modeNames = config.modeOrder
+        model.llmModes = Set(config.modeOrder.filter { config.modes[$0]?.usesLLM == true })
+        model.modes = config.orderedModes
+    }
+
+    private func observeConfigChanges() {
+        config.onChange { [weak self] changes in
+            guard changes.contains(.modeLibrary) else { return }
+            self?.populateModes()
+        }
     }
 
     func populateHistory() {
@@ -229,9 +242,9 @@ final class SettingsWorkflow {
         case .toggleFlag:
             flagHistory(entry)
             return nil
-        case let .rerunPolish(modeName):
+        case let .rerunPolish(modeID):
             return Task { @MainActor in
-                await rerunPolish(entry, modeName: modeName)
+                await rerunPolish(entry, modeID: modeID)
             }
         case .delete:
             deleteHistory(entry)
@@ -250,8 +263,11 @@ final class SettingsWorkflow {
         model.historyEntries = historyStore.load()
     }
 
-    func rerunPolish(_ entry: HistoryEntry, modeName: String) async {
-        guard let mode = config.modes[modeName] else { return }
+    func rerunPolish(_ entry: HistoryEntry, modeID: ModeID) async {
+        guard let mode = config.mode(id: modeID) else {
+            setStatus("⚠️ Mode is no longer available. Choose another Mode.", isError: true)
+            return
+        }
         await reprocessor.rerunPolish(entry, mode: mode)
         model.historyEntries = historyStore.load()
     }
