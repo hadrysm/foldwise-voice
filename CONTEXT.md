@@ -115,6 +115,23 @@ several models that trade download size for accuracy and language coverage; the
 Whisper models are what widen FoldWise's language reach beyond Parakeet's 25.
 _Avoid_: weights, checkpoint
 
+**ASR model availability** — Whether an ASR model is ready to use because its
+model data is present locally. Downloading or deleting changes availability
+without changing the ASR model selection.
+_Avoid_: installed model, cached model
+
+**ASR model selection** — The global ASR model chosen for transcription. It
+changes only through explicit selection, never merely because another ASR model
+became available. Each Dictation session captures the selection when it begins;
+a later change applies to the next Dictation session.
+_Avoid_: active engine, downloaded model
+
+**Effective ASR model** — The ASR model a Dictation session actually uses after
+availability is resolved. It is normally the captured ASR model selection; when
+that selection is unavailable or unrecognized, FoldWise uses its default ASR
+model without silently changing the selection.
+_Avoid_: runtime selection, resolved engine
+
 ## Batch workflow
 
 **PRD** — a GitHub issue carrying the `prd` label that holds a product
