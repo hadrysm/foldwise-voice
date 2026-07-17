@@ -21,6 +21,7 @@ protocol AudioRecording: AnyObject {
 /// behavior under test.
 protocol Transcribing: AnyObject {
     var ready: Bool { get }
+    var isDictationBlocked: Bool { get }
     var onLoading: ((Bool) -> Void)? { get set }
     /// Fired with a 0…1 fraction while a model's weights download on first use,
     /// for a Badge/pane percentage (issue #93). An engine that can't report a
@@ -35,6 +36,12 @@ protocol Transcribing: AnyObject {
     func transcribe(_ samples: [Float]) async throws -> String
 }
 
+extension Transcribing {
+    var isDictationBlocked: Bool {
+        false
+    }
+}
+
 enum PipelineState: Equatable {
     case listening(mode: String)
     /// A model's weights are downloading on first use; `fraction` is 0…1.
@@ -42,6 +49,7 @@ enum PipelineState: Equatable {
     case loadingModel
     case transcribing
     case polishing(model: String)
+    case recognitionUnavailable
     case inserted
     case clipboard
     case idle
@@ -182,7 +190,7 @@ final class Pipeline {
 
     func startRecording() {
         withStateLock {
-            guard !isShutDown, !recording else { return }
+            guard !isShutDown, !recording, !transcriber.isDictationBlocked else { return }
             if config.pauseAudio { ducker.duck() }
             recording = true
             let mode = config.mode

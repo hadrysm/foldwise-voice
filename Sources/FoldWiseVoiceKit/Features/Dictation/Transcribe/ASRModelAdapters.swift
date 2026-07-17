@@ -110,6 +110,11 @@ struct ParakeetASRModelAdapter: ASRModelFamilyAdapting {
         try await download(variant, progress)
     }
 
+    func makeEngine(for id: String) throws -> Transcribing {
+        guard let variant = variant(for: id) else { throw ASRModelAdapterError.unknownModel(id) }
+        return Transcriber(version: variant)
+    }
+
     private func variant(for id: String) -> ASRModelCatalog.ParakeetVariant? {
         guard let entry = ASRModelCatalog.entry(for: id),
               case let .parakeet(version) = entry.engine else { return nil }
@@ -205,6 +210,11 @@ struct WhisperASRModelAdapter: ASRModelFamilyAdapting {
     ) async throws {
         guard let variant = variant(for: id) else { throw ASRModelAdapterError.unknownModel(id) }
         try await download(variant, progress)
+    }
+
+    func makeEngine(for id: String) throws -> Transcribing {
+        guard let variant = variant(for: id) else { throw ASRModelAdapterError.unknownModel(id) }
+        return WhisperTranscriber(variant: variant)
     }
 
     private func variant(for id: String) -> String? {

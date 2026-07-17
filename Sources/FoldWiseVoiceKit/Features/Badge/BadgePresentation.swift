@@ -566,6 +566,8 @@ enum BadgeReducer {
             // The post-talk stages show the spinner, not a word — the user
             // is waiting for their text, not watching stage names.
             .working(status: nil)
+        case .recognitionUnavailable:
+            .working(status: "speech model unavailable")
         case let .downloadingModel(fraction):
             .working(status: "downloading \(Int(fraction * 100))%")
         case .loadingModel:

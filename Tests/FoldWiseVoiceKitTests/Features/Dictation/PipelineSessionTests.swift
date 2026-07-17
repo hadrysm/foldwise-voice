@@ -7,7 +7,45 @@ import XCTest
 
 private struct FailedSessionError: Error {}
 
+private struct BlockedRecordingState: Equatable {
+    let recorderStartCount: Int
+    let duckingEvents: [AudioDuckingEvent]
+    let pipelineStates: [PipelineState]
+}
+
 final class PipelineSessionTests: XCTestCase {
+    func testBlockedRecognitionPreventsRecordingFromStarting() {
+        let recorder = FakeRecorder()
+        let transcriber = FakeTranscriber()
+        transcriber.isDictationBlocked = true
+        let ducker = FakeAudioDucker()
+        let pipeline = Pipeline(
+            config: makeTestConfig(pauseAudio: true),
+            recorder: recorder,
+            transcriber: transcriber,
+            ducker: ducker,
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+        let collector = StateCollector()
+        pipeline.onState = { collector.append($0) }
+
+        pipeline.startRecording()
+
+        XCTAssertEqual(
+            BlockedRecordingState(
+                recorderStartCount: recorder.startCount,
+                duckingEvents: ducker.events,
+                pipelineStates: collector.states
+            ),
+            BlockedRecordingState(
+                recorderStartCount: 0,
+                duckingEvents: [],
+                pipelineStates: []
+            )
+        )
+    }
+
     func testCaptureStartupFailureEmitsErrorWithoutListeningOrLaterStages() async {
         let recorder = FakeRecorder()
         recorder.startError = .bindFailed(device: "Studio Mic")

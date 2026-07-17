@@ -54,6 +54,13 @@ final class BadgeReducerTests: XCTestCase {
         )
     }
 
+    func testBlockedRecognitionExplainsWhyDictationCannotStart() {
+        XCTAssertEqual(
+            reduce(.idle, .pipeline(.recognitionUnavailable)).state,
+            .working(status: "speech model unavailable")
+        )
+    }
+
     func testInsertedEntersTheDoneBeat() {
         XCTAssertEqual(reduce(.working(status: nil), .pipeline(.inserted)).state, .done)
     }

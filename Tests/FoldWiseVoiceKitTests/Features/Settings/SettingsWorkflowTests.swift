@@ -79,6 +79,10 @@ final class SettingsWorkflowTests: XCTestCase {
         let errorDescription: String? = "listener activation failed"
     }
 
+    private struct EnginePreparationFailure: LocalizedError {
+        let errorDescription: String? = "engine rejected"
+    }
+
     private final class NonPersistingHistoryStore: HistoryStore {
         private let entries: [HistoryEntry]
 
@@ -366,6 +370,21 @@ final class SettingsWorkflowTests: XCTestCase {
         let deleteError: String
     }
 
+    private struct ASRRecoveryState: Equatable {
+        let storedSelection: String
+        let messageNamesStoredSelection: Bool
+        let messageNamesFallback: Bool
+        let catalogContainsStoredSelection: Bool
+    }
+
+    private struct ASRBootstrapPresentationState: Equatable {
+        let downloading: String?
+        let fraction: Double?
+        let error: String
+        let canRetry: Bool
+        let defaultIsAvailable: Bool
+    }
+
     @MainActor
     private final class SuspendedLLMLists {
         private(set) var requestCount = 0
@@ -496,6 +515,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let modelIDs = Set(ASRModelCatalog.entries.map(\.id))
         private let lock = NSLock()
         private var availableModelIDs: Set<String> = [ASRModelCatalog.defaultID]
+        private var enginePreparationError: Error?
         private let download: @MainActor (
             ASRModelCatalog.Entry,
             @escaping ASRProgress,
@@ -529,6 +549,16 @@ final class SettingsWorkflowTests: XCTestCase {
             if Task.isCancelled { throw CancellationError() }
             if let failure { throw DownloadError(errorDescription: failure) }
             setAvailable(true, id: id)
+        }
+
+        func makeEngine(for _: String) throws -> Transcribing {
+            let engine = FakeTranscriber()
+            engine.prepareError = lock.withLock { enginePreparationError }
+            return engine
+        }
+
+        func setEnginePreparationError(_ error: Error?) {
+            lock.withLock { enginePreparationError = error }
         }
 
         func setAvailable(_ available: Bool, id: String) {
@@ -1471,6 +1501,207 @@ final class SettingsWorkflowTests: XCTestCase {
                 deleting: nil,
                 deleteError: ""
             )
+        )
+    }
+
+    func testUnknownASRSelectionPublishesRecoveryNoticeWithoutCatalogRow() async throws {
+        let config = makeConfig()
+        try config.setASRModel("legacy/custom-asr")
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.populatePreferences()
+        await waitForPublishedValue(model.$asrRecoveryMessage) { $0 != nil }
+
+        XCTAssertEqual(
+            ASRRecoveryState(
+                storedSelection: model.asrModel,
+                messageNamesStoredSelection: model.asrRecoveryMessage?.contains(
+                    "legacy/custom-asr"
+                ) == true,
+                messageNamesFallback: model.asrRecoveryMessage?.contains("Parakeet") == true,
+                catalogContainsStoredSelection: model.asrCatalog.contains {
+                    $0.id == "legacy/custom-asr"
+                }
+            ),
+            ASRRecoveryState(
+                storedSelection: "legacy/custom-asr",
+                messageNamesStoredSelection: true,
+                messageNamesFallback: true,
+                catalogContainsStoredSelection: false
+            )
+        )
+    }
+
+    func testUnavailableASRSelectionPublishesRepairNotice() async throws {
+        let config = makeConfig()
+        try config.setASRModel("whisper-small")
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.populatePreferences()
+        await waitForPublishedValue(model.$asrRecoveryMessage) { $0 != nil }
+
+        XCTAssertEqual(
+            ASRRecoveryState(
+                storedSelection: model.asrModel,
+                messageNamesStoredSelection: model.asrRecoveryMessage?.contains(
+                    "Whisper small"
+                ) == true,
+                messageNamesFallback: model.asrRecoveryMessage?.contains("Parakeet") == true,
+                catalogContainsStoredSelection: model.asrCatalog.contains {
+                    $0.id == "whisper-small"
+                }
+            ),
+            ASRRecoveryState(
+                storedSelection: "whisper-small",
+                messageNamesStoredSelection: true,
+                messageNamesFallback: true,
+                catalogContainsStoredSelection: true
+            )
+        )
+    }
+
+    func testFailedDefaultBootstrapPublishesProgressAndExplicitRetryRecovers() async {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let preparation = SuspendedASRPreparation()
+        var attempt = 0
+        let effects = makeModelEffects(prepareASR: { entry, progress, loading in
+            attempt += 1
+            guard attempt == 1 else { return nil }
+            return await preparation.run(entry, progress: progress, loading: loading)
+        })
+        effects.asrAdapter.setAvailable(false, id: ASRModelCatalog.defaultID)
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [effects.asrAdapter]
+        )
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: effects,
+            asrLifecycle: lifecycle
+        )
+
+        let start = Task { await lifecycle.start() }
+        await preparation.waitUntilStarted()
+        preparation.report(fraction: 0.45, loading: true)
+        await waitForPublishedValue(model.$asrDownloadFraction) { $0 == 0.45 }
+        let progressing = ASRBootstrapPresentationState(
+            downloading: model.asrDownloading,
+            fraction: model.asrDownloadFraction,
+            error: model.asrDownloadError,
+            canRetry: model.canRetryASRBootstrap,
+            defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
+        )
+
+        preparation.finish("network unavailable")
+        await start.value
+        await waitForPublishedValue(model.$canRetryASRBootstrap) { $0 }
+        let failed = ASRBootstrapPresentationState(
+            downloading: model.asrDownloading,
+            fraction: model.asrDownloadFraction,
+            error: model.asrDownloadError,
+            canRetry: model.canRetryASRBootstrap,
+            defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
+        )
+
+        workflow.retryASRBootstrap()
+        await waitForPublishedValue(model.$asrDownloaded) {
+            $0.contains(ASRModelCatalog.defaultID)
+        }
+        let recovered = ASRBootstrapPresentationState(
+            downloading: model.asrDownloading,
+            fraction: model.asrDownloadFraction,
+            error: model.asrDownloadError,
+            canRetry: model.canRetryASRBootstrap,
+            defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
+        )
+
+        XCTAssertEqual(
+            [progressing, failed, recovered],
+            [
+                ASRBootstrapPresentationState(
+                    downloading: ASRModelCatalog.defaultID,
+                    fraction: 0.45,
+                    error: "",
+                    canRetry: false,
+                    defaultIsAvailable: false
+                ),
+                ASRBootstrapPresentationState(
+                    downloading: nil,
+                    fraction: nil,
+                    error: "Couldn't prepare the default speech model: network unavailable",
+                    canRetry: true,
+                    defaultIsAvailable: false
+                ),
+                ASRBootstrapPresentationState(
+                    downloading: nil,
+                    fraction: nil,
+                    error: "",
+                    canRetry: false,
+                    defaultIsAvailable: true
+                ),
+            ]
+        )
+    }
+
+    func testDefaultEngineLoadFailureOffersExplicitBootstrapRetry() async {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let effects = makeModelEffects()
+        effects.asrAdapter.setEnginePreparationError(EnginePreparationFailure())
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [effects.asrAdapter]
+        )
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: effects,
+            asrLifecycle: lifecycle
+        )
+
+        await lifecycle.start()
+        await waitForPublishedValue(model.$asrDownloadError) { $0.contains("engine rejected") }
+        let failed = ASRBootstrapPresentationState(
+            downloading: model.asrDownloading,
+            fraction: model.asrDownloadFraction,
+            error: model.asrDownloadError,
+            canRetry: model.canRetryASRBootstrap,
+            defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
+        )
+
+        effects.asrAdapter.setEnginePreparationError(nil)
+        workflow.retryASRBootstrap()
+        await waitUntil { model.asrDownloadError.isEmpty }
+        let recovered = ASRBootstrapPresentationState(
+            downloading: model.asrDownloading,
+            fraction: model.asrDownloadFraction,
+            error: model.asrDownloadError,
+            canRetry: model.canRetryASRBootstrap,
+            defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
+        )
+
+        XCTAssertEqual(
+            [failed, recovered],
+            [
+                ASRBootstrapPresentationState(
+                    downloading: nil,
+                    fraction: nil,
+                    error: "Couldn't load Parakeet TDT v3: engine rejected",
+                    canRetry: true,
+                    defaultIsAvailable: false
+                ),
+                ASRBootstrapPresentationState(
+                    downloading: nil,
+                    fraction: nil,
+                    error: "",
+                    canRetry: false,
+                    defaultIsAvailable: true
+                ),
+            ]
         )
     }
 

@@ -154,6 +154,7 @@ final class SettingsWorkflow {
             }
             if changes.contains(.asrModel) {
                 let selectedID = config.asrModel
+                model.asrModel = selectedID
                 Task { await self.asrLifecycle.updateStoredSelection(selectedID) }
             }
         }
@@ -171,12 +172,27 @@ final class SettingsWorkflow {
     }
 
     private func applyASRSnapshot(_ snapshot: ASRModelLifecycleSnapshot) {
+        guard snapshot.storedSelection == config.asrModel else { return }
         model.asrCatalog = snapshot.models
         model.asrModel = snapshot.storedSelection
         model.asrDownloaded = Set(snapshot.models.filter(\.isAvailable).map(\.id))
+        switch snapshot.recovery {
+        case let .storedSelectionUnavailable(modelID, fallbackModelID):
+            let selected = asrModelName(modelID, in: snapshot.models)
+            let fallback = asrModelName(fallbackModelID, in: snapshot.models)
+            model.asrRecoveryMessage = "\(selected) is unavailable. Using \(fallback) until you download it again."
+        case let .storedSelectionUnknown(modelID, fallbackModelID):
+            let fallback = asrModelName(fallbackModelID, in: snapshot.models)
+            model.asrRecoveryMessage = "Stored speech model “\(modelID)” isn't recognized. Using \(fallback)."
+        case nil:
+            model.asrRecoveryMessage = nil
+        }
         switch snapshot.operation {
         case let .downloading(modelID, fraction):
             model.asrDownloading = modelID
+            model.asrDownloadFraction = fraction
+        case let .bootstrapping(fraction):
+            model.asrDownloading = ASRModelCatalog.defaultID
             model.asrDownloadFraction = fraction
         case nil:
             model.asrDownloading = nil
@@ -184,14 +200,26 @@ final class SettingsWorkflow {
         }
         switch snapshot.failure {
         case let .downloadFailed(modelID, reason):
-            let name = snapshot.models.first { $0.id == modelID }?.name ?? modelID
+            let name = asrModelName(modelID, in: snapshot.models)
             model.asrDownloadError = "Couldn't download \(name): \(reason)"
         case let .downloadedDataInvalid(modelID):
-            let name = snapshot.models.first { $0.id == modelID }?.name ?? modelID
+            let name = asrModelName(modelID, in: snapshot.models)
             model.asrDownloadError = "Downloaded data for \(name) is incomplete or corrupt."
+        case let .bootstrapFailed(reason):
+            model.asrDownloadError = "Couldn't prepare the default speech model: \(reason)"
+        case let .engineLoadFailed(modelID, reason):
+            let name = asrModelName(modelID, in: snapshot.models)
+            model.asrDownloadError = "Couldn't load \(name): \(reason)"
         case nil:
             model.asrDownloadError = ""
         }
+        model.canRetryASRBootstrap = snapshot.isDictationBlocked
+            && snapshot.operation == nil
+            && snapshot.failure?.allowsBootstrapRetry == true
+    }
+
+    private func asrModelName(_ id: String, in models: [ASRModelDescriptor]) -> String {
+        models.first { $0.id == id }?.name ?? id
     }
 
     private func reconcileASRAvailability() {
@@ -587,7 +615,6 @@ final class SettingsWorkflow {
     func selectASRModel(_ id: String) {
         model.asrModel = id
         commit()
-        Task { await asrLifecycle.updateStoredSelection(config.asrModel) }
     }
 
     func downloadASRModel(_ id: String) {
@@ -605,10 +632,14 @@ final class SettingsWorkflow {
         Task { await asrLifecycle.cancelCurrentOperation() }
     }
 
+    func retryASRBootstrap() {
+        Task { await asrLifecycle.retryBootstrap() }
+    }
+
     func deleteASRModel(_ id: String) {
         guard asrDeleteID == nil, asrDownloadID == nil,
               let descriptor = model.asrCatalog.first(where: { $0.id == id }),
-              !descriptor.isDefault else { return }
+              descriptor.allowsDeletion else { return }
         let operationID = UUID()
         asrDeleteID = operationID
         model.asrDeleting = id

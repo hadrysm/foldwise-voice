@@ -480,7 +480,7 @@ private extension PipelineState {
         switch self {
         case .idle: false
         case .listening, .downloadingModel, .loadingModel, .transcribing,
-             .polishing, .inserted, .clipboard, .error: true
+             .polishing, .recognitionUnavailable, .inserted, .clipboard, .error: true
         }
     }
 }

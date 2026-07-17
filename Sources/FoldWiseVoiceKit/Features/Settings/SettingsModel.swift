@@ -69,6 +69,8 @@ final class SettingsModel: ObservableObject {
     /// keeps the pane on the indeterminate spinner (#93).
     @Published var asrDownloadFraction: Double?
     @Published var asrDownloadError = ""
+    @Published var asrRecoveryMessage: String?
+    @Published var canRetryASRBootstrap = false
     @Published var asrDeleting: String?
     @Published var asrDeleteError = ""
     @Published var installed: [OllamaClient.InstalledModel]? // nil = checking, [] = Ollama down
@@ -148,6 +150,7 @@ final class SettingsModel: ObservableObject {
     /// Abort an in-flight download/prepare and return the row to its pre-download
     /// state, so a slow or stalled fetch (or the post-100% compile) can be escaped.
     var onCancelASRDownload: (() -> Void)?
+    var onRetryASRBootstrap: (() -> Void)?
     /// Delete a downloaded model's on-disk weights to reclaim space (#95). If it
     /// was active, dictation falls back to Parakeet until another is selected.
     var onDeleteASRModel: ((String) -> Void)?

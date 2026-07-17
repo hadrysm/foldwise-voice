@@ -29,10 +29,22 @@ struct SpeechPane: View {
             if !downloaded.isEmpty { section("Your Models", downloaded) }
             if !available.isEmpty { section("Available", available) }
 
-            if !model.asrDownloadError.isEmpty {
-                Label(model.asrDownloadError, systemImage: "exclamationmark.triangle.fill")
+            if let recovery = model.asrRecoveryMessage {
+                Label(recovery, systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
                     .font(Theme.ui(11))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+
+            if !model.asrDownloadError.isEmpty {
+                HStack(spacing: 8) {
+                    Label(model.asrDownloadError, systemImage: "exclamationmark.triangle.fill")
+                        .font(Theme.ui(11))
+                        .foregroundStyle(.red)
+                    if model.canRetryASRBootstrap {
+                        Button("Retry") { model.onRetryASRBootstrap?() }
+                            .controlSize(.small)
+                    }
+                }
             }
             if !model.asrDeleteError.isEmpty {
                 Label(model.asrDeleteError, systemImage: "exclamationmark.triangle.fill")
@@ -80,7 +92,7 @@ struct SpeechPane: View {
         let deleting = model.asrDeleting == entry.id
         // The built-in default (Parakeet v3) is the permanent fallback and
         // re-downloads at launch, so it is never offered for deletion.
-        let deletable = downloaded && !deleting && !entry.isDefault
+        let deletable = downloaded && !deleting && entry.allowsDeletion
         return HStack(alignment: .center, spacing: 12) {
             Button {
                 model.onSelectASRModel?(entry.id)
@@ -113,7 +125,7 @@ struct SpeechPane: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(!downloaded || deleting)
+            .disabled(!downloaded || deleting || model.asrDownloading != nil)
 
             if downloading {
                 HStack(spacing: 8) {

@@ -90,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeys: HotkeyBindingCoordinator!
     private var modeCycleCommand: ModeCycleCommand!
     private var updateChecker: UpdateChecker!
+    private var asrLifecycleWasBlocking = false
     private let shortcutCaptureGate = ShortcutCaptureGate()
     // swiftlint:enable implicitly_unwrapped_optional
 
@@ -123,15 +124,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // and the Badge's level meter, and warmup is triggered here (below),
         // not inside Pipeline.
         let recorder = AudioRecorder(config: config, hardware: CoreAudioHardware())
-        // The dispatcher fronts the ASR engines behind the `Transcribing` seam
-        // (ADR-0005): it resolves the active engine from `config.asrModel` and
-        // subscribes to `.asrModel` changes itself. The Pipeline drives it as an
-        // ordinary transcriber and never learns there is more than one engine.
-        let transcriber = TranscriberDispatcher(config: config)
         let asrLifecycle = ASRModelLifecycle(
             storedSelection: config.asrModel,
             adapters: [ParakeetASRModelAdapter(), WhisperASRModelAdapter()]
         )
+        let transcriber: Transcribing = asrLifecycle
         // One store shared between the record seam and the History pane, so a
         // dictation just spoken is on disk for the pane to load (PRD #78).
         let historyStore = JSONLHistoryStore(url: JSONLHistoryStore.defaultURL)
@@ -220,6 +217,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pipeline.onState = { [weak self] state in
             Task { @MainActor in self?.apply(state) }
         }
+        Task { [weak self] in
+            for await snapshot in await asrLifecycle.snapshots() {
+                guard !Task.isCancelled else { return }
+                self?.applyASRLifecycle(snapshot)
+            }
+        }
 
         updateChecker = UpdateChecker { [weak self] version in
             self?.menuBar.showUpdateAvailable(version)
@@ -235,8 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 "Hotkey setup failed: \(error.localizedDescription, privacy: .public)"
             )
         }
-        transcriber.warmup()
-        Task { await asrLifecycle.reconcileAvailability() }
+        asrLifecycle.warmup()
 
         // The living idle pill is the ready signal (PRD #103); the hotkey
         // hint lives on Home, rendered from the live config.
@@ -288,11 +290,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch state {
         case .listening:
             menuBar.setIcon(.listening)
-        case .downloadingModel, .loadingModel, .transcribing, .polishing:
+        case .downloadingModel, .loadingModel, .transcribing, .polishing,
+             .recognitionUnavailable:
             menuBar.setIcon(.working)
         case .inserted, .clipboard, .error, .idle:
             menuBar.setIcon(.idle)
         }
+    }
+
+    private func applyASRLifecycle(_ snapshot: ASRModelLifecycleSnapshot) {
+        switch snapshot.operation {
+        case let .bootstrapping(fraction):
+            badge.apply(fraction.map { .downloadingModel(fraction: $0) } ?? .loadingModel)
+        case .downloading:
+            break
+        case nil where snapshot.isDictationBlocked:
+            badge.apply(.recognitionUnavailable)
+        case nil where asrLifecycleWasBlocking:
+            badge.apply(.idle)
+        case nil:
+            break
+        }
+        asrLifecycleWasBlocking = snapshot.isDictationBlocked
     }
 
     @objc private func quit() {

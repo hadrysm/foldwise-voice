@@ -129,6 +129,39 @@ final class ASRModelAdapterTests: XCTestCase {
         )
     }
 
+    func testLiveAdaptersConstructMappedEnginesWithoutLoadingModelData() throws {
+        let parakeet = try ParakeetASRModelAdapter().makeEngine(for: "parakeet-v2")
+        let whisper = try WhisperASRModelAdapter().makeEngine(for: "whisper-small")
+
+        XCTAssertEqual(
+            [parakeet is Transcriber, whisper is WhisperTranscriber],
+            [true, true]
+        )
+    }
+
+    func testAdaptersRejectEngineConstructionForUnknownModelIDs() {
+        XCTAssertEqual(
+            [
+                constructionFails {
+                    try ParakeetASRModelAdapter().makeEngine(for: "whisper-small")
+                },
+                constructionFails {
+                    try WhisperASRModelAdapter().makeEngine(for: "parakeet-v3")
+                },
+            ],
+            [true, true]
+        )
+    }
+
+    private func constructionFails(_ construct: () throws -> Transcribing) -> Bool {
+        do {
+            _ = try construct()
+            return false
+        } catch {
+            return true
+        }
+    }
+
     func testParakeetLibraryDownloadUsesStorageOnlyRepositoryPrimitive() async throws {
         let directory = try XCTUnwrap(directory)
         let probe = ParakeetRepositoryDownloadProbe()
@@ -156,6 +189,51 @@ final class ASRModelAdapterTests: XCTestCase {
                 progress: [0.4]
             )
         )
+    }
+
+    func testParakeetV2LibraryDownloadUsesItsRepositoryWithoutAPrecisionVariant() async throws {
+        let directory = try XCTUnwrap(directory)
+        let probe = ParakeetRepositoryDownloadProbe()
+        let modelDirectory: ParakeetASRModelAdapter.ModelDirectory = { _ in
+            directory.appendingPathComponent("parakeet-v2")
+        }
+        let download: ParakeetASRModelAdapter.RepositoryDownload = { repo, parent, variant, progress in
+            probe.record(repo: repo.folderName, directory: parent, variant: variant)
+            progress(0.25)
+        }
+
+        try await ParakeetASRModelAdapter.downloadFromLibrary(
+            .v2,
+            { probe.recordProgress($0) },
+            modelDirectory: modelDirectory,
+            downloadRepository: download
+        )
+
+        XCTAssertEqual(
+            probe.state,
+            ParakeetRepositoryDownloadState(
+                repository: "parakeet-tdt-0.6b-v2",
+                directory: directory.appendingPathComponent("parakeet-v2")
+                    .deletingLastPathComponent(),
+                variant: nil,
+                progress: [0.25]
+            )
+        )
+    }
+
+    func testParakeetLibraryDownloadFailsWhenTheModelDirectoryCannotResolve() async {
+        let modelDirectory: ParakeetASRModelAdapter.ModelDirectory = { _ in nil }
+        let download: ParakeetASRModelAdapter.RepositoryDownload = { _, _, _, _ in }
+        let error = await unknownModelError {
+            try await ParakeetASRModelAdapter.downloadFromLibrary(
+                .v3,
+                { _ in },
+                modelDirectory: modelDirectory,
+                downloadRepository: download
+            )
+        }
+
+        XCTAssertEqual(error, "Couldn't locate the ASR model directory.")
     }
 
     func testWhisperLibraryDownloadStoresWeightsAndTokenizerWithoutEngineLoading() async throws {
