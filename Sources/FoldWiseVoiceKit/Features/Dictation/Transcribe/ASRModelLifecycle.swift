@@ -107,7 +107,7 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
     private var activeDownload: ActiveDownload?
     private var canceledDownloadIDs: Set<UUID> = []
     private var observers: [UUID: AsyncStream<ASRModelLifecycleSnapshot>.Continuation] = [:]
-    private let transcriberState = ASRLifecycleTranscriberState()
+    private let sessionCoordinator = ASRLifecycleSessionCoordinator()
 
     init(
         storedSelection: String,
@@ -118,21 +118,21 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
     }
 
     nonisolated var ready: Bool {
-        transcriberState.ready
+        sessionCoordinator.ready
     }
 
     nonisolated var isDictationBlocked: Bool {
-        transcriberState.isDictationBlocked
+        sessionCoordinator.isDictationBlocked
     }
 
     nonisolated var onLoading: ((Bool) -> Void)? {
-        get { transcriberState.onLoading }
-        set { transcriberState.onLoading = newValue }
+        get { sessionCoordinator.onLoading }
+        set { sessionCoordinator.onLoading = newValue }
     }
 
     nonisolated var onDownloadProgress: ((Double) -> Void)? {
-        get { transcriberState.onDownloadProgress }
-        set { transcriberState.onDownloadProgress = newValue }
+        get { sessionCoordinator.onDownloadProgress }
+        set { sessionCoordinator.onDownloadProgress = newValue }
     }
 
     nonisolated func warmup() {
@@ -140,7 +140,7 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
     }
 
     nonisolated func captureSession() throws -> any ASRSessionHandle {
-        try transcriberState.captureSession()
+        try sessionCoordinator.captureSession()
     }
 
     func prepare() async throws {
@@ -159,7 +159,7 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
         guard !didStart else { return }
         didStart = true
         dictationBlocked = true
-        transcriberState.setDictationBlocked(true)
+        sessionCoordinator.setDictationBlocked(true)
         reconcileAvailabilityFromAdapters()
         guard availability.contains(ASRModelCatalog.defaultID) else {
             await bootstrapDefault()
@@ -197,7 +197,7 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
             }
             guard targetID != effectiveSelection || engine == nil else {
                 dictationBlocked = false
-                transcriberState.activate(engine)
+                sessionCoordinator.activate(engine)
                 publishSnapshot()
                 return
             }
@@ -217,11 +217,11 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
             }
             do {
                 let candidate = try adapter.makeEngine(for: targetID)
-                candidate.onLoading = { [transcriberState] in
-                    transcriberState.notifyLoading($0)
+                candidate.onLoading = { [sessionCoordinator] in
+                    sessionCoordinator.notifyLoading($0)
                 }
-                candidate.onDownloadProgress = { [transcriberState] in
-                    transcriberState.notifyDownloadProgress($0)
+                candidate.onDownloadProgress = { [sessionCoordinator] in
+                    sessionCoordinator.notifyDownloadProgress($0)
                 }
                 try await candidate.prepare()
                 guard targetID == effectiveTargetID(), availability.contains(targetID) else {
@@ -230,7 +230,7 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
                 engine = candidate
                 effectiveSelection = targetID
                 dictationBlocked = false
-                transcriberState.activate(candidate)
+                sessionCoordinator.activate(candidate)
                 publishSnapshot()
                 return
             } catch {
@@ -259,10 +259,10 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
 
     private func blockDictationThenReleaseEngine() async {
         dictationBlocked = true
-        if transcriberState.beginBlockingSessions() {
+        if sessionCoordinator.beginBlockingSessions() {
             publishSnapshot()
         }
-        await transcriberState.waitForSessionsToDrain()
+        await sessionCoordinator.waitForSessionsToDrain()
         engine = nil
         effectiveSelection = nil
     }
@@ -278,7 +278,7 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
         failure = nil
         operation = .bootstrapping(fraction: nil)
         dictationBlocked = true
-        transcriberState.setDictationBlocked(true)
+        sessionCoordinator.setDictationBlocked(true)
         publishSnapshot()
         let lifecycle = self
         let result = await Task {
@@ -507,7 +507,7 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
     }
 }
 
-private final class ASRLifecycleTranscriberState: @unchecked Sendable {
+private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
     private let lock = NSLock()
     private var _ready = false
     private var _isDictationBlocked = true
