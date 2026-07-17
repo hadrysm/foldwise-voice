@@ -44,6 +44,8 @@ enum ASRModelLifecycleRecovery: Equatable {
 enum ASRModelLifecycleOperation: Equatable {
     case downloading(modelID: String, fraction: Double?)
     case bootstrapping(fraction: Double?)
+    case switching(modelID: String)
+    case restoring(modelID: String)
 }
 
 enum ASRModelLifecycleFailure: Equatable {
@@ -51,6 +53,9 @@ enum ASRModelLifecycleFailure: Equatable {
     case downloadedDataInvalid(modelID: String)
     case bootstrapFailed(reason: String)
     case engineLoadFailed(modelID: String, reason: String)
+    case selectionFailed(modelID: String, reason: String)
+    case selectionCanceled(modelID: String)
+    case selectionDegraded(modelID: String, fallbackModelID: String, reason: String?)
 
     var allowsBootstrapRetry: Bool {
         switch self {
@@ -58,7 +63,8 @@ enum ASRModelLifecycleFailure: Equatable {
             true
         case let .engineLoadFailed(modelID, _):
             modelID == ASRModelCatalog.defaultID
-        case .downloadFailed, .downloadedDataInvalid:
+        case .downloadFailed, .downloadedDataInvalid, .selectionFailed, .selectionCanceled,
+             .selectionDegraded:
             false
         }
     }
@@ -86,14 +92,22 @@ enum ASRModelLifecycleError: LocalizedError {
 }
 
 actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
+    typealias PersistSelection = @MainActor (String) throws -> Void
+
     private struct ActiveDownload {
         let id: UUID
         let modelID: String
         let task: Task<Void, Error>
     }
 
+    private struct ActiveSelection {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
     private var storedSelection: String
     private let adapters: [any ASRModelFamilyAdapting]
+    private let persistSelection: PersistSelection
     private var availability: Set<String> = []
     private var rejectedEngineModelIDs: Set<String> = []
     private var effectiveSelection: String?
@@ -105,16 +119,19 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
     private var operation: ASRModelLifecycleOperation?
     private var failure: ASRModelLifecycleFailure?
     private var activeDownload: ActiveDownload?
+    private var activeSelection: ActiveSelection?
     private var canceledDownloadIDs: Set<UUID> = []
     private var observers: [UUID: AsyncStream<ASRModelLifecycleSnapshot>.Continuation] = [:]
     private let sessionCoordinator = ASRLifecycleSessionCoordinator()
 
     init(
         storedSelection: String,
-        adapters: [any ASRModelFamilyAdapting]
+        adapters: [any ASRModelFamilyAdapting],
+        persistSelection: @escaping PersistSelection = { _ in }
     ) {
         self.storedSelection = storedSelection
         self.adapters = adapters
+        self.persistSelection = persistSelection
     }
 
     nonisolated var ready: Bool {
@@ -217,11 +234,13 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
             }
             do {
                 let candidate = try adapter.makeEngine(for: targetID)
-                candidate.onLoading = { [sessionCoordinator] in
-                    sessionCoordinator.notifyLoading($0)
-                }
-                candidate.onDownloadProgress = { [sessionCoordinator] in
-                    sessionCoordinator.notifyDownloadProgress($0)
+                if operation == nil {
+                    candidate.onLoading = { [sessionCoordinator] in
+                        sessionCoordinator.notifyLoading($0)
+                    }
+                    candidate.onDownloadProgress = { [sessionCoordinator] in
+                        sessionCoordinator.notifyDownloadProgress($0)
+                    }
                 }
                 try await candidate.prepare()
                 guard targetID == effectiveTargetID(), availability.contains(targetID) else {
@@ -263,6 +282,19 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
             publishSnapshot()
         }
         await sessionCoordinator.waitForSessionsToDrain()
+        engine = nil
+        effectiveSelection = nil
+    }
+
+    private func blockDictationThenReleaseEngineForSelection() async throws {
+        do {
+            try await sessionCoordinator.waitForSessionsToDrainCancelable()
+            try Task.checkCancellation()
+        } catch {
+            dictationBlocked = false
+            sessionCoordinator.activate(engine)
+            throw error
+        }
         engine = nil
         effectiveSelection = nil
     }
@@ -314,6 +346,10 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
             publishSnapshot()
             return
         }
+        guard operation == nil else {
+            publishSnapshot()
+            return
+        }
         guard !requiresExplicitBootstrapRetry else {
             publishSnapshot()
             return
@@ -327,24 +363,122 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
         await ensureEffectiveEngine()
     }
 
-    func updateStoredSelection(_ id: String) async {
-        storedSelection = id
-        reconcileAvailabilityFromAdapters()
-        guard didStart else {
-            publishSnapshot()
-            return
-        }
-        if case .bootstrapping = operation {
-            publishSnapshot()
-            return
-        }
-        let targetID = effectiveTargetID()
+    func select(_ id: String) async {
+        if !didStart { await start() }
+        guard operation == nil,
+              activeDownload == nil,
+              activeSelection == nil,
+              id != storedSelection,
+              availability.contains(id),
+              adapter(for: id) != nil
+        else { return }
+
+        let operationID = UUID()
+        let previousSelection = storedSelection
+        let previousEffectiveSelection = effectiveSelection ?? effectiveTargetID()
+        operation = .switching(modelID: id)
         failure = nil
-        guard targetID != effectiveSelection else {
+        dictationBlocked = true
+        _ = sessionCoordinator.beginBlockingSessions()
+        publishSnapshot()
+        let lifecycle = self
+        let task = Task {
+            await lifecycle.performSelection(
+                id,
+                previousSelection: previousSelection,
+                previousEffectiveSelection: previousEffectiveSelection,
+                operationID: operationID
+            )
+        }
+        activeSelection = ActiveSelection(id: operationID, task: task)
+        await task.value
+    }
+
+    private func performSelection(
+        _ id: String,
+        previousSelection: String,
+        previousEffectiveSelection: String,
+        operationID: UUID
+    ) async {
+        guard activeSelection?.id == operationID,
+              let adapter = adapter(for: id) else { return }
+        do {
+            try await blockDictationThenReleaseEngineForSelection()
+        } catch {
+            storedSelection = previousSelection
+            failure = .selectionCanceled(modelID: id)
+            operation = nil
+            activeSelection = nil
             publishSnapshot()
             return
         }
-        await ensureEffectiveEngine()
+        publishSnapshot()
+
+        var candidate: Transcribing?
+        var candidateLoaded = false
+        do {
+            candidate = try adapter.makeEngine(for: id)
+            guard let candidate else { return }
+            try await candidate.prepare()
+            candidateLoaded = true
+            try Task.checkCancellation()
+            guard activeSelection?.id == operationID else { throw CancellationError() }
+            try await persistSelection(id)
+            storedSelection = id
+            engine = candidate
+            effectiveSelection = id
+            operation = nil
+            dictationBlocked = false
+            activeSelection = nil
+            sessionCoordinator.activate(candidate)
+            publishSnapshot()
+        } catch {
+            candidate = nil
+            if !candidateLoaded, !(error is CancellationError) {
+                rejectedEngineModelIDs.insert(id)
+                reconcileAvailabilityFromAdapters()
+            }
+            let interruption: ASRModelLifecycleFailure = if error is CancellationError {
+                .selectionCanceled(modelID: id)
+            } else {
+                .selectionFailed(modelID: id, reason: error.localizedDescription)
+            }
+            await restorePreviousSelection(
+                previousSelection,
+                effectiveSelection: previousEffectiveSelection,
+                after: interruption
+            )
+        }
+    }
+
+    private func restorePreviousSelection(
+        _ previousSelection: String,
+        effectiveSelection previousEffectiveSelection: String,
+        after interruption: ASRModelLifecycleFailure
+    ) async {
+        failure = interruption
+        storedSelection = previousSelection
+        operation = .restoring(modelID: previousEffectiveSelection)
+        publishSnapshot()
+        let restoration = Task { await self.ensureEffectiveEngine() }
+        await restoration.value
+        if effectiveSelection == previousEffectiveSelection {
+            failure = interruption
+        } else if effectiveSelection == ASRModelCatalog.defaultID {
+            let restorationReason: String? = if case let .engineLoadFailed(_, reason) = failure {
+                reason
+            } else {
+                nil
+            }
+            failure = .selectionDegraded(
+                modelID: previousSelection,
+                fallbackModelID: ASRModelCatalog.defaultID,
+                reason: restorationReason
+            )
+        }
+        operation = nil
+        activeSelection = nil
+        publishSnapshot()
     }
 
     func snapshots() -> AsyncStream<ASRModelLifecycleSnapshot> {
@@ -377,15 +511,19 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
     }
 
     func cancelCurrentOperation() async {
-        guard let activeDownload else { return }
-        canceledDownloadIDs.insert(activeDownload.id)
-        activeDownload.task.cancel()
-        let result = await activeDownload.task.result
-        await finishDownload(
-            operationID: activeDownload.id,
-            modelID: activeDownload.modelID,
-            result: result
-        )
+        if let activeDownload {
+            canceledDownloadIDs.insert(activeDownload.id)
+            activeDownload.task.cancel()
+            let result = await activeDownload.task.result
+            await finishDownload(
+                operationID: activeDownload.id,
+                modelID: activeDownload.modelID,
+                result: result
+            )
+        } else if let activeSelection {
+            activeSelection.task.cancel()
+            await activeSelection.task.value
+        }
     }
 
     private func finishDownload(
@@ -514,6 +652,9 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
     private var engine: Transcribing?
     private var activeSessionCount = 0
     private var sessionDrainWaiters: [CheckedContinuation<Void, Never>] = []
+    private var cancellableSessionDrainWaiters: [
+        UUID: CheckedContinuation<Void, Error>
+    ] = [:]
     private var _onLoading: ((Bool) -> Void)?
     private var _onDownloadProgress: ((Double) -> Void)?
 
@@ -580,16 +721,53 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
         }
     }
 
-    private func releaseSession() {
-        let waiters = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
-            activeSessionCount -= 1
-            guard activeSessionCount == 0 else { return [] }
-            defer { sessionDrainWaiters.removeAll() }
-            return sessionDrainWaiters
+    func waitForSessionsToDrainCancelable() async throws {
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation { continuation in
+                let shouldResume = lock.withLock {
+                    guard activeSessionCount > 0 else { return true }
+                    cancellableSessionDrainWaiters[waiterID] = continuation
+                    return false
+                }
+                if shouldResume {
+                    continuation.resume(returning: ())
+                } else if Task.isCancelled {
+                    cancelSessionDrainWaiter(waiterID)
+                }
+            }
+        } onCancel: {
+            self.cancelSessionDrainWaiter(waiterID)
         }
-        for waiter in waiters {
+    }
+
+    private func releaseSession() {
+        let waiters = lock.withLock { () -> (
+            [CheckedContinuation<Void, Never>],
+            [CheckedContinuation<Void, Error>]
+        ) in
+            activeSessionCount -= 1
+            guard activeSessionCount == 0 else { return ([], []) }
+            defer {
+                sessionDrainWaiters.removeAll()
+                cancellableSessionDrainWaiters.removeAll()
+            }
+            return (sessionDrainWaiters, Array(cancellableSessionDrainWaiters.values))
+        }
+        for waiter in waiters.0 {
             waiter.resume()
         }
+        for waiter in waiters.1 {
+            waiter.resume(returning: ())
+        }
+    }
+
+    private func cancelSessionDrainWaiter(_ id: UUID) {
+        let waiter = lock.withLock {
+            cancellableSessionDrainWaiters.removeValue(forKey: id)
+        }
+        waiter?.resume(throwing: CancellationError())
     }
 
     func notifyLoading(_ loading: Bool) {

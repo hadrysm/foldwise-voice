@@ -572,6 +572,8 @@ enum BadgeReducer {
             .working(status: "downloading \(Int(fraction * 100))%")
         case .loadingModel:
             .working(status: "preparing…")
+        case .switchingASRModel:
+            .working(status: "switching speech model…")
         case .inserted:
             .done
         case .clipboard:

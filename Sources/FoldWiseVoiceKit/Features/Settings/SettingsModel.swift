@@ -69,6 +69,8 @@ final class SettingsModel: ObservableObject {
     /// keeps the pane on the indeterminate spinner (#93).
     @Published var asrDownloadFraction: Double?
     @Published var isASRBootstrapping = false
+    @Published var asrSwitching: String?
+    @Published var asrRestoring: String?
     @Published var asrDownloadError = ""
     @Published var asrRecoveryMessage: String?
     @Published var canRetryASRBootstrap = false
@@ -110,6 +112,10 @@ final class SettingsModel: ObservableObject {
     @Published var shortcutListenerHealth: ShortcutListenerHealth = .global
     @Published var configurationRecoveryMessage: String?
 
+    var hasActiveASRManagementOperation: Bool {
+        asrDownloading != nil || asrSwitching != nil || asrRestoring != nil || asrDeleting != nil
+    }
+
     @Published var modeSelection = ModePresentationFactory.projection(
         modes: [], selection: .voiceToText
     )
@@ -150,7 +156,7 @@ final class SettingsModel: ObservableObject {
     var onDownloadASRModel: ((String) -> Void)?
     /// Abort an in-flight download/prepare and return the row to its pre-download
     /// state, so a slow or stalled fetch (or the post-100% compile) can be escaped.
-    var onCancelASRDownload: (() -> Void)?
+    var onCancelASROperation: (() -> Void)?
     var onRetryASRBootstrap: (() -> Void)?
     /// Delete a downloaded model's on-disk weights to reclaim space (#95). If it
     /// was active, dictation falls back to Parakeet until another is selected.

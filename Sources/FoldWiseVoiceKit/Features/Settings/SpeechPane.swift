@@ -29,6 +29,12 @@ struct SpeechPane: View {
             if !downloaded.isEmpty { section("Your Models", downloaded) }
             if !available.isEmpty { section("Available", available) }
 
+            if let modelID = model.asrSwitching {
+                operationStatus("Switching to \(modelName(modelID))…", allowsCancellation: true)
+            } else if let modelID = model.asrRestoring {
+                operationStatus("Restoring \(modelName(modelID))…", allowsCancellation: false)
+            }
+
             if let recovery = model.asrRecoveryMessage {
                 Label(recovery, systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
                     .font(Theme.ui(11))
@@ -90,6 +96,7 @@ struct SpeechPane: View {
         let selected = model.asrModel == entry.id
         let downloading = model.asrDownloading == entry.id
         let deleting = model.asrDeleting == entry.id
+        let managementBusy = model.hasActiveASRManagementOperation
         // The built-in default (Parakeet v3) is the permanent fallback and
         // re-downloads at launch, so it is never offered for deletion.
         let deletable = downloaded && !deleting && entry.allowsDeletion
@@ -125,14 +132,14 @@ struct SpeechPane: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(!downloaded || deleting || model.asrDownloading != nil)
+            .disabled(!downloaded || deleting || managementBusy)
 
             if downloading {
                 HStack(spacing: 8) {
                     downloadProgress
                     if !model.isASRBootstrapping {
                         Button {
-                            model.onCancelASRDownload?()
+                            model.onCancelASROperation?()
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(Theme.textSecondary)
@@ -145,7 +152,7 @@ struct SpeechPane: View {
             } else if !downloaded {
                 Button("Download") { model.onDownloadASRModel?(entry.id) }
                     .controlSize(.small)
-                    .disabled(model.asrDownloading != nil)
+                    .disabled(managementBusy)
             } else if deletable {
                 deleteMenu(entry)
             }
@@ -171,7 +178,7 @@ struct SpeechPane: View {
         .menuIndicator(.hidden)
         .controlSize(.small)
         .fixedSize()
-        .disabled(model.asrDownloading != nil || model.asrDeleting != nil)
+        .disabled(model.hasActiveASRManagementOperation)
         .accessibilityLabel("More actions for \(entry.name)")
     }
 
@@ -197,6 +204,21 @@ struct SpeechPane: View {
             RatingDots(label: "Speed", value: entry.speed)
             RatingDots(label: "Quality", value: entry.quality)
         }
+    }
+
+    private func operationStatus(_ text: String, allowsCancellation: Bool) -> some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(text).font(Theme.ui(11)).foregroundStyle(Theme.textSecondary)
+            if allowsCancellation {
+                Button("Cancel") { model.onCancelASROperation?() }
+                    .controlSize(.small)
+            }
+        }
+    }
+
+    private func modelName(_ id: String) -> String {
+        model.asrCatalog.first { $0.id == id }?.name ?? id
     }
 
     private func deleteConfirmation(for entry: ASRModelDescriptor) -> String {

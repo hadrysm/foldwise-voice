@@ -479,7 +479,7 @@ private extension PipelineState {
     var ownsBadge: Bool {
         switch self {
         case .idle: false
-        case .listening, .downloadingModel, .loadingModel, .transcribing,
+        case .listening, .downloadingModel, .loadingModel, .switchingASRModel, .transcribing,
              .polishing, .recognitionUnavailable, .inserted, .clipboard, .error: true
         }
     }

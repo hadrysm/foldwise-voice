@@ -362,6 +362,19 @@ final class SettingsWorkflowTests: XCTestCase {
         let error: String
     }
 
+    private struct SelectionPersistenceState: Equatable {
+        let modelSelection: String
+        let configSelection: String
+        let lifecyclePersistence: [String]
+    }
+
+    private struct SelectionPresentationState: Equatable {
+        let selected: String
+        let switching: String?
+        let restoring: String?
+        let actionsDisabled: Bool
+    }
+
     private struct ASRPopulationState: Equatable {
         let downloading: String?
         let downloaded: Set<String>
@@ -1772,7 +1785,7 @@ final class SettingsWorkflowTests: XCTestCase {
         }
     }
 
-    func testCommitPersistsEditedPreferences() throws {
+    func testCommitPersistsEditedPreferencesWithoutBypassingASRLifecycle() throws {
         let config = makeConfig()
         let model = SettingsModel()
         let workflow = SettingsWorkflow(
@@ -1803,9 +1816,9 @@ final class SettingsWorkflowTests: XCTestCase {
                 activeMode: "Voice to Text", hotkey: "F7", toggleHotkey: nil,
                 pauseAudio: true, appearance: .light,
                 saveHistory: true, retention: .ninetyDays,
-                sidebarCollapsed: false, llmModel: nil, asrModel: "whisper-small",
+                sidebarCollapsed: false, llmModel: nil, asrModel: "parakeet-v3",
                 persistedHotkey: "F7", persistedLLMModel: nil,
-                persistedASRModel: "whisper-small", persistedAppearance: .light
+                persistedASRModel: "parakeet-v3", persistedAppearance: .light
             )
         )
     }
@@ -2790,15 +2803,103 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual([model.deleteError, String(listCount)], ["Couldn't uninstall old:latest: busy", "0"])
     }
 
-    func testSelectingASRModelPersistsTheChoice() {
+    func testSelectingASRModelPersistsThroughLifecycle() async {
         let config = makeConfig()
         let model = SettingsModel()
-        let workflow = makeWorkflow(config: config, model: model)
+        let effects = makeModelEffects()
+        effects.asrAdapter.setAvailable(true, id: "whisper-small")
+        var lifecyclePersistence: [String] = []
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [effects.asrAdapter],
+            persistSelection: { id in
+                lifecyclePersistence.append(id)
+                try config.setASRModel(id)
+            }
+        )
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: effects,
+            asrLifecycle: lifecycle
+        )
+        workflow.populatePreferences()
+        await lifecycle.start()
+
+        workflow.selectASRModel("whisper-small")
+        await waitUntil { config.asrModel == "whisper-small" }
+
+        XCTAssertEqual(
+            SelectionPersistenceState(
+                modelSelection: model.asrModel,
+                configSelection: config.asrModel,
+                lifecyclePersistence: lifecyclePersistence
+            ),
+            SelectionPersistenceState(
+                modelSelection: "whisper-small",
+                configSelection: "whisper-small",
+                lifecyclePersistence: ["whisper-small"]
+            )
+        )
+    }
+
+    func testCancelingASRSwitchKeepsCommittedSelectionVisibleUntilRestored() async throws {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let effects = makeModelEffects()
+        effects.asrAdapter.setAvailable(true, id: "whisper-small")
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [effects.asrAdapter],
+            persistSelection: { try config.setASRModel($0) }
+        )
+        await lifecycle.start()
+        let session = try lifecycle.captureSession()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: effects,
+            asrLifecycle: lifecycle
+        )
         workflow.populatePreferences()
 
         workflow.selectASRModel("whisper-small")
+        await waitForPublishedValue(model.$asrSwitching) { $0 == "whisper-small" }
+        let whileSwitching = SelectionPresentationState(
+            selected: model.asrModel,
+            switching: model.asrSwitching,
+            restoring: model.asrRestoring,
+            actionsDisabled: model.hasActiveASRManagementOperation
+        )
+        workflow.cancelASROperation()
+        await waitForPublishedValue(model.$asrSwitching) { $0 == nil }
+        session.release()
 
-        XCTAssertEqual([model.asrModel, config.asrModel], ["whisper-small", "whisper-small"])
+        XCTAssertEqual(
+            [
+                whileSwitching,
+                SelectionPresentationState(
+                    selected: model.asrModel,
+                    switching: model.asrSwitching,
+                    restoring: model.asrRestoring,
+                    actionsDisabled: model.hasActiveASRManagementOperation
+                ),
+            ],
+            [
+                SelectionPresentationState(
+                    selected: "parakeet-v3",
+                    switching: "whisper-small",
+                    restoring: nil,
+                    actionsDisabled: true
+                ),
+                SelectionPresentationState(
+                    selected: "parakeet-v3",
+                    switching: nil,
+                    restoring: nil,
+                    actionsDisabled: false
+                ),
+            ]
+        )
     }
 
     func testDownloadingASRModelMakesItAvailable() async {
@@ -3118,7 +3219,8 @@ final class SettingsWorkflowTests: XCTestCase {
         let effects = effects ?? makeModelEffects()
         let asrLifecycle = asrLifecycle ?? ASRModelLifecycle(
             storedSelection: config.asrModel,
-            adapters: [effects.asrAdapter]
+            adapters: [effects.asrAdapter],
+            persistSelection: { try config.setASRModel($0) }
         )
         return SettingsWorkflow(
             config: config,

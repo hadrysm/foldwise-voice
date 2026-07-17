@@ -110,7 +110,7 @@ final class SettingsController {
         model.onRefreshModels = { [weak self] in self?.workflow.refreshLLMModels() }
         model.onSelectASRModel = { [weak self] id in self?.workflow.selectASRModel(id) }
         model.onDownloadASRModel = { [weak self] id in self?.workflow.downloadASRModel(id) }
-        model.onCancelASRDownload = { [weak self] in self?.workflow.cancelASRDownload() }
+        model.onCancelASROperation = { [weak self] in self?.workflow.cancelASROperation() }
         model.onRetryASRBootstrap = { [weak self] in self?.workflow.retryASRBootstrap() }
         model.onDeleteASRModel = { [weak self] id in self?.workflow.deleteASRModel(id) }
         model.onCheckUpdates = { [weak self] in self?.workflow.checkForUpdates() }

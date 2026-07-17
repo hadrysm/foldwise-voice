@@ -126,7 +126,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let recorder = AudioRecorder(config: config, hardware: CoreAudioHardware())
         let asrLifecycle = ASRModelLifecycle(
             storedSelection: config.asrModel,
-            adapters: [ParakeetASRModelAdapter(), WhisperASRModelAdapter()]
+            adapters: [ParakeetASRModelAdapter(), WhisperASRModelAdapter()],
+            persistSelection: { [config] id in try config.setASRModel(id) }
         )
         // One store shared between the record seam and the History pane, so a
         // dictation just spoken is on disk for the pane to load (PRD #78).
@@ -289,7 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch state {
         case .listening:
             menuBar.setIcon(.listening)
-        case .downloadingModel, .loadingModel, .transcribing, .polishing,
+        case .downloadingModel, .loadingModel, .switchingASRModel, .transcribing, .polishing,
              .recognitionUnavailable:
             menuBar.setIcon(.working)
         case .inserted, .clipboard, .error, .idle:
@@ -303,6 +304,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             badge.apply(fraction.map { .downloadingModel(fraction: $0) } ?? .loadingModel)
         case .downloading:
             break
+        case .switching, .restoring:
+            badge.apply(.switchingASRModel)
         case nil where snapshot.isDictationBlocked:
             badge.apply(.recognitionUnavailable)
         case nil where asrLifecycleWasBlocking:

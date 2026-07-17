@@ -61,6 +61,13 @@ final class BadgeReducerTests: XCTestCase {
         )
     }
 
+    func testASRSelectionSwitchExplainsWhyDictationIsPaused() {
+        XCTAssertEqual(
+            reduce(.idle, .pipeline(.switchingASRModel)).state,
+            .working(status: "switching speech model…")
+        )
+    }
+
     func testInsertedEntersTheDoneBeat() {
         XCTAssertEqual(reduce(.working(status: nil), .pipeline(.inserted)).state, .done)
     }

@@ -52,6 +52,7 @@ enum PipelineState: Equatable {
     /// A model's weights are downloading on first use; `fraction` is 0…1.
     case downloadingModel(fraction: Double)
     case loadingModel
+    case switchingASRModel
     case transcribing
     case polishing(model: String)
     case recognitionUnavailable

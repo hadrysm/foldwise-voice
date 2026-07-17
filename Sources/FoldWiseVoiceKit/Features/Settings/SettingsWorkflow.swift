@@ -153,9 +153,7 @@ final class SettingsWorkflow {
                 model.selectedModel = config.mode.llmModel ?? ""
             }
             if changes.contains(.asrModel) {
-                let selectedID = config.asrModel
-                model.asrModel = selectedID
-                Task { await self.asrLifecycle.updateStoredSelection(selectedID) }
+                model.asrModel = config.asrModel
             }
         }
     }
@@ -176,6 +174,8 @@ final class SettingsWorkflow {
         model.asrCatalog = snapshot.models
         model.asrModel = snapshot.storedSelection
         model.asrDownloaded = Set(snapshot.models.filter(\.isAvailable).map(\.id))
+        model.asrSwitching = nil
+        model.asrRestoring = nil
         switch snapshot.recovery {
         case let .storedSelectionUnavailable(modelID, fallbackModelID):
             let selected = asrModelName(modelID, in: snapshot.models)
@@ -196,6 +196,16 @@ final class SettingsWorkflow {
             model.asrDownloading = ASRModelCatalog.defaultID
             model.asrDownloadFraction = fraction
             model.isASRBootstrapping = true
+        case let .switching(modelID):
+            model.asrSwitching = modelID
+            model.asrDownloading = nil
+            model.asrDownloadFraction = nil
+            model.isASRBootstrapping = false
+        case let .restoring(modelID):
+            model.asrRestoring = modelID
+            model.asrDownloading = nil
+            model.asrDownloadFraction = nil
+            model.isASRBootstrapping = false
         case nil:
             model.asrDownloading = nil
             model.asrDownloadFraction = nil
@@ -213,6 +223,16 @@ final class SettingsWorkflow {
         case let .engineLoadFailed(modelID, reason):
             let name = asrModelName(modelID, in: snapshot.models)
             model.asrDownloadError = "Couldn't load \(name): \(reason)"
+        case let .selectionFailed(modelID, reason):
+            let name = asrModelName(modelID, in: snapshot.models)
+            model.asrDownloadError = "Couldn't switch to \(name): \(reason)"
+        case .selectionCanceled:
+            model.asrDownloadError = ""
+        case let .selectionDegraded(modelID, fallbackModelID, reason):
+            let selected = asrModelName(modelID, in: snapshot.models)
+            let fallback = asrModelName(fallbackModelID, in: snapshot.models)
+            let detail = reason.map { ": \($0)" } ?? "."
+            model.asrDownloadError = "Couldn't restore \(selected). Using \(fallback)\(detail)"
         case nil:
             model.asrDownloadError = ""
         }
@@ -616,12 +636,13 @@ final class SettingsWorkflow {
     }
 
     func selectASRModel(_ id: String) {
-        model.asrModel = id
-        commit()
+        guard !model.hasActiveASRManagementOperation else { return }
+        Task { await asrLifecycle.select(id) }
     }
 
     func downloadASRModel(_ id: String) {
-        guard asrDeleteID == nil, asrDownloadID == nil else { return }
+        guard asrDeleteID == nil, asrDownloadID == nil,
+              !model.hasActiveASRManagementOperation else { return }
         let operationID = UUID()
         asrDownloadID = operationID
         Task { @MainActor in
@@ -632,6 +653,10 @@ final class SettingsWorkflow {
     }
 
     func cancelASRDownload() {
+        cancelASROperation()
+    }
+
+    func cancelASROperation() {
         Task { await asrLifecycle.cancelCurrentOperation() }
     }
 
@@ -641,6 +666,7 @@ final class SettingsWorkflow {
 
     func deleteASRModel(_ id: String) {
         guard asrDeleteID == nil, asrDownloadID == nil,
+              !model.hasActiveASRManagementOperation,
               let descriptor = model.asrCatalog.first(where: { $0.id == id }),
               descriptor.allowsDeletion else { return }
         let operationID = UUID()
@@ -716,7 +742,6 @@ final class SettingsWorkflow {
 
         let retentionChanged = config.historyRetention != model.retention
         var preferences = config.preferences
-        if !model.asrModel.isEmpty { preferences.asrModel = model.asrModel }
         preferences.hotkey = bindings.pushToTalk
         preferences.toggleHotkey = bindings.toggleRecording
         preferences.pauseAudio = model.pauseAudio
