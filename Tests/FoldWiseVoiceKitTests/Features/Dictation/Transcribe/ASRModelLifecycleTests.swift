@@ -538,9 +538,92 @@ final class ASRModelLifecycleTests: XCTestCase {
         )
     }
 
+    func testSelectionUpdateWaitsForActiveTranscriptionBeforeReplacingEngine() async throws {
+        let residency = EngineResidencyProbe()
+        let transcription = SuspendFirstAsyncOperation()
+        let preparation = SuspendFirstAsyncOperation()
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"],
+            residency: residency
+        )
+        parakeet.engineTranscription = transcription.run
+        parakeet.transcriptionTextByModelID = ["parakeet-v3": "captured transcript"]
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: ["whisper-small"],
+            residency: residency
+        )
+        whisper.enginePreparation = preparation.run
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "parakeet-v3",
+            adapters: [parakeet, whisper]
+        )
+        await lifecycle.start()
+        let updates = await lifecycle.snapshots()
+        var iterator = updates.makeAsyncIterator()
+        _ = await iterator.next()
+
+        let transcriptionTask = Task { try await lifecycle.transcribe([0.1]) }
+        await transcription.waitUntilStarted()
+        let selection = Task { await lifecycle.updateStoredSelection("whisper-small") }
+        guard let transition = await iterator.next() else {
+            return XCTFail("Expected a selection transition snapshot")
+        }
+        let whileTranscribing = ActiveTranscriptionTransitionState(
+            effectiveSelection: transition.effectiveSelection,
+            isDictationBlocked: transition.isDictationBlocked,
+            eventLog: residency.events,
+            maximumResidentEngines: residency.maximumResidentEngines
+        )
+
+        transcription.finish()
+        let text = try await transcriptionTask.value
+        await preparation.waitUntilStarted()
+        preparation.finish()
+        await selection.value
+        let completed = await lifecycle.snapshot()
+
+        XCTAssertEqual(
+            ActiveTranscriptionSwitchResult(
+                text: text,
+                states: [
+                    whileTranscribing,
+                    ActiveTranscriptionTransitionState(
+                        effectiveSelection: completed.effectiveSelection,
+                        isDictationBlocked: completed.isDictationBlocked,
+                        eventLog: residency.events,
+                        maximumResidentEngines: residency.maximumResidentEngines
+                    ),
+                ]
+            ),
+            ActiveTranscriptionSwitchResult(
+                text: "captured transcript",
+                states: [
+                    ActiveTranscriptionTransitionState(
+                        effectiveSelection: "parakeet-v3",
+                        isDictationBlocked: true,
+                        eventLog: ["construct-parakeet-v3"],
+                        maximumResidentEngines: 1
+                    ),
+                    ActiveTranscriptionTransitionState(
+                        effectiveSelection: "whisper-small",
+                        isDictationBlocked: false,
+                        eventLog: [
+                            "construct-parakeet-v3",
+                            "release-parakeet-v3",
+                            "construct-whisper-small",
+                        ],
+                        maximumResidentEngines: 1
+                    ),
+                ]
+            )
+        )
+    }
+
     func testRepeatedSelectionUpdateDoesNotLoadASecondCandidateEngine() async {
         let residency = EngineResidencyProbe()
-        let preparation = SuspendFirstEnginePreparation()
+        let preparation = SuspendFirstAsyncOperation()
         let parakeet = FakeASRModelFamilyAdapter(
             modelIDs: ["parakeet-v3"],
             availableModelIDs: ["parakeet-v3"],
@@ -585,7 +668,7 @@ final class ASRModelLifecycleTests: XCTestCase {
 
     func testSelectionUpdatePublishesBlockedStateBeforeReplacingTheEffectiveEngine() async {
         let residency = EngineResidencyProbe()
-        let preparation = SuspendFirstEnginePreparation()
+        let preparation = SuspendFirstAsyncOperation()
         let parakeet = FakeASRModelFamilyAdapter(
             modelIDs: ["parakeet-v3"],
             availableModelIDs: ["parakeet-v3"],
@@ -689,7 +772,7 @@ final class ASRModelLifecycleTests: XCTestCase {
 
     func testDifferentSelectionUpdateDuringPreparationWaitsAndSupersedesStaleCandidate() async {
         let residency = EngineResidencyProbe()
-        let preparation = SuspendFirstEnginePreparation()
+        let preparation = SuspendFirstAsyncOperation()
         let parakeet = FakeASRModelFamilyAdapter(
             modelIDs: ["parakeet-v3"],
             availableModelIDs: ["parakeet-v3"],
@@ -1317,6 +1400,18 @@ final class ASRModelLifecycleTests: XCTestCase {
         let maximumResidentEngines: Int
     }
 
+    private struct ActiveTranscriptionTransitionState: Equatable {
+        let effectiveSelection: String?
+        let isDictationBlocked: Bool
+        let eventLog: [String]
+        let maximumResidentEngines: Int
+    }
+
+    private struct ActiveTranscriptionSwitchResult: Equatable {
+        let text: String
+        let states: [ActiveTranscriptionTransitionState]
+    }
+
     private struct SelectionTransitionState: Equatable {
         let storedSelection: String
         let effectiveSelection: String?
@@ -1421,6 +1516,7 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
     var transcriptionTextByModelID: [String: String] = [:]
     var enginePreparationErrors: [String: Error] = [:]
     var enginePreparation: (() async -> Void)?
+    var engineTranscription: (() async -> Void)?
 
     private let lock = NSLock()
     private var _availableModelIDs: Set<String>
@@ -1494,6 +1590,7 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
             residency: residency,
             preparationError: enginePreparationErrors[id],
             preparation: enginePreparation,
+            transcription: engineTranscription,
             onPreparationFailure: { [weak self] in
                 guard self?.removesAvailabilityOnPreparationFailure == true else { return }
                 _ = self?.lock.withLock { self?._availableModelIDs.remove(id) }
@@ -1547,6 +1644,7 @@ private final class FakeLifecycleTranscriber: Transcribing {
     private let residency: EngineResidencyProbe?
     private let preparationError: Error?
     private let preparation: (() async -> Void)?
+    private let transcription: (() async -> Void)?
     private let onPreparationFailure: () -> Void
     private let onTranscribe: ([Float]) -> Void
     private(set) var ready = false
@@ -1559,6 +1657,7 @@ private final class FakeLifecycleTranscriber: Transcribing {
         residency: EngineResidencyProbe?,
         preparationError: Error?,
         preparation: (() async -> Void)?,
+        transcription: (() async -> Void)?,
         onPreparationFailure: @escaping () -> Void,
         onTranscribe: @escaping ([Float]) -> Void
     ) {
@@ -1567,6 +1666,7 @@ private final class FakeLifecycleTranscriber: Transcribing {
         self.residency = residency
         self.preparationError = preparationError
         self.preparation = preparation
+        self.transcription = transcription
         self.onPreparationFailure = onPreparationFailure
         self.onTranscribe = onTranscribe
         residency?.constructed(modelID)
@@ -1588,12 +1688,13 @@ private final class FakeLifecycleTranscriber: Transcribing {
     }
 
     func transcribe(_ samples: [Float]) async throws -> String {
+        await transcription?()
         onTranscribe(samples)
         return text
     }
 }
 
-private final class SuspendFirstEnginePreparation: @unchecked Sendable {
+private final class SuspendFirstAsyncOperation: @unchecked Sendable {
     private let lock = NSLock()
     private let started = AsyncEvent()
     private var shouldSuspend = true

@@ -99,6 +99,8 @@ actor ASRModelLifecycle: Transcribing {
     private var effectiveSelection: String?
     private var activationInProgress = false
     private var engine: Transcribing?
+    private var activeTranscriptionCount = 0
+    private var transcriptionDrainWaiters: [CheckedContinuation<Void, Never>] = []
     private var didStart = false
     private var dictationBlocked = true
     private var bootstrapOperationID: UUID?
@@ -149,6 +151,8 @@ actor ASRModelLifecycle: Transcribing {
         guard !dictationBlocked, let engine else {
             throw ASRModelLifecycleError.recognitionBlocked
         }
+        activeTranscriptionCount += 1
+        defer { finishTranscription() }
         return try await engine.transcribe(samples)
     }
 
@@ -188,7 +192,7 @@ actor ASRModelLifecycle: Transcribing {
         while true {
             let targetID = effectiveTargetID()
             guard availability.contains(targetID) else {
-                blockDictationAndReleaseEngine()
+                await blockDictationThenReleaseEngine()
                 publishSnapshot()
                 return
             }
@@ -200,8 +204,11 @@ actor ASRModelLifecycle: Transcribing {
                 return
             }
 
-            blockDictationAndReleaseEngine()
+            await blockDictationThenReleaseEngine()
             publishSnapshot()
+            guard targetID == effectiveTargetID(), availability.contains(targetID) else {
+                continue
+            }
             guard let adapter = adapter(for: targetID) else {
                 failure = .engineLoadFailed(
                     modelID: targetID,
@@ -253,12 +260,28 @@ actor ASRModelLifecycle: Transcribing {
         }
     }
 
-    private func blockDictationAndReleaseEngine() {
+    private func blockDictationThenReleaseEngine() async {
         dictationBlocked = true
-        engine = nil
-        effectiveSelection = nil
         transcriberState.setReady(false)
         transcriberState.setDictationBlocked(true)
+        if activeTranscriptionCount > 0 {
+            publishSnapshot()
+            await withCheckedContinuation { continuation in
+                transcriptionDrainWaiters.append(continuation)
+            }
+        }
+        engine = nil
+        effectiveSelection = nil
+    }
+
+    private func finishTranscription() {
+        activeTranscriptionCount -= 1
+        guard activeTranscriptionCount == 0 else { return }
+        let waiters = transcriptionDrainWaiters
+        transcriptionDrainWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 
     private func bootstrapDefault() async {
