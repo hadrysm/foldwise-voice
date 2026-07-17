@@ -540,8 +540,8 @@ final class ASRModelLifecycleTests: XCTestCase {
 
     func testSelectionUpdateWaitsForActiveTranscriptionBeforeReplacingEngine() async throws {
         let residency = EngineResidencyProbe()
-        let transcription = SuspendFirstAsyncOperation()
-        let preparation = SuspendFirstAsyncOperation()
+        let transcription = SuspendAsyncOperations()
+        let preparation = SuspendAsyncOperations()
         let parakeet = FakeASRModelFamilyAdapter(
             modelIDs: ["parakeet-v3"],
             availableModelIDs: ["parakeet-v3"],
@@ -621,9 +621,87 @@ final class ASRModelLifecycleTests: XCTestCase {
         )
     }
 
+    func testSelectionUpdateWaitsForEveryActiveTranscriptionBeforeReplacingEngine() async throws {
+        let residency = EngineResidencyProbe()
+        let transcription = SuspendAsyncOperations(count: 2)
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"],
+            residency: residency
+        )
+        parakeet.engineTranscription = transcription.run
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: ["whisper-small"],
+            residency: residency
+        )
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "parakeet-v3",
+            adapters: [parakeet, whisper]
+        )
+        await lifecycle.start()
+        let updates = await lifecycle.snapshots()
+        var iterator = updates.makeAsyncIterator()
+        _ = await iterator.next()
+
+        let firstTranscription = Task { try await lifecycle.transcribe([0.1]) }
+        await transcription.waitUntilStarted()
+        let secondTranscription = Task { try await lifecycle.transcribe([0.2]) }
+        await transcription.waitUntilStarted()
+        let selection = Task { await lifecycle.updateStoredSelection("whisper-small") }
+        guard await iterator.next() != nil else {
+            return XCTFail("Expected a selection transition snapshot")
+        }
+
+        transcription.finish()
+        _ = try await firstTranscription.value
+        let afterFirstTranscription = await lifecycle.snapshot()
+        let whileSecondTranscriptionRuns = ActiveTranscriptionTransitionState(
+            effectiveSelection: afterFirstTranscription.effectiveSelection,
+            isDictationBlocked: afterFirstTranscription.isDictationBlocked,
+            eventLog: residency.events,
+            maximumResidentEngines: residency.maximumResidentEngines
+        )
+
+        transcription.finish()
+        _ = try await secondTranscription.value
+        await selection.value
+        let completed = await lifecycle.snapshot()
+
+        XCTAssertEqual(
+            [
+                whileSecondTranscriptionRuns,
+                ActiveTranscriptionTransitionState(
+                    effectiveSelection: completed.effectiveSelection,
+                    isDictationBlocked: completed.isDictationBlocked,
+                    eventLog: residency.events,
+                    maximumResidentEngines: residency.maximumResidentEngines
+                ),
+            ],
+            [
+                ActiveTranscriptionTransitionState(
+                    effectiveSelection: "parakeet-v3",
+                    isDictationBlocked: true,
+                    eventLog: ["construct-parakeet-v3"],
+                    maximumResidentEngines: 1
+                ),
+                ActiveTranscriptionTransitionState(
+                    effectiveSelection: "whisper-small",
+                    isDictationBlocked: false,
+                    eventLog: [
+                        "construct-parakeet-v3",
+                        "release-parakeet-v3",
+                        "construct-whisper-small",
+                    ],
+                    maximumResidentEngines: 1
+                ),
+            ]
+        )
+    }
+
     func testRepeatedSelectionUpdateDoesNotLoadASecondCandidateEngine() async {
         let residency = EngineResidencyProbe()
-        let preparation = SuspendFirstAsyncOperation()
+        let preparation = SuspendAsyncOperations()
         let parakeet = FakeASRModelFamilyAdapter(
             modelIDs: ["parakeet-v3"],
             availableModelIDs: ["parakeet-v3"],
@@ -668,7 +746,7 @@ final class ASRModelLifecycleTests: XCTestCase {
 
     func testSelectionUpdatePublishesBlockedStateBeforeReplacingTheEffectiveEngine() async {
         let residency = EngineResidencyProbe()
-        let preparation = SuspendFirstAsyncOperation()
+        let preparation = SuspendAsyncOperations()
         let parakeet = FakeASRModelFamilyAdapter(
             modelIDs: ["parakeet-v3"],
             availableModelIDs: ["parakeet-v3"],
@@ -772,7 +850,7 @@ final class ASRModelLifecycleTests: XCTestCase {
 
     func testDifferentSelectionUpdateDuringPreparationWaitsAndSupersedesStaleCandidate() async {
         let residency = EngineResidencyProbe()
-        let preparation = SuspendFirstAsyncOperation()
+        let preparation = SuspendAsyncOperations()
         let parakeet = FakeASRModelFamilyAdapter(
             modelIDs: ["parakeet-v3"],
             availableModelIDs: ["parakeet-v3"],
@@ -1694,21 +1772,26 @@ private final class FakeLifecycleTranscriber: Transcribing {
     }
 }
 
-private final class SuspendFirstAsyncOperation: @unchecked Sendable {
+private final class SuspendAsyncOperations: @unchecked Sendable {
     private let lock = NSLock()
     private let started = AsyncEvent()
-    private var shouldSuspend = true
-    private var continuation: CheckedContinuation<Void, Never>?
+    private var remainingCount: Int
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    init(count: Int = 1) {
+        remainingCount = count
+    }
 
     func run() async {
         let suspends = lock.withLock {
-            defer { shouldSuspend = false }
-            return shouldSuspend
+            guard remainingCount > 0 else { return false }
+            remainingCount -= 1
+            return true
         }
         guard suspends else { return }
-        started.signal()
         await withCheckedContinuation { continuation in
-            lock.withLock { self.continuation = continuation }
+            lock.withLock { continuations.append(continuation) }
+            started.signal()
         }
     }
 
@@ -1717,9 +1800,9 @@ private final class SuspendFirstAsyncOperation: @unchecked Sendable {
     }
 
     func finish() {
-        let continuation = lock.withLock {
-            defer { self.continuation = nil }
-            return self.continuation
+        let continuation: CheckedContinuation<Void, Never>? = lock.withLock {
+            guard !continuations.isEmpty else { return nil }
+            return continuations.removeFirst()
         }
         continuation?.resume()
     }
