@@ -13,7 +13,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
     private func makePipeline(
         config: Config = makeTestConfig(),
         recorder: FakeRecorder = FakeRecorder(),
-        transcriber: FakeTranscriber,
+        sessionProvider: FakeTranscriberSessionProvider,
         polish: @escaping (String, Mode) async -> String = { text, _ in text },
         insert: @escaping (String) async -> Bool = { _ in true },
         record: @escaping (HistoryEntry) -> Void = { _ in },
@@ -22,7 +22,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         let pipeline = Pipeline(
             config: config,
             recorder: recorder,
-            transcriber: transcriber,
+            sessionProvider: sessionProvider,
             polish: polish,
             insert: insert,
             record: record,
@@ -39,7 +39,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         let transcriber = FakeTranscriber()
         transcriber.ready = false
         transcriber.result = .success("hello world")
-        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
 
         pipeline.startRecording()
         pipeline.stopRecording()
@@ -60,7 +60,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         transcriber.onTranscribe = { [weak transcriber] in
             transcriber?.onLoading?(false)
         }
-        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
 
         pipeline.startRecording()
         pipeline.stopRecording()
@@ -77,7 +77,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
 
     func testLoadingModelResolvesToIdleAfterLaunchWarmup() {
         let transcriber = FakeTranscriber()
-        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
 
         transcriber.onLoading?(true)
         transcriber.onLoading?(false)
@@ -91,7 +91,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
 
     func testLoadingModelSuppressedWhileRecording() {
         let transcriber = FakeTranscriber()
-        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
 
         pipeline.startRecording()
         transcriber.onLoading?(true)
@@ -115,7 +115,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
             transcriber?.onDownloadProgress?(0.5)
             transcriber?.onLoading?(false)
         }
-        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
 
         pipeline.startRecording()
         pipeline.stopRecording()
@@ -132,7 +132,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
 
     func testDownloadingModelSuppressedWhileRecording() {
         let transcriber = FakeTranscriber()
-        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
 
         pipeline.startRecording()
         transcriber.onDownloadProgress?(0.5)
@@ -152,7 +152,10 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         // session has been queued behind it.
         let latch = Latch()
         transcriber.onTranscribe = { await latch.wait() }
-        let (pipeline, collector) = makePipeline(recorder: recorder, transcriber: transcriber)
+        let (pipeline, collector) = makePipeline(
+            recorder: recorder,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber)
+        )
 
         pipeline.startRecording()
         pipeline.stopRecording()
@@ -178,7 +181,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
     func testQueuedSessionsContinueAfterTranscriptionFailure() async {
         let transcriber = FakeTranscriber()
         transcriber.result = .failure(StubTranscriptionError())
-        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
 
         pipeline.startRecording()
         pipeline.stopRecording()
@@ -212,7 +215,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         let recorded = RecordSpy()
         let (pipeline, _) = makePipeline(
             config: fixture.config,
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             record: { recorded.record($0) }
         )
 
@@ -236,7 +239,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         let recorded = RecordSpy()
         let (pipeline, _) = makePipeline(
             config: fixture.config,
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             polish: { text, _ in
                 entered.fulfill()
                 await finish.wait()
@@ -265,7 +268,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         let recorded = RecordSpy()
         let (pipeline, _) = makePipeline(
             config: fixture.config,
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             insert: { _ in
                 entered.fulfill()
                 await finish.wait()
@@ -288,7 +291,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
 
     func testTranscriberCallbacksDoNothingAfterPipelineDeallocation() {
         let transcriber = FakeTranscriber()
-        var pipeline: Pipeline? = makePipeline(transcriber: transcriber).0
+        var pipeline: Pipeline? = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber)).0
         let collector = StateCollector()
         pipeline?.onState = { collector.append($0) }
 
@@ -311,7 +314,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
             await finishTranscribing.wait()
         }
         let (pipeline, collector) = makePipeline(
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             insert: { _ in true }
         )
 
@@ -340,7 +343,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         }
         let insert = InsertSpy()
         let (pipeline, _) = makePipeline(
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             insert: { insert.insert($0) }
         )
 
@@ -369,7 +372,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         let insert = InsertSpy()
         let (pipeline, _) = makePipeline(
             config: makeTestConfig(mode: mode),
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             polish: { text, _ in
                 polishing.fulfill()
                 await finishPolishing.wait()
@@ -395,7 +398,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         let finishResolvingTarget = Latch()
         let insert = InsertSpy()
         let (pipeline, _) = makePipeline(
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             insert: { insert.insert($0) },
             frontmostApp: {
                 resolvingTarget.fulfill()
@@ -417,7 +420,10 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
     func testShutdownClosesRecorder() {
         let recorder = FakeRecorder()
         let transcriber = FakeTranscriber()
-        let (pipeline, _) = makePipeline(recorder: recorder, transcriber: transcriber)
+        let (pipeline, _) = makePipeline(
+            recorder: recorder,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber)
+        )
 
         pipeline.shutdown()
         pipeline.shutdown()
@@ -427,7 +433,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
 
     func testTranscriberCallbacksDoNothingAfterShutdown() {
         let transcriber = FakeTranscriber()
-        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
 
         pipeline.shutdown()
         transcriber.onLoading?(true)
@@ -438,7 +444,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
 
     func testStateCallbackCanShutDownPipelineWithoutDeadlocking() {
         let transcriber = FakeTranscriber()
-        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
         pipeline.onState = { state in
             collector.append(state)
             if state == .loadingModel {
@@ -454,7 +460,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
     func testShutdownFromTranscribingDoesNotStartSession() async {
         let transcriber = FakeTranscriber()
         transcriber.result = .success("text that must not be inserted")
-        let (pipeline, _) = makePipeline(transcriber: transcriber)
+        let (pipeline, _) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
         pipeline.onState = { state in
             if state == .transcribing {
                 pipeline.shutdown()
@@ -473,7 +479,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         transcriber.result = .success("inserted text")
         let record = RecordSpy()
         let (pipeline, _) = makePipeline(
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             record: { record.record($0) }
         )
         pipeline.onState = { state in
@@ -495,7 +501,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         let inserting = expectation(description: "insert started")
         let finishInserting = Latch()
         let (pipeline, collector) = makePipeline(
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             insert: { _ in
                 inserting.fulfill()
                 await finishInserting.wait()
@@ -523,7 +529,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         let finishInserting = Latch()
         let record = RecordSpy()
         let (pipeline, _) = makePipeline(
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             insert: { _ in
                 inserting.fulfill()
                 await finishInserting.wait()
@@ -545,7 +551,7 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
     func testShutdownDuringCaptureIgnoresLaterInputAndEndsIdle() async {
         let transcriber = FakeTranscriber()
         transcriber.result = .success("text that must not be inserted")
-        let (pipeline, collector) = makePipeline(transcriber: transcriber)
+        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
 
         pipeline.startRecording()
         pipeline.shutdown()

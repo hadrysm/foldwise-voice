@@ -1,5 +1,5 @@
 // Shared harness for driving full dictation sessions through the Pipeline
-// seams (ADR-0002): protocol fakes for the record/transcribe stages, plus a
+// seams (ADR-0002): protocol fakes for recording and ASR session capture, plus a
 // state collector guarded by a lock because onState may fire off the main
 // thread. The polish/insert stages are plain closures passed per-test.
 
@@ -72,6 +72,114 @@ final class FakeTranscriber: Transcribing {
         received.append(samples)
         await onTranscribe?()
         return try result.get()
+    }
+}
+
+final class FakeTranscriberSessionProvider: ASRSessionHandleProviding {
+    private let transcriber: FakeTranscriber
+
+    init(_ transcriber: FakeTranscriber) {
+        self.transcriber = transcriber
+    }
+
+    var isDictationBlocked: Bool {
+        transcriber.isDictationBlocked
+    }
+
+    var onLoading: ((Bool) -> Void)? {
+        get { transcriber.onLoading }
+        set { transcriber.onLoading = newValue }
+    }
+
+    var onDownloadProgress: ((Double) -> Void)? {
+        get { transcriber.onDownloadProgress }
+        set { transcriber.onDownloadProgress = newValue }
+    }
+
+    func captureSession() throws -> any ASRSessionHandle {
+        FakeTranscriberSessionHandle(transcriber)
+    }
+}
+
+private final class FakeTranscriberSessionHandle: ASRSessionHandle {
+    private let transcriber: FakeTranscriber
+
+    init(_ transcriber: FakeTranscriber) {
+        self.transcriber = transcriber
+    }
+
+    var ready: Bool {
+        transcriber.ready
+    }
+
+    func transcribe(_ samples: [Float]) async throws -> String {
+        try await transcriber.transcribe(samples)
+    }
+
+    func release() {}
+}
+
+final class FakeASRSessionHandleProvider: ASRSessionHandleProviding {
+    var isDictationBlocked = false
+    var onLoading: ((Bool) -> Void)?
+    var onDownloadProgress: ((Double) -> Void)?
+    private var handles: [FakeASRSessionHandle]
+    private let events: SessionHandleEventProbe
+
+    init(handles: [FakeASRSessionHandle], events: SessionHandleEventProbe) {
+        self.handles = handles
+        self.events = events
+    }
+
+    func captureSession() throws -> any ASRSessionHandle {
+        events.append(.capture)
+        return handles.removeFirst()
+    }
+}
+
+final class FakeASRSessionHandle: ASRSessionHandle {
+    var ready = true
+    var result: Result<String, Error>
+    var onTranscribe: (() async -> Void)?
+    private let events: SessionHandleEventProbe
+
+    init(
+        result: Result<String, Error>,
+        events: SessionHandleEventProbe
+    ) {
+        self.result = result
+        self.events = events
+    }
+
+    func transcribe(_: [Float]) async throws -> String {
+        events.append(.transcribe)
+        await onTranscribe?()
+        return try result.get()
+    }
+
+    func release() {
+        events.append(.release)
+    }
+}
+
+enum SessionHandleEvent: Equatable {
+    case capture
+    case transcribe
+    case release
+    case polish
+    case insert
+}
+
+final class SessionHandleEventProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var collected: [SessionHandleEvent] = []
+
+    func append(_ event: SessionHandleEvent) {
+        lock.withLock { collected.append(event) }
+    }
+
+    var events: [SessionHandleEvent] {
+        lock.withLock { collected }
     }
 }
 

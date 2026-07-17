@@ -185,7 +185,7 @@ final class ConfigSchema1Tests: XCTestCase {
         let pipeline = Pipeline(
             config: config,
             recorder: FakeRecorder(),
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             insert: { _ in true },
             record: { recorded.record($0) },
             frontmostApp: { nil }
@@ -225,7 +225,7 @@ final class ConfigSchema1Tests: XCTestCase {
         let pipeline = Pipeline(
             config: relaunched,
             recorder: FakeRecorder(),
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             insert: { _ in true },
             record: { recorded.record($0) },
             frontmostApp: { nil }

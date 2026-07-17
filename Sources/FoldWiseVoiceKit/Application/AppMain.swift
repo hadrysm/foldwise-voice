@@ -128,7 +128,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             storedSelection: config.asrModel,
             adapters: [ParakeetASRModelAdapter(), WhisperASRModelAdapter()]
         )
-        let transcriber: Transcribing = asrLifecycle
         // One store shared between the record seam and the History pane, so a
         // dictation just spoken is on disk for the pane to load (PRD #78).
         let historyStore = JSONLHistoryStore(url: JSONLHistoryStore.defaultURL)
@@ -149,7 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statsStore.advance(on: entry.createdAt, calendar: .current)
         }
         pipeline = Pipeline(
-            config: config, recorder: recorder, transcriber: transcriber,
+            config: config, recorder: recorder, sessionProvider: asrLifecycle,
             record: { historyStore.append($0) }
         )
         badge = BadgeController(config: config) { [weak self] in

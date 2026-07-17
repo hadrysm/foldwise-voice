@@ -1,4 +1,4 @@
-// Wires the stages: record → Parakeet ASR → (optional Ollama polish) →
+// Wires the stages: record → on-device ASR → (optional Ollama polish) →
 // paste. start/stop are called from the hotkey listener and must be fast;
 // transcription jobs run in chained Tasks so they process in order without
 // ever blocking the UI.
@@ -16,17 +16,28 @@ protocol AudioRecording: AnyObject {
     func close()
 }
 
-/// The transcribe stage's seam (ADR-0002). Mirrors `Transcriber`'s full
-/// surface because the asynchronous loading-model dance is part of the
-/// behavior under test.
-protocol Transcribing: AnyObject {
+/// A Dictation session's captured transcription capability. Pipeline can use
+/// and release it without learning which model or engine the lifecycle owns.
+protocol ASRSessionHandle: AnyObject {
     var ready: Bool { get }
+    func transcribe(_ samples: [Float]) async throws -> String
+    func release()
+}
+
+/// Captures the Effective ASR model when a Dictation session starts recording.
+protocol ASRSessionHandleProviding: AnyObject {
     var isDictationBlocked: Bool { get }
     var onLoading: ((Bool) -> Void)? { get set }
-    /// Fired with a 0…1 fraction while a model's weights download on first use,
-    /// for a Badge/pane percentage (issue #93). An engine that can't report a
-    /// fraction (FluidAudio/Parakeet) leaves this unset and degrades to the
-    /// boolean `onLoading` spinner.
+    /// Fired with a 0…1 fraction while model data downloads on first use.
+    var onDownloadProgress: ((Double) -> Void)? { get set }
+    func captureSession() throws -> any ASRSessionHandle
+}
+
+/// The engine-family adapter seam (ADR-0002). Concrete engines stay behind a
+/// lifecycle-owned `ASRSessionHandle` in production.
+protocol Transcribing: AnyObject {
+    var ready: Bool { get }
+    var onLoading: ((Bool) -> Void)? { get set }
     var onDownloadProgress: ((Double) -> Void)? { get set }
     func warmup()
     /// Load (and, on first use, download) the model, throwing on failure.
@@ -34,12 +45,6 @@ protocol Transcribing: AnyObject {
     /// used by the Speech pane's Download action to fetch weights up front.
     func prepare() async throws
     func transcribe(_ samples: [Float]) async throws -> String
-}
-
-extension Transcribing {
-    var isDictationBlocked: Bool {
-        false
-    }
 }
 
 enum PipelineState: Equatable {
@@ -67,10 +72,15 @@ enum PipelineState: Equatable {
 }
 
 final class Pipeline {
+    private struct RecordingContext {
+        let mode: Mode
+        let asrSession: any ASRSessionHandle
+    }
+
     let config: Config
 
     private let recorder: AudioRecording
-    private let transcriber: Transcribing
+    private let sessionProvider: ASRSessionHandleProviding
     private let ducker: AudioDucking
     private let polish: (String, Mode) async -> String
     private let insert: (String) async -> Bool
@@ -91,7 +101,7 @@ final class Pipeline {
     /// Owned here rather than read back through the record seam, so the
     /// start/stop guards are self-contained and fakes needn't track it.
     private var recording = false
-    private var recordingMode: Mode?
+    private var recordingContext: RecordingContext?
     private var lastJob: Task<Void, Never>?
     private var jobActive = false
     private var lastEmitted: PipelineState = .idle
@@ -100,7 +110,7 @@ final class Pipeline {
     init(
         config: Config,
         recorder: AudioRecording,
-        transcriber: Transcribing = Transcriber(),
+        sessionProvider: ASRSessionHandleProviding,
         ducker: AudioDucking = AudioDucker(),
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
         insert: @escaping (String) async -> Bool = Pipeline.pasteboardInsert,
@@ -109,7 +119,7 @@ final class Pipeline {
     ) {
         self.config = config
         self.recorder = recorder
-        self.transcriber = transcriber
+        self.sessionProvider = sessionProvider
         self.ducker = ducker
         self.polish = polish
         self.insert = insert
@@ -118,7 +128,7 @@ final class Pipeline {
         self.recorder.onFailure = { [weak self] error in
             self?.recordingFailed(error)
         }
-        self.transcriber.onLoading = { [weak self] loading in
+        sessionProvider.onLoading = { [weak self] loading in
             guard let self else { return }
             withStateLock {
                 if loading {
@@ -131,7 +141,7 @@ final class Pipeline {
                 }
             }
         }
-        self.transcriber.onDownloadProgress = { [weak self] fraction in
+        sessionProvider.onDownloadProgress = { [weak self] fraction in
             guard let self else { return }
             withStateLock {
                 // Suppressed while recording, like the loading spinner: the
@@ -190,17 +200,26 @@ final class Pipeline {
 
     func startRecording() {
         withStateLock {
-            guard !isShutDown, !recording, !transcriber.isDictationBlocked else { return }
+            guard !isShutDown, !recording, !sessionProvider.isDictationBlocked else { return }
+            let asrSession: any ASRSessionHandle
+            do {
+                asrSession = try sessionProvider.captureSession()
+            } catch {
+                Log.pipeline.error(
+                    "ASR session capture skipped: \(error.localizedDescription, privacy: .public)"
+                )
+                return
+            }
             if config.pauseAudio { ducker.duck() }
             recording = true
             let mode = config.mode
             do {
                 try recorder.start()
-                recordingMode = mode
+                recordingContext = RecordingContext(mode: mode, asrSession: asrSession)
                 emit(.listening(mode: mode.name))
             } catch {
                 recording = false
-                recordingMode = nil
+                asrSession.release()
                 ducker.restore()
                 emit(.error(error.localizedDescription))
             }
@@ -213,9 +232,13 @@ final class Pipeline {
             recording = false
             let samples = recorder.stop()
             ducker.restore()
-            guard let mode = recordingMode else { return }
-            recordingMode = nil
-            guard emit(.transcribing) else { return }
+            guard let context = recordingContext else { return }
+            recordingContext = nil
+            let asrSession = context.asrSession
+            guard emit(.transcribing) else {
+                asrSession.release()
+                return
+            }
             // Unlike the start-time Mode snapshot, whether this session is saved is
             // decided when the user stops speaking, not read later off the job task.
             let saveHistory = config.saveHistory
@@ -223,8 +246,16 @@ final class Pipeline {
             lastJob = Task {
                 await withTaskCancellationHandler {
                     await previous?.value
-                    guard !Task.isCancelled else { return }
-                    await self.process(samples, mode: mode, saveHistory: saveHistory)
+                    guard !Task.isCancelled else {
+                        asrSession.release()
+                        return
+                    }
+                    await self.process(
+                        samples,
+                        mode: context.mode,
+                        asrSession: asrSession,
+                        saveHistory: saveHistory
+                    )
                 } onCancel: {
                     previous?.cancel()
                 }
@@ -255,7 +286,7 @@ final class Pipeline {
             guard !isShutDown else { return }
             isShutDown = true
             recording = false
-            recordingMode = nil
+            releaseRecordingContext()
             lastJob?.cancel()
             ducker.restore()
             recorder.close()
@@ -267,50 +298,36 @@ final class Pipeline {
         withStateLock {
             guard !isShutDown, recording else { return }
             recording = false
-            recordingMode = nil
+            releaseRecordingContext()
             ducker.restore()
             emit(.error(error.localizedDescription))
         }
     }
 
+    private func releaseRecordingContext() {
+        recordingContext?.asrSession.release()
+        recordingContext = nil
+    }
+
     // MARK: - worker
 
-    private func process(_ samples: [Float], mode: Mode, saveHistory: Bool) async {
+    private func process(
+        _ samples: [Float],
+        mode: Mode,
+        asrSession: any ASRSessionHandle,
+        saveHistory: Bool
+    ) async {
         let started = withStateLock {
             guard !isShutDown else { return false }
             jobActive = true
             return true
         }
-        guard started else { return }
+        guard started else {
+            asrSession.release()
+            return
+        }
         defer { withStateLock { jobActive = false } }
-        guard samples.count >= 1600 else { // < 0.1 s — no real audio captured
-            emit(.idle)
-            return
-        }
-        // Near-silence makes ASR hallucinate — skip it.
-        guard samples.contains(where: { abs($0) >= 0.005 }) else {
-            emit(.idle)
-            return
-        }
-
-        var text: String
-        do {
-            if !transcriber.ready {
-                guard emit(.loadingModel) else { return }
-            }
-            text = try await transcriber.transcribe(samples)
-            guard !Task.isCancelled else { return }
-        } catch is CancellationError {
-            guard !Task.isCancelled else { return }
-            emit(.idle)
-            return
-        } catch {
-            Log.pipeline.error(
-                "Transcription failed: \(String(describing: error), privacy: .public)"
-            )
-            emit(.error("\(error)"))
-            return
-        }
+        guard var text = await transcribe(samples, using: asrSession) else { return }
         guard !text.isEmpty else {
             emit(.idle)
             return
@@ -368,6 +385,40 @@ final class Pipeline {
         withStateLock {
             guard !isShutDown else { return }
             record(entry)
+        }
+    }
+
+    private func transcribe(
+        _ samples: [Float],
+        using asrSession: any ASRSessionHandle
+    ) async -> String? {
+        defer { asrSession.release() }
+        guard samples.count >= 1600 else { // < 0.1 s — no real audio captured
+            emit(.idle)
+            return nil
+        }
+        // Near-silence makes ASR hallucinate — skip it.
+        guard samples.contains(where: { abs($0) >= 0.005 }) else {
+            emit(.idle)
+            return nil
+        }
+        do {
+            if !asrSession.ready {
+                guard emit(.loadingModel) else { return nil }
+            }
+            let text = try await asrSession.transcribe(samples)
+            guard !Task.isCancelled else { return nil }
+            return text
+        } catch is CancellationError {
+            guard !Task.isCancelled else { return nil }
+            emit(.idle)
+            return nil
+        } catch {
+            Log.pipeline.error(
+                "Transcription failed: \(String(describing: error), privacy: .public)"
+            )
+            emit(.error("\(error)"))
+            return nil
         }
     }
 

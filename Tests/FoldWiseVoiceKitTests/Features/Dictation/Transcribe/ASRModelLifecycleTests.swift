@@ -28,14 +28,14 @@ final class ASRModelLifecycleTests: XCTestCase {
                 ),
             ]
         )
-        let transcriber: Transcribing = lifecycle
+        let sessionProvider: ASRSessionHandleProviding = lifecycle
 
         let snapshot = await lifecycle.snapshot()
 
         XCTAssertEqual(
             InitialBlockingState(
                 snapshotIsBlocked: snapshot.isDictationBlocked,
-                transcriberIsBlocked: transcriber.isDictationBlocked,
+                transcriberIsBlocked: sessionProvider.isDictationBlocked,
                 effectiveSelection: snapshot.effectiveSelection
             ),
             InitialBlockingState(
@@ -244,6 +244,7 @@ final class ASRModelLifecycleTests: XCTestCase {
             adapters: [parakeet]
         )
         let transcriber: Transcribing = lifecycle
+        let sessionProvider: ASRSessionHandleProviding = lifecycle
         let callbacks = LifecycleCallbackProbe()
         transcriber.onLoading = { callbacks.recordLoading($0) }
         transcriber.onDownloadProgress = { callbacks.recordProgress($0) }
@@ -256,7 +257,7 @@ final class ASRModelLifecycleTests: XCTestCase {
         XCTAssertEqual(
             LifecycleTranscribingState(
                 ready: transcriber.ready,
-                isDictationBlocked: transcriber.isDictationBlocked,
+                isDictationBlocked: sessionProvider.isDictationBlocked,
                 hasLoadingCallback: transcriber.onLoading != nil,
                 hasProgressCallback: transcriber.onDownloadProgress != nil,
                 loadingEvents: callbacks.loadingEvents,
@@ -284,6 +285,7 @@ final class ASRModelLifecycleTests: XCTestCase {
             adapters: [parakeet]
         )
         let transcriber: Transcribing = lifecycle
+        let sessionProvider: ASRSessionHandleProviding = lifecycle
 
         let transcriptionFailure = await failureDescription {
             _ = try await transcriber.transcribe([0.1])
@@ -296,7 +298,7 @@ final class ASRModelLifecycleTests: XCTestCase {
             BlockedRecognitionState(
                 transcriptionFailure: transcriptionFailure,
                 preparationFailure: preparationFailure,
-                isDictationBlocked: transcriber.isDictationBlocked,
+                isDictationBlocked: sessionProvider.isDictationBlocked,
                 downloadAttempts: parakeet.downloadedModelIDs
             ),
             BlockedRecognitionState(
@@ -617,6 +619,288 @@ final class ASRModelLifecycleTests: XCTestCase {
                         maximumResidentEngines: 1
                     ),
                 ]
+            )
+        )
+    }
+
+    func testCapturedSessionKeepsItsEngineUntilReleaseAllowsSelectionUpdate() async throws {
+        let residency = EngineResidencyProbe()
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"],
+            residency: residency
+        )
+        parakeet.transcriptionTextByModelID = ["parakeet-v3": "captured transcript"]
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: ["whisper-small"],
+            residency: residency
+        )
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "parakeet-v3",
+            adapters: [parakeet, whisper]
+        )
+        await lifecycle.start()
+        let session = try lifecycle.captureSession()
+
+        let selection = Task { await lifecycle.updateStoredSelection("whisper-small") }
+        let transition = await snapshot(from: lifecycle) {
+            $0.storedSelection == "whisper-small" && $0.isDictationBlocked
+        }
+        let text = try await session.transcribe([0.1])
+        let whileSessionIsHeld = ActiveTranscriptionTransitionState(
+            effectiveSelection: transition.effectiveSelection,
+            isDictationBlocked: transition.isDictationBlocked,
+            eventLog: residency.events,
+            maximumResidentEngines: residency.maximumResidentEngines
+        )
+
+        session.release()
+        await selection.value
+        let completed = await lifecycle.snapshot()
+
+        XCTAssertEqual(
+            ActiveTranscriptionSwitchResult(
+                text: text,
+                states: [
+                    whileSessionIsHeld,
+                    ActiveTranscriptionTransitionState(
+                        effectiveSelection: completed.effectiveSelection,
+                        isDictationBlocked: completed.isDictationBlocked,
+                        eventLog: residency.events,
+                        maximumResidentEngines: residency.maximumResidentEngines
+                    ),
+                ]
+            ),
+            ActiveTranscriptionSwitchResult(
+                text: "captured transcript",
+                states: [
+                    ActiveTranscriptionTransitionState(
+                        effectiveSelection: "parakeet-v3",
+                        isDictationBlocked: true,
+                        eventLog: ["construct-parakeet-v3"],
+                        maximumResidentEngines: 1
+                    ),
+                    ActiveTranscriptionTransitionState(
+                        effectiveSelection: "whisper-small",
+                        isDictationBlocked: false,
+                        eventLog: [
+                            "construct-parakeet-v3",
+                            "release-parakeet-v3",
+                            "construct-whisper-small",
+                        ],
+                        maximumResidentEngines: 1
+                    ),
+                ]
+            )
+        )
+    }
+
+    func testAbandonedSessionHandleReleasesEngineForPendingSelection() async throws {
+        let fixture = switchingLifecycle()
+        await fixture.lifecycle.start()
+        var session: (any ASRSessionHandle)? = try fixture.lifecycle.captureSession()
+        _ = session?.ready
+        let selection = Task {
+            await fixture.lifecycle.updateStoredSelection("whisper-small")
+        }
+        _ = await snapshot(from: fixture.lifecycle) {
+            $0.storedSelection == "whisper-small" && $0.isDictationBlocked
+        }
+
+        session = nil
+        await selection.value
+        let completed = await fixture.lifecycle.snapshot()
+
+        XCTAssertEqual(
+            EngineSwitchState(
+                effectiveSelection: completed.effectiveSelection,
+                eventLog: fixture.residency.events,
+                maximumResidentEngines: fixture.residency.maximumResidentEngines
+            ),
+            completedSwitchState
+        )
+    }
+
+    func testTranscriptionFailureReleasesLifecycleSessionForPendingSelection() async {
+        let fixture = switchingLifecycle(transcriptionError: EngineFailure())
+        await fixture.lifecycle.start()
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: FakeRecorder(),
+            sessionProvider: fixture.lifecycle,
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        let selection = Task {
+            await fixture.lifecycle.updateStoredSelection("whisper-small")
+        }
+        _ = await snapshot(from: fixture.lifecycle) {
+            $0.storedSelection == "whisper-small" && $0.isDictationBlocked
+        }
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+        await selection.value
+        let completed = await fixture.lifecycle.snapshot()
+
+        XCTAssertEqual(
+            EngineSwitchState(
+                effectiveSelection: completed.effectiveSelection,
+                eventLog: fixture.residency.events,
+                maximumResidentEngines: fixture.residency.maximumResidentEngines
+            ),
+            completedSwitchState
+        )
+    }
+
+    func testCanceledTranscriptionReleasesLifecycleSessionForPendingSelection() async {
+        let transcription = SuspendAsyncOperations()
+        let fixture = switchingLifecycle(transcription: transcription.run)
+        await fixture.lifecycle.start()
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: FakeRecorder(),
+            sessionProvider: fixture.lifecycle,
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        let selection = Task {
+            await fixture.lifecycle.updateStoredSelection("whisper-small")
+        }
+        _ = await snapshot(from: fixture.lifecycle) {
+            $0.storedSelection == "whisper-small" && $0.isDictationBlocked
+        }
+        pipeline.stopRecording()
+        await transcription.waitUntilStarted()
+        pipeline.shutdown()
+        transcription.finish()
+        await pipeline.awaitPendingJob()
+        await selection.value
+        let completed = await fixture.lifecycle.snapshot()
+
+        XCTAssertEqual(
+            EngineSwitchState(
+                effectiveSelection: completed.effectiveSelection,
+                eventLog: fixture.residency.events,
+                maximumResidentEngines: fixture.residency.maximumResidentEngines
+            ),
+            completedSwitchState
+        )
+    }
+
+    func testRecorderFailureReleasesLifecycleSessionForPendingSelection() async {
+        let fixture = switchingLifecycle()
+        await fixture.lifecycle.start()
+        let recorder = FakeRecorder()
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: recorder,
+            sessionProvider: fixture.lifecycle,
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        let selection = Task {
+            await fixture.lifecycle.updateStoredSelection("whisper-small")
+        }
+        _ = await snapshot(from: fixture.lifecycle) {
+            $0.storedSelection == "whisper-small" && $0.isDictationBlocked
+        }
+        recorder.fail(.configurationChanged)
+        await selection.value
+        let completed = await fixture.lifecycle.snapshot()
+
+        XCTAssertEqual(
+            EngineSwitchState(
+                effectiveSelection: completed.effectiveSelection,
+                eventLog: fixture.residency.events,
+                maximumResidentEngines: fixture.residency.maximumResidentEngines
+            ),
+            completedSwitchState
+        )
+    }
+
+    func testPipelineReleasesSessionForSwitchBeforePolishAndQueuesNextEngine() async {
+        let residency = EngineResidencyProbe()
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"],
+            residency: residency
+        )
+        parakeet.transcriptionTextByModelID = [
+            "parakeet-v3":
+                "first transcript is unquestionably longer than the forty character threshold",
+        ]
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: ["whisper-small"],
+            residency: residency
+        )
+        whisper.transcriptionTextByModelID = [
+            "whisper-small":
+                "second transcript is unquestionably longer than the forty character threshold",
+        ]
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "parakeet-v3",
+            adapters: [parakeet, whisper]
+        )
+        await lifecycle.start()
+        let polish = SuspendAsyncOperations()
+        let inserted = InsertSpy()
+        let mode = Mode(
+            name: "Clean", asrModel: "", llmModel: "llama3", systemPrompt: nil, vocab: []
+        )
+        let pipeline = Pipeline(
+            config: makeTestConfig(mode: mode),
+            recorder: FakeRecorder(),
+            sessionProvider: lifecycle,
+            polish: { text, _ in
+                await polish.run()
+                return text
+            },
+            insert: { inserted.insert($0) },
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        let selection = Task { await lifecycle.updateStoredSelection("whisper-small") }
+        _ = await snapshot(from: lifecycle) {
+            $0.storedSelection == "whisper-small" && $0.isDictationBlocked
+        }
+        pipeline.stopRecording()
+        await polish.waitUntilStarted()
+        await selection.value
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        polish.finish()
+        await pipeline.awaitPendingJob()
+        let completed = await lifecycle.snapshot()
+
+        XCTAssertEqual(
+            PipelineLifecycleTransitionState(
+                effectiveSelection: completed.effectiveSelection,
+                insertedTexts: inserted.texts,
+                eventLog: residency.events,
+                maximumResidentEngines: residency.maximumResidentEngines
+            ),
+            PipelineLifecycleTransitionState(
+                effectiveSelection: "whisper-small",
+                insertedTexts: [
+                    "first transcript is unquestionably longer than the forty character threshold",
+                    "second transcript is unquestionably longer than the forty character threshold",
+                ],
+                eventLog: [
+                    "construct-parakeet-v3",
+                    "release-parakeet-v3",
+                    "construct-whisper-small",
+                ],
+                maximumResidentEngines: 1
             )
         )
     }
@@ -1388,6 +1672,46 @@ final class ASRModelLifecycleTests: XCTestCase {
         preconditionFailure("Lifecycle snapshot stream ended")
     }
 
+    private func switchingLifecycle(
+        transcriptionError: Error? = nil,
+        transcription: (() async -> Void)? = nil
+    ) -> (lifecycle: ASRModelLifecycle, residency: EngineResidencyProbe) {
+        let residency = EngineResidencyProbe()
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"],
+            residency: residency
+        )
+        if let transcriptionError {
+            parakeet.engineTranscriptionErrors = ["parakeet-v3": transcriptionError]
+        }
+        parakeet.engineTranscription = transcription
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: ["whisper-small"],
+            residency: residency
+        )
+        return (
+            ASRModelLifecycle(
+                storedSelection: "parakeet-v3",
+                adapters: [parakeet, whisper]
+            ),
+            residency
+        )
+    }
+
+    private var completedSwitchState: EngineSwitchState {
+        EngineSwitchState(
+            effectiveSelection: "whisper-small",
+            eventLog: [
+                "construct-parakeet-v3",
+                "release-parakeet-v3",
+                "construct-whisper-small",
+            ],
+            maximumResidentEngines: 1
+        )
+    }
+
     private func failureDescription(
         _ operation: () async throws -> Void
     ) async -> String? {
@@ -1488,6 +1812,13 @@ final class ASRModelLifecycleTests: XCTestCase {
     private struct ActiveTranscriptionSwitchResult: Equatable {
         let text: String
         let states: [ActiveTranscriptionTransitionState]
+    }
+
+    private struct PipelineLifecycleTransitionState: Equatable {
+        let effectiveSelection: String?
+        let insertedTexts: [String]
+        let eventLog: [String]
+        let maximumResidentEngines: Int
     }
 
     private struct SelectionTransitionState: Equatable {
@@ -1592,6 +1923,7 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
     }
 
     var transcriptionTextByModelID: [String: String] = [:]
+    var engineTranscriptionErrors: [String: Error] = [:]
     var enginePreparationErrors: [String: Error] = [:]
     var enginePreparation: (() async -> Void)?
     var engineTranscription: (() async -> Void)?
@@ -1669,6 +2001,7 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
             preparationError: enginePreparationErrors[id],
             preparation: enginePreparation,
             transcription: engineTranscription,
+            transcriptionError: engineTranscriptionErrors[id],
             onPreparationFailure: { [weak self] in
                 guard self?.removesAvailabilityOnPreparationFailure == true else { return }
                 _ = self?.lock.withLock { self?._availableModelIDs.remove(id) }
@@ -1723,6 +2056,7 @@ private final class FakeLifecycleTranscriber: Transcribing {
     private let preparationError: Error?
     private let preparation: (() async -> Void)?
     private let transcription: (() async -> Void)?
+    private let transcriptionError: Error?
     private let onPreparationFailure: () -> Void
     private let onTranscribe: ([Float]) -> Void
     private(set) var ready = false
@@ -1736,6 +2070,7 @@ private final class FakeLifecycleTranscriber: Transcribing {
         preparationError: Error?,
         preparation: (() async -> Void)?,
         transcription: (() async -> Void)?,
+        transcriptionError: Error?,
         onPreparationFailure: @escaping () -> Void,
         onTranscribe: @escaping ([Float]) -> Void
     ) {
@@ -1745,6 +2080,7 @@ private final class FakeLifecycleTranscriber: Transcribing {
         self.preparationError = preparationError
         self.preparation = preparation
         self.transcription = transcription
+        self.transcriptionError = transcriptionError
         self.onPreparationFailure = onPreparationFailure
         self.onTranscribe = onTranscribe
         residency?.constructed(modelID)
@@ -1767,6 +2103,7 @@ private final class FakeLifecycleTranscriber: Transcribing {
 
     func transcribe(_ samples: [Float]) async throws -> String {
         await transcription?()
+        if let transcriptionError { throw transcriptionError }
         onTranscribe(samples)
         return text
     }

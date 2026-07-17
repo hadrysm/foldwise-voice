@@ -85,7 +85,7 @@ enum ASRModelLifecycleError: LocalizedError {
     }
 }
 
-actor ASRModelLifecycle: Transcribing {
+actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
     private struct ActiveDownload {
         let id: UUID
         let modelID: String
@@ -99,8 +99,6 @@ actor ASRModelLifecycle: Transcribing {
     private var effectiveSelection: String?
     private var activationInProgress = false
     private var engine: Transcribing?
-    private var activeTranscriptionCount = 0
-    private var transcriptionDrainWaiters: [CheckedContinuation<Void, Never>] = []
     private var didStart = false
     private var dictationBlocked = true
     private var bootstrapOperationID: UUID?
@@ -141,6 +139,10 @@ actor ASRModelLifecycle: Transcribing {
         Task { await start() }
     }
 
+    nonisolated func captureSession() throws -> any ASRSessionHandle {
+        try transcriberState.captureSession()
+    }
+
     func prepare() async throws {
         await start()
         guard !dictationBlocked else { throw ASRModelLifecycleError.recognitionBlocked }
@@ -148,12 +150,9 @@ actor ASRModelLifecycle: Transcribing {
 
     func transcribe(_ samples: [Float]) async throws -> String {
         if !didStart { await start() }
-        guard !dictationBlocked, let engine else {
-            throw ASRModelLifecycleError.recognitionBlocked
-        }
-        activeTranscriptionCount += 1
-        defer { finishTranscription() }
-        return try await engine.transcribe(samples)
+        let session = try captureSession()
+        defer { session.release() }
+        return try await session.transcribe(samples)
     }
 
     func start() async {
@@ -198,8 +197,7 @@ actor ASRModelLifecycle: Transcribing {
             }
             guard targetID != effectiveSelection || engine == nil else {
                 dictationBlocked = false
-                transcriberState.setReady(true)
-                transcriberState.setDictationBlocked(false)
+                transcriberState.activate(engine)
                 publishSnapshot()
                 return
             }
@@ -232,8 +230,7 @@ actor ASRModelLifecycle: Transcribing {
                 engine = candidate
                 effectiveSelection = targetID
                 dictationBlocked = false
-                transcriberState.setReady(true)
-                transcriberState.setDictationBlocked(false)
+                transcriberState.activate(candidate)
                 publishSnapshot()
                 return
             } catch {
@@ -262,26 +259,12 @@ actor ASRModelLifecycle: Transcribing {
 
     private func blockDictationThenReleaseEngine() async {
         dictationBlocked = true
-        transcriberState.setReady(false)
-        transcriberState.setDictationBlocked(true)
-        if activeTranscriptionCount > 0 {
+        if transcriberState.beginBlockingSessions() {
             publishSnapshot()
-            await withCheckedContinuation { continuation in
-                transcriptionDrainWaiters.append(continuation)
-            }
         }
+        await transcriberState.waitForSessionsToDrain()
         engine = nil
         effectiveSelection = nil
-    }
-
-    private func finishTranscription() {
-        activeTranscriptionCount -= 1
-        guard activeTranscriptionCount == 0 else { return }
-        let waiters = transcriptionDrainWaiters
-        transcriptionDrainWaiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
     }
 
     private func bootstrapDefault() async {
@@ -528,6 +511,9 @@ private final class ASRLifecycleTranscriberState: @unchecked Sendable {
     private let lock = NSLock()
     private var _ready = false
     private var _isDictationBlocked = true
+    private var engine: Transcribing?
+    private var activeSessionCount = 0
+    private var sessionDrainWaiters: [CheckedContinuation<Void, Never>] = []
     private var _onLoading: ((Bool) -> Void)?
     private var _onDownloadProgress: ((Double) -> Void)?
 
@@ -549,12 +535,61 @@ private final class ASRLifecycleTranscriberState: @unchecked Sendable {
         set { lock.withLock { _onDownloadProgress = newValue } }
     }
 
-    func setReady(_ ready: Bool) {
-        lock.withLock { _ready = ready }
-    }
-
     func setDictationBlocked(_ blocked: Bool) {
         lock.withLock { _isDictationBlocked = blocked }
+    }
+
+    func activate(_ engine: Transcribing?) {
+        lock.withLock {
+            self.engine = engine
+            _ready = engine != nil
+            _isDictationBlocked = engine == nil
+        }
+    }
+
+    func beginBlockingSessions() -> Bool {
+        lock.withLock {
+            engine = nil
+            _ready = false
+            _isDictationBlocked = true
+            return activeSessionCount > 0
+        }
+    }
+
+    func captureSession() throws -> any ASRSessionHandle {
+        let capturedEngine = try lock.withLock { () throws -> Transcribing in
+            guard !_isDictationBlocked, let engine else {
+                throw ASRModelLifecycleError.recognitionBlocked
+            }
+            activeSessionCount += 1
+            return engine
+        }
+        return ASRLifecycleSessionHandle(engine: capturedEngine) { [weak self] in
+            self?.releaseSession()
+        }
+    }
+
+    func waitForSessionsToDrain() async {
+        await withCheckedContinuation { continuation in
+            let shouldResume = lock.withLock {
+                guard activeSessionCount > 0 else { return true }
+                sessionDrainWaiters.append(continuation)
+                return false
+            }
+            if shouldResume { continuation.resume() }
+        }
+    }
+
+    private func releaseSession() {
+        let waiters = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            activeSessionCount -= 1
+            guard activeSessionCount == 0 else { return [] }
+            defer { sessionDrainWaiters.removeAll() }
+            return sessionDrainWaiters
+        }
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 
     func notifyLoading(_ loading: Bool) {
@@ -563,5 +598,40 @@ private final class ASRLifecycleTranscriberState: @unchecked Sendable {
 
     func notifyDownloadProgress(_ fraction: Double) {
         lock.withLock { _onDownloadProgress }?(fraction)
+    }
+}
+
+private final class ASRLifecycleSessionHandle: ASRSessionHandle, @unchecked Sendable {
+    private let lock = NSLock()
+    private var engine: Transcribing?
+    private var onRelease: (() -> Void)?
+
+    init(engine: Transcribing, onRelease: @escaping () -> Void) {
+        self.engine = engine
+        self.onRelease = onRelease
+    }
+
+    var ready: Bool {
+        lock.withLock { engine?.ready ?? false }
+    }
+
+    func transcribe(_ samples: [Float]) async throws -> String {
+        guard let engine = lock.withLock({ engine }) else {
+            throw ASRModelLifecycleError.recognitionBlocked
+        }
+        return try await engine.transcribe(samples)
+    }
+
+    func release() {
+        let callback = lock.withLock { () -> (() -> Void)? in
+            engine = nil
+            defer { onRelease = nil }
+            return onRelease
+        }
+        callback?()
+    }
+
+    deinit {
+        release()
     }
 }
