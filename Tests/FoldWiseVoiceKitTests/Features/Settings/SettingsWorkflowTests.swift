@@ -380,6 +380,7 @@ final class SettingsWorkflowTests: XCTestCase {
     private struct ASRBootstrapPresentationState: Equatable {
         let downloading: String?
         let fraction: Double?
+        let isBootstrapping: Bool
         let error: String
         let canRetry: Bool
         let defaultIsAvailable: Bool
@@ -1591,6 +1592,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let progressing = ASRBootstrapPresentationState(
             downloading: model.asrDownloading,
             fraction: model.asrDownloadFraction,
+            isBootstrapping: model.isASRBootstrapping,
             error: model.asrDownloadError,
             canRetry: model.canRetryASRBootstrap,
             defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
@@ -1602,6 +1604,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let failed = ASRBootstrapPresentationState(
             downloading: model.asrDownloading,
             fraction: model.asrDownloadFraction,
+            isBootstrapping: model.isASRBootstrapping,
             error: model.asrDownloadError,
             canRetry: model.canRetryASRBootstrap,
             defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
@@ -1614,6 +1617,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let recovered = ASRBootstrapPresentationState(
             downloading: model.asrDownloading,
             fraction: model.asrDownloadFraction,
+            isBootstrapping: model.isASRBootstrapping,
             error: model.asrDownloadError,
             canRetry: model.canRetryASRBootstrap,
             defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
@@ -1625,6 +1629,7 @@ final class SettingsWorkflowTests: XCTestCase {
                 ASRBootstrapPresentationState(
                     downloading: ASRModelCatalog.defaultID,
                     fraction: 0.45,
+                    isBootstrapping: true,
                     error: "",
                     canRetry: false,
                     defaultIsAvailable: false
@@ -1632,6 +1637,7 @@ final class SettingsWorkflowTests: XCTestCase {
                 ASRBootstrapPresentationState(
                     downloading: nil,
                     fraction: nil,
+                    isBootstrapping: false,
                     error: "Couldn't prepare the default speech model: network unavailable",
                     canRetry: true,
                     defaultIsAvailable: false
@@ -1639,6 +1645,7 @@ final class SettingsWorkflowTests: XCTestCase {
                 ASRBootstrapPresentationState(
                     downloading: nil,
                     fraction: nil,
+                    isBootstrapping: false,
                     error: "",
                     canRetry: false,
                     defaultIsAvailable: true
@@ -1668,6 +1675,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let failed = ASRBootstrapPresentationState(
             downloading: model.asrDownloading,
             fraction: model.asrDownloadFraction,
+            isBootstrapping: model.isASRBootstrapping,
             error: model.asrDownloadError,
             canRetry: model.canRetryASRBootstrap,
             defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
@@ -1679,6 +1687,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let recovered = ASRBootstrapPresentationState(
             downloading: model.asrDownloading,
             fraction: model.asrDownloadFraction,
+            isBootstrapping: model.isASRBootstrapping,
             error: model.asrDownloadError,
             canRetry: model.canRetryASRBootstrap,
             defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
@@ -1690,6 +1699,7 @@ final class SettingsWorkflowTests: XCTestCase {
                 ASRBootstrapPresentationState(
                     downloading: nil,
                     fraction: nil,
+                    isBootstrapping: false,
                     error: "Couldn't load Parakeet TDT v3: engine rejected",
                     canRetry: true,
                     defaultIsAvailable: false
@@ -1697,6 +1707,7 @@ final class SettingsWorkflowTests: XCTestCase {
                 ASRBootstrapPresentationState(
                     downloading: nil,
                     fraction: nil,
+                    isBootstrapping: false,
                     error: "",
                     canRetry: false,
                     defaultIsAvailable: true

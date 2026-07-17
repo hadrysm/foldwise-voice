@@ -130,14 +130,17 @@ struct SpeechPane: View {
             if downloading {
                 HStack(spacing: 8) {
                     downloadProgress
-                    Button {
-                        model.onCancelASRDownload?()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textSecondary)
+                    if !model.isASRBootstrapping {
+                        Button {
+                            model.onCancelASRDownload?()
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Cancel download")
+                        .accessibilityLabel("Cancel download for \(entry.name)")
                     }
-                    .buttonStyle(.plain)
-                    .help("Cancel download")
-                    .accessibilityLabel("Cancel download for \(entry.name)")
                 }
             } else if !downloaded {
                 Button("Download") { model.onDownloadASRModel?(entry.id) }

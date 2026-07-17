@@ -68,6 +68,7 @@ final class SettingsModel: ObservableObject {
     /// fraction arrives or for an engine that can't report one (Parakeet), which
     /// keeps the pane on the indeterminate spinner (#93).
     @Published var asrDownloadFraction: Double?
+    @Published var isASRBootstrapping = false
     @Published var asrDownloadError = ""
     @Published var asrRecoveryMessage: String?
     @Published var canRetryASRBootstrap = false

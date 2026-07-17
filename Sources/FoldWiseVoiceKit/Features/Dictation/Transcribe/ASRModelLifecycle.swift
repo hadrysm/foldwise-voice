@@ -107,7 +107,7 @@ actor ASRModelLifecycle: Transcribing {
     private var activeDownload: ActiveDownload?
     private var canceledDownloadIDs: Set<UUID> = []
     private var observers: [UUID: AsyncStream<ASRModelLifecycleSnapshot>.Continuation] = [:]
-    nonisolated private let transcriberState = ASRLifecycleTranscriberState()
+    private let transcriberState = ASRLifecycleTranscriberState()
 
     init(
         storedSelection: String,
@@ -162,7 +162,7 @@ actor ASRModelLifecycle: Transcribing {
             await bootstrapDefault()
             return
         }
-        await loadEffectiveEngine()
+        await ensureEffectiveEngine()
     }
 
     func retryBootstrap() async {
@@ -171,14 +171,10 @@ actor ASRModelLifecycle: Transcribing {
         reconcileAvailabilityFromAdapters()
         if availability.contains(ASRModelCatalog.defaultID) {
             failure = nil
-            await loadEffectiveEngine()
+            await ensureEffectiveEngine()
         } else {
             await bootstrapDefault()
         }
-    }
-
-    private func loadEffectiveEngine() async {
-        await ensureEffectiveEngine()
     }
 
     private func ensureEffectiveEngine() async {
@@ -301,7 +297,7 @@ actor ASRModelLifecycle: Transcribing {
             return
         }
         operation = nil
-        await loadEffectiveEngine()
+        await ensureEffectiveEngine()
     }
 
     func reconcileAvailability() async {
@@ -337,11 +333,11 @@ actor ASRModelLifecycle: Transcribing {
             return
         }
         let targetID = effectiveTargetID()
+        failure = nil
         guard targetID != effectiveSelection else {
             publishSnapshot()
             return
         }
-        failure = nil
         await ensureEffectiveEngine()
     }
 

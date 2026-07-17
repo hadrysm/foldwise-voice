@@ -863,6 +863,41 @@ final class ASRModelLifecycleTests: XCTestCase {
         )
     }
 
+    func testSelectingEffectiveFallbackClearsPreviousEngineLoadFailure() async {
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"]
+        )
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: ["whisper-small"]
+        )
+        whisper.enginePreparationErrors = ["whisper-small": EngineFailure()]
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "whisper-small",
+            adapters: [parakeet, whisper]
+        )
+        await lifecycle.start()
+
+        await lifecycle.updateStoredSelection("parakeet-v3")
+        let snapshot = await lifecycle.snapshot()
+
+        XCTAssertEqual(
+            ExplicitFallbackSelectionState(
+                storedSelection: snapshot.storedSelection,
+                effectiveSelection: snapshot.effectiveSelection,
+                recovery: snapshot.recovery,
+                failure: snapshot.failure
+            ),
+            ExplicitFallbackSelectionState(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                recovery: nil,
+                failure: nil
+            )
+        )
+    }
+
     func testUnknownStoredSelectionFallsBackWithoutSyntheticCatalogRow() async {
         let parakeet = FakeASRModelFamilyAdapter(
             modelIDs: ["parakeet-v3"],
@@ -1319,6 +1354,13 @@ final class ASRModelLifecycleTests: XCTestCase {
         let isDictationBlocked: Bool
         let failure: ASRModelLifecycleFailure?
         let loadedModelIDs: [String]
+    }
+
+    private struct ExplicitFallbackSelectionState: Equatable {
+        let storedSelection: String
+        let effectiveSelection: String?
+        let recovery: ASRModelLifecycleRecovery?
+        let failure: ASRModelLifecycleFailure?
     }
 
     private struct UnknownSelectionState: Equatable {

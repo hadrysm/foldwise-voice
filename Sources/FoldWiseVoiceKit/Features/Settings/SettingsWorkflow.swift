@@ -191,12 +191,15 @@ final class SettingsWorkflow {
         case let .downloading(modelID, fraction):
             model.asrDownloading = modelID
             model.asrDownloadFraction = fraction
+            model.isASRBootstrapping = false
         case let .bootstrapping(fraction):
             model.asrDownloading = ASRModelCatalog.defaultID
             model.asrDownloadFraction = fraction
+            model.isASRBootstrapping = true
         case nil:
             model.asrDownloading = nil
             model.asrDownloadFraction = nil
+            model.isASRBootstrapping = false
         }
         switch snapshot.failure {
         case let .downloadFailed(modelID, reason):

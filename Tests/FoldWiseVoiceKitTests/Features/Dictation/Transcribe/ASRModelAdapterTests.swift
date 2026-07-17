@@ -129,14 +129,11 @@ final class ASRModelAdapterTests: XCTestCase {
         )
     }
 
-    func testLiveAdaptersConstructMappedEnginesWithoutLoadingModelData() throws {
+    func testLiveAdaptersConstructEnginesWithoutPreparingThem() throws {
         let parakeet = try ParakeetASRModelAdapter().makeEngine(for: "parakeet-v2")
         let whisper = try WhisperASRModelAdapter().makeEngine(for: "whisper-small")
 
-        XCTAssertEqual(
-            [parakeet is Transcriber, whisper is WhisperTranscriber],
-            [true, true]
-        )
+        XCTAssertEqual([parakeet.ready, whisper.ready], [false, false])
     }
 
     func testAdaptersRejectEngineConstructionForUnknownModelIDs() {
