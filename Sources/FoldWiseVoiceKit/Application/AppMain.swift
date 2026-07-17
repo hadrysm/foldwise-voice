@@ -35,11 +35,9 @@ final class LiveLLMModelManager: LLMModelManaging {
     }
 }
 
-final class LiveASRModelManager: ASRModelDeleting {
-    func deleteASRModel(_ id: String) async -> String? {
-        guard let entry = ASRModelCatalog.entry(for: id) else { return "Unknown ASR model." }
-        return await Task.detached { ASRModelStore.delete(entry.engine) }.value
-    }
+func deleteStoredASRModel(_ id: String) async -> String? {
+    guard let entry = ASRModelCatalog.entry(for: id) else { return "Unknown ASR model." }
+    return await Task.detached { ASRModelStore.delete(entry.engine) }.value
 }
 
 final class LiveSettingsUpdateChecker: SettingsUpdateChecking {

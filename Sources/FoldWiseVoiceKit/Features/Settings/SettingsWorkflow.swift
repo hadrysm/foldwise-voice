@@ -10,11 +10,6 @@ protocol LLMModelManaging {
 }
 
 @MainActor
-protocol ASRModelDeleting {
-    func deleteASRModel(_ id: String) async -> String?
-}
-
-@MainActor
 protocol SettingsUpdateChecking {
     var isAvailable: Bool { get }
     func check() async -> UpdateChecker.CheckResult
@@ -25,6 +20,7 @@ protocol SettingsUpdateChecking {
 final class SettingsWorkflow {
     typealias ScheduleStatusClear = @MainActor ((@MainActor () -> Void)?) -> Void
     typealias Copy = @MainActor (String) -> Void
+    typealias DeleteASRModel = @MainActor (String) async -> String?
 
     private let config: Config
     private let model: SettingsModel
@@ -32,7 +28,7 @@ final class SettingsWorkflow {
     private let now: () -> Date
     private let scheduleStatusClear: ScheduleStatusClear
     private let llmModels: any LLMModelManaging
-    private let asrModels: any ASRModelDeleting
+    private let deleteASRModel: DeleteASRModel
     private let asrLifecycle: ASRModelLifecycle
     private let copy: Copy
     private let statsStore: StatsStore
@@ -71,7 +67,7 @@ final class SettingsWorkflow {
             now: now,
             scheduleStatusClear: scheduleStatusClear,
             llmModels: LiveLLMModelManager(),
-            asrModels: LiveASRModelManager(),
+            deleteASRModel: deleteStoredASRModel,
             asrLifecycle: asrLifecycle,
             copy: copy,
             statsStore: statsStore,
@@ -91,7 +87,7 @@ final class SettingsWorkflow {
         now: @escaping () -> Date,
         scheduleStatusClear: @escaping ScheduleStatusClear,
         llmModels: any LLMModelManaging,
-        asrModels: any ASRModelDeleting,
+        deleteASRModel: @escaping DeleteASRModel,
         asrLifecycle: ASRModelLifecycle,
         copy: @escaping Copy,
         statsStore: StatsStore = JSONStatsStore(url: JSONStatsStore.defaultURL),
@@ -108,7 +104,7 @@ final class SettingsWorkflow {
         self.now = now
         self.scheduleStatusClear = scheduleStatusClear
         self.llmModels = llmModels
-        self.asrModels = asrModels
+        self.deleteASRModel = deleteASRModel
         self.asrLifecycle = asrLifecycle
         self.copy = copy
         self.statsStore = statsStore
@@ -618,7 +614,7 @@ final class SettingsWorkflow {
         model.asrDeleting = id
         model.asrDeleteError = ""
         Task { @MainActor in
-            let failure = await asrModels.deleteASRModel(id)
+            let failure = await deleteASRModel(id)
             guard asrDeleteID == operationID else { return }
             asrDeleteID = nil
             model.asrDeleting = nil

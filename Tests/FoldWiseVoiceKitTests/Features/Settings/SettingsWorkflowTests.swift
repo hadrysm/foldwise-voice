@@ -27,7 +27,7 @@ private extension SettingsWorkflow {
             now: now,
             scheduleStatusClear: scheduleStatusClear,
             llmModels: LiveLLMModelManager(),
-            asrModels: LiveASRModelManager(),
+            deleteASRModel: deleteStoredASRModel,
             asrLifecycle: ASRModelLifecycle(
                 storedSelection: config.asrModel,
                 adapters: []
@@ -439,7 +439,7 @@ final class SettingsWorkflowTests: XCTestCase {
     }
 
     @MainActor
-    private final class CannedModelManagers: LLMModelManaging, ASRModelDeleting {
+    private final class CannedModelManagers: LLMModelManaging {
         let asrAdapter: CannedASRAdapter
         let listResult: @MainActor () async -> [OllamaClient.InstalledModel]
         let pullResult: @MainActor (
@@ -2885,7 +2885,7 @@ final class SettingsWorkflowTests: XCTestCase {
             now: now,
             scheduleStatusClear: { _ in },
             llmModels: effects,
-            asrModels: effects,
+            deleteASRModel: effects.deleteASRModel,
             asrLifecycle: asrLifecycle,
             copy: { text in
                 pasteboard.clearContents()

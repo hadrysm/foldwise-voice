@@ -160,8 +160,6 @@ struct SpeechPane: View {
         .accessibilityLabel("More actions for \(entry.name)")
     }
 
-    /// A fractional bar mirroring the Ollama pull UX once the storage adapter
-    /// reports a percentage; before the first fraction it is indeterminate.
     @ViewBuilder
     private var downloadProgress: some View {
         if let fraction = model.asrDownloadFraction {

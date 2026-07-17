@@ -2,7 +2,6 @@ import FluidAudio
 import Foundation
 import WhisperKit
 
-/// Thin library boundary for network-backed ASR model storage operations.
 enum ASRModelLibraryStorage {
     static let parakeetModelDirectory: @Sendable (
         ASRModelCatalog.ParakeetVariant
