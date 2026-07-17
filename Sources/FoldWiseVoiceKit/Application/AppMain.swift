@@ -35,29 +35,10 @@ final class LiveLLMModelManager: LLMModelManaging {
     }
 }
 
-final class LiveASRModelManager: ASRModelManaging {
-    func prepare(
-        _ entry: ASRModelCatalog.Entry,
-        progress: @escaping ASRProgress,
-        loading: @escaping ASRLoading
-    ) async -> String? {
-        let engine = TranscriberDispatcher.buildEngine(entry.engine)
-        engine.onDownloadProgress = { fraction in
-            Task { @MainActor in progress(fraction) }
-        }
-        engine.onLoading = { isLoading in
-            Task { @MainActor in loading(isLoading) }
-        }
-        do {
-            try await engine.prepare()
-            return nil
-        } catch {
-            return "\(error)"
-        }
-    }
-
-    func delete(_ entry: ASRModelCatalog.Entry) async -> String? {
-        await Task.detached { ASRModelStore.delete(entry.engine) }.value
+final class LiveASRModelManager: ASRModelDeleting {
+    func deleteASRModel(_ id: String) async -> String? {
+        guard let entry = ASRModelCatalog.entry(for: id) else { return "Unknown ASR model." }
+        return await Task.detached { ASRModelStore.delete(entry.engine) }.value
     }
 }
 
@@ -149,6 +130,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // subscribes to `.asrModel` changes itself. The Pipeline drives it as an
         // ordinary transcriber and never learns there is more than one engine.
         let transcriber = TranscriberDispatcher(config: config)
+        let asrLifecycle = ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [ParakeetASRModelAdapter(), WhisperASRModelAdapter()]
+        )
         // One store shared between the record seam and the History pane, so a
         // dictation just spoken is on disk for the pane to load (PRD #78).
         let historyStore = JSONLHistoryStore(url: JSONLHistoryStore.defaultURL)
@@ -221,7 +206,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         settings = SettingsController(
             config: config, historyStore: historyStore, statsStore: statsStore,
-            inputDevices: recorder, hotkeys: hotkeys, captureGate: shortcutCaptureGate
+            inputDevices: recorder, hotkeys: hotkeys, captureGate: shortcutCaptureGate,
+            asrLifecycle: asrLifecycle
         )
         menuBar = MenuBarController(
             config: config,
@@ -252,6 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
         transcriber.warmup()
+        Task { await asrLifecycle.reconcileAvailability() }
 
         // The living idle pill is the ready signal (PRD #103); the hotkey
         // hint lives on Home, rendered from the live config.

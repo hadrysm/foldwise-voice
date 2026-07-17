@@ -10,16 +10,8 @@ protocol LLMModelManaging {
 }
 
 @MainActor
-protocol ASRModelManaging {
-    typealias ASRProgress = @MainActor (Double) -> Void
-    typealias ASRLoading = @MainActor (Bool) -> Void
-
-    func prepare(
-        _ entry: ASRModelCatalog.Entry,
-        progress: @escaping ASRProgress,
-        loading: @escaping ASRLoading
-    ) async -> String?
-    func delete(_ entry: ASRModelCatalog.Entry) async -> String?
+protocol ASRModelDeleting {
+    func deleteASRModel(_ id: String) async -> String?
 }
 
 @MainActor
@@ -40,7 +32,8 @@ final class SettingsWorkflow {
     private let now: () -> Date
     private let scheduleStatusClear: ScheduleStatusClear
     private let llmModels: any LLMModelManaging
-    private let asrModels: any ASRModelManaging
+    private let asrModels: any ASRModelDeleting
+    private let asrLifecycle: ASRModelLifecycle
     private let copy: Copy
     private let statsStore: StatsStore
     private let calendar: Calendar
@@ -51,9 +44,9 @@ final class SettingsWorkflow {
     private let captureGate: ShortcutCaptureGate
     private var llmRefreshID: UUID?
     private var llmMutationID: UUID?
-    private var asrDownloadID: UUID?
-    private var asrDownloadTask: Task<Void, Never>?
     private var asrDeleteID: UUID?
+    private var asrDownloadID: UUID?
+    private var asrSnapshotTask: Task<Void, Never>?
 
     convenience init(
         config: Config,
@@ -68,7 +61,8 @@ final class SettingsWorkflow {
         updates: (any SettingsUpdateChecking)? = nil,
         reportUpdate: @escaping (String) -> Void = { _ in },
         updateHotkeys: ((ShortcutBindings) throws -> Void)? = nil,
-        captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
+        captureGate: ShortcutCaptureGate = ShortcutCaptureGate(),
+        asrLifecycle: ASRModelLifecycle
     ) {
         self.init(
             config: config,
@@ -78,6 +72,7 @@ final class SettingsWorkflow {
             scheduleStatusClear: scheduleStatusClear,
             llmModels: LiveLLMModelManager(),
             asrModels: LiveASRModelManager(),
+            asrLifecycle: asrLifecycle,
             copy: copy,
             statsStore: statsStore,
             calendar: calendar,
@@ -96,7 +91,8 @@ final class SettingsWorkflow {
         now: @escaping () -> Date,
         scheduleStatusClear: @escaping ScheduleStatusClear,
         llmModels: any LLMModelManaging,
-        asrModels: any ASRModelManaging,
+        asrModels: any ASRModelDeleting,
+        asrLifecycle: ASRModelLifecycle,
         copy: @escaping Copy,
         statsStore: StatsStore = JSONStatsStore(url: JSONStatsStore.defaultURL),
         calendar: Calendar = .current,
@@ -113,6 +109,7 @@ final class SettingsWorkflow {
         self.scheduleStatusClear = scheduleStatusClear
         self.llmModels = llmModels
         self.asrModels = asrModels
+        self.asrLifecycle = asrLifecycle
         self.copy = copy
         self.statsStore = statsStore
         self.calendar = calendar
@@ -122,18 +119,13 @@ final class SettingsWorkflow {
         self.updateHotkeys = updateHotkeys ?? { try config.setShortcutBindings($0) }
         self.captureGate = captureGate
         observeConfigChanges()
+        observeASRLifecycle()
     }
 
     func populatePreferences() {
         model.configurationRecoveryMessage = config.recovery?.message
         populateModes()
         model.asrModel = config.asrModel
-        model.asrDownloaded = [ASRModelCatalog.defaultID]
-        if ASRModelCatalog.entry(for: config.asrModel) != nil {
-            model.asrDownloaded.insert(config.asrModel)
-        }
-        model.asrDownloading = nil
-        model.asrDownloadError = ""
         model.asrDeleting = nil
         model.asrDeleteError = ""
         populateShortcutBindings()
@@ -143,6 +135,7 @@ final class SettingsWorkflow {
         model.retention = config.historyRetention
         model.sidebar = SidebarPresentation(prefersCollapsed: config.sidebarCollapsed)
         model.status = ""
+        reconcileASRAvailability()
     }
 
     private func populateModes() {
@@ -163,7 +156,50 @@ final class SettingsWorkflow {
                 model.modeSelection = model.modeSelection.selecting(config.selection)
                 model.selectedModel = config.mode.llmModel ?? ""
             }
+            if changes.contains(.asrModel) {
+                let selectedID = config.asrModel
+                Task { await self.asrLifecycle.updateStoredSelection(selectedID) }
+            }
         }
+    }
+
+    private func observeASRLifecycle() {
+        let lifecycle = asrLifecycle
+        asrSnapshotTask = Task { [weak self] in
+            let updates = await lifecycle.snapshots()
+            for await snapshot in updates {
+                guard let self, !Task.isCancelled else { return }
+                applyASRSnapshot(snapshot)
+            }
+        }
+    }
+
+    private func applyASRSnapshot(_ snapshot: ASRModelLifecycleSnapshot) {
+        model.asrCatalog = snapshot.models
+        model.asrModel = snapshot.storedSelection
+        model.asrDownloaded = Set(snapshot.models.filter(\.isAvailable).map(\.id))
+        switch snapshot.operation {
+        case let .downloading(modelID, fraction):
+            model.asrDownloading = modelID
+            model.asrDownloadFraction = fraction
+        case nil:
+            model.asrDownloading = nil
+            model.asrDownloadFraction = nil
+        }
+        switch snapshot.failure {
+        case let .downloadFailed(modelID, reason):
+            let name = snapshot.models.first { $0.id == modelID }?.name ?? modelID
+            model.asrDownloadError = "Couldn't download \(name): \(reason)"
+        case let .downloadedDataInvalid(modelID):
+            let name = snapshot.models.first { $0.id == modelID }?.name ?? modelID
+            model.asrDownloadError = "Downloaded data for \(name) is incomplete or corrupt."
+        case nil:
+            model.asrDownloadError = ""
+        }
+    }
+
+    private func reconcileASRAvailability() {
+        Task { await asrLifecycle.reconcileAvailability() }
     }
 
     func populateHistory() {
@@ -555,67 +591,43 @@ final class SettingsWorkflow {
     func selectASRModel(_ id: String) {
         model.asrModel = id
         commit()
+        Task { await asrLifecycle.updateStoredSelection(config.asrModel) }
     }
 
     func downloadASRModel(_ id: String) {
-        guard asrDownloadTask == nil, model.asrDeleting == nil,
-              let entry = ASRModelCatalog.entry(for: id) else { return }
+        guard asrDeleteID == nil, asrDownloadID == nil else { return }
         let operationID = UUID()
         asrDownloadID = operationID
-        model.asrDownloading = id
-        model.asrDownloadError = ""
-        model.asrDownloadFraction = nil
-        model.asrPreparing = false
-        asrDownloadTask = Task { @MainActor in
-            let failure = await asrModels.prepare(
-                entry,
-                progress: { [weak self] fraction in
-                    guard let self, asrDownloadID == operationID else { return }
-                    model.asrDownloadFraction = fraction
-                },
-                loading: { [weak self] loading in
-                    guard let self, asrDownloadID == operationID else { return }
-                    model.asrPreparing = loading
-                }
-            )
-            asrDownloadTask = nil
+        Task { @MainActor in
+            await asrLifecycle.download(id)
             guard asrDownloadID == operationID else { return }
             asrDownloadID = nil
-            clearASRDownloadUI()
-            if let message = ASRModelCatalog.downloadError(for: entry, failure: failure) {
-                model.asrDownloadError = message
-            } else {
-                model.asrDownloaded.insert(id)
-            }
         }
     }
 
     func cancelASRDownload() {
-        asrDownloadID = nil
-        asrDownloadTask?.cancel()
-        clearASRDownloadUI()
+        Task { await asrLifecycle.cancelCurrentOperation() }
     }
 
     func deleteASRModel(_ id: String) {
-        guard asrDeleteID == nil, asrDownloadTask == nil,
-              id != ASRModelCatalog.defaultID,
-              let entry = ASRModelCatalog.entry(for: id) else { return }
+        guard asrDeleteID == nil, asrDownloadID == nil,
+              let descriptor = model.asrCatalog.first(where: { $0.id == id }),
+              !descriptor.isDefault else { return }
         let operationID = UUID()
         asrDeleteID = operationID
         model.asrDeleting = id
         model.asrDeleteError = ""
         Task { @MainActor in
-            let failure = await asrModels.delete(entry)
+            let failure = await asrModels.deleteASRModel(id)
             guard asrDeleteID == operationID else { return }
             asrDeleteID = nil
             model.asrDeleting = nil
             if let failure {
-                model.asrDeleteError = "Couldn't delete \(entry.name): \(failure)"
+                model.asrDeleteError = "Couldn't delete \(descriptor.name): \(failure)"
                 return
             }
-            model.asrDownloaded.remove(id)
-            if ASRModelCatalog.deleteOutcome(for: entry, isActive: model.asrModel == id)
-                .fallsBackToDefault {
+            await asrLifecycle.reconcileAvailability()
+            if model.asrModel == id {
                 selectASRModel(ASRModelCatalog.defaultID)
             }
         }
@@ -719,11 +731,5 @@ final class SettingsWorkflow {
         scheduleStatusClear { [weak self] in
             self?.model.status = ""
         }
-    }
-
-    private func clearASRDownloadUI() {
-        model.asrDownloading = nil
-        model.asrDownloadFraction = nil
-        model.asrPreparing = false
     }
 }

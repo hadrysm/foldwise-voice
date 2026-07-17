@@ -6,12 +6,12 @@ import SwiftUI
 /// (downloaded) and "Available", mirroring the Ollama `ModelsPane`. Rows lead
 /// with language coverage; a downloaded model is a selectable row with a
 /// checkmark for the active one, an available model shows a Download button with
-/// fractional progress. Selection routes through `onSelectASRModel`, which
-/// persists via `setASRModel` and triggers the dispatcher's drop-before-load swap.
+/// fractional progress. Catalog descriptions and availability arrive from the
+/// ASR lifecycle snapshot rather than being reconstructed by this surface.
 struct SpeechPane: View {
     @ObservedObject var model: SettingsModel
     /// Armed by a downloaded row's kebab; drives the delete confirmation alert.
-    @State private var pendingDelete: ASRModelCatalog.Entry?
+    @State private var pendingDelete: ASRModelDescriptor?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -23,8 +23,8 @@ struct SpeechPane: View {
             .font(Theme.ui(12))
             .foregroundStyle(Theme.textSecondary)
 
-            let downloaded = ASRModelCatalog.entries.filter { model.asrDownloaded.contains($0.id) }
-            let available = ASRModelCatalog.entries.filter { !model.asrDownloaded.contains($0.id) }
+            let downloaded = model.asrCatalog.filter(\.isAvailable)
+            let available = model.asrCatalog.filter { !$0.isAvailable }
 
             if !downloaded.isEmpty { section("Your Models", downloaded) }
             if !available.isEmpty { section("Available", available) }
@@ -52,8 +52,7 @@ struct SpeechPane: View {
             Button("Cancel", role: .cancel) {}
         } message: { entry in
             Text(
-                ASRModelCatalog.deleteOutcome(for: entry, isActive: model.asrModel == entry.id)
-                    .message
+                deleteConfirmation(for: entry)
             )
         }
     }
@@ -61,7 +60,7 @@ struct SpeechPane: View {
     /// A titled card of rows, mirroring the Ollama `ModelsPane`'s Installed /
     /// Model-library split so the pane separates downloaded from available.
     @ViewBuilder
-    private func section(_ title: String, _ entries: [ASRModelCatalog.Entry]) -> some View {
+    private func section(_ title: String, _ entries: [ASRModelDescriptor]) -> some View {
         sectionHeader(title)
         Card {
             ForEach(Array(entries.enumerated()), id: \.element.id) { i, entry in
@@ -74,14 +73,14 @@ struct SpeechPane: View {
     /// The select `Button` (title, ratings, checkmark) and the trailing
     /// Download/spinner are siblings, never nested — a disabled select row would
     /// otherwise also disable a nested Download button (cf. `ModelsPane`).
-    private func row(_ entry: ASRModelCatalog.Entry) -> some View {
-        let downloaded = model.asrDownloaded.contains(entry.id)
+    private func row(_ entry: ASRModelDescriptor) -> some View {
+        let downloaded = entry.isAvailable
         let selected = model.asrModel == entry.id
         let downloading = model.asrDownloading == entry.id
         let deleting = model.asrDeleting == entry.id
         // The built-in default (Parakeet v3) is the permanent fallback and
         // re-downloads at launch, so it is never offered for deletion.
-        let deletable = downloaded && !deleting && entry.id != ASRModelCatalog.defaultID
+        let deletable = downloaded && !deleting && !entry.isDefault
         return HStack(alignment: .center, spacing: 12) {
             Button {
                 model.onSelectASRModel?(entry.id)
@@ -143,7 +142,7 @@ struct SpeechPane: View {
     /// The trailing kebab on a downloaded row: a borderless `ellipsis` whose one
     /// item arms the delete confirmation. A sibling of the select `Button`, never
     /// nested, so opening it can't also select the model (cf. `ModelsPane`).
-    private func deleteMenu(_ entry: ASRModelCatalog.Entry) -> some View {
+    private func deleteMenu(_ entry: ASRModelDescriptor) -> some View {
         Menu {
             Button("Delete…", role: .destructive) { pendingDelete = entry }
         } label: {
@@ -161,19 +160,11 @@ struct SpeechPane: View {
         .accessibilityLabel("More actions for \(entry.name)")
     }
 
-    /// A fractional bar mirroring the Ollama pull UX once the engine reports a
-    /// percentage; before the first fraction (or for Parakeet, which reports
-    /// none) it degrades to the existing indeterminate spinner (#93). Once the
-    /// weights are fetched, the trailing compile-onto-the-ANE phase shows
-    /// "Preparing…" so the bar doesn't sit frozen at 100%.
+    /// A fractional bar mirroring the Ollama pull UX once the storage adapter
+    /// reports a percentage; before the first fraction it is indeterminate.
     @ViewBuilder
     private var downloadProgress: some View {
-        if model.asrPreparing {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Preparing…").font(Theme.ui(11)).foregroundStyle(Theme.textSecondary)
-            }
-        } else if let fraction = model.asrDownloadFraction {
+        if let fraction = model.asrDownloadFraction {
             VStack(alignment: .trailing, spacing: 2) {
                 ProgressView(value: fraction).frame(width: 110)
                 Text("\(Int(fraction * 100))%")
@@ -187,11 +178,20 @@ struct SpeechPane: View {
         }
     }
 
-    private func ratings(_ entry: ASRModelCatalog.Entry) -> some View {
+    private func ratings(_ entry: ASRModelDescriptor) -> some View {
         VStack(alignment: .trailing, spacing: 3) {
             Text(entry.size).font(Theme.ui(10)).foregroundStyle(Theme.textSecondary)
             RatingDots(label: "Speed", value: entry.speed)
             RatingDots(label: "Quality", value: entry.quality)
         }
+    }
+
+    private func deleteConfirmation(for entry: ASRModelDescriptor) -> String {
+        var message = "This removes \(entry.name)'s downloaded weights and frees \(entry.size)."
+        if model.asrModel == entry.id {
+            message += " It's your current speech model, so dictation falls back to "
+                + "Parakeet until you pick another."
+        }
+        return message
     }
 }

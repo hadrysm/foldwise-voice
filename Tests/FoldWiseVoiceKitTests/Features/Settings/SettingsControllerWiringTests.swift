@@ -30,6 +30,31 @@ private final class WiringInputDevices: AudioInputStateProviding {
 }
 
 @MainActor
+private extension SettingsController {
+    convenience init(
+        config: Config,
+        historyStore: HistoryStore,
+        statsStore: StatsStore,
+        inputDevices: (any AudioInputStateProviding)? = nil,
+        hotkeys: HotkeyBindingCoordinator? = nil,
+        captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
+    ) {
+        self.init(
+            config: config,
+            historyStore: historyStore,
+            statsStore: statsStore,
+            inputDevices: inputDevices,
+            hotkeys: hotkeys,
+            captureGate: captureGate,
+            asrLifecycle: ASRModelLifecycle(
+                storedSelection: config.asrModel,
+                adapters: []
+            )
+        )
+    }
+}
+
+@MainActor
 final class SettingsControllerWiringTests: XCTestCase {
     private let dir = FileManager.default.temporaryDirectory
         .appendingPathComponent("foldwise-settings-controller-tests-\(UUID().uuidString)")

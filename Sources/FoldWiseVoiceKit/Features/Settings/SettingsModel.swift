@@ -60,19 +60,14 @@ final class SettingsModel: ObservableObject {
     @Published var selectedModel = ""
     /// The active ASR model's catalog id (ADR-0006). Speech-pane state below.
     @Published var asrModel = ASRModelCatalog.defaultID
-    /// Catalog ids whose weights are present and thus selectable. Parakeet (the
-    /// on-device default) is always in here; Whisper joins after a download.
-    @Published var asrDownloaded: Set<String> = [ASRModelCatalog.defaultID]
+    @Published var asrCatalog: [ASRModelDescriptor] = []
+    /// Catalog ids whose adapter-validated model data is available locally.
+    @Published var asrDownloaded: Set<String> = []
     @Published var asrDownloading: String?
     /// 0…1 while the downloading model reports progress; nil before the first
     /// fraction arrives or for an engine that can't report one (Parakeet), which
     /// keeps the pane on the indeterminate spinner (#93).
     @Published var asrDownloadFraction: Double?
-    /// True while a just-downloaded model compiles/loads onto the Neural Engine —
-    /// the phase after the 0…1 fraction reaches 100%, which WhisperKit reports no
-    /// further progress for. The pane shows "Preparing…" here rather than a bar
-    /// frozen at 100%.
-    @Published var asrPreparing = false
     @Published var asrDownloadError = ""
     @Published var asrDeleting: String?
     @Published var asrDeleteError = ""

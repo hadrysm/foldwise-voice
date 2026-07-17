@@ -13,6 +13,7 @@ final class SettingsController {
     private let inputDevices: (any AudioInputStateProviding)?
     private let hotkeys: HotkeyBindingCoordinator?
     private let captureGate: ShortcutCaptureGate
+    private let asrLifecycle: ASRModelLifecycle
     let model = SettingsModel()
     private lazy var workflow = SettingsWorkflow(
         config: config,
@@ -30,7 +31,8 @@ final class SettingsController {
                 try self?.config.setShortcutBindings(bindings)
             }
         },
-        captureGate: captureGate
+        captureGate: captureGate,
+        asrLifecycle: asrLifecycle
     )
     private var window: NSWindow?
     private var keyMonitor: Any?
@@ -46,7 +48,8 @@ final class SettingsController {
         config: Config, historyStore: HistoryStore, statsStore: StatsStore,
         inputDevices: (any AudioInputStateProviding)? = nil,
         hotkeys: HotkeyBindingCoordinator? = nil,
-        captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
+        captureGate: ShortcutCaptureGate = ShortcutCaptureGate(),
+        asrLifecycle: ASRModelLifecycle
     ) {
         self.config = config
         self.historyStore = historyStore
@@ -54,6 +57,7 @@ final class SettingsController {
         self.inputDevices = inputDevices
         self.hotkeys = hotkeys
         self.captureGate = captureGate
+        self.asrLifecycle = asrLifecycle
         if let inputDevices {
             model.inputState = inputDevices.inputState
             inputDevices.onInputStateChange = { [weak self] state in
