@@ -38,8 +38,6 @@ final class SettingsWorkflow {
     private let captureGate: ShortcutCaptureGate
     private var llmRefreshID: UUID?
     private var llmMutationID: UUID?
-    private var asrDeleteID: UUID?
-    private var asrDownloadID: UUID?
     private var asrSnapshotTask: Task<Void, Never>?
 
     convenience init(
@@ -116,9 +114,6 @@ final class SettingsWorkflow {
     func populatePreferences() {
         model.configurationRecoveryMessage = config.recovery?.message
         populateModes()
-        model.asrModel = config.asrModel
-        model.asrDeleting = nil
-        model.asrDeleteError = ""
         populateShortcutBindings()
         model.pauseAudio = config.pauseAudio
         model.appearance = config.appearance
@@ -147,9 +142,6 @@ final class SettingsWorkflow {
                 model.modeSelection = model.modeSelection.selecting(config.selection)
                 model.selectedModel = config.mode.llmModel ?? ""
             }
-            if changes.contains(.asrModel) {
-                model.asrModel = config.asrModel
-            }
         }
     }
 
@@ -165,91 +157,7 @@ final class SettingsWorkflow {
     }
 
     private func applyASRSnapshot(_ snapshot: ASRModelLifecycleSnapshot) {
-        guard snapshot.storedSelection == config.asrModel else { return }
-        model.asrCatalog = snapshot.models
-        model.asrModel = snapshot.storedSelection
-        model.asrDownloaded = Set(snapshot.models.filter(\.isAvailable).map(\.id))
-        model.asrSwitching = nil
-        model.asrRestoring = nil
-        model.asrDeleting = nil
-        model.asrDeleteError = ""
-        switch snapshot.recovery {
-        case let .storedSelectionUnavailable(modelID, fallbackModelID):
-            let selected = asrModelName(modelID, in: snapshot.models)
-            let fallback = asrModelName(fallbackModelID, in: snapshot.models)
-            model.asrRecoveryMessage = "\(selected) is unavailable. Using \(fallback) until you download it again."
-        case let .storedSelectionUnknown(modelID, fallbackModelID):
-            let fallback = asrModelName(fallbackModelID, in: snapshot.models)
-            model.asrRecoveryMessage = "Stored speech model “\(modelID)” isn't recognized. Using \(fallback)."
-        case nil:
-            model.asrRecoveryMessage = nil
-        }
-        switch snapshot.operation {
-        case let .downloading(modelID, fraction):
-            model.asrDownloading = modelID
-            model.asrDownloadFraction = fraction
-            model.isASRBootstrapping = false
-        case let .bootstrapping(fraction):
-            model.asrDownloading = ASRModelCatalog.defaultID
-            model.asrDownloadFraction = fraction
-            model.isASRBootstrapping = true
-        case let .switching(modelID):
-            model.asrSwitching = modelID
-            model.asrDownloading = nil
-            model.asrDownloadFraction = nil
-            model.isASRBootstrapping = false
-        case let .restoring(modelID):
-            model.asrRestoring = modelID
-            model.asrDownloading = nil
-            model.asrDownloadFraction = nil
-            model.isASRBootstrapping = false
-        case let .deleting(modelID):
-            model.asrDeleting = modelID
-            model.asrDownloading = nil
-            model.asrDownloadFraction = nil
-            model.isASRBootstrapping = false
-        case nil:
-            model.asrDownloading = nil
-            model.asrDownloadFraction = nil
-            model.isASRBootstrapping = false
-        }
-        switch snapshot.failure {
-        case let .downloadFailed(modelID, reason):
-            let name = asrModelName(modelID, in: snapshot.models)
-            model.asrDownloadError = "Couldn't download \(name): \(reason)"
-        case let .downloadedDataInvalid(modelID):
-            let name = asrModelName(modelID, in: snapshot.models)
-            model.asrDownloadError = "Downloaded data for \(name) is incomplete or corrupt."
-        case let .bootstrapFailed(reason):
-            model.asrDownloadError = "Couldn't prepare the default speech model: \(reason)"
-        case let .engineLoadFailed(modelID, reason):
-            let name = asrModelName(modelID, in: snapshot.models)
-            model.asrDownloadError = "Couldn't load \(name): \(reason)"
-        case let .selectionFailed(modelID, reason):
-            let name = asrModelName(modelID, in: snapshot.models)
-            model.asrDownloadError = "Couldn't switch to \(name): \(reason)"
-        case .selectionCanceled:
-            model.asrDownloadError = ""
-        case let .selectionDegraded(modelID, fallbackModelID, reason):
-            let selected = asrModelName(modelID, in: snapshot.models)
-            let fallback = asrModelName(fallbackModelID, in: snapshot.models)
-            let detail = reason.map { ": \($0)" } ?? "."
-            model.asrDownloadError = "Couldn't restore \(selected). Using \(fallback)\(detail)"
-        case let .deletionFailed(modelID, reason),
-             let .deletionSelectionFailed(modelID, reason):
-            let name = asrModelName(modelID, in: snapshot.models)
-            model.asrDeleteError = "Couldn't delete \(name): \(reason)"
-            model.asrDownloadError = ""
-        case nil:
-            model.asrDownloadError = ""
-        }
-        model.canRetryASRBootstrap = snapshot.isDictationBlocked
-            && snapshot.operation == nil
-            && snapshot.failure?.allowsBootstrapRetry == true
-    }
-
-    private func asrModelName(_ id: String, in models: [ASRModelDescriptor]) -> String {
-        models.first { $0.id == id }?.name ?? id
+        model.applyASRLifecycleSnapshot(snapshot)
     }
 
     private func reconcileASRAvailability() {
@@ -643,25 +551,13 @@ final class SettingsWorkflow {
     }
 
     func selectASRModel(_ id: String) {
-        guard asrDeleteID == nil, asrDownloadID == nil,
-              !model.hasActiveASRManagementOperation else { return }
+        guard !model.hasActiveASRManagementOperation else { return }
         Task { await asrLifecycle.select(id) }
     }
 
     func downloadASRModel(_ id: String) {
-        guard asrDeleteID == nil, asrDownloadID == nil,
-              !model.hasActiveASRManagementOperation else { return }
-        let operationID = UUID()
-        asrDownloadID = operationID
-        Task { @MainActor in
-            await asrLifecycle.download(id)
-            guard asrDownloadID == operationID else { return }
-            asrDownloadID = nil
-        }
-    }
-
-    func cancelASRDownload() {
-        cancelASROperation()
+        guard !model.hasActiveASRManagementOperation else { return }
+        Task { await asrLifecycle.download(id) }
     }
 
     func cancelASROperation() {
@@ -673,17 +569,10 @@ final class SettingsWorkflow {
     }
 
     func deleteASRModel(_ id: String) {
-        guard asrDeleteID == nil, asrDownloadID == nil,
-              !model.hasActiveASRManagementOperation,
+        guard !model.hasActiveASRManagementOperation,
               let descriptor = model.asrCatalog.first(where: { $0.id == id }),
               descriptor.allowsDeletion else { return }
-        let operationID = UUID()
-        asrDeleteID = operationID
-        Task { @MainActor in
-            await asrLifecycle.delete(id)
-            guard asrDeleteID == operationID else { return }
-            asrDeleteID = nil
-        }
+        Task { await asrLifecycle.delete(id) }
     }
 
     func commit(changedShortcut: SettingsModel.RecordingField? = nil) {

@@ -12,9 +12,10 @@ The automated suite has three practical layers:
 1. Pure behavior tests cover reducers, projections, parsing, catalogs,
    persistence, and workflow decisions through non-private interfaces.
 2. Boundary-fake tests cover the dictation Pipeline and external-service
-   fallbacks with injected recorders, transcribers, transports, pasteboards,
-   clocks, and system-effect closures. They never use live internet services,
-   microphones, permissions, models, or the user's general pasteboard.
+   fallbacks with injected recorders, ASR session handles, engine-family
+   adapters, transports, pasteboards, clocks, and system-effect closures. They
+   never use live internet services, microphones, permissions, models, or the
+   user's general pasteboard.
 3. A small platform-component layer renders stable SwiftUI/AppKit invariants in
    process. Real system integration belongs to the manual smoke procedure.
 
@@ -154,7 +155,7 @@ Run the relevant sections earlier when a boundary changes:
 | Global hotkey installation or handling | 2, 3, and 11, while another app has focus |
 | Mode configuration, lifecycle, or History attribution | 5, 7, 10, 11, and 12 |
 | Configuration loading, persistence, or recovery | 2, 11, and 13 |
-| Parakeet, Whisper, model storage, or ASR dispatch | 2 and 4; always exercise both ASR engines |
+| Parakeet, Whisper, model storage, or ASR lifecycle | 2 and 4; always exercise both ASR engines |
 | Ollama transport or Polish integration | 5 |
 | Clipboard or Accessibility insertion | 2 and 6 |
 | Badge, menu bar, or AppKit window behavior | 7 and 11 |

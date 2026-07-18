@@ -95,7 +95,7 @@ enum ASRModelLifecycleError: LocalizedError {
     }
 }
 
-actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
+actor ASRModelLifecycle: ASRSessionHandleProviding {
     typealias PersistSelection = @MainActor (String) throws -> Void
 
     private struct ActiveDownload {
@@ -138,42 +138,12 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
         self.persistSelection = persistSelection
     }
 
-    nonisolated var ready: Bool {
-        sessionCoordinator.ready
-    }
-
     nonisolated var isDictationBlocked: Bool {
         sessionCoordinator.isDictationBlocked
     }
 
-    nonisolated var onLoading: ((Bool) -> Void)? {
-        get { sessionCoordinator.onLoading }
-        set { sessionCoordinator.onLoading = newValue }
-    }
-
-    nonisolated var onDownloadProgress: ((Double) -> Void)? {
-        get { sessionCoordinator.onDownloadProgress }
-        set { sessionCoordinator.onDownloadProgress = newValue }
-    }
-
-    nonisolated func warmup() {
-        Task { await start() }
-    }
-
     nonisolated func captureSession() throws -> any ASRSessionHandle {
         try sessionCoordinator.captureSession()
-    }
-
-    func prepare() async throws {
-        await start()
-        guard !dictationBlocked else { throw ASRModelLifecycleError.recognitionBlocked }
-    }
-
-    func transcribe(_ samples: [Float]) async throws -> String {
-        if !didStart { await start() }
-        let session = try captureSession()
-        defer { session.release() }
-        return try await session.transcribe(samples)
     }
 
     func start() async {
@@ -238,14 +208,6 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
             }
             do {
                 let candidate = try adapter.makeEngine(for: targetID)
-                if operation == nil {
-                    candidate.onLoading = { [sessionCoordinator] in
-                        sessionCoordinator.notifyLoading($0)
-                    }
-                    candidate.onDownloadProgress = { [sessionCoordinator] in
-                        sessionCoordinator.notifyDownloadProgress($0)
-                    }
-                }
                 try await candidate.prepare()
                 guard targetID == effectiveTargetID(), availability.contains(targetID) else {
                     continue
@@ -720,7 +682,6 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
 
 private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
     private let lock = NSLock()
-    private var _ready = false
     private var _isDictationBlocked = true
     private var engine: Transcribing?
     private var engineModelID: String?
@@ -733,25 +694,8 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
     private var cancellableSessionDrainWaiters: [
         UUID: CheckedContinuation<Void, Error>
     ] = [:]
-    private var _onLoading: ((Bool) -> Void)?
-    private var _onDownloadProgress: ((Double) -> Void)?
-
-    var ready: Bool {
-        lock.withLock { _ready }
-    }
-
     var isDictationBlocked: Bool {
         lock.withLock { _isDictationBlocked }
-    }
-
-    var onLoading: ((Bool) -> Void)? {
-        get { lock.withLock { _onLoading } }
-        set { lock.withLock { _onLoading = newValue } }
-    }
-
-    var onDownloadProgress: ((Double) -> Void)? {
-        get { lock.withLock { _onDownloadProgress } }
-        set { lock.withLock { _onDownloadProgress = newValue } }
     }
 
     func setDictationBlocked(_ blocked: Bool) {
@@ -762,7 +706,6 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
         lock.withLock {
             self.engine = engine
             engineModelID = modelID
-            _ready = engine != nil
             _isDictationBlocked = engine == nil
         }
     }
@@ -771,7 +714,6 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
         lock.withLock {
             engine = nil
             engineModelID = nil
-            _ready = false
             _isDictationBlocked = true
             return activeSessionCount > 0
         }
@@ -882,14 +824,6 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
         }
         waiter?.resume(throwing: CancellationError())
     }
-
-    func notifyLoading(_ loading: Bool) {
-        lock.withLock { _onLoading }?(loading)
-    }
-
-    func notifyDownloadProgress(_ fraction: Double) {
-        lock.withLock { _onDownloadProgress }?(fraction)
-    }
 }
 
 private final class ASRLifecycleSessionHandle: ASRSessionHandle, @unchecked Sendable {
@@ -897,10 +831,6 @@ private final class ASRLifecycleSessionHandle: ASRSessionHandle, @unchecked Send
 
     init(engine: Transcribing, onRelease: @escaping () -> Void) {
         lease = ASRLifecycleSessionLease(engine: engine, onRelease: onRelease)
-    }
-
-    var ready: Bool {
-        lease.ready
     }
 
     func transcribe(_ samples: [Float]) async throws -> String {
@@ -926,10 +856,6 @@ private final class ASRLifecycleSessionLease: @unchecked Sendable {
     init(engine: Transcribing, onRelease: @escaping () -> Void) {
         self.engine = engine
         self.onRelease = onRelease
-    }
-
-    var ready: Bool {
-        lock.withLock { engine?.ready ?? false }
     }
 
     func transcribe(_ samples: [Float]) async throws -> String {

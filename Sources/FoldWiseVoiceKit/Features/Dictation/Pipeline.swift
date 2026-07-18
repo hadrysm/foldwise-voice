@@ -19,7 +19,6 @@ protocol AudioRecording: AnyObject {
 /// A Dictation session's captured transcription capability. Pipeline can use
 /// and release it without learning which model or engine the lifecycle owns.
 protocol ASRSessionHandle: AnyObject {
-    var ready: Bool { get }
     func transcribe(_ samples: [Float]) async throws -> String
     func release()
 }
@@ -27,22 +26,12 @@ protocol ASRSessionHandle: AnyObject {
 /// Captures the Effective ASR model when a Dictation session starts recording.
 protocol ASRSessionHandleProviding: AnyObject {
     var isDictationBlocked: Bool { get }
-    var onLoading: ((Bool) -> Void)? { get set }
-    /// Fired with a 0…1 fraction while model data downloads on first use.
-    var onDownloadProgress: ((Double) -> Void)? { get set }
     func captureSession() throws -> any ASRSessionHandle
 }
 
 /// The engine-family adapter seam (ADR-0002). Concrete engines stay behind a
 /// lifecycle-owned `ASRSessionHandle` in production.
 protocol Transcribing: AnyObject {
-    var ready: Bool { get }
-    var onLoading: ((Bool) -> Void)? { get set }
-    var onDownloadProgress: ((Double) -> Void)? { get set }
-    func warmup()
-    /// Load (and, on first use, download) the model, throwing on failure.
-    /// The awaitable, error-reporting sibling of fire-and-forget `warmup()`,
-    /// used by the Speech pane's Download action to fetch weights up front.
     func prepare() async throws
     func transcribe(_ samples: [Float]) async throws -> String
 }
@@ -60,16 +49,6 @@ enum PipelineState: Equatable {
     case clipboard
     case idle
     case error(String)
-
-    /// True while a model (down)load is on screen — downloading or loading — so
-    /// the boolean load-done signal resolves back to transcribing/idle from
-    /// whichever preparing state the Badge is currently showing.
-    var isPreparing: Bool {
-        switch self {
-        case .downloadingModel, .loadingModel: true
-        default: false
-        }
-    }
 }
 
 final class Pipeline {
@@ -128,28 +107,6 @@ final class Pipeline {
         self.frontmostApp = frontmostApp
         self.recorder.onFailure = { [weak self] error in
             self?.recordingFailed(error)
-        }
-        sessionProvider.onLoading = { [weak self] loading in
-            guard let self else { return }
-            withStateLock {
-                if loading {
-                    guard !self.recording else { return }
-                    self.emit(.loadingModel)
-                } else if self.lastEmitted.isPreparing {
-                    // Back to whatever the (down)load interrupted: a queued dictation
-                    // continues transcribing; a launch warmup returns to idle.
-                    self.emit(self.jobActive ? .transcribing : .idle)
-                }
-            }
-        }
-        sessionProvider.onDownloadProgress = { [weak self] fraction in
-            guard let self else { return }
-            withStateLock {
-                // Suppressed while recording, like the loading spinner: the
-                // percentage would fight the live listening pill.
-                guard !self.recording else { return }
-                self.emit(.downloadingModel(fraction: fraction))
-            }
         }
     }
 
@@ -404,9 +361,6 @@ final class Pipeline {
             return nil
         }
         do {
-            if !asrSession.ready {
-                guard emit(.loadingModel) else { return nil }
-            }
             let text = try await asrSession.transcribe(samples)
             guard !Task.isCancelled else { return nil }
             return text

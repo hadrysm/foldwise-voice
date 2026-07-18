@@ -617,7 +617,7 @@ final class SettingsWorkflowTests: XCTestCase {
         try FileManager.default.removeItem(at: dir)
     }
 
-    func testPopulateCopiesPreferencesIntoSettingsState() {
+    func testPopulateCopiesPreferencesIntoSettingsState() async {
         let config = makeConfig()
         let model = SettingsModel()
         let workflow = SettingsWorkflow(
@@ -630,6 +630,7 @@ final class SettingsWorkflowTests: XCTestCase {
         )
 
         workflow.populatePreferences()
+        await waitForASRState(model) { !model.asrModel.isEmpty }
 
         XCTAssertEqual(
             preferenceState(model),
@@ -1487,23 +1488,18 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
-    func testPopulateReconcilesAvailableASRModelsAndClearsTransientState() async throws {
+    func testPopulateReconcilesAvailableASRModelsIntoOneSnapshot() async throws {
         let config = makeConfig()
         try config.setASRModel("whisper-small")
         let model = SettingsModel()
-        model.asrDownloading = "whisper-large-v3-turbo"
-        model.asrDownloadError = "old download error"
-        model.asrDeleting = "whisper-small"
-        model.asrDeleteError = "old delete error"
         let effects = makeModelEffects()
         effects.asrAdapter.setAvailable(true, id: "whisper-small")
         let workflow = makeWorkflow(config: config, model: model, effects: effects)
 
         workflow.populatePreferences()
-        await waitForPublishedValue(model.$asrDownloaded) {
-            $0 == [ASRModelCatalog.defaultID, "whisper-small"]
+        await waitForASRState(model) {
+            model.asrDownloaded == [ASRModelCatalog.defaultID, "whisper-small"]
         }
-        await waitForPublishedValue(model.$asrDownloading) { $0 == nil }
 
         XCTAssertEqual(
             ASRPopulationState(
@@ -1530,7 +1526,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let workflow = makeWorkflow(config: config, model: model)
 
         workflow.populatePreferences()
-        await waitForPublishedValue(model.$asrRecoveryMessage) { $0 != nil }
+        await waitForASRState(model) { model.asrRecoveryMessage != nil }
 
         XCTAssertEqual(
             ASRRecoveryState(
@@ -1559,7 +1555,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let workflow = makeWorkflow(config: config, model: model)
 
         workflow.populatePreferences()
-        await waitForPublishedValue(model.$asrRecoveryMessage) { $0 != nil }
+        await waitForASRState(model) { model.asrRecoveryMessage != nil }
 
         XCTAssertEqual(
             ASRRecoveryState(
@@ -1606,7 +1602,7 @@ final class SettingsWorkflowTests: XCTestCase {
         let start = Task { await lifecycle.start() }
         await preparation.waitUntilStarted()
         preparation.report(fraction: 0.45, loading: true)
-        await waitForPublishedValue(model.$asrDownloadFraction) { $0 == 0.45 }
+        await waitForASRState(model) { model.asrDownloadFraction == 0.45 }
         let progressing = ASRBootstrapPresentationState(
             downloading: model.asrDownloading,
             fraction: model.asrDownloadFraction,
@@ -1618,7 +1614,7 @@ final class SettingsWorkflowTests: XCTestCase {
 
         preparation.finish("network unavailable")
         await start.value
-        await waitForPublishedValue(model.$canRetryASRBootstrap) { $0 }
+        await waitForASRState(model) { model.canRetryASRBootstrap }
         let failed = ASRBootstrapPresentationState(
             downloading: model.asrDownloading,
             fraction: model.asrDownloadFraction,
@@ -1629,8 +1625,8 @@ final class SettingsWorkflowTests: XCTestCase {
         )
 
         workflow.retryASRBootstrap()
-        await waitForPublishedValue(model.$asrDownloaded) {
-            $0.contains(ASRModelCatalog.defaultID)
+        await waitForASRState(model) {
+            model.asrDownloaded.contains(ASRModelCatalog.defaultID)
         }
         let recovered = ASRBootstrapPresentationState(
             downloading: model.asrDownloading,
@@ -1689,7 +1685,7 @@ final class SettingsWorkflowTests: XCTestCase {
         )
 
         await lifecycle.start()
-        await waitForPublishedValue(model.$asrDownloadError) { $0.contains("engine rejected") }
+        await waitForASRState(model) { model.asrDownloadError.contains("engine rejected") }
         let failed = ASRBootstrapPresentationState(
             downloading: model.asrDownloading,
             fraction: model.asrDownloadFraction,
@@ -1810,7 +1806,6 @@ final class SettingsWorkflowTests: XCTestCase {
         model.saveHistory = true
         model.retention = .ninetyDays
         model.sidebar = SidebarPresentation(prefersCollapsed: false)
-        model.asrModel = "whisper-small"
 
         workflow.commit()
 
@@ -2833,6 +2828,7 @@ final class SettingsWorkflowTests: XCTestCase {
 
         workflow.selectASRModel("whisper-small")
         await waitUntil { config.asrModel == "whisper-small" }
+        await waitForASRState(model) { model.asrModel == "whisper-small" }
 
         XCTAssertEqual(
             SelectionPersistenceState(
@@ -2869,7 +2865,7 @@ final class SettingsWorkflowTests: XCTestCase {
         workflow.populatePreferences()
 
         workflow.selectASRModel("whisper-small")
-        await waitForPublishedValue(model.$asrSwitching) { $0 == "whisper-small" }
+        await waitForASRState(model) { model.asrSwitching == "whisper-small" }
         let whileSwitching = SelectionPresentationState(
             selected: model.asrModel,
             switching: model.asrSwitching,
@@ -2877,7 +2873,7 @@ final class SettingsWorkflowTests: XCTestCase {
             actionsDisabled: model.hasActiveASRManagementOperation
         )
         workflow.cancelASROperation()
-        await waitForPublishedValue(model.$asrSwitching) { $0 == nil }
+        await waitForASRState(model) { model.asrSwitching == nil }
         session.release()
 
         XCTAssertEqual(
@@ -2917,7 +2913,7 @@ final class SettingsWorkflowTests: XCTestCase {
         )
 
         workflow.downloadASRModel("whisper-small")
-        await waitForPublishedValue(model.$asrDownloaded) { $0.contains("whisper-small") }
+        await waitForASRState(model) { model.asrDownloaded.contains("whisper-small") }
 
         XCTAssertEqual(model.asrDownloaded, [ASRModelCatalog.defaultID, "whisper-small"])
     }
@@ -2935,13 +2931,13 @@ final class SettingsWorkflowTests: XCTestCase {
         await preparation.waitUntilStarted()
 
         preparation.report(fraction: 0.6, loading: true)
-        await waitForPublishedValue(model.$asrDownloadFraction) { $0 == 0.6 }
+        await waitForASRState(model) { model.asrDownloadFraction == 0.6 }
 
         XCTAssertEqual(
             ASRProgressState(fraction: model.asrDownloadFraction),
             ASRProgressState(fraction: 0.6)
         )
-        workflow.cancelASRDownload()
+        workflow.cancelASROperation()
         await preparation.waitUntilCancelled()
         preparation.finish(nil)
     }
@@ -2956,7 +2952,7 @@ final class SettingsWorkflowTests: XCTestCase {
         )
 
         workflow.downloadASRModel("whisper-small")
-        await waitForPublishedValue(model.$asrDownloadError) { !$0.isEmpty }
+        await waitForASRState(model) { !model.asrDownloadError.isEmpty }
 
         XCTAssertEqual(
             ASRDownloadState(
@@ -2983,12 +2979,12 @@ final class SettingsWorkflowTests: XCTestCase {
         )
         workflow.downloadASRModel("whisper-small")
         await preparation.waitUntilStarted()
-        await waitForPublishedValue(model.$asrDownloading) { $0 == "whisper-small" }
+        await waitForASRState(model) { model.asrDownloading == "whisper-small" }
 
-        workflow.cancelASRDownload()
+        workflow.cancelASROperation()
         await preparation.waitUntilCancelled()
         preparation.finish(nil)
-        await waitForPublishedValue(model.$asrDownloading) { $0 == nil }
+        await waitForASRState(model) { model.asrDownloading == nil }
 
         XCTAssertEqual(
             ASRDownloadState(
@@ -3013,7 +3009,7 @@ final class SettingsWorkflowTests: XCTestCase {
             adapters: [effects.asrAdapter]
         )
         await asrLifecycle.reconcileAvailability()
-        model.asrCatalog = await asrLifecycle.snapshot().models
+        model.applyASRLifecycleSnapshot(await asrLifecycle.snapshot())
         let workflow = makeWorkflow(
             config: config,
             model: model,
@@ -3025,7 +3021,7 @@ final class SettingsWorkflowTests: XCTestCase {
         workflow.deleteASRModel("whisper-small")
         let deletingModel = model.asrDeleting
         await preparation.waitUntilStarted()
-        workflow.cancelASRDownload()
+        workflow.cancelASROperation()
         preparation.finish(nil)
 
         XCTAssertNil(deletingModel)
@@ -3038,10 +3034,10 @@ final class SettingsWorkflowTests: XCTestCase {
         effects.asrAdapter.setAvailable(true, id: "whisper-small")
         let workflow = makeWorkflow(config: config, model: model, effects: effects)
         workflow.populatePreferences()
-        await waitForPublishedValue(model.$asrDownloaded) { $0.contains("whisper-small") }
+        await waitForASRState(model) { model.asrDownloaded.contains("whisper-small") }
 
         workflow.deleteASRModel("whisper-small")
-        await waitForPublishedValue(model.$asrDownloaded) { !$0.contains("whisper-small") }
+        await waitForASRState(model) { !model.asrDownloaded.contains("whisper-small") }
     }
 
     func testDeletingActiveASRModelFallsBackToDefault() async throws {
@@ -3056,11 +3052,12 @@ final class SettingsWorkflowTests: XCTestCase {
             effects: effects
         )
         workflow.populatePreferences()
-        await waitForPublishedValue(model.$asrDownloaded) { $0.contains("whisper-small") }
+        await waitForASRState(model) { model.asrDownloaded.contains("whisper-small") }
 
         workflow.deleteASRModel("whisper-small")
-        await waitForPublishedValue(model.$asrModel) { $0 == ASRModelCatalog.defaultID }
-        await waitForPublishedValue(model.$asrDownloaded) { !$0.contains("whisper-small") }
+        await waitForASRState(model) { model.asrModel == ASRModelCatalog.defaultID }
+        await waitForASRState(model) { !model.asrDownloaded.contains("whisper-small") }
+        await waitForASRState(model) { !model.hasActiveASRManagementOperation }
 
         XCTAssertEqual(
             ASRDeleteState(
@@ -3087,10 +3084,10 @@ final class SettingsWorkflowTests: XCTestCase {
             effects: effects
         )
         workflow.populatePreferences()
-        await waitForPublishedValue(model.$asrDownloaded) { $0.contains("whisper-small") }
+        await waitForASRState(model) { model.asrDownloaded.contains("whisper-small") }
 
         workflow.deleteASRModel("whisper-small")
-        await waitForPublishedValue(model.$asrDeleteError) { !$0.isEmpty }
+        await waitForASRState(model) { !model.asrDeleteError.isEmpty }
 
         XCTAssertEqual(
             ASRDeleteState(
@@ -3293,6 +3290,13 @@ final class SettingsWorkflowTests: XCTestCase {
             await Task.yield()
         }
         XCTAssertTrue(condition(), file: file, line: line)
+    }
+
+    private func waitForASRState(
+        _: SettingsModel,
+        matching predicate: @escaping @MainActor () -> Bool
+    ) async {
+        await waitUntil(predicate)
     }
 
     private func waitForPublishedValue<Value>(

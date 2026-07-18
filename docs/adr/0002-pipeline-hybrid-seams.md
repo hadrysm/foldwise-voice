@@ -4,6 +4,8 @@
 
 Accepted (2026-07-03). Amended (2026-07-10): issue #123 extracted audio-duck
 coordination after an in-flight duck could outlive a superseding restore.
+Amended again (2026-07-18) by PRD #179: Pipeline captures opaque ASR session
+handles instead of observing a transcriber's loading lifecycle.
 
 ## Context
 
@@ -23,9 +25,10 @@ collaborators are not alike:
 
 - `polish` and `insert` are pure-ish functions — text in, result out — reached
   only by Pipeline.
-- `record` and `transcribe` carry state the machine reads (`isRecording`;
-  `ready` + `onLoading`) and are reached from *outside* Pipeline: the HUD polls
-  `recorder.level`, and AppMain calls `transcriber.warmup()`.
+- `record` carries state reached from outside Pipeline because Badge polls the
+  recorder's level. Transcription is session-scoped: Pipeline captures an
+  opaque handle from the ASR lifecycle and releases it after the transcribe
+  Stage.
 - The audio ducker emits no state the machine reads.
 
 ## Decision
@@ -36,17 +39,16 @@ collaborator's actual shape:
 - **Closures for the pure stages** (`polish`, `insert`), with production
   defaults — mirroring the boundary-closure injection `TextInserter.insert`
   already uses (`trusted:`, `postPaste:`).
-- **A small protocol each for the stateful stages** (`AudioRecording`,
-  `Transcribing`). `Transcribing` mirrors `Transcriber`'s full surface
-  (`ready`, `onLoading`, `warmup`, `transcribe`) precisely because the
-  asynchronous `.loadingModel` dance is the highest-value untested behavior.
+- **Small protocols for the stateful stages.** `AudioRecording` exposes capture.
+  `ASRSessionHandleProviding` captures a session-scoped transcription handle;
+  Pipeline sees neither model identifiers nor loading/selection callbacks.
+  Concrete engines remain behind the lifecycle's internal `Transcribing` seam.
 - **Pipeline owns the "am I recording" flag** rather than reading it back
   through the record seam, so the guards are self-contained and a fake recorder
   needn't track it.
-- **The composition root (`AppMain`) constructs the concrete adapters** and
-  shares the single `AudioRecorder` instance between Pipeline and the HUD, and
-  calls `warmup()` — so HUD level-metering and launch warmup are unchanged.
-  Pipeline no longer news up its own collaborators.
+- **The composition root (`AppMain`) constructs the concrete adapters**, shares
+  the single `AudioRecorder` between Pipeline and Badge, and starts the shared
+  ASR lifecycle. Pipeline no longer constructs collaborators.
 - **Audio ducking uses a small command seam.** `Pipeline` injects `AudioDucking`,
   while `AudioDuckCoordinator` injects the multi-operation system-effects
   boundary. This keeps AppleScript execution in a thin adapter and makes the
@@ -65,7 +67,8 @@ shape.
 - The Pipeline interface becomes its own test surface: a fake-driven session
   drives `startRecording()` / `stopRecording()` and asserts the `onState`
   sequence (silence-skip, empty transcript, transcribe error, LLM-fallback
-  threshold, inserted vs clipboard, and the loading-model dance).
+  threshold, and inserted vs clipboard). ASR management state is tested and
+  observed through lifecycle snapshots instead.
 - An internal `awaitPendingJob()` lets tests drain the chained-`Task` job queue
   deterministically, making silent double-tap queueing assertable.
 - Follow-up work (the OllamaClient transport seam, HotkeyListener) gets smaller,

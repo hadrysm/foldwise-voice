@@ -79,40 +79,16 @@ final class WhisperTranscriber: Transcribing {
     private let variant: String
     private let stateLock = NSLock()
     private var _loadTask: Task<LoadedPipe, Error>?
-    /// True once the model is loaded and transcription is instant.
-    private var _ready = false
-    var ready: Bool {
-        stateLock.withLock { _ready }
-    }
-
-    /// Fired when a (down)load starts/ends, for Badge feedback.
-    private var _onLoading: ((Bool) -> Void)?
-    var onLoading: ((Bool) -> Void)? {
-        get { stateLock.withLock { _onLoading } }
-        set { stateLock.withLock { _onLoading = newValue } }
-    }
-
-    /// Fired with a 0…1 fraction while the CoreML weights download on first use,
-    /// so the Badge and Speech pane can show a real percentage (#93).
-    private var _onDownloadProgress: ((Double) -> Void)?
-    var onDownloadProgress: ((Double) -> Void)? {
-        get { stateLock.withLock { _onDownloadProgress } }
-        set { stateLock.withLock { _onDownloadProgress = newValue } }
-    }
 
     init(variant: String) {
         self.variant = variant
     }
 
-    func warmup() {
-        _ = ensureLoaded()
-    }
-
     func prepare() async throws {
         let task = ensureLoaded()
         do {
-            // Cancel only this waiter. Warmup, transcription, or another
-            // preparation may still depend on the shared download/compile.
+            // Cancel only this waiter. Active transcription or another lifecycle
+            // preparation may still depend on the shared engine load.
             _ = try await SharedTaskValue.wait(for: task)
         } catch SharedTaskValue.WaitError.waiterCancelled {
             throw CancellationError()
@@ -126,16 +102,8 @@ final class WhisperTranscriber: Transcribing {
         stateLock.withLock {
             if let loadTask = _loadTask { return loadTask }
             let variant = variant
-            let task = Task<LoadedPipe, Error> { [weak self] in
-                // Two phases so the Badge can distinguish them (#93): first fetch the
-                // CoreML weights from Hugging Face, reporting a 0…1 fraction (a no-op
-                // that resolves instantly once they're cached on disk)…
-                let folder = try await WhisperKit.download(variant: variant) { [weak self] progress in
-                    self?.notifyDownloadProgress(progress.fractionCompleted)
-                }
-                // …then compile and load them — the boolean spinner phase,
-                // `modelFolder` set so this never re-downloads.
-                //
+            let task = Task<LoadedPipe, Error> {
+                let folder = try await WhisperKit.download(variant: variant)
                 // Run the audio encoder on the GPU rather than WhisperKit's macOS-14
                 // default of the Neural Engine: compiling the large-v3-turbo encoder
                 // for the ANE on first load takes many minutes and often never
@@ -143,8 +111,6 @@ final class WhisperTranscriber: Transcribing {
                 // (measured ~41s vs >6min unfinished on identical weights). The text
                 // decoder stays on the ANE (WhisperKit's default), and GPU-encoder is
                 // itself WhisperKit's own default on macOS < 14.
-                self?.notifyLoading(true)
-                defer { self?.notifyLoading(false) }
                 let pipe = try await WhisperKit(
                     WhisperKitConfig(
                         modelFolder: folder.path,
@@ -152,7 +118,6 @@ final class WhisperTranscriber: Transcribing {
                         verbose: false, logLevel: .none, load: true
                     )
                 )
-                self?.markReady()
                 return LoadedPipe(pipe: pipe)
             }
             _loadTask = task
@@ -164,20 +129,6 @@ final class WhisperTranscriber: Transcribing {
         stateLock.withLock {
             if _loadTask == task { _loadTask = nil }
         }
-    }
-
-    private func markReady() {
-        stateLock.withLock { _ready = true }
-    }
-
-    private func notifyLoading(_ loading: Bool) {
-        let callback = stateLock.withLock { _onLoading }
-        callback?(loading)
-    }
-
-    private func notifyDownloadProgress(_ fraction: Double) {
-        let callback = stateLock.withLock { _onDownloadProgress }
-        callback?(fraction)
     }
 
     func transcribe(_ samples: [Float]) async throws -> String {

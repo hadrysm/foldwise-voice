@@ -1,92 +1,87 @@
-# ADR-0005: A second ASR engine (WhisperKit) lives behind the `Transcribing` seam, fronted by a dispatching composite
+# ADR-0005: The ASR lifecycle owns multiple engine families
 
 ## Status
 
-Accepted (2026-07-07)
+Accepted (2026-07-07). Amended (2026-07-18) by PRD #179.
 
 ## Context
 
-Today the app transcribes with exactly one engine — Parakeet TDT v3 (FluidAudio)
-on the Neural Engine — behind the `Transcribing` protocol introduced by ADR-0002
-(`Sources/FoldWiseVoiceKit/Features/Dictation/Pipeline.swift`). We want a second
-engine, Whisper, to widen language
-coverage from Parakeet's 25 to Whisper's ~99 and make that breadth a visible
-selling point (see `CONTEXT.md`: *ASR engine*, *ASR model*). FluidAudio has no
-Whisper backend and no engine abstraction to ride — it is Parakeet-only — so a
-second engine means a second conformer plus the machinery to choose, load, and
-provision it.
+FoldWise supports Parakeet through FluidAudio and Whisper through WhisperKit.
+Both libraries can keep hundreds of megabytes or more of model state resident,
+so switching engines must never overlap their loaded state. Model data on disk
+is different: several models may be downloaded without being loaded.
 
-Three questions had to be answered together: which Whisper library, who owns the
-now-plural model lifecycle, and how the `Pipeline` stays ignorant of all of it.
-
-The reference multi-engine app (Handy) dispatches engines with an `enum` +
-`match` rather than a trait, but only because it adapts two foreign Rust crates
-with incompatible option types — a constraint we do not have, since we write our
-own conformers.
+The original decision put engine choice and replacement in a `Transcribing`
+composite. Settings then prepared a separate engine to download model data.
+That split allowed two engines to load at once and left no single owner for
+availability, selection, effective fallback, management operations, and active
+Dictation sessions.
 
 ## Decision
 
-**Keep the `Transcribing` protocol; add a second conformer; front both with a
-dispatching composite that is itself a `Transcribing`.** The `Pipeline` keeps
-calling `transcriber.transcribe(_:)` and never learns there is more than one
-engine — the composition root
-(`Sources/FoldWiseVoiceKit/Application/AppMain.swift`) constructs the dispatcher
-in the one place ADR-0002 already put engine construction.
+One actor-owned `ASRModelLifecycle` is the application seam for ASR model
+management and use. The composition root creates one instance and shares it
+with Settings and Pipeline.
 
-- **Whisper backend → WhisperKit** (`argmaxinc/argmax-oss-swift`, product
-  `WhisperKit`, pinned `from: "1.0.0"`; the repo was renamed from
-  `argmaxinc/WhisperKit` at v1.0.0, 2026-05-01). It is the structural twin of
-  FluidAudio: pure-Swift, CoreML on the ANE, MIT, macOS 14+, and its
-  `transcribe(audioArray: [Float])` takes our recorder's `[Float]@16 kHz` buffer
-  verbatim. Like FluidAudio it **auto-downloads weights from Hugging Face on
-  first load**, so it needs no bespoke download stack. It runs **in-process** —
-  the FluidAudio pattern, not the out-of-process Ollama pattern.
+The lifecycle owns:
 
-- **The dispatcher owns the model lifecycle: one engine loaded at a time, and
-  the old engine is dropped before the new one is built.** Whisper large-v3-turbo
-  is ~1.5 GiB on top of Parakeet's ~600 MB; drop-before-load is the only thing
-  that stops a switch from putting ~2 GiB resident at once. It is **mandatory,
-  not an optimization.**
+- catalog resolution and adapter selection;
+- adapter-validated local availability;
+- the sole loaded ASR engine;
+- serialized download, selection, repair, retry, and deletion operations;
+- typed failures and one immutable observable snapshot; and
+- session capture, release, waiting, cancellation, and recovery.
 
-- **The `Transcribing` seam gains a fractional download-progress channel.** The
-  boolean `onLoading` is enough for Parakeet (usually already downloaded) but
-  reads as a hang during Whisper's multi-minute first download. The seam carries
-  *optional* progress; engines that cannot report it (FluidAudio may only flip
-  the boolean) degrade to the existing spinner, and `Pipeline` maps progress to a
-  new `downloadingModel(fraction:)` HUD state.
+Parakeet and Whisper remain internal engine-family adapters. Each adapter owns
+its library identifiers, local path resolution, complete-data validation,
+storage-only download, safe deletion, and concrete engine construction. This is
+the only layer coupled to FluidAudio or WhisperKit.
 
-- **Idle-unload is deliberately deferred.** It would re-introduce load latency
-  the app doesn't have today, fights the launch `warmup()` that makes the first
-  dictation instant, and adds a timer/threading surface. Drop-before-load ships;
-  idle-unload waits for evidence of real memory pressure.
+Optional downloads are storage-only. They change availability without selecting
+or loading the model and may run while dictation uses the warm engine. The
+default Parakeet bootstrap is the sole automatic download; it blocks dictation
+and publishes progress through the lifecycle snapshot.
 
-## Rejected alternatives
+Pipeline never receives model identifiers, catalog entries, engine-loading
+callbacks, or concrete engines. At recording start it captures an opaque
+session-scoped handle for the Effective ASR model. The handle retains that
+engine through transcription and is released on every transcription completion
+path, before Polish and insert. A later global selection therefore applies only
+to later Dictation sessions, including sessions already queued with their own
+captured handles.
 
-- **Handy's `enum LoadedEngine` + parallel `match` blocks.** That is a workaround
-  for two foreign crates whose option structs won't unify. In Swift each
-  conformer keeps its per-model options private behind the protocol, so the enum
-  buys nothing and costs "edit N match arms per new engine."
-- **whisper.cpp XCFramework (Metal/GGUF).** Its only real wins — GGUF
-  quantization control and Handy model-parity — don't serve a language-coverage
-  driver, and they cost a hand-written C bridge plus our own
-  download/storage/verification (WhisperKit gives that for free). Its one perf
-  edge (memory via quantization) is on an axis press-to-talk dictation doesn't
-  cash in; on the axis that matters for a laptop — power efficiency — the ANE
-  path (WhisperKit) wins.
-- **SwiftWhisper.** Stale since 2023 (vendors a pre-large-v3-turbo whisper.cpp);
-  fine for a throwaway spike, not a foundation.
-- **Apple SpeechAnalyzer / SFSpeechRecognizer.** SpeechAnalyzer is macOS 26+ only
-  (below our floor; a future `#available`-gated adapter at best);
-  SFSpeechRecognizer caps tasks at ~1 minute, fighting open-ended dictation.
+Engine replacement is exclusive. Existing transcription finishes, new capture
+is blocked, the old lifecycle-owned engine is released, and only then is the
+candidate constructed and prepared. The lifecycle resumes capture after a
+working engine is active or exposes a blocked failure. This drop-before-load
+ordering is mandatory and enforces one loaded engine at a time. The successfully
+selected effective engine stays warm while idle; idle unload remains deferred.
+
+Settings and Badge observe lifecycle snapshots. Optional download progress stays
+in Settings. Badge presents only lifecycle states that genuinely block
+dictation, such as default bootstrap, switching/restoration, or recognition
+unavailability.
 
 ## Consequences
 
-- Adding a *third* engine later is one new conformer + one catalog entry + one
-  dispatcher arm — no `Pipeline` change, because the seam already hides plurality.
-- `Transcribing`'s test double (ADR-0002) must grow the progress channel, and the
-  `Pipeline`→HUD mapping gains `downloadingModel(fraction:)`. The seam remains the
-  app's transcribe-stage test surface.
-- The "nothing leaves your machine" story is unchanged: the only new network
-  touch is WhisperKit's one-time weight download from Hugging Face — the same
-  posture as the existing Parakeet download and the daily update check.
-- Selection and provisioning UX are specified in ADR-0006.
+- There is one production ASR lifecycle path and one owner of loaded engine
+  state.
+- Downloaded model data may coexist on disk without violating the one-engine
+  invariant.
+- Pipeline tests fake the session-handle provider; lifecycle tests fake both
+  engine-family adapters; real adapter tests stay focused on library coupling.
+- Adding another engine family means adding an adapter and catalog descriptors,
+  without changing Pipeline or Settings ownership rules.
+- WhisperKit remains the Whisper implementation chosen by the original ADR; ASR
+  remains in-process and on-device after model download.
+
+## Rejected alternatives
+
+- **Settings-owned engine preparation for downloads.** It duplicates lifecycle
+  ownership and can load a second engine.
+- **Selection callbacks passed through Pipeline.** They expose lifecycle timing
+  to a stage that only needs an opaque transcription capability.
+- **Loading a candidate before dropping the current engine.** It violates the
+  mandatory resident-memory invariant.
+- **Idle unload.** It adds latency and scheduling complexity without evidence of
+  a product need.

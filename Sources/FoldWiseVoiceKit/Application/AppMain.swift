@@ -7,18 +7,6 @@ import AppKit
 import Foundation
 import os
 
-extension TranscriberDispatcher {
-    /// Production-only construction for the real ASR adapters. Keeping it in
-    /// the composition root leaves the dispatcher's decisions testable without
-    /// initializing or downloading a CoreML model.
-    static func buildEngine(_ engine: ASRModelCatalog.Engine) -> Transcribing {
-        switch engine {
-        case let .parakeet(version): Transcriber(version: version)
-        case let .whisper(variant): WhisperTranscriber(variant: variant)
-        }
-    }
-}
-
 final class LiveLLMModelManager: LLMModelManaging {
     func list() async -> [OllamaClient.InstalledModel] {
         await OllamaClient.listModels()
@@ -116,8 +104,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = buildMainMenu()
 
         // Composition root: the one recorder is shared between the Pipeline
-        // and the Badge's level meter, and warmup is triggered here (below),
-        // not inside Pipeline.
+        // and the Badge's level meter, and lifecycle startup is triggered here
+        // (below), not inside Pipeline.
         let recorder = AudioRecorder(config: config, hardware: CoreAudioHardware())
         let asrLifecycle = ASRModelLifecycle(
             storedSelection: config.asrModel,
@@ -233,7 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 "Hotkey setup failed: \(error.localizedDescription, privacy: .public)"
             )
         }
-        asrLifecycle.warmup()
+        Task { await asrLifecycle.start() }
 
         // The living idle pill is the ready signal (PRD #103); the hotkey
         // hint lives on Home, rendered from the live config.

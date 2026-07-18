@@ -429,10 +429,9 @@ Existing high-value seams are:
 - Badge's pure reducer and HotkeyDispatcher's pure event seam
   ([BadgeReducerTests.swift:14-107](../../Tests/FoldWiseVoiceKitTests/Features/Badge/BadgeReducerTests.swift#L14-L107),
   [HotkeyListenerDispatchTests.swift:10-101](../../Tests/FoldWiseVoiceKitTests/SystemIntegrations/Hotkeys/HotkeyListenerDispatchTests.swift#L10-L101));
-- TranscriberDispatcher's injectable factory/reactor tests as prior art for
-  Config-subscribed runtime components
-  ([TranscriberDispatcherTests.swift:93-109](../../Tests/FoldWiseVoiceKitTests/Features/Dictation/Transcribe/TranscriberDispatcherTests.swift#L93-L109),
-  [TranscriberDispatcherTests.swift:179-233](../../Tests/FoldWiseVoiceKitTests/Features/Dictation/Transcribe/TranscriberDispatcherTests.swift#L179-L233)).
+- ASRModelLifecycle's adapter fakes and immutable snapshots as prior art for
+  runtime ownership and observable state
+  ([ASRModelLifecycleTests.swift](../../Tests/FoldWiseVoiceKitTests/Features/Dictation/Transcribe/ASRModelLifecycleTests.swift)).
 
 There are no MenuBarController tests and no BadgeController Config-integration
 tests in the test target. Roster rebuilding, stable-ID menu commands, and cycle

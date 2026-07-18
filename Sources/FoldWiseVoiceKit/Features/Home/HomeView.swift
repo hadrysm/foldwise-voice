@@ -296,13 +296,14 @@ struct HomeView: View {
         ].joined(separator: " · ")
     }
 
-    /// The active ASR model, resolved like the transcriber resolves it: an
-    /// unknown/fossil id (ADR-0006) reads as the Parakeet default the app
-    /// actually transcribes with, so Home never claims a model that isn't
-    /// running.
+    /// Home names the effective model reported by the lifecycle. It never
+    /// resolves catalog ids or fallback rules independently.
     private var asrModelName: String {
-        let entry = ASRModelCatalog.entry(for: model.asrModel)
-            ?? ASRModelCatalog.entry(for: ASRModelCatalog.defaultID)
-        return entry?.name ?? "Parakeet TDT v3"
+        guard let snapshot = model.asrSnapshot,
+              let effectiveSelection = snapshot.effectiveSelection else {
+            return "Speech unavailable"
+        }
+        return snapshot.models.first { $0.id == effectiveSelection }?.name
+            ?? "Speech unavailable"
     }
 }

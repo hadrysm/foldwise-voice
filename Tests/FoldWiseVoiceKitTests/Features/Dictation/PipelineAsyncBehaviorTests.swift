@@ -1,8 +1,5 @@
-// Pins the asynchronous session behaviors (issue #51): the model-loading
-// indicator — when it appears, what it resolves to, and its suppression while
-// recording — and strict in-order processing of silently double-tapped
-// sessions. Sessions run through the Pipeline seams (ADR-0002); assertions
-// touch only emitted states and the samples the transcribe stage receives.
+// Pins asynchronous session behavior through Pipeline's session-handle seam:
+// strict in-order processing, captured Mode state, and shutdown cancellation.
 
 import XCTest
 @testable import FoldWiseVoiceKit
@@ -31,113 +28,6 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         let collector = StateCollector()
         pipeline.onState = { collector.append($0) }
         return (pipeline, collector)
-    }
-
-    // MARK: - model-loading indicator
-
-    func testSessionEmitsLoadingModelWhenTranscriberNotReady() async {
-        let transcriber = FakeTranscriber()
-        transcriber.ready = false
-        transcriber.result = .success("hello world")
-        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
-
-        pipeline.startRecording()
-        pipeline.stopRecording()
-        await pipeline.awaitPendingJob()
-
-        XCTAssertEqual(
-            collector.states,
-            [.listening(mode: "Voice to Text"), .transcribing, .loadingModel, .inserted]
-        )
-    }
-
-    func testLoadingModelResolvesToTranscribingWhenSessionQueued() async {
-        let transcriber = FakeTranscriber()
-        transcriber.ready = false
-        transcriber.result = .success("hello world")
-        // The load finishing mid-job is what the real Transcriber does when a
-        // dictation is queued behind the model load.
-        transcriber.onTranscribe = { [weak transcriber] in
-            transcriber?.onLoading?(false)
-        }
-        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
-
-        pipeline.startRecording()
-        pipeline.stopRecording()
-        await pipeline.awaitPendingJob()
-
-        XCTAssertEqual(
-            collector.states,
-            [
-                .listening(mode: "Voice to Text"), .transcribing,
-                .loadingModel, .transcribing, .inserted,
-            ]
-        )
-    }
-
-    func testLoadingModelResolvesToIdleAfterLaunchWarmup() {
-        let transcriber = FakeTranscriber()
-        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
-
-        transcriber.onLoading?(true)
-        transcriber.onLoading?(false)
-
-        // The Pipeline must outlive the callbacks — its deinit would sever the
-        // weakly-captured onLoading handler under test.
-        withExtendedLifetime(pipeline) {
-            XCTAssertEqual(collector.states, [.loadingModel, .idle])
-        }
-    }
-
-    func testLoadingModelSuppressedWhileRecording() {
-        let transcriber = FakeTranscriber()
-        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
-
-        pipeline.startRecording()
-        transcriber.onLoading?(true)
-        transcriber.onLoading?(false)
-
-        XCTAssertEqual(collector.states, [.listening(mode: "Voice to Text")])
-    }
-
-    // MARK: - fractional download progress
-
-    /// An engine that reports a download fraction surfaces it as a
-    /// `.downloadingModel(fraction:)` state, and the load-done signal resolves
-    /// it back to transcribing for the queued dictation behind it.
-    func testSessionEmitsDownloadingModelWhenEngineReportsProgress() async {
-        let transcriber = FakeTranscriber()
-        transcriber.ready = false
-        transcriber.result = .success("hello world")
-        // The real Whisper first-load downloads (reporting a fraction) then
-        // flips the loading flag off once the weights are compiled and loaded.
-        transcriber.onTranscribe = { [weak transcriber] in
-            transcriber?.onDownloadProgress?(0.5)
-            transcriber?.onLoading?(false)
-        }
-        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
-
-        pipeline.startRecording()
-        pipeline.stopRecording()
-        await pipeline.awaitPendingJob()
-
-        XCTAssertEqual(
-            collector.states,
-            [
-                .listening(mode: "Voice to Text"), .transcribing,
-                .loadingModel, .downloadingModel(fraction: 0.5), .transcribing, .inserted,
-            ]
-        )
-    }
-
-    func testDownloadingModelSuppressedWhileRecording() {
-        let transcriber = FakeTranscriber()
-        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
-
-        pipeline.startRecording()
-        transcriber.onDownloadProgress?(0.5)
-
-        XCTAssertEqual(collector.states, [.listening(mode: "Voice to Text")])
     }
 
     // MARK: - silent double-tap queueing
@@ -287,21 +177,6 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         XCTAssertEqual(recorded.entries.first?.modeID, fixture.modeID)
     }
 
-    // MARK: - callback lifetime
-
-    func testTranscriberCallbacksDoNothingAfterPipelineDeallocation() {
-        let transcriber = FakeTranscriber()
-        var pipeline: Pipeline? = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber)).0
-        let collector = StateCollector()
-        pipeline?.onState = { collector.append($0) }
-
-        pipeline = nil
-        transcriber.onLoading?(true)
-        transcriber.onDownloadProgress?(0.5)
-
-        XCTAssertTrue(collector.states.isEmpty)
-    }
-
     // MARK: - shutdown cancellation
 
     func testShutdownCancelsSessionBeforeInsertion() async {
@@ -429,32 +304,6 @@ final class PipelineAsyncBehaviorTests: XCTestCase {
         pipeline.shutdown()
 
         XCTAssertEqual(recorder.closeCount, 1)
-    }
-
-    func testTranscriberCallbacksDoNothingAfterShutdown() {
-        let transcriber = FakeTranscriber()
-        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
-
-        pipeline.shutdown()
-        transcriber.onLoading?(true)
-        transcriber.onDownloadProgress?(0.5)
-
-        XCTAssertEqual(collector.states, [.idle])
-    }
-
-    func testStateCallbackCanShutDownPipelineWithoutDeadlocking() {
-        let transcriber = FakeTranscriber()
-        let (pipeline, collector) = makePipeline(sessionProvider: FakeTranscriberSessionProvider(transcriber))
-        pipeline.onState = { state in
-            collector.append(state)
-            if state == .loadingModel {
-                pipeline.shutdown()
-            }
-        }
-
-        transcriber.onLoading?(true)
-
-        XCTAssertEqual(collector.states, [.loadingModel, .idle])
     }
 
     func testShutdownFromTranscribingDoesNotStartSession() async {

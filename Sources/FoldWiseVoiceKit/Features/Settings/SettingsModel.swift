@@ -58,24 +58,10 @@ final class SettingsModel: ObservableObject {
     @Published var pane: Pane = .home
     @Published var updateState: UpdateState = .idle
     @Published var selectedModel = ""
-    /// The active ASR model's catalog id (ADR-0006). Speech-pane state below.
-    @Published var asrModel = ASRModelCatalog.defaultID
-    @Published var asrCatalog: [ASRModelDescriptor] = []
-    /// Catalog ids whose adapter-validated model data is available locally.
-    @Published var asrDownloaded: Set<String> = []
-    @Published var asrDownloading: String?
-    /// 0…1 while the downloading model reports progress; nil before the first
-    /// fraction arrives or for an engine that can't report one (Parakeet), which
-    /// keeps the pane on the indeterminate spinner (#93).
-    @Published var asrDownloadFraction: Double?
-    @Published var isASRBootstrapping = false
-    @Published var asrSwitching: String?
-    @Published var asrRestoring: String?
-    @Published var asrDownloadError = ""
-    @Published var asrRecoveryMessage: String?
-    @Published var canRetryASRBootstrap = false
-    @Published var asrDeleting: String?
-    @Published var asrDeleteError = ""
+    /// The lifecycle is the single source of ASR truth. Presentation properties
+    /// below derive from one immutable value so Settings cannot expose mixed
+    /// selected/available/operating states while snapshots change.
+    @Published private(set) var asrSnapshot: ASRModelLifecycleSnapshot?
     @Published var installed: [OllamaClient.InstalledModel]? // nil = checking, [] = Ollama down
     @Published var pullingModel: String?
     @Published var pullStatus = ""
@@ -112,8 +98,119 @@ final class SettingsModel: ObservableObject {
     @Published var shortcutListenerHealth: ShortcutListenerHealth = .global
     @Published var configurationRecoveryMessage: String?
 
+    func applyASRLifecycleSnapshot(_ snapshot: ASRModelLifecycleSnapshot) {
+        asrSnapshot = snapshot
+    }
+
+    var asrModel: String {
+        asrSnapshot?.storedSelection ?? ""
+    }
+
+    var asrCatalog: [ASRModelDescriptor] {
+        asrSnapshot?.models ?? []
+    }
+
+    var asrDownloaded: Set<String> {
+        Set(asrCatalog.filter(\.isAvailable).map(\.id))
+    }
+
+    var asrDownloading: String? {
+        switch asrSnapshot?.operation {
+        case let .downloading(modelID, _):
+            modelID
+        case .bootstrapping:
+            asrCatalog.first(where: \.isDefault)?.id
+        case .switching, .restoring, .deleting, nil:
+            nil
+        }
+    }
+
+    var asrDownloadFraction: Double? {
+        switch asrSnapshot?.operation {
+        case let .downloading(_, fraction), let .bootstrapping(fraction):
+            fraction
+        case .switching, .restoring, .deleting, nil:
+            nil
+        }
+    }
+
+    var isASRBootstrapping: Bool {
+        if case .bootstrapping = asrSnapshot?.operation { return true }
+        return false
+    }
+
+    var asrSwitching: String? {
+        if case let .switching(modelID) = asrSnapshot?.operation { return modelID }
+        return nil
+    }
+
+    var asrRestoring: String? {
+        if case let .restoring(modelID) = asrSnapshot?.operation { return modelID }
+        return nil
+    }
+
+    var asrDeleting: String? {
+        if case let .deleting(modelID) = asrSnapshot?.operation { return modelID }
+        return nil
+    }
+
+    var asrRecoveryMessage: String? {
+        switch asrSnapshot?.recovery {
+        case let .storedSelectionUnavailable(modelID, fallbackModelID):
+            "\(asrModelName(modelID)) is unavailable. Using "
+                + "\(asrModelName(fallbackModelID)) until you download it again."
+        case let .storedSelectionUnknown(modelID, fallbackModelID):
+            "Stored speech model “\(modelID)” isn't recognized. Using \(asrModelName(fallbackModelID))."
+        case nil:
+            nil
+        }
+    }
+
+    var asrDownloadError: String {
+        switch asrSnapshot?.failure {
+        case let .downloadFailed(modelID, reason):
+            "Couldn't download \(asrModelName(modelID)): \(reason)"
+        case let .downloadedDataInvalid(modelID):
+            "Downloaded data for \(asrModelName(modelID)) is incomplete or corrupt."
+        case let .bootstrapFailed(reason):
+            "Couldn't prepare the default speech model: \(reason)"
+        case let .engineLoadFailed(modelID, reason):
+            "Couldn't load \(asrModelName(modelID)): \(reason)"
+        case let .selectionFailed(modelID, reason):
+            "Couldn't switch to \(asrModelName(modelID)): \(reason)"
+        case .selectionCanceled:
+            ""
+        case let .selectionDegraded(modelID, fallbackModelID, reason):
+            "Couldn't restore \(asrModelName(modelID)). Using "
+                + "\(asrModelName(fallbackModelID))\(reason.map { ": \($0)" } ?? ".")"
+        case .deletionFailed, .deletionSelectionFailed, nil:
+            ""
+        }
+    }
+
+    var asrDeleteError: String {
+        switch asrSnapshot?.failure {
+        case let .deletionFailed(modelID, reason),
+             let .deletionSelectionFailed(modelID, reason):
+            "Couldn't delete \(asrModelName(modelID)): \(reason)"
+        case .downloadFailed, .downloadedDataInvalid, .bootstrapFailed, .engineLoadFailed,
+             .selectionFailed, .selectionCanceled, .selectionDegraded, nil:
+            ""
+        }
+    }
+
+    var canRetryASRBootstrap: Bool {
+        asrSnapshot?.isDictationBlocked == true
+            && asrSnapshot?.operation == nil
+            && asrSnapshot?.failure?.allowsBootstrapRetry == true
+    }
+
     var hasActiveASRManagementOperation: Bool {
-        asrDownloading != nil || asrSwitching != nil || asrRestoring != nil || asrDeleting != nil
+        asrSnapshot?.operation != nil
+    }
+
+    private func asrModelName(_ id: String) -> String {
+        asrCatalog.first { $0.id == id }?.name ?? id
     }
 
     @Published var modeSelection = ModePresentationFactory.projection(

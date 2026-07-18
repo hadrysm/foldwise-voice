@@ -17,10 +17,9 @@ enum ASRModelCatalog {
     }
 
     /// Which ASR engine (ADR-0005) runs a catalog entry, and the model variant
-    /// it needs. Each case maps to one `Transcribing` conformer behind the
-    /// dispatcher; `.parakeet` carries the FluidAudio checkpoint and `.whisper`
-    /// the exact `argmaxinc/whisperkit-coreml` variant folder name so the
-    /// engine resolves it verbatim.
+    /// it needs. Each case maps through its family adapter to a lifecycle-owned
+    /// `Transcribing` engine; `.parakeet` carries the FluidAudio checkpoint and
+    /// `.whisper` the exact `argmaxinc/whisperkit-coreml` variant folder name.
     enum Engine: Equatable {
         case parakeet(version: ParakeetVariant)
         case whisper(variant: String)

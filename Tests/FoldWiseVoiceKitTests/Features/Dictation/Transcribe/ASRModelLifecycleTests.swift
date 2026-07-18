@@ -26,7 +26,7 @@ final class ASRModelLifecycleTests: XCTestCase {
         let errorDescription: String? = "permission denied"
     }
 
-    func testInitialSnapshotAndTranscribingSeamBothBlockUntilStartupCompletes() async {
+    func testInitialSnapshotAndSessionProviderBothBlockUntilStartupCompletes() async {
         let lifecycle = ASRModelLifecycle(
             storedSelection: "parakeet-v3",
             adapters: [
@@ -43,12 +43,12 @@ final class ASRModelLifecycleTests: XCTestCase {
         XCTAssertEqual(
             InitialBlockingState(
                 snapshotIsBlocked: snapshot.isDictationBlocked,
-                transcriberIsBlocked: sessionProvider.isDictationBlocked,
+                providerIsBlocked: sessionProvider.isDictationBlocked,
                 effectiveSelection: snapshot.effectiveSelection
             ),
             InitialBlockingState(
                 snapshotIsBlocked: true,
-                transcriberIsBlocked: true,
+                providerIsBlocked: true,
                 effectiveSelection: nil
             )
         )
@@ -211,7 +211,7 @@ final class ASRModelLifecycleTests: XCTestCase {
         )
     }
 
-    func testLifecycleIsTheWarmTranscribingSeam() async throws {
+    func testLifecycleCapturesTheWarmEngineThroughASessionHandle() async throws {
         let parakeet = FakeASRModelFamilyAdapter(
             modelIDs: ["parakeet-v3"],
             availableModelIDs: ["parakeet-v3"]
@@ -221,63 +221,21 @@ final class ASRModelLifecycleTests: XCTestCase {
             storedSelection: "parakeet-v3",
             adapters: [parakeet]
         )
-        let transcriber: Transcribing = lifecycle
-
         await lifecycle.start()
-        let text = try await transcriber.transcribe([0.1, 0.2])
+        let session = try lifecycle.captureSession()
+        let text = try await session.transcribe([0.1, 0.2])
+        session.release()
 
         XCTAssertEqual(
             WarmEngineState(
                 text: text,
-                ready: transcriber.ready,
                 loadedModelIDs: parakeet.loadedModelIDs,
                 transcribedSamples: parakeet.transcribedSamples
             ),
             WarmEngineState(
                 text: "hello from lifecycle",
-                ready: true,
                 loadedModelIDs: ["parakeet-v3"],
                 transcribedSamples: [[0.1, 0.2]]
-            )
-        )
-    }
-
-    func testWarmupForwardsEngineSignalsThroughTheTranscribingSeam() async {
-        let parakeet = FakeASRModelFamilyAdapter(
-            modelIDs: ["parakeet-v3"],
-            availableModelIDs: ["parakeet-v3"]
-        )
-        let lifecycle = ASRModelLifecycle(
-            storedSelection: "parakeet-v3",
-            adapters: [parakeet]
-        )
-        let transcriber: Transcribing = lifecycle
-        let sessionProvider: ASRSessionHandleProviding = lifecycle
-        let callbacks = LifecycleCallbackProbe()
-        transcriber.onLoading = { callbacks.recordLoading($0) }
-        transcriber.onDownloadProgress = { callbacks.recordProgress($0) }
-
-        transcriber.warmup()
-        _ = await snapshot(from: lifecycle) { $0.effectiveSelection == "parakeet-v3" }
-        parakeet.latestEngine?.onLoading?(true)
-        parakeet.latestEngine?.onDownloadProgress?(0.4)
-
-        XCTAssertEqual(
-            LifecycleTranscribingState(
-                ready: transcriber.ready,
-                isDictationBlocked: sessionProvider.isDictationBlocked,
-                hasLoadingCallback: transcriber.onLoading != nil,
-                hasProgressCallback: transcriber.onDownloadProgress != nil,
-                loadingEvents: callbacks.loadingEvents,
-                progressEvents: callbacks.progressEvents
-            ),
-            LifecycleTranscribingState(
-                ready: true,
-                isDictationBlocked: false,
-                hasLoadingCallback: true,
-                hasProgressCallback: true,
-                loadingEvents: [true],
-                progressEvents: [0.4]
             )
         )
     }
@@ -292,26 +250,21 @@ final class ASRModelLifecycleTests: XCTestCase {
             storedSelection: "parakeet-v3",
             adapters: [parakeet]
         )
-        let transcriber: Transcribing = lifecycle
         let sessionProvider: ASRSessionHandleProviding = lifecycle
 
-        let transcriptionFailure = await failureDescription {
-            _ = try await transcriber.transcribe([0.1])
-        }
-        let preparationFailure = await failureDescription {
-            try await transcriber.prepare()
+        await lifecycle.start()
+        let captureFailure = await failureDescription {
+            _ = try lifecycle.captureSession()
         }
 
         XCTAssertEqual(
             BlockedRecognitionState(
-                transcriptionFailure: transcriptionFailure,
-                preparationFailure: preparationFailure,
+                captureFailure: captureFailure,
                 isDictationBlocked: sessionProvider.isDictationBlocked,
                 downloadAttempts: parakeet.downloadedModelIDs
             ),
             BlockedRecognitionState(
-                transcriptionFailure: "Speech recognition is unavailable.",
-                preparationFailure: "Speech recognition is unavailable.",
+                captureFailure: "Speech recognition is unavailable.",
                 isDictationBlocked: true,
                 downloadAttempts: ["parakeet-v3"]
             )
@@ -1063,7 +1016,11 @@ final class ASRModelLifecycleTests: XCTestCase {
         var iterator = updates.makeAsyncIterator()
         _ = await iterator.next()
 
-        let transcriptionTask = Task { try await lifecycle.transcribe([0.1]) }
+        let session = try lifecycle.captureSession()
+        let transcriptionTask = Task {
+            defer { session.release() }
+            return try await session.transcribe([0.1])
+        }
         await transcription.waitUntilStarted()
         let selection = Task { await lifecycle.select("whisper-small") }
         guard let transition = await iterator.next() else {
@@ -1197,7 +1154,7 @@ final class ASRModelLifecycleTests: XCTestCase {
         let fixture = switchingLifecycle()
         await fixture.lifecycle.start()
         var session: (any ASRSessionHandle)? = try fixture.lifecycle.captureSession()
-        _ = session?.ready
+        XCTAssertNotNil(session)
         let selection = Task {
             await fixture.lifecycle.select("whisper-small")
         }
@@ -1425,9 +1382,17 @@ final class ASRModelLifecycleTests: XCTestCase {
         var iterator = updates.makeAsyncIterator()
         _ = await iterator.next()
 
-        let firstTranscription = Task { try await lifecycle.transcribe([0.1]) }
+        let firstSession = try lifecycle.captureSession()
+        let firstTranscription = Task {
+            defer { firstSession.release() }
+            return try await firstSession.transcribe([0.1])
+        }
         await transcription.waitUntilStarted()
-        let secondTranscription = Task { try await lifecycle.transcribe([0.2]) }
+        let secondSession = try lifecycle.captureSession()
+        let secondTranscription = Task {
+            defer { secondSession.release() }
+            return try await secondSession.transcribe([0.2])
+        }
         await transcription.waitUntilStarted()
         let selection = Task { await lifecycle.select("whisper-small") }
         guard await iterator.next() != nil else {
@@ -2660,7 +2625,7 @@ final class ASRModelLifecycleTests: XCTestCase {
 
     private struct InitialBlockingState: Equatable {
         let snapshotIsBlocked: Bool
-        let transcriberIsBlocked: Bool
+        let providerIsBlocked: Bool
         let effectiveSelection: String?
     }
 
@@ -2703,23 +2668,12 @@ final class ASRModelLifecycleTests: XCTestCase {
 
     private struct WarmEngineState: Equatable {
         let text: String
-        let ready: Bool
         let loadedModelIDs: [String]
         let transcribedSamples: [[Float]]
     }
 
-    private struct LifecycleTranscribingState: Equatable {
-        let ready: Bool
-        let isDictationBlocked: Bool
-        let hasLoadingCallback: Bool
-        let hasProgressCallback: Bool
-        let loadingEvents: [Bool]
-        let progressEvents: [Double]
-    }
-
     private struct BlockedRecognitionState: Equatable {
-        let transcriptionFailure: String?
-        let preparationFailure: String?
+        let captureFailure: String?
         let isDictationBlocked: Bool
         let downloadAttempts: [String]
     }
@@ -2923,10 +2877,6 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
         lock.withLock { _transcribedSamples }
     }
 
-    var latestEngine: FakeLifecycleTranscriber? {
-        lock.withLock { _latestEngine }
-    }
-
     var transcriptionTextByModelID: [String: String] = [:]
     var engineTranscriptionErrors: [String: Error] = [:]
     var enginePreparationErrors: [String: Error] = [:]
@@ -2941,7 +2891,6 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
     private var _loadedModelIDs: [String] = []
     private var _removedModelIDs: [String] = []
     private var _transcribedSamples: [[Float]] = []
-    private weak var _latestEngine: FakeLifecycleTranscriber?
     private var activeDownloadID: String?
     private var progress: (@Sendable (Double) -> Void)?
     private var continuation: CheckedContinuation<Void, Error>?
@@ -3002,7 +2951,7 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
     func makeEngine(for id: String) throws -> Transcribing {
         lock.withLock { _loadedModelIDs.append(id) }
         let text = transcriptionTextByModelID[id] ?? ""
-        let engine = FakeLifecycleTranscriber(
+        return FakeLifecycleTranscriber(
             modelID: id,
             text: text,
             residency: residency,
@@ -3018,8 +2967,6 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
                 self?.lock.withLock { self?._transcribedSamples.append(samples) }
             }
         )
-        lock.withLock { _latestEngine = engine }
-        return engine
     }
 
     func removeModelData(for id: String) async throws {
@@ -3092,9 +3039,6 @@ private final class FakeLifecycleTranscriber: Transcribing {
     private let transcriptionError: Error?
     private let onPreparationFailure: () -> Void
     private let onTranscribe: ([Float]) -> Void
-    private(set) var ready = false
-    var onLoading: ((Bool) -> Void)?
-    var onDownloadProgress: ((Double) -> Void)?
 
     init(
         modelID: String,
@@ -3123,8 +3067,6 @@ private final class FakeLifecycleTranscriber: Transcribing {
         residency?.released(modelID)
     }
 
-    func warmup() {}
-
     func prepare() async throws {
         await preparation?()
         try Task.checkCancellation()
@@ -3132,7 +3074,6 @@ private final class FakeLifecycleTranscriber: Transcribing {
             onPreparationFailure()
             throw preparationError
         }
-        ready = true
     }
 
     func transcribe(_ samples: [Float]) async throws -> String {
@@ -3218,28 +3159,6 @@ private final class CancellableSelectionPreparation: @unchecked Sendable {
             return self.continuation
         }
         continuation?.resume()
-    }
-}
-
-private final class LifecycleCallbackProbe: @unchecked Sendable {
-    private let lock = NSLock()
-    private var loading: [Bool] = []
-    private var progress: [Double] = []
-
-    var loadingEvents: [Bool] {
-        lock.withLock { loading }
-    }
-
-    var progressEvents: [Double] {
-        lock.withLock { progress }
-    }
-
-    func recordLoading(_ value: Bool) {
-        lock.withLock { loading.append(value) }
-    }
-
-    func recordProgress(_ value: Double) {
-        lock.withLock { progress.append(value) }
     }
 }
 

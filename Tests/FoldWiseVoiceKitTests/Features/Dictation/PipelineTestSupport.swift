@@ -45,23 +45,15 @@ final class FakeRecorder: AudioRecording {
 }
 
 final class FakeTranscriber: Transcribing {
-    var ready = true
     var isDictationBlocked = false
-    var onLoading: ((Bool) -> Void)?
-    var onDownloadProgress: ((Double) -> Void)?
     var result: Result<String, Error> = .success("")
     /// Thrown by `prepare()` when set, so a test can drive a failed download.
     var prepareError: Error?
     /// Awaited at the start of every `transcribe` call, so a test can hold a
-    /// session mid-transcription or fire `onLoading` while a job is active.
+    /// session mid-transcription.
     var onTranscribe: (() async -> Void)?
-    private(set) var warmupCount = 0
     private(set) var prepareCount = 0
     private(set) var received: [[Float]] = []
-
-    func warmup() {
-        warmupCount += 1
-    }
 
     func prepare() async throws {
         prepareCount += 1
@@ -86,16 +78,6 @@ final class FakeTranscriberSessionProvider: ASRSessionHandleProviding {
         transcriber.isDictationBlocked
     }
 
-    var onLoading: ((Bool) -> Void)? {
-        get { transcriber.onLoading }
-        set { transcriber.onLoading = newValue }
-    }
-
-    var onDownloadProgress: ((Double) -> Void)? {
-        get { transcriber.onDownloadProgress }
-        set { transcriber.onDownloadProgress = newValue }
-    }
-
     func captureSession() throws -> any ASRSessionHandle {
         FakeTranscriberSessionHandle(transcriber)
     }
@@ -108,10 +90,6 @@ private final class FakeTranscriberSessionHandle: ASRSessionHandle {
         self.transcriber = transcriber
     }
 
-    var ready: Bool {
-        transcriber.ready
-    }
-
     func transcribe(_ samples: [Float]) async throws -> String {
         try await transcriber.transcribe(samples)
     }
@@ -121,8 +99,6 @@ private final class FakeTranscriberSessionHandle: ASRSessionHandle {
 
 final class FakeASRSessionHandleProvider: ASRSessionHandleProviding {
     var isDictationBlocked = false
-    var onLoading: ((Bool) -> Void)?
-    var onDownloadProgress: ((Double) -> Void)?
     private var handles: [FakeASRSessionHandle]
     private let events: SessionHandleEventProbe
 
@@ -138,7 +114,6 @@ final class FakeASRSessionHandleProvider: ASRSessionHandleProviding {
 }
 
 final class FakeASRSessionHandle: ASRSessionHandle {
-    var ready = true
     var result: Result<String, Error>
     var onTranscribe: (() async -> Void)?
     private let events: SessionHandleEventProbe
