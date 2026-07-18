@@ -1904,30 +1904,16 @@ final class ASRModelLifecycleTests: XCTestCase {
         }
         let blockedCapture = await failureDescription { _ = try lifecycle.captureSession() }
         let transcript = try await session.transcribe([0.2])
-
-        XCTAssertEqual(
-            DeletionState(
-                storedSelection: deleting.storedSelection,
-                effectiveSelection: deleting.effectiveSelection,
-                operation: deleting.operation,
-                isDictationBlocked: deleting.isDictationBlocked,
-                targetIsAvailable: deleting.models.first { $0.id == "whisper-small" }?.isAvailable,
-                failure: deleting.failure,
-                transcript: transcript,
-                captureFailure: blockedCapture,
-                events: residency.events
-            ),
-            DeletionState(
-                storedSelection: "parakeet-v3",
-                effectiveSelection: "whisper-small",
-                operation: .deleting(modelID: "whisper-small"),
-                isDictationBlocked: true,
-                targetIsAvailable: true,
-                failure: nil,
-                transcript: "captured whisper",
-                captureFailure: "Speech recognition is unavailable.",
-                events: ["construct-whisper-small", "persist-parakeet-v3"]
-            )
+        let deletingState = DeletionState(
+            storedSelection: deleting.storedSelection,
+            effectiveSelection: deleting.effectiveSelection,
+            operation: deleting.operation,
+            isDictationBlocked: deleting.isDictationBlocked,
+            targetIsAvailable: deleting.models.first { $0.id == "whisper-small" }?.isAvailable,
+            failure: deleting.failure,
+            transcript: transcript,
+            captureFailure: blockedCapture,
+            events: residency.events
         )
 
         session.release()
@@ -1935,33 +1921,51 @@ final class ASRModelLifecycleTests: XCTestCase {
         let completed = await lifecycle.snapshot()
 
         XCTAssertEqual(
-            DeletionState(
-                storedSelection: completed.storedSelection,
-                effectiveSelection: completed.effectiveSelection,
-                operation: completed.operation,
-                isDictationBlocked: completed.isDictationBlocked,
-                targetIsAvailable: completed.models.first { $0.id == "whisper-small" }?.isAvailable,
-                failure: completed.failure,
-                transcript: nil,
-                captureFailure: nil,
-                events: residency.events
+            DeletionTransition(
+                deleting: deletingState,
+                completed: DeletionState(
+                    storedSelection: completed.storedSelection,
+                    effectiveSelection: completed.effectiveSelection,
+                    operation: completed.operation,
+                    isDictationBlocked: completed.isDictationBlocked,
+                    targetIsAvailable: completed.models.first {
+                        $0.id == "whisper-small"
+                    }?.isAvailable,
+                    failure: completed.failure,
+                    transcript: nil,
+                    captureFailure: nil,
+                    events: residency.events
+                )
             ),
-            DeletionState(
-                storedSelection: "parakeet-v3",
-                effectiveSelection: "parakeet-v3",
-                operation: nil,
-                isDictationBlocked: false,
-                targetIsAvailable: false,
-                failure: nil,
-                transcript: nil,
-                captureFailure: nil,
-                events: [
-                    "construct-whisper-small",
-                    "persist-parakeet-v3",
-                    "release-whisper-small",
-                    "delete-whisper-small",
-                    "construct-parakeet-v3",
-                ]
+            DeletionTransition(
+                deleting: DeletionState(
+                    storedSelection: "parakeet-v3",
+                    effectiveSelection: "whisper-small",
+                    operation: .deleting(modelID: "whisper-small"),
+                    isDictationBlocked: true,
+                    targetIsAvailable: true,
+                    failure: nil,
+                    transcript: "captured whisper",
+                    captureFailure: "Speech recognition is unavailable.",
+                    events: ["construct-whisper-small", "persist-parakeet-v3"]
+                ),
+                completed: DeletionState(
+                    storedSelection: "parakeet-v3",
+                    effectiveSelection: "parakeet-v3",
+                    operation: nil,
+                    isDictationBlocked: false,
+                    targetIsAvailable: false,
+                    failure: nil,
+                    transcript: nil,
+                    captureFailure: nil,
+                    events: [
+                        "construct-whisper-small",
+                        "persist-parakeet-v3",
+                        "release-whisper-small",
+                        "delete-whisper-small",
+                        "construct-parakeet-v3",
+                    ]
+                )
             )
         )
     }
@@ -2842,6 +2846,11 @@ final class ASRModelLifecycleTests: XCTestCase {
         let transcript: String?
         let captureFailure: String?
         let events: [String]
+    }
+
+    private struct DeletionTransition: Equatable {
+        let deleting: DeletionState
+        let completed: DeletionState
     }
 
     private struct DeletionOutcome: Equatable {

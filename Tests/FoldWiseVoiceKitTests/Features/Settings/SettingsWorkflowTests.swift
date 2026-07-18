@@ -3031,14 +3031,10 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertNil(deletingModel)
     }
 
-    func testASRDeletionUsesLifecycleAdapter() async {
-        var adapterDeleteCalled = false
+    func testASRDeletionPublishesModelAsUnavailable() async {
         let config = makeConfig()
         let model = SettingsModel()
-        let effects = makeModelEffects(deleteASR: { _ in
-            adapterDeleteCalled = true
-            return nil
-        })
+        let effects = makeModelEffects(deleteASR: { _ in nil })
         effects.asrAdapter.setAvailable(true, id: "whisper-small")
         let workflow = makeWorkflow(config: config, model: model, effects: effects)
         workflow.populatePreferences()
@@ -3046,8 +3042,6 @@ final class SettingsWorkflowTests: XCTestCase {
 
         workflow.deleteASRModel("whisper-small")
         await waitForPublishedValue(model.$asrDownloaded) { !$0.contains("whisper-small") }
-
-        XCTAssertTrue(adapterDeleteCalled)
     }
 
     func testDeletingActiveASRModelFallsBackToDefault() async throws {

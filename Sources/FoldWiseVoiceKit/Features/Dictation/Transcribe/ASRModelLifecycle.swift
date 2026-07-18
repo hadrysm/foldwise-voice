@@ -299,8 +299,14 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
             sessionCoordinator.activate(engine, modelID: effectiveSelection)
             throw error
         }
+        await releaseEffectiveEngineForExclusiveOperation()
+    }
+
+    private func releaseEffectiveEngineForExclusiveOperation() async {
         engine = nil
         effectiveSelection = nil
+        // Let ARC finish engine teardown before replacement or storage removal begins.
+        await Task.yield()
     }
 
     private func bootstrapDefault() async {
@@ -553,8 +559,7 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
             await sessionCoordinator.waitForSessionsToDrain(modelID: id)
         }
         if deletesEffectiveEngine {
-            engine = nil
-            effectiveSelection = nil
+            await releaseEffectiveEngineForExclusiveOperation()
         }
 
         let deletionFailure: Error?
@@ -888,6 +893,32 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
 }
 
 private final class ASRLifecycleSessionHandle: ASRSessionHandle, @unchecked Sendable {
+    private let lease: ASRLifecycleSessionLease
+
+    init(engine: Transcribing, onRelease: @escaping () -> Void) {
+        lease = ASRLifecycleSessionLease(engine: engine, onRelease: onRelease)
+    }
+
+    var ready: Bool {
+        lease.ready
+    }
+
+    func transcribe(_ samples: [Float]) async throws -> String {
+        try await lease.transcribe(samples)
+    }
+
+    func release() {
+        lease.release()
+    }
+
+    deinit {
+        lease.release()
+    }
+}
+
+/// Keeps release state alive during handle deinitialization so the engine is dropped
+/// before the session coordinator is notified.
+private final class ASRLifecycleSessionLease: @unchecked Sendable {
     private let lock = NSLock()
     private var engine: Transcribing?
     private var onRelease: (() -> Void)?
@@ -909,22 +940,11 @@ private final class ASRLifecycleSessionHandle: ASRSessionHandle, @unchecked Send
     }
 
     func release() {
-        takeReleaseCallback()?()
-    }
-
-    private func takeReleaseCallback() -> (() -> Void)? {
-        lock.withLock { () -> (() -> Void)? in
+        let callback = lock.withLock { () -> (() -> Void)? in
             engine = nil
             defer { onRelease = nil }
             return onRelease
         }
-    }
-
-    deinit {
-        guard let callback = takeReleaseCallback() else { return }
-        Task {
-            await Task.yield()
-            callback()
-        }
+        callback?()
     }
 }
