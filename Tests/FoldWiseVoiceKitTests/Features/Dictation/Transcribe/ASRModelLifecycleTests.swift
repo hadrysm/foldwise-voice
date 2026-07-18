@@ -2103,6 +2103,32 @@ final class ASRModelLifecycleTests: XCTestCase {
         )
     }
 
+    func testSelectedModelDeletionFailurePreservesFallbackEngineLoadFailure() async {
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"]
+        )
+        parakeet.enginePreparationErrors = ["parakeet-v3": EngineFailure()]
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: ["whisper-small"]
+        )
+        whisper.deletionError = DeletionFailure()
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "whisper-small",
+            adapters: [parakeet, whisper]
+        )
+        await lifecycle.start()
+
+        await lifecycle.delete("whisper-small")
+        let snapshot = await lifecycle.snapshot()
+
+        XCTAssertEqual(
+            snapshot.failure,
+            .engineLoadFailed(modelID: "parakeet-v3", reason: "model data rejected")
+        )
+    }
+
     func testSelectedModelDeletionStopsWhenFallbackSelectionCannotPersist() async {
         let residency = EngineResidencyProbe()
         let parakeet = FakeASRModelFamilyAdapter(

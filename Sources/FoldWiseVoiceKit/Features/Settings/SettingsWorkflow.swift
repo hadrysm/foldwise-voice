@@ -574,11 +574,12 @@ final class SettingsWorkflow {
         Task { await asrLifecycle.retryBootstrap() }
     }
 
-    func deleteASRModel(_ id: String) {
+    @discardableResult
+    func deleteASRModel(_ id: String) -> Task<Void, Never>? {
         guard !model.hasActiveASRManagementOperation,
               let descriptor = model.asrCatalog.first(where: { $0.id == id }),
-              descriptor.allowsDeletion else { return }
-        Task { await asrLifecycle.delete(id) }
+              descriptor.allowsDeletion else { return nil }
+        return Task { await asrLifecycle.delete(id) }
     }
 
     func commit(changedShortcut: SettingsModel.RecordingField? = nil) {

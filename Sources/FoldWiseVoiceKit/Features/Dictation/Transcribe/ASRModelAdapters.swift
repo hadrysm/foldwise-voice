@@ -170,7 +170,7 @@ struct WhisperASRModelAdapter: ASRModelFamilyAdapting {
             ASRModelDataValidation.canLoadCompiledModel(at: $0)
         },
         packageIsUsable: @escaping ModelValidation = {
-            ASRModelDataValidation.canCompileModelPackage(at: $0)
+            ASRModelDataValidation.containsUsableModelPackage(at: $0)
         },
         download: @escaping Download,
         delete: @escaping Delete = { _ in throw ASRModelAdapterError.deletionUnavailable }
@@ -187,7 +187,7 @@ struct WhisperASRModelAdapter: ASRModelFamilyAdapting {
         modelDirectory = ASRModelLibraryStorage.whisperModelDirectory
         tokenizerDirectory = ASRModelLibraryStorage.tokenizerDirectory
         compiledModelIsUsable = { ASRModelDataValidation.canLoadCompiledModel(at: $0) }
-        packageIsUsable = { ASRModelDataValidation.canCompileModelPackage(at: $0) }
+        packageIsUsable = { ASRModelDataValidation.containsUsableModelPackage(at: $0) }
         download = { try await Self.downloadFromLibrary($0, $1) }
         delete = ASRModelLibraryStorage.deleteWhisper
     }
@@ -316,6 +316,44 @@ private enum ASRModelDataValidation {
         return merges.allSatisfy(isUsableMerge)
     }
 
+    static func containsUsableModelPackage(at package: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: package.path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              let manifest = jsonDictionary(
+                  at: package.appendingPathComponent("Manifest.json")
+              ),
+              let rootModelIdentifier = manifest["rootModelIdentifier"] as? String,
+              !rootModelIdentifier.isEmpty,
+              let itemInfoEntries = manifest["itemInfoEntries"] as? [String: Any],
+              !itemInfoEntries.isEmpty,
+              itemInfoEntries[rootModelIdentifier] != nil else {
+            return false
+        }
+
+        let packageRoot = package.standardizedFileURL.resolvingSymlinksInPath()
+        let dataRoot = package.appendingPathComponent("Data")
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard dataRoot == packageRoot.appendingPathComponent("Data").standardizedFileURL else {
+            return false
+        }
+
+        return itemInfoEntries.values.allSatisfy { value in
+            guard let entry = value as? [String: Any],
+                  let path = entry["path"] as? String,
+                  !path.isEmpty,
+                  !path.hasPrefix("/") else {
+                return false
+            }
+            let item = dataRoot.appendingPathComponent(path)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            guard item.path.hasPrefix(dataRoot.path + "/") else { return false }
+            return containsOnlyNonemptyData(at: item)
+        }
+    }
+
     private static func jsonDictionary(at url: URL) -> [String: Any]? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -330,16 +368,37 @@ private enum ASRModelDataValidation {
         return pair.count == 2 && pair.allSatisfy { !$0.isEmpty }
     }
 
+    private static func containsOnlyNonemptyData(at url: URL) -> Bool {
+        guard let values = try? url.resourceValues(
+            forKeys: [.isDirectoryKey, .isRegularFileKey, .fileSizeKey]
+        ) else { return false }
+        if values.isRegularFile == true {
+            return (values.fileSize ?? 0) > 0
+        }
+        guard values.isDirectory == true,
+              let enumerator = FileManager.default.enumerator(
+                  at: url,
+                  includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]
+              ) else { return false }
+
+        var containsData = false
+        for case let item as URL in enumerator {
+            guard let itemValues = try? item.resourceValues(
+                forKeys: [.isRegularFileKey, .fileSizeKey]
+            ) else { return false }
+            guard itemValues.isRegularFile == true else { continue }
+            guard (itemValues.fileSize ?? 0) > 0 else { return false }
+            containsData = true
+        }
+        return containsData
+    }
+
     static func canLoadCompiledModel(at url: URL) -> Bool {
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .cpuOnly
         return autoreleasepool {
             (try? MLModel(contentsOf: url, configuration: configuration)) != nil
         }
-    }
-
-    static func canCompileModelPackage(at url: URL) -> Bool {
-        (try? MLModel.compileModel(at: url)) != nil
     }
 }
 

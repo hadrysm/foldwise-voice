@@ -86,6 +86,53 @@ final class ASRModelAdapterTests: XCTestCase {
         XCTAssertTrue(adapter.isModelDataAvailable(for: "whisper-large-v3"))
     }
 
+    func testWhisperStructurallyValidatesPackagedCoreMLDataWithoutCompilingIt() throws {
+        let adapter = try makeWhisperAdapterWithRealisticPackages()
+
+        XCTAssertTrue(adapter.isModelDataAvailable(for: "whisper-large-v3"))
+    }
+
+    func testWhisperRejectsMalformedModelPackageManifest() throws {
+        let adapter = try makeWhisperAdapterWithRealisticPackages()
+        let directory = try XCTUnwrap(directory)
+        try Data("{".utf8).write(
+            to: directory.appendingPathComponent("AudioEncoder.mlpackage/Manifest.json")
+        )
+
+        XCTAssertFalse(adapter.isModelDataAvailable(for: "whisper-large-v3"))
+    }
+
+    func testWhisperRejectsEmptyReferencedModelPackageData() throws {
+        let adapter = try makeWhisperAdapterWithRealisticPackages()
+        let directory = try XCTUnwrap(directory)
+        try Data().write(
+            to: directory.appendingPathComponent(
+                "AudioEncoder.mlpackage/Data/com.apple.CoreML/weights/weight.bin"
+            )
+        )
+
+        XCTAssertFalse(adapter.isModelDataAvailable(for: "whisper-large-v3"))
+    }
+
+    func testWhisperRejectsMissingRootModelPackageEntry() throws {
+        let adapter = try makeWhisperAdapterWithRealisticPackages()
+        let directory = try XCTUnwrap(directory)
+        let package = directory.appendingPathComponent("AudioEncoder.mlpackage")
+        try writePackageManifest(to: package, rootModelIdentifier: "missing")
+
+        XCTAssertFalse(adapter.isModelDataAvailable(for: "whisper-large-v3"))
+    }
+
+    func testWhisperRejectsModelPackagePathOutsideDataDirectory() throws {
+        let adapter = try makeWhisperAdapterWithRealisticPackages()
+        let directory = try XCTUnwrap(directory)
+        let package = directory.appendingPathComponent("AudioEncoder.mlpackage")
+        try Data("outside".utf8).write(to: directory.appendingPathComponent("outside.mlmodel"))
+        try writePackageManifest(to: package, modelPath: "../../outside.mlmodel")
+
+        XCTAssertFalse(adapter.isModelDataAvailable(for: "whisper-large-v3"))
+    }
+
     func testWhisperRequiresUsableTokenizerData() throws {
         let directory = try XCTUnwrap(directory)
         let tokenizerDirectory = directory.appendingPathComponent("tokenizer")
@@ -542,6 +589,20 @@ final class ASRModelAdapterTests: XCTestCase {
         )
     }
 
+    private func makeWhisperAdapterWithRealisticPackages() throws -> WhisperASRModelAdapter {
+        let directory = try XCTUnwrap(directory)
+        let tokenizerDirectory = directory.appendingPathComponent("tokenizer")
+        for component in ["MelSpectrogram", "AudioEncoder", "TextDecoder"] {
+            try writeRealisticPackagedModel(named: component, to: directory)
+        }
+        try writeTokenizerData(to: tokenizerDirectory)
+        return WhisperASRModelAdapter(
+            modelDirectory: { _ in directory },
+            tokenizerDirectory: { _, _ in tokenizerDirectory },
+            download: { _, _ in }
+        )
+    }
+
     private func writePackagedModel(named name: String, to directory: URL) throws {
         let package = directory.appendingPathComponent("\(name).mlpackage")
         let model = package.appendingPathComponent("Data/com.apple.CoreML/model.mlmodel")
@@ -551,6 +612,51 @@ final class ASRModelAdapterTests: XCTestCase {
         )
         try Data("model".utf8).write(to: model)
         try Data(#"{"rootModelIdentifier":"model"}"#.utf8).write(
+            to: package.appendingPathComponent("Manifest.json")
+        )
+    }
+
+    private func writeRealisticPackagedModel(named name: String, to directory: URL) throws {
+        let package = directory.appendingPathComponent("\(name).mlpackage")
+        let model = package.appendingPathComponent("Data/com.apple.CoreML/model.mlmodel")
+        let weights = package.appendingPathComponent("Data/com.apple.CoreML/weights/weight.bin")
+        try FileManager.default.createDirectory(
+            at: model.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: weights.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("model specification".utf8).write(to: model)
+        try Data("weights".utf8).write(to: weights)
+        try writePackageManifest(to: package)
+    }
+
+    private func writePackageManifest(
+        to package: URL,
+        rootModelIdentifier: String = "model",
+        modelPath: String = "com.apple.CoreML/model.mlmodel"
+    ) throws {
+        let manifest: [String: Any] = [
+            "fileFormatVersion": "1.0.0",
+            "itemInfoEntries": [
+                "model": [
+                    "author": "com.apple.CoreML",
+                    "description": "CoreML Model Specification",
+                    "name": "model.mlmodel",
+                    "path": modelPath,
+                ],
+                "weights": [
+                    "author": "com.apple.CoreML",
+                    "description": "CoreML Model Weights",
+                    "name": "weights",
+                    "path": "com.apple.CoreML/weights",
+                ],
+            ],
+            "rootModelIdentifier": rootModelIdentifier,
+        ]
+        try JSONSerialization.data(withJSONObject: manifest).write(
             to: package.appendingPathComponent("Manifest.json")
         )
     }

@@ -363,6 +363,12 @@ final class SettingsWorkflowTests: XCTestCase {
         let error: String
     }
 
+    private struct ASRDeletionAttemptState: Equatable {
+        let wasScheduled: Bool
+        let deleting: String?
+        let attempts: Int
+    }
+
     private struct SelectionPersistenceState: Equatable {
         let modelSelection: String
         let configSelection: String
@@ -3013,7 +3019,14 @@ final class SettingsWorkflowTests: XCTestCase {
         let preparation = SuspendedASRPreparation()
         let config = makeConfig()
         let model = SettingsModel()
-        let effects = makeModelEffects(prepareASR: preparation.run)
+        var deletionAttempts = 0
+        let effects = makeModelEffects(
+            prepareASR: preparation.run,
+            deleteASR: { _ in
+                deletionAttempts += 1
+                return nil
+            }
+        )
         let asrLifecycle = ASRModelLifecycle(
             storedSelection: config.asrModel,
             adapters: [effects.asrAdapter]
@@ -3028,13 +3041,22 @@ final class SettingsWorkflowTests: XCTestCase {
         )
 
         workflow.downloadASRModel("whisper-small")
-        workflow.deleteASRModel("whisper-small")
-        let deletingModel = model.asrDeleting
+        let deletionTask = workflow.deleteASRModel("whisper-small")
         await preparation.waitUntilStarted()
+        await waitForASRState(model) { model.asrDownloading == "whisper-small" }
+        await deletionTask?.value
+        let state = ASRDeletionAttemptState(
+            wasScheduled: deletionTask != nil,
+            deleting: model.asrDeleting,
+            attempts: deletionAttempts
+        )
         workflow.cancelASROperation()
         preparation.finish(nil)
 
-        XCTAssertNil(deletingModel)
+        XCTAssertEqual(
+            state,
+            ASRDeletionAttemptState(wasScheduled: true, deleting: nil, attempts: 0)
+        )
     }
 
     func testASRDeletionPublishesModelAsUnavailable() async {

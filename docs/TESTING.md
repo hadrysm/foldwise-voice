@@ -110,6 +110,7 @@ their meaningful decisions into covered collaborators.
 | `Theme.swift` | Declarative SwiftUI styling primitives |
 | `TextInsertionSystem.swift` | Thin macOS Accessibility, CGEvent, and main-queue scheduling adapter |
 | `Transcriber.swift` | Real FluidAudio model-loading and inference adapter |
+| `ASRModelLibraryStorage.swift` | Thin FluidAudio and WhisperKit network-storage boundary; mapping, progress, and availability policy live in covered adapters |
 | `UpdateCheckEnvironment.swift` | Thin application-bundle, URLSession, and recurring-timer configuration adapter |
 | `WhisperTranscriber.swift` | Real WhisperKit model-loading and inference adapter |
 

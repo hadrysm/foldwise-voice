@@ -560,7 +560,7 @@ actor ASRModelLifecycle: ASRSessionHandleProviding {
             sessionCoordinator.activate(engine, modelID: effectiveSelection)
         }
         operation = nil
-        if let deletionFailure {
+        if let deletionFailure, failure == nil {
             failure = .deletionFailed(modelID: id, reason: deletionFailure.localizedDescription)
         }
         publishSnapshot()
