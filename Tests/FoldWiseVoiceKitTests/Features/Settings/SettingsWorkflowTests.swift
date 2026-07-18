@@ -1,9 +1,53 @@
 import AppKit
+import Combine
 import XCTest
 @testable import FoldWiseVoiceKit
 
 @MainActor
+private extension SettingsWorkflow {
+    convenience init(
+        config: Config,
+        model: SettingsModel,
+        historyStore: HistoryStore,
+        now: @escaping () -> Date,
+        scheduleStatusClear: @escaping ScheduleStatusClear,
+        copy: @escaping Copy,
+        statsStore: StatsStore = JSONStatsStore(url: JSONStatsStore.defaultURL),
+        calendar: Calendar = .current,
+        polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
+        updates: (any SettingsUpdateChecking)? = nil,
+        reportUpdate: @escaping (String) -> Void = { _ in },
+        updateHotkeys: ((ShortcutBindings) throws -> Void)? = nil,
+        captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
+    ) {
+        self.init(
+            config: config,
+            model: model,
+            historyStore: historyStore,
+            now: now,
+            scheduleStatusClear: scheduleStatusClear,
+            llmModels: LiveLLMModelManager(),
+            asrLifecycle: ASRModelLifecycle(
+                storedSelection: config.asrModel,
+                adapters: []
+            ),
+            copy: copy,
+            statsStore: statsStore,
+            calendar: calendar,
+            polish: polish,
+            updates: updates,
+            reportUpdate: reportUpdate,
+            updateHotkeys: updateHotkeys,
+            captureGate: captureGate
+        )
+    }
+}
+
+@MainActor
 final class SettingsWorkflowTests: XCTestCase {
+    private typealias ASRProgress = @MainActor (Double) -> Void
+    private typealias ASRLoading = @MainActor (Bool) -> Void
+
     private final class DispatchingListener: HotkeyListening {
         var onHealthChange: ((ShortcutListenerHealth) -> Void)?
         private(set) var isStarted = false
@@ -16,7 +60,9 @@ final class SettingsWorkflowTests: XCTestCase {
         }
 
         func start() throws {
-            if let startError { throw startError }
+            if let startError {
+                throw startError
+            }
             isStarted = true
         }
 
@@ -32,6 +78,10 @@ final class SettingsWorkflowTests: XCTestCase {
 
     private struct ListenerFailure: LocalizedError {
         let errorDescription: String? = "listener activation failed"
+    }
+
+    private struct EnginePreparationFailure: LocalizedError {
+        let errorDescription: String? = "engine rejected"
     }
 
     private final class NonPersistingHistoryStore: HistoryStore {
@@ -297,14 +347,12 @@ final class SettingsWorkflowTests: XCTestCase {
     private struct ASRDownloadState: Equatable {
         let downloading: String?
         let fraction: Double?
-        let preparing: Bool
         let downloaded: Set<String>
         let error: String
     }
 
     private struct ASRProgressState: Equatable {
         let fraction: Double?
-        let preparing: Bool
     }
 
     private struct ASRDeleteState: Equatable {
@@ -315,12 +363,47 @@ final class SettingsWorkflowTests: XCTestCase {
         let error: String
     }
 
+    private struct ASRDeletionAttemptState: Equatable {
+        let wasScheduled: Bool
+        let deleting: String?
+        let attempts: Int
+    }
+
+    private struct SelectionPersistenceState: Equatable {
+        let modelSelection: String
+        let configSelection: String
+        let lifecyclePersistence: [String]
+    }
+
+    private struct SelectionPresentationState: Equatable {
+        let selected: String
+        let switching: String?
+        let restoring: String?
+        let actionsDisabled: Bool
+    }
+
     private struct ASRPopulationState: Equatable {
         let downloading: String?
         let downloaded: Set<String>
         let downloadError: String
         let deleting: String?
         let deleteError: String
+    }
+
+    private struct ASRRecoveryState: Equatable {
+        let storedSelection: String
+        let messageNamesStoredSelection: Bool
+        let messageNamesFallback: Bool
+        let catalogContainsStoredSelection: Bool
+    }
+
+    private struct ASRBootstrapPresentationState: Equatable {
+        let downloading: String?
+        let fraction: Double?
+        let isBootstrapping: Bool
+        let error: String
+        let canRetry: Bool
+        let defaultIsAvailable: Bool
     }
 
     @MainActor
@@ -342,19 +425,39 @@ final class SettingsWorkflowTests: XCTestCase {
     @MainActor
     private final class SuspendedASRPreparation {
         private(set) var started = false
-        private var progress: ASRModelManaging.ASRProgress?
-        private var loading: ASRModelManaging.ASRLoading?
+        private var progress: ASRProgress?
+        private var loading: ASRLoading?
         private var continuation: CheckedContinuation<String?, Never>?
+        private var startContinuations: [CheckedContinuation<Void, Never>] = []
+        private var cancellationContinuations: [CheckedContinuation<Void, Never>] = []
+        private var wasCancelled = false
 
         func run(
             _: ASRModelCatalog.Entry,
-            progress: @escaping ASRModelManaging.ASRProgress,
-            loading: @escaping ASRModelManaging.ASRLoading
+            progress: @escaping ASRProgress,
+            loading: @escaping ASRLoading
         ) async -> String? {
             started = true
+            let startContinuations = startContinuations
+            self.startContinuations.removeAll()
+            startContinuations.forEach { $0.resume() }
             self.progress = progress
             self.loading = loading
-            return await withCheckedContinuation { continuation = $0 }
+            return await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation = $0 }
+            } onCancel: {
+                Task { @MainActor in self.markCancelled() }
+            }
+        }
+
+        func waitUntilStarted() async {
+            guard !started else { return }
+            await withCheckedContinuation { startContinuations.append($0) }
+        }
+
+        func waitUntilCancelled() async {
+            guard !wasCancelled else { return }
+            await withCheckedContinuation { cancellationContinuations.append($0) }
         }
 
         func report(fraction: Double, loading: Bool) {
@@ -366,21 +469,23 @@ final class SettingsWorkflowTests: XCTestCase {
             continuation?.resume(returning: failure)
             continuation = nil
         }
+
+        private func markCancelled() {
+            wasCancelled = true
+            let cancellationContinuations = cancellationContinuations
+            self.cancellationContinuations.removeAll()
+            cancellationContinuations.forEach { $0.resume() }
+        }
     }
 
     @MainActor
-    private final class CannedModelManagers: LLMModelManaging, ASRModelManaging {
+    private final class CannedModelManagers: LLMModelManaging {
+        let asrAdapter: CannedASRAdapter
         let listResult: @MainActor () async -> [OllamaClient.InstalledModel]
         let pullResult: @MainActor (
             String, @escaping LLMModelManaging.LLMProgress
         ) async -> String?
         let deleteLLMResult: @MainActor (String) async -> String?
-        let prepareASRResult: @MainActor (
-            ASRModelCatalog.Entry,
-            @escaping ASRModelManaging.ASRProgress,
-            @escaping ASRModelManaging.ASRLoading
-        ) async -> String?
-        let deleteASRResult: @MainActor (ASRModelCatalog.Entry) async -> String?
 
         init(
             list: @escaping @MainActor () async -> [OllamaClient.InstalledModel],
@@ -390,16 +495,15 @@ final class SettingsWorkflowTests: XCTestCase {
             deleteLLM: @escaping @MainActor (String) async -> String?,
             prepareASR: @escaping @MainActor (
                 ASRModelCatalog.Entry,
-                @escaping ASRModelManaging.ASRProgress,
-                @escaping ASRModelManaging.ASRLoading
+                @escaping ASRProgress,
+                @escaping ASRLoading
             ) async -> String?,
             deleteASR: @escaping @MainActor (ASRModelCatalog.Entry) async -> String?
         ) {
             listResult = list
             pullResult = pull
             deleteLLMResult = deleteLLM
-            prepareASRResult = prepareASR
-            deleteASRResult = deleteASR
+            asrAdapter = CannedASRAdapter(download: prepareASR, delete: deleteASR)
         }
 
         func list() async -> [OllamaClient.InstalledModel] {
@@ -413,17 +517,89 @@ final class SettingsWorkflowTests: XCTestCase {
         func delete(_ name: String) async -> String? {
             await deleteLLMResult(name)
         }
+    }
 
-        func prepare(
-            _ entry: ASRModelCatalog.Entry,
-            progress: @escaping ASRProgress,
-            loading: @escaping ASRLoading
-        ) async -> String? {
-            await prepareASRResult(entry, progress, loading)
+    private final class CannedASRAdapter: ASRModelFamilyAdapting, @unchecked Sendable {
+        private struct DownloadError: LocalizedError {
+            let errorDescription: String?
         }
 
-        func delete(_ entry: ASRModelCatalog.Entry) async -> String? {
-            await deleteASRResult(entry)
+        private struct DeletionError: LocalizedError {
+            let errorDescription: String?
+        }
+
+        let modelIDs = Set(ASRModelCatalog.entries.map(\.id))
+        private let lock = NSLock()
+        private var availableModelIDs: Set<String> = [ASRModelCatalog.defaultID]
+        private var enginePreparationError: Error?
+        private let download: @MainActor (
+            ASRModelCatalog.Entry,
+            @escaping ASRProgress,
+            @escaping ASRLoading
+        ) async -> String?
+        private let delete: @MainActor (ASRModelCatalog.Entry) async -> String?
+
+        init(
+            download: @escaping @MainActor (
+                ASRModelCatalog.Entry,
+                @escaping ASRProgress,
+                @escaping ASRLoading
+            ) async -> String?,
+            delete: @escaping @MainActor (ASRModelCatalog.Entry) async -> String?
+        ) {
+            self.download = download
+            self.delete = delete
+        }
+
+        func isModelDataAvailable(for id: String) -> Bool {
+            lock.withLock { availableModelIDs.contains(id) }
+        }
+
+        func downloadModelData(
+            for id: String,
+            progress: @escaping @Sendable (Double) -> Void
+        ) async throws {
+            guard let entry = ASRModelCatalog.entry(for: id) else { return }
+            let failure = await download(
+                entry,
+                { fraction in progress(fraction) },
+                { _ in }
+            )
+            if Task.isCancelled {
+                throw CancellationError()
+            }
+            if let failure {
+                throw DownloadError(errorDescription: failure)
+            }
+            setAvailable(true, id: id)
+        }
+
+        func makeEngine(for _: String) throws -> Transcribing {
+            let engine = FakeTranscriber()
+            engine.prepareError = lock.withLock { enginePreparationError }
+            return engine
+        }
+
+        func removeModelData(for id: String) async throws {
+            guard let entry = ASRModelCatalog.entry(for: id) else { return }
+            if let failure = await delete(entry) {
+                throw DeletionError(errorDescription: failure)
+            }
+            setAvailable(false, id: id)
+        }
+
+        func setEnginePreparationError(_ error: Error?) {
+            lock.withLock { enginePreparationError = error }
+        }
+
+        func setAvailable(_ available: Bool, id: String) {
+            lock.withLock {
+                if available {
+                    availableModelIDs.insert(id)
+                } else {
+                    availableModelIDs.remove(id)
+                }
+            }
         }
     }
 
@@ -453,7 +629,7 @@ final class SettingsWorkflowTests: XCTestCase {
         try FileManager.default.removeItem(at: dir)
     }
 
-    func testPopulateCopiesPreferencesIntoSettingsState() {
+    func testPopulateCopiesPreferencesIntoSettingsState() async {
         let config = makeConfig()
         let model = SettingsModel()
         let workflow = SettingsWorkflow(
@@ -466,6 +642,7 @@ final class SettingsWorkflowTests: XCTestCase {
         )
 
         workflow.populatePreferences()
+        await waitForASRState(model) { !model.asrModel.isEmpty }
 
         XCTAssertEqual(
             preferenceState(model),
@@ -1323,17 +1500,18 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
-    func testPopulateMakesPersistedASRModelAvailableAndClearsTransientState() throws {
+    func testPopulateReconcilesAvailableASRModelsIntoOneSnapshot() async throws {
         let config = makeConfig()
         try config.setASRModel("whisper-small")
         let model = SettingsModel()
-        model.asrDownloading = "whisper-large-v3-turbo"
-        model.asrDownloadError = "old download error"
-        model.asrDeleting = "whisper-small"
-        model.asrDeleteError = "old delete error"
-        let workflow = makeWorkflow(config: config, model: model)
+        let effects = makeModelEffects()
+        effects.asrAdapter.setAvailable(true, id: "whisper-small")
+        let workflow = makeWorkflow(config: config, model: model, effects: effects)
 
         workflow.populatePreferences()
+        await waitForASRState(model) {
+            model.asrDownloaded == [ASRModelCatalog.defaultID, "whisper-small"]
+        }
 
         XCTAssertEqual(
             ASRPopulationState(
@@ -1350,6 +1528,217 @@ final class SettingsWorkflowTests: XCTestCase {
                 deleting: nil,
                 deleteError: ""
             )
+        )
+    }
+
+    func testUnknownASRSelectionPublishesRecoveryNoticeWithoutCatalogRow() async throws {
+        let config = makeConfig()
+        try config.setASRModel("legacy/custom-asr")
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.populatePreferences()
+        await waitForASRState(model) { model.asrRecoveryMessage != nil }
+
+        XCTAssertEqual(
+            ASRRecoveryState(
+                storedSelection: model.asrModel,
+                messageNamesStoredSelection: model.asrRecoveryMessage?.contains(
+                    "legacy/custom-asr"
+                ) == true,
+                messageNamesFallback: model.asrRecoveryMessage?.contains("Parakeet") == true,
+                catalogContainsStoredSelection: model.asrCatalog.contains {
+                    $0.id == "legacy/custom-asr"
+                }
+            ),
+            ASRRecoveryState(
+                storedSelection: "legacy/custom-asr",
+                messageNamesStoredSelection: true,
+                messageNamesFallback: true,
+                catalogContainsStoredSelection: false
+            )
+        )
+    }
+
+    func testUnavailableASRSelectionPublishesRepairNotice() async throws {
+        let config = makeConfig()
+        try config.setASRModel("whisper-small")
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.populatePreferences()
+        await waitForASRState(model) { model.asrRecoveryMessage != nil }
+
+        XCTAssertEqual(
+            ASRRecoveryState(
+                storedSelection: model.asrModel,
+                messageNamesStoredSelection: model.asrRecoveryMessage?.contains(
+                    "Whisper small"
+                ) == true,
+                messageNamesFallback: model.asrRecoveryMessage?.contains("Parakeet") == true,
+                catalogContainsStoredSelection: model.asrCatalog.contains {
+                    $0.id == "whisper-small"
+                }
+            ),
+            ASRRecoveryState(
+                storedSelection: "whisper-small",
+                messageNamesStoredSelection: true,
+                messageNamesFallback: true,
+                catalogContainsStoredSelection: true
+            )
+        )
+    }
+
+    func testFailedDefaultBootstrapPublishesProgressAndExplicitRetryRecovers() async {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let preparation = SuspendedASRPreparation()
+        var attempt = 0
+        let effects = makeModelEffects(prepareASR: { entry, progress, loading in
+            attempt += 1
+            guard attempt == 1 else { return nil }
+            return await preparation.run(entry, progress: progress, loading: loading)
+        })
+        effects.asrAdapter.setAvailable(false, id: ASRModelCatalog.defaultID)
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [effects.asrAdapter]
+        )
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: effects,
+            asrLifecycle: lifecycle
+        )
+
+        let start = Task { await lifecycle.start() }
+        await preparation.waitUntilStarted()
+        preparation.report(fraction: 0.45, loading: true)
+        await waitForASRState(model) { model.asrDownloadFraction == 0.45 }
+        let progressing = ASRBootstrapPresentationState(
+            downloading: model.asrDownloading,
+            fraction: model.asrDownloadFraction,
+            isBootstrapping: model.isASRBootstrapping,
+            error: model.asrDownloadError,
+            canRetry: model.canRetryASRBootstrap,
+            defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
+        )
+
+        preparation.finish("network unavailable")
+        await start.value
+        await waitForASRState(model) { model.canRetryASRBootstrap }
+        let failed = ASRBootstrapPresentationState(
+            downloading: model.asrDownloading,
+            fraction: model.asrDownloadFraction,
+            isBootstrapping: model.isASRBootstrapping,
+            error: model.asrDownloadError,
+            canRetry: model.canRetryASRBootstrap,
+            defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
+        )
+
+        workflow.retryASRBootstrap()
+        await waitForASRState(model) {
+            model.asrDownloaded.contains(ASRModelCatalog.defaultID)
+        }
+        let recovered = ASRBootstrapPresentationState(
+            downloading: model.asrDownloading,
+            fraction: model.asrDownloadFraction,
+            isBootstrapping: model.isASRBootstrapping,
+            error: model.asrDownloadError,
+            canRetry: model.canRetryASRBootstrap,
+            defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
+        )
+
+        XCTAssertEqual(
+            [progressing, failed, recovered],
+            [
+                ASRBootstrapPresentationState(
+                    downloading: ASRModelCatalog.defaultID,
+                    fraction: 0.45,
+                    isBootstrapping: true,
+                    error: "",
+                    canRetry: false,
+                    defaultIsAvailable: false
+                ),
+                ASRBootstrapPresentationState(
+                    downloading: nil,
+                    fraction: nil,
+                    isBootstrapping: false,
+                    error: "Couldn't prepare the default speech model: network unavailable",
+                    canRetry: true,
+                    defaultIsAvailable: false
+                ),
+                ASRBootstrapPresentationState(
+                    downloading: nil,
+                    fraction: nil,
+                    isBootstrapping: false,
+                    error: "",
+                    canRetry: false,
+                    defaultIsAvailable: true
+                ),
+            ]
+        )
+    }
+
+    func testDefaultEngineLoadFailureOffersExplicitBootstrapRetry() async {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let effects = makeModelEffects()
+        effects.asrAdapter.setEnginePreparationError(EnginePreparationFailure())
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [effects.asrAdapter]
+        )
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: effects,
+            asrLifecycle: lifecycle
+        )
+
+        await lifecycle.start()
+        await waitForASRState(model) { model.asrDownloadError.contains("engine rejected") }
+        let failed = ASRBootstrapPresentationState(
+            downloading: model.asrDownloading,
+            fraction: model.asrDownloadFraction,
+            isBootstrapping: model.isASRBootstrapping,
+            error: model.asrDownloadError,
+            canRetry: model.canRetryASRBootstrap,
+            defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
+        )
+
+        effects.asrAdapter.setEnginePreparationError(nil)
+        workflow.retryASRBootstrap()
+        await waitUntil { model.asrDownloadError.isEmpty }
+        let recovered = ASRBootstrapPresentationState(
+            downloading: model.asrDownloading,
+            fraction: model.asrDownloadFraction,
+            isBootstrapping: model.isASRBootstrapping,
+            error: model.asrDownloadError,
+            canRetry: model.canRetryASRBootstrap,
+            defaultIsAvailable: model.asrDownloaded.contains(ASRModelCatalog.defaultID)
+        )
+
+        XCTAssertEqual(
+            [failed, recovered],
+            [
+                ASRBootstrapPresentationState(
+                    downloading: nil,
+                    fraction: nil,
+                    isBootstrapping: false,
+                    error: "Couldn't load Parakeet TDT v3: engine rejected",
+                    canRetry: true,
+                    defaultIsAvailable: false
+                ),
+                ASRBootstrapPresentationState(
+                    downloading: nil,
+                    fraction: nil,
+                    isBootstrapping: false,
+                    error: "",
+                    canRetry: false,
+                    defaultIsAvailable: true
+                ),
+            ]
         )
     }
 
@@ -1382,7 +1771,9 @@ final class SettingsWorkflowTests: XCTestCase {
 
         workflow.checkForUpdates()
         await waitUntil {
-            if case .available = model.updateState { return true }
+            if case .available = model.updateState {
+                return true
+            }
             return false
         }
 
@@ -1400,7 +1791,9 @@ final class SettingsWorkflowTests: XCTestCase {
 
         workflow.checkForUpdates()
         await waitUntil {
-            if case .failed = model.updateState { return true }
+            if case .failed = model.updateState {
+                return true
+            }
             return false
         }
 
@@ -1409,7 +1802,7 @@ final class SettingsWorkflowTests: XCTestCase {
         }
     }
 
-    func testCommitPersistsEditedPreferences() throws {
+    func testCommitPersistsEditedPreferencesWithoutBypassingASRLifecycle() throws {
         let config = makeConfig()
         let model = SettingsModel()
         let workflow = SettingsWorkflow(
@@ -1429,7 +1822,6 @@ final class SettingsWorkflowTests: XCTestCase {
         model.saveHistory = true
         model.retention = .ninetyDays
         model.sidebar = SidebarPresentation(prefersCollapsed: false)
-        model.asrModel = "whisper-small"
 
         workflow.commit()
 
@@ -1440,9 +1832,9 @@ final class SettingsWorkflowTests: XCTestCase {
                 activeMode: "Voice to Text", hotkey: "F7", toggleHotkey: nil,
                 pauseAudio: true, appearance: .light,
                 saveHistory: true, retention: .ninetyDays,
-                sidebarCollapsed: false, llmModel: nil, asrModel: "whisper-small",
+                sidebarCollapsed: false, llmModel: nil, asrModel: "parakeet-v3",
                 persistedHotkey: "F7", persistedLLMModel: nil,
-                persistedASRModel: "whisper-small", persistedAppearance: .light
+                persistedASRModel: "parakeet-v3", persistedAppearance: .light
             )
         )
     }
@@ -2427,15 +2819,104 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual([model.deleteError, String(listCount)], ["Couldn't uninstall old:latest: busy", "0"])
     }
 
-    func testSelectingASRModelPersistsTheChoice() {
+    func testSelectingASRModelPersistsThroughLifecycle() async {
         let config = makeConfig()
         let model = SettingsModel()
-        let workflow = makeWorkflow(config: config, model: model)
+        let effects = makeModelEffects()
+        effects.asrAdapter.setAvailable(true, id: "whisper-small")
+        var lifecyclePersistence: [String] = []
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [effects.asrAdapter],
+            persistSelection: { id in
+                lifecyclePersistence.append(id)
+                try config.setASRModel(id)
+            }
+        )
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: effects,
+            asrLifecycle: lifecycle
+        )
+        workflow.populatePreferences()
+        await lifecycle.start()
+
+        workflow.selectASRModel("whisper-small")
+        await waitUntil { config.asrModel == "whisper-small" }
+        await waitForASRState(model) { model.asrModel == "whisper-small" }
+
+        XCTAssertEqual(
+            SelectionPersistenceState(
+                modelSelection: model.asrModel,
+                configSelection: config.asrModel,
+                lifecyclePersistence: lifecyclePersistence
+            ),
+            SelectionPersistenceState(
+                modelSelection: "whisper-small",
+                configSelection: "whisper-small",
+                lifecyclePersistence: ["whisper-small"]
+            )
+        )
+    }
+
+    func testCancelingASRSwitchKeepsCommittedSelectionVisibleUntilRestored() async throws {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let effects = makeModelEffects()
+        effects.asrAdapter.setAvailable(true, id: "whisper-small")
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [effects.asrAdapter],
+            persistSelection: { try config.setASRModel($0) }
+        )
+        await lifecycle.start()
+        let session = try lifecycle.captureSession()
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: effects,
+            asrLifecycle: lifecycle
+        )
         workflow.populatePreferences()
 
         workflow.selectASRModel("whisper-small")
+        await waitForASRState(model) { model.asrSwitching == "whisper-small" }
+        let whileSwitching = SelectionPresentationState(
+            selected: model.asrModel,
+            switching: model.asrSwitching,
+            restoring: model.asrRestoring,
+            actionsDisabled: model.hasActiveASRManagementOperation
+        )
+        workflow.cancelASROperation()
+        await waitForASRState(model) { model.asrSwitching == nil }
+        session.release()
 
-        XCTAssertEqual([model.asrModel, config.asrModel], ["whisper-small", "whisper-small"])
+        XCTAssertEqual(
+            [
+                whileSwitching,
+                SelectionPresentationState(
+                    selected: model.asrModel,
+                    switching: model.asrSwitching,
+                    restoring: model.asrRestoring,
+                    actionsDisabled: model.hasActiveASRManagementOperation
+                ),
+            ],
+            [
+                SelectionPresentationState(
+                    selected: "parakeet-v3",
+                    switching: "whisper-small",
+                    restoring: nil,
+                    actionsDisabled: true
+                ),
+                SelectionPresentationState(
+                    selected: "parakeet-v3",
+                    switching: nil,
+                    restoring: nil,
+                    actionsDisabled: false
+                ),
+            ]
+        )
     }
 
     func testDownloadingASRModelMakesItAvailable() async {
@@ -2448,7 +2929,7 @@ final class SettingsWorkflowTests: XCTestCase {
         )
 
         workflow.downloadASRModel("whisper-small")
-        await waitUntil { model.asrDownloaded.contains("whisper-small") }
+        await waitForASRState(model) { model.asrDownloaded.contains("whisper-small") }
 
         XCTAssertEqual(model.asrDownloaded, [ASRModelCatalog.defaultID, "whisper-small"])
     }
@@ -2463,15 +2944,17 @@ final class SettingsWorkflowTests: XCTestCase {
             effects: makeModelEffects(prepareASR: preparation.run)
         )
         workflow.downloadASRModel("whisper-small")
-        await waitUntil { preparation.started }
+        await preparation.waitUntilStarted()
 
         preparation.report(fraction: 0.6, loading: true)
+        await waitForASRState(model) { model.asrDownloadFraction == 0.6 }
 
         XCTAssertEqual(
-            ASRProgressState(fraction: model.asrDownloadFraction, preparing: model.asrPreparing),
-            ASRProgressState(fraction: 0.6, preparing: true)
+            ASRProgressState(fraction: model.asrDownloadFraction),
+            ASRProgressState(fraction: 0.6)
         )
-        workflow.cancelASRDownload()
+        workflow.cancelASROperation()
+        await preparation.waitUntilCancelled()
         preparation.finish(nil)
     }
 
@@ -2485,23 +2968,23 @@ final class SettingsWorkflowTests: XCTestCase {
         )
 
         workflow.downloadASRModel("whisper-small")
-        await waitUntil { !model.asrDownloadError.isEmpty }
+        await waitForASRState(model) { !model.asrDownloadError.isEmpty }
 
         XCTAssertEqual(
             ASRDownloadState(
                 downloading: model.asrDownloading, fraction: model.asrDownloadFraction,
-                preparing: model.asrPreparing, downloaded: model.asrDownloaded,
+                downloaded: model.asrDownloaded,
                 error: model.asrDownloadError
             ),
             ASRDownloadState(
-                downloading: nil, fraction: nil, preparing: false,
+                downloading: nil, fraction: nil,
                 downloaded: [ASRModelCatalog.defaultID],
                 error: "Couldn't download Whisper small: disk full"
             )
         )
     }
 
-    func testCancellingASRDownloadIgnoresLateProgressAndCompletion() async {
+    func testCancellingASRDownloadReturnsIdleAfterAdapterStops() async {
         let config = makeConfig()
         let model = SettingsModel()
         let preparation = SuspendedASRPreparation()
@@ -2511,41 +2994,102 @@ final class SettingsWorkflowTests: XCTestCase {
             effects: makeModelEffects(prepareASR: preparation.run)
         )
         workflow.downloadASRModel("whisper-small")
-        await waitUntil { preparation.started }
+        await preparation.waitUntilStarted()
+        await waitForASRState(model) { model.asrDownloading == "whisper-small" }
 
-        workflow.cancelASRDownload()
-        preparation.report(fraction: 1, loading: true)
+        workflow.cancelASROperation()
+        await preparation.waitUntilCancelled()
         preparation.finish(nil)
-        await Task.yield()
+        await waitForASRState(model) { model.asrDownloading == nil }
 
         XCTAssertEqual(
             ASRDownloadState(
                 downloading: model.asrDownloading, fraction: model.asrDownloadFraction,
-                preparing: model.asrPreparing, downloaded: model.asrDownloaded,
+                downloaded: model.asrDownloaded,
                 error: model.asrDownloadError
             ),
             ASRDownloadState(
-                downloading: nil, fraction: nil, preparing: false,
+                downloading: nil, fraction: nil,
                 downloaded: [ASRModelCatalog.defaultID], error: ""
             )
         )
     }
 
-    func testDeletingActiveASRModelFallsBackToDefault() async throws {
+    func testScheduledASRDownloadPreventsDeletionFromStarting() async {
+        let preparation = SuspendedASRPreparation()
         let config = makeConfig()
         let model = SettingsModel()
+        var deletionAttempts = 0
+        let effects = makeModelEffects(
+            prepareASR: preparation.run,
+            deleteASR: { _ in
+                deletionAttempts += 1
+                return nil
+            }
+        )
+        let asrLifecycle = ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [effects.asrAdapter]
+        )
+        await asrLifecycle.reconcileAvailability()
+        model.applyASRLifecycleSnapshot(await asrLifecycle.snapshot())
         let workflow = makeWorkflow(
             config: config,
             model: model,
-            effects: makeModelEffects(deleteASR: { _ in nil })
+            effects: effects,
+            asrLifecycle: asrLifecycle
         )
+
+        workflow.downloadASRModel("whisper-small")
+        let deletionTask = workflow.deleteASRModel("whisper-small")
+        await preparation.waitUntilStarted()
+        await waitForASRState(model) { model.asrDownloading == "whisper-small" }
+        await deletionTask?.value
+        let state = ASRDeletionAttemptState(
+            wasScheduled: deletionTask != nil,
+            deleting: model.asrDeleting,
+            attempts: deletionAttempts
+        )
+        workflow.cancelASROperation()
+        preparation.finish(nil)
+
+        XCTAssertEqual(
+            state,
+            ASRDeletionAttemptState(wasScheduled: true, deleting: nil, attempts: 0)
+        )
+    }
+
+    func testASRDeletionPublishesModelAsUnavailable() async {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let effects = makeModelEffects(deleteASR: { _ in nil })
+        effects.asrAdapter.setAvailable(true, id: "whisper-small")
+        let workflow = makeWorkflow(config: config, model: model, effects: effects)
         workflow.populatePreferences()
-        model.asrModel = "whisper-small"
-        try config.setASRModel("whisper-small")
-        model.asrDownloaded.insert("whisper-small")
+        await waitForASRState(model) { model.asrDownloaded.contains("whisper-small") }
 
         workflow.deleteASRModel("whisper-small")
-        await waitUntil { model.asrDeleting == nil }
+        await waitForASRState(model) { !model.asrDownloaded.contains("whisper-small") }
+    }
+
+    func testDeletingActiveASRModelFallsBackToDefault() async throws {
+        let config = makeConfig()
+        try config.setASRModel("whisper-small")
+        let model = SettingsModel()
+        let effects = makeModelEffects(deleteASR: { _ in nil })
+        effects.asrAdapter.setAvailable(true, id: "whisper-small")
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: effects
+        )
+        workflow.populatePreferences()
+        await waitForASRState(model) { model.asrDownloaded.contains("whisper-small") }
+
+        workflow.deleteASRModel("whisper-small")
+        await waitForASRState(model) { model.asrModel == ASRModelCatalog.defaultID }
+        await waitForASRState(model) { !model.asrDownloaded.contains("whisper-small") }
+        await waitForASRState(model) { !model.hasActiveASRManagementOperation }
 
         XCTAssertEqual(
             ASRDeleteState(
@@ -2564,15 +3108,18 @@ final class SettingsWorkflowTests: XCTestCase {
     func testFailedASRDeleteKeepsModelAvailableAndReportsError() async {
         let config = makeConfig()
         let model = SettingsModel()
-        model.asrDownloaded.insert("whisper-small")
+        let effects = makeModelEffects(deleteASR: { _ in "permission denied" })
+        effects.asrAdapter.setAvailable(true, id: "whisper-small")
         let workflow = makeWorkflow(
             config: config,
             model: model,
-            effects: makeModelEffects(deleteASR: { _ in "permission denied" })
+            effects: effects
         )
+        workflow.populatePreferences()
+        await waitForASRState(model) { model.asrDownloaded.contains("whisper-small") }
 
         workflow.deleteASRModel("whisper-small")
-        await waitUntil { model.asrDeleting == nil }
+        await waitForASRState(model) { !model.asrDeleteError.isEmpty }
 
         XCTAssertEqual(
             ASRDeleteState(
@@ -2700,6 +3247,7 @@ final class SettingsWorkflowTests: XCTestCase {
         config: Config,
         model: SettingsModel,
         effects: CannedModelManagers? = nil,
+        asrLifecycle: ASRModelLifecycle? = nil,
         pasteboard: NSPasteboard = NSPasteboard(name: .init("SettingsWorkflowTests.\(UUID())")),
         historyStore: HistoryStore? = nil,
         statsStore: StatsStore? = nil,
@@ -2715,34 +3263,20 @@ final class SettingsWorkflowTests: XCTestCase {
             ?? JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl"))
         let statsStore = statsStore
             ?? JSONStatsStore(url: dir.appendingPathComponent("stats.json"))
-        if let effects {
-            return SettingsWorkflow(
-                config: config,
-                model: model,
-                historyStore: historyStore,
-                now: now,
-                scheduleStatusClear: { _ in },
-                llmModels: effects,
-                asrModels: effects,
-                copy: { text in
-                    pasteboard.clearContents()
-                    pasteboard.setString(text, forType: .string)
-                },
-                statsStore: statsStore,
-                calendar: calendar,
-                polish: polish,
-                updates: updates ?? CannedUpdateChecker(result: .failed),
-                reportUpdate: reportUpdate,
-                updateHotkeys: updateHotkeys,
-                captureGate: captureGate
-            )
-        }
+        let effects = effects ?? makeModelEffects()
+        let asrLifecycle = asrLifecycle ?? ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [effects.asrAdapter],
+            persistSelection: { try config.setASRModel($0) }
+        )
         return SettingsWorkflow(
             config: config,
             model: model,
             historyStore: historyStore,
             now: now,
             scheduleStatusClear: { _ in },
+            llmModels: effects,
+            asrLifecycle: asrLifecycle,
             copy: { text in
                 pasteboard.clearContents()
                 pasteboard.setString(text, forType: .string)
@@ -2765,8 +3299,8 @@ final class SettingsWorkflowTests: XCTestCase {
         deleteLLM: @escaping @MainActor (String) async -> String? = { _ in nil },
         prepareASR: @escaping @MainActor (
             ASRModelCatalog.Entry,
-            @escaping ASRModelManaging.ASRProgress,
-            @escaping ASRModelManaging.ASRLoading
+            @escaping ASRProgress,
+            @escaping ASRLoading
         ) async -> String? = { _, _, _ in nil },
         deleteASR: @escaping @MainActor (ASRModelCatalog.Entry) async -> String? = { _ in nil }
     ) -> CannedModelManagers {
@@ -2788,6 +3322,32 @@ final class SettingsWorkflowTests: XCTestCase {
             await Task.yield()
         }
         XCTAssertTrue(condition(), file: file, line: line)
+    }
+
+    private func waitForASRState(
+        _ model: SettingsModel,
+        matching predicate: @escaping @MainActor () -> Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let published = expectation(description: "ASR snapshot matches predicate")
+        let cancellable = model.$asrSnapshot
+            .receive(on: DispatchQueue.main)
+            .first { _ in predicate() }
+            .sink { _ in published.fulfill() }
+        await fulfillment(of: [published], timeout: 1)
+        withExtendedLifetime(cancellable) {}
+        XCTAssertTrue(predicate(), file: file, line: line)
+    }
+
+    private func waitForPublishedValue<Value>(
+        _ publisher: Published<Value>.Publisher,
+        matching predicate: @escaping (Value) -> Bool
+    ) async {
+        let published = expectation(description: "Published value matches predicate")
+        let cancellable = publisher.first(where: predicate).sink { _ in published.fulfill() }
+        await fulfillment(of: [published], timeout: 1)
+        withExtendedLifetime(cancellable) {}
     }
 
     private func makeConfig(path: URL? = nil) -> Config {

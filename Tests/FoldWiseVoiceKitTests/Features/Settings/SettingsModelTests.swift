@@ -3,6 +3,61 @@ import XCTest
 
 @MainActor
 final class SettingsModelTests: XCTestCase {
+    func testASRPresentationDerivesCoherentStateFromOneLifecycleSnapshot() async {
+        let lifecycle = ASRModelLifecycle(storedSelection: "whisper-small", adapters: [])
+        let snapshot = await lifecycle.snapshot()
+        let model = SettingsModel()
+
+        model.applyASRLifecycleSnapshot(ASRModelLifecycleSnapshot(
+            models: snapshot.models,
+            storedSelection: "whisper-small",
+            effectiveSelection: ASRModelCatalog.defaultID,
+            recovery: .storedSelectionUnavailable(
+                modelID: "whisper-small",
+                fallbackModelID: ASRModelCatalog.defaultID
+            ),
+            operation: .downloading(modelID: "whisper-large-v3-turbo", fraction: 0.4),
+            failure: nil,
+            isDictationBlocked: false
+        ))
+
+        XCTAssertEqual(
+            ASRPresentationState(
+                selected: model.asrModel,
+                downloading: model.asrDownloading,
+                fraction: model.asrDownloadFraction,
+                recovery: model.asrRecoveryMessage,
+                effectiveModelName: model.effectiveASRModelName,
+                actionsDisabled: model.hasActiveASRManagementOperation
+            ),
+            ASRPresentationState(
+                selected: "whisper-small",
+                downloading: "whisper-large-v3-turbo",
+                fraction: 0.4,
+                recovery: "Whisper small is unavailable. Using Parakeet TDT v3 until you download it again.",
+                effectiveModelName: "Parakeet TDT v3",
+                actionsDisabled: true
+            )
+        )
+    }
+
+    func testASRDeleteConfirmationExplainsSelectedModelCommit() async {
+        let lifecycle = ASRModelLifecycle(storedSelection: "whisper-small", adapters: [])
+        let snapshot = await lifecycle.snapshot()
+        let model = SettingsModel()
+        model.applyASRLifecycleSnapshot(snapshot)
+
+        let message = model.asrCatalog
+            .first { $0.id == "whisper-small" }
+            .map(model.asrDeleteConfirmation(for:))
+
+        XCTAssertEqual(
+            message,
+            "This removes Whisper small's downloaded weights and frees 483 MB. "
+                + "It's your current speech model, so deletion selects Parakeet instead."
+        )
+    }
+
     func testPaneIDsMatchEachDestination() {
         XCTAssertEqual(
             SettingsModel.Pane.allCases.map(\.id),
@@ -74,4 +129,13 @@ final class SettingsModelTests: XCTestCase {
     private func installed(_ name: String) -> OllamaClient.InstalledModel {
         OllamaClient.InstalledModel(name: name, sizeBytes: 1)
     }
+}
+
+private struct ASRPresentationState: Equatable {
+    let selected: String
+    let downloading: String?
+    let fraction: Double?
+    let recovery: String?
+    let effectiveModelName: String
+    let actionsDisabled: Bool
 }

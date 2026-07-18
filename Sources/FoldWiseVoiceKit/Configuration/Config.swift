@@ -483,15 +483,25 @@ final class Config {
 
     private static func changes(from old: Values, to new: Values) -> ChangeSet {
         var result: ChangeSet = []
-        if old.selection != new.selection { result.insert(.selection) }
+        if old.selection != new.selection {
+            result.insert(.selection)
+        }
         if old.hotkey != new.hotkey || old.toggleHotkey != new.toggleHotkey
             || old.modeCycleHotkey != new.modeCycleHotkey {
             result.insert(.hotkeys)
         }
-        if old.asrModel != new.asrModel { result.insert(.asrModel) }
-        if old.inputDevice != new.inputDevice { result.insert(.inputDevice) }
-        if old.appearance != new.appearance { result.insert(.appearance) }
-        if !libraryEqual(old.orderedModes, new.orderedModes) { result.insert(.modeLibrary) }
+        if old.asrModel != new.asrModel {
+            result.insert(.asrModel)
+        }
+        if old.inputDevice != new.inputDevice {
+            result.insert(.inputDevice)
+        }
+        if old.appearance != new.appearance {
+            result.insert(.appearance)
+        }
+        if !libraryEqual(old.orderedModes, new.orderedModes) {
+            result.insert(.modeLibrary)
+        }
         return result
     }
 
@@ -834,7 +844,9 @@ final class Config {
     /// in the working directories, then Application Support.
     static func resolvePath(cliPath: String?) -> URL {
         let fileManager = FileManager.default
-        if let cliPath { return URL(fileURLWithPath: cliPath) }
+        if let cliPath {
+            return URL(fileURLWithPath: cliPath)
+        }
         if let environmentPath = ProcessInfo.processInfo.environment["FOLDWISE_CONFIG"],
            !environmentPath.isEmpty {
             return URL(fileURLWithPath: environmentPath)

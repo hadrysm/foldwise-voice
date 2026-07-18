@@ -17,10 +17,9 @@ enum ASRModelCatalog {
     }
 
     /// Which ASR engine (ADR-0005) runs a catalog entry, and the model variant
-    /// it needs. Each case maps to one `Transcribing` conformer behind the
-    /// dispatcher; `.parakeet` carries the FluidAudio checkpoint and `.whisper`
-    /// the exact `argmaxinc/whisperkit-coreml` variant folder name so the
-    /// engine resolves it verbatim.
+    /// it needs. Each case maps through its family adapter to a lifecycle-owned
+    /// `Transcribing` engine; `.parakeet` carries the FluidAudio checkpoint and
+    /// `.whisper` the exact `argmaxinc/whisperkit-coreml` variant folder name.
     enum Engine: Equatable {
         case parakeet(version: ParakeetVariant)
         case whisper(variant: String)
@@ -116,27 +115,5 @@ enum ASRModelCatalog {
     static func downloadError(for entry: Entry, failure: String?) -> String? {
         guard let failure, !failure.isEmpty else { return nil }
         return "Couldn't download \(entry.name): \(failure)"
-    }
-
-    /// Pure outcome of deleting a downloaded ASR model: the confirmation-dialog
-    /// body and whether the active selection must fall back to the default
-    /// engine. Deleting the active model drops dictation back to Parakeet until
-    /// the user picks another (ADR-0006). Tested with no I/O, mirroring
-    /// `OllamaClient.deleteOutcome`; the on-disk removal lives in `ASRModelStore`.
-    static func deleteOutcome(for entry: Entry, isActive: Bool) -> DeleteOutcome {
-        var message = "This removes \(entry.name)'s downloaded weights and frees \(entry.size)."
-        if isActive {
-            message += " It's your current speech model, so dictation falls back to "
-                + "Parakeet until you pick another."
-        }
-        return DeleteOutcome(message: message, fallsBackToDefault: isActive)
-    }
-
-    struct DeleteOutcome: Equatable {
-        /// Body of the delete confirmation dialog.
-        let message: String
-        /// True when the deleted model was active, so the caller must re-select
-        /// the default (Parakeet) to keep dictation working.
-        let fallsBackToDefault: Bool
     }
 }

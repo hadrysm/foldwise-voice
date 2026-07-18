@@ -52,7 +52,9 @@ struct HomeProjection: Equatable {
         var buckets: [Date: [Row]] = [:]
         for entry in latest {
             let day = calendar.startOfDay(for: entry.createdAt)
-            if buckets[day] == nil { order.append(day) }
+            if buckets[day] == nil {
+                order.append(day)
+            }
             buckets[day, default: []].append(Row(
                 entry: entry,
                 presentation: DictationRowPresentation(
@@ -76,7 +78,9 @@ struct HomeProjection: Equatable {
         for day: Date, now: Date, calendar: Calendar, formatter: DateFormatter
     ) -> String {
         let today = calendar.startOfDay(for: now)
-        if day == today { return "Today" }
+        if day == today {
+            return "Today"
+        }
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: today),
            day == yesterday {
             return "Yesterday"

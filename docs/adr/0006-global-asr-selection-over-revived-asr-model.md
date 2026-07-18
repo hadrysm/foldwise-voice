@@ -1,106 +1,97 @@
-# ADR-0006: ASR-model selection is global, persisted by reviving the per-mode `asr_model` field
+# ADR-0006: ASR model selection is global and transactional
 
 ## Status
 
-Accepted (2026-07-07). Amended (2026-07-16) by the user-managed Mode-library
-schema decision.
-
-## Amendment: the initial public schema stores the global selection once
-
-The original decision's product semantics remain: ASR-model selection is global,
-unknown identifiers are preserved until the user explicitly selects a catalog
-model, and runtime resolution safely falls back to Parakeet. Its persistence
-mechanism changes when the initial public user-managed Mode schema ships: it
-stores `asr_model` once at the top level and removes it from individual Mode
-records. The app is not public yet, so this is a clean schema replacement rather
-than a legacy migration or backward-writing contract.
-
-The old per-Mode representation depended on every configuration containing at
-least one Mode. The user-managed library deliberately allows zero Modes and
-makes Voice to Text a separate system selection, so that representation can no
-longer hold a global preference. This amendment supersedes the per-Mode storage
-and "no further schema churn" parts of the original decision, not its global
-ownership or runtime fallback behavior.
+Accepted (2026-07-07). Amended (2026-07-16) for the user-managed Mode schema and
+again (2026-07-18) by PRD #179.
 
 ## Context
 
-ADR-0005 adds a second ASR engine; users need to choose one, and the choice must
-persist in `modes.json`. Two shaping facts:
+ASR model choice describes the language and recognition engine used before any
+Mode-specific Polish behavior, so it is global. Config schema version 1 stores
+that choice once as top-level `asr_model`.
 
-- The schema already reserves a **per-mode** slot, `Mode.asrModel`
-  (`Sources/FoldWiseVoiceKit/Configuration/Config.swift`), parsed from
-  `asr_model`. It is preserved on save but ignored — "this app always transcribes
-  with Parakeet" — and its default value is a
-  fossil from the app's Python/MLX era (`mlx-community/whisper-large-v3-turbo`),
-  an id namespace meaningless to WhisperKit and FluidAudio. A round-trip test
-  locks in that we don't clobber it
-  (`testASRModelIsPreservedEvenThoughUnusedBySwiftApp`). The "Python app" it was
-  kept compatible with is a **retired predecessor**, not a live co-target.
-- The app already treats *model choice as global-by-convention* for the LLM:
-  `setLLMModel` points every mode at one model and `Config.llmModel` reads the
-  first (also in `Sources/FoldWiseVoiceKit/Configuration/Config.swift`), even
-  though `llm_model` is a per-mode field.
-
-Whether you need Whisper's languages is a property of *the language you speak* —
-constant across Modes — whereas a Mode governs *output formatting/polish*. So ASR
-model is naturally global, not per-mode.
+A persisted choice is not proof that its model data is usable. Data may be
+missing, partial, corrupt, deleted externally, or associated with an identifier
+a newer build does not recognize. Persisting a candidate before it loads can
+also leave Config and the runtime disagreeing. Availability, stored intent, and
+the model safe to use for the next Dictation session must therefore remain
+distinct facts.
 
 ## Decision
 
-**Selection is global from the user's point of view, realized by reviving the
-per-mode `asr_model` field and driving it exactly like the LLM model.**
+Config remains the sole persistence and typed change-propagation owner for the
+global **ASR model selection**. `ASRModelLifecycle` is the sole requester of ASR
+selection changes; Settings cannot write `asr_model` directly.
 
-- Add `Config.asrModel` (reads the first mode, like `llmModel`) and
-  `setASRModel` (writes every mode, like `setLLMModel`). One field, one pattern;
-  genuine per-mode ASR stays a latent, UI-only change for the future with **no
-  further schema churn**.
-- **Mint our own stable, human-readable catalog ids** (`parakeet-v3`,
-  `whisper-large-v3-turbo`, `whisper-small`, …). A catalog maps id → (engine,
-  WhisperKit variant / FluidAudio call, languages, size, speed/quality, blurb),
-  mirroring the existing `ModelCatalog` for Ollama. The stored id is *our* key,
-  independent of WhisperKit's internal model names.
-- **Unknown id on load → fall back to the default engine (Parakeet) without
-  overwriting the stored string** until the user explicitly picks. Old MLX
-  fossils therefore degrade gracefully and are preserved passively — no migration
-  script, no data loss for anyone who never touches the setting.
-- **Fresh-install default is `parakeet-v3`** (fast, tiny, ANE, already warmed at
-  launch), not the old MLX fossil. Whisper is strictly opt-in — nobody eats a
-  1.5 GiB download unless they choose it.
-- **Propagation follows ADR-0003.** A new `Config.ChangeSet.asrModel` member fires
-  from `saveAndNotify`; the dispatcher subscribes via `config.onChange` and does
-  the drop-before-load swap — the same shape as the hotkey listener reacting to
-  `.hotkeys`. User actions in the Speech pane (Download / Select / Delete) route
-  through explicit `SettingsController` callbacks, the ASR analogues of
-  `onSelectModel` / `onInstallModel` / `onDeleteModel`.
-- **Selection surface: a dedicated "Speech" pane** cloning `ModelsPane` — a
-  curated ~4–5-entry, all-multilingual catalog (Parakeet v3/v2 + a Whisper size
-  tier, no `.en` variants, no tiny/base), **language-led rows** ("~99 languages"
-  vs "25 languages"), two-step Download-then-Select reusing the `pullFraction`
-  progress bar, and delete-to-free-space via the kebab. Capabilities are
-  hardcoded in the catalog with no runtime reconciliation — there is no GGUF to
-  probe, and 5 curated entries don't warrant Handy's probe-and-reconcile
-  machinery.
+Selection is an exclusive, cancelable transaction:
 
-## Rejected alternatives
+1. wait for active transcription handles to release and block new capture;
+2. release the old engine before constructing the candidate;
+3. prepare the candidate engine;
+4. persist the new selection through Config only after activation succeeds; and
+5. publish the committed snapshot and resume Dictation sessions.
 
-- **A new top-level `asr_model` field, leaving the per-mode fossil untouched.**
-  Preserves the old-config contract most literally and keeps the existing
-  round-trip test green, but introduces a **name collision** (top-level and
-  per-mode `asr_model`, one live and one dead) and makes the per-mode field
-  permanent dead weight — and it declines to reuse the LLM pattern the app
-  already has.
-- **Genuine per-mode ASR selection as a user feature now.** More flexible, but
-  forces a Polish-speaking user to set the engine in every Mode, conflates the
-  ASR axis with the polish axis, and adds an ASR picker to every Mode editor for
-  a need we have no evidence of.
+Candidate-load, persistence, or cancellation failure restores the previous
+engine while leaving the previous persisted selection intact. If restoration
+fails, the lifecycle attempts the default Parakeet fallback and publishes a
+typed degraded failure. If the fallback also fails, recognition remains
+blocked. No transition owns two loaded engines.
+
+The lifecycle snapshot distinguishes the stored **ASR model selection** from
+the **Effective ASR model**. A known selection with unavailable data remains
+stored while Parakeet is effective. An unrecognized stored identifier is also
+preserved, named in recovery state, and does not create a synthetic catalog row.
+Fallback becoming effective never rewrites Config. A later successful repair
+makes the stored selection effective again without another selection write,
+warming it when active sessions no longer hold the fallback engine.
+
+**ASR model availability** comes from each adapter's validation of its real
+local model data. Directory existence is insufficient; missing, incomplete,
+corrupt, or unrecognized data is unavailable. Availability is reconciled at
+launch, when Settings opens, after every lifecycle operation, and after an
+engine load failure. Canceled downloads may retain safe library-managed partial
+data for retry, but partial data is never reported as available.
+
+Download and selection remain separate actions. Optional download is
+storage-only and preserves both stored and effective selection. Only one ASR
+management operation runs at a time.
+
+Optional deletion is ordered by the lifecycle. The default Parakeet model
+cannot be deleted. Deleting the selected optional model first commits Parakeet
+for future sessions, waits for every handle using the old model to release,
+unloads it, and then removes its data. A disk-removal failure after the fallback
+commit leaves the old model available but unselected; the selection is not
+rolled back. Non-selected deletion likewise waits only for handles using that
+model.
+
+Schema version 1 is unchanged. It stores the global selection only. Availability,
+effective fallback, loaded-engine state, progress, and failures are runtime
+facts: there is no availability manifest and no migration.
 
 ## Consequences
 
-- `testASRModelIsPreservedEvenThoughUnusedBySwiftApp` becomes wrong — the field
-  is no longer unused. It is **replaced** by tests for the new semantics:
-  preserve-until-picked, then owns-the-field, and unknown-id-falls-back-to-Parakeet.
-- Once a user picks a model, `setASRModel` overwrites the old MLX fossils across
-  all modes. This only matters if they return to the retired Python app, which
-  won't happen.
-- Per-mode ASR, delete, and idle-unload (ADR-0005) are all reachable later
-  without schema or seam changes.
+- Settings keeps the curated Download-then-Select presentation while rendering
+  lifecycle descriptors and one immutable snapshot.
+- Unknown and unavailable selections preserve user intent without sacrificing a
+  safe default.
+- Config and the loaded engine cannot expose a committed selected-new/loaded-old
+  state.
+- Repair, fallback, and deletion remain truthful after relaunch because adapters
+  validate local data rather than reconstructing availability from Config.
+- The domain terms in `CONTEXT.md` remain presentation-neutral and contain no
+  implementation ownership details.
+
+## Rejected alternatives
+
+- **Persist before loading.** A failed candidate would make Config claim a model
+  that never became active.
+- **Persist the effective fallback.** It silently destroys the user's stored
+  intent.
+- **Treat a model directory as availability.** Partial or corrupt data can still
+  be unusable.
+- **Persist an availability manifest.** It creates a second source of truth and
+  requires schema work without improving adapter validation.
+- **Delete selected data before committing fallback or draining sessions.** It
+  can break current transcription and leave future sessions without a valid
+  selection.

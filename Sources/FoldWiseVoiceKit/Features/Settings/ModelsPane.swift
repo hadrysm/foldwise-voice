@@ -37,7 +37,9 @@ struct ModelsPane: View {
                 sectionHeader("Installed")
                 Card {
                     ForEach(Array((model.installed ?? []).enumerated()), id: \.element.id) { i, installed in
-                        if i > 0 { Divider().padding(.leading, 14) }
+                        if i > 0 {
+                            Divider().padding(.leading, 14)
+                        }
                         installedRow(installed)
                     }
                 }
@@ -53,7 +55,9 @@ struct ModelsPane: View {
                         }
                     }
                     ForEach(Array(library.enumerated()), id: \.element.id) { i, entry in
-                        if i > 0 { Divider().padding(.leading, 14) }
+                        if i > 0 {
+                            Divider().padding(.leading, 14)
+                        }
                         libraryRow(entry)
                     }
                 }
@@ -91,7 +95,11 @@ struct ModelsPane: View {
             "Uninstall \(pendingUninstall?.name ?? "")?",
             isPresented: Binding(
                 get: { pendingUninstall != nil },
-                set: { if !$0 { pendingUninstall = nil } }
+                set: {
+                    if !$0 {
+                        pendingUninstall = nil
+                    }
+                }
             ),
             presenting: pendingUninstall
         ) { target in
@@ -116,13 +124,12 @@ struct ModelsPane: View {
         return message
     }
 
+    @ViewBuilder
     private func modelRatings(_ name: String) -> some View {
-        Group {
-            if let entry = ModelCatalog.entry(for: name) {
-                VStack(alignment: .trailing, spacing: 3) {
-                    RatingDots(label: "Speed", value: entry.speed)
-                    RatingDots(label: "Quality", value: entry.quality)
-                }
+        if let entry = ModelCatalog.entry(for: name) {
+            VStack(alignment: .trailing, spacing: 3) {
+                RatingDots(label: "Speed", value: entry.speed)
+                RatingDots(label: "Quality", value: entry.quality)
             }
         }
     }

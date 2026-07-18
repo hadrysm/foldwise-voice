@@ -54,7 +54,9 @@ struct HistoryProjection: Equatable {
         let search = input.search.trimmingCharacters(in: .whitespacesAndNewlines)
         let entries = input.entries
             .filter { entry in
-                if input.flaggedOnly, !entry.flagged { return false }
+                if input.flaggedOnly, !entry.flagged {
+                    return false
+                }
                 guard !search.isEmpty else { return true }
                 return entry.text.localizedCaseInsensitiveContains(search)
                     || entry.rawText.localizedCaseInsensitiveContains(search)
@@ -65,7 +67,9 @@ struct HistoryProjection: Equatable {
         var buckets: [Date: [Row]] = [:]
         for entry in entries {
             let day = calendar.startOfDay(for: entry.createdAt)
-            if buckets[day] == nil { dayOrder.append(day) }
+            if buckets[day] == nil {
+                dayOrder.append(day)
+            }
             buckets[day, default: []].append(Row(
                 entry: entry,
                 presentation: DictationRowPresentation(
@@ -92,7 +96,9 @@ struct HistoryProjection: Equatable {
         formatter: DateFormatter
     ) -> String {
         let today = calendar.startOfDay(for: now)
-        if day == today { return "Today" }
+        if day == today {
+            return "Today"
+        }
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: today),
            day == yesterday {
             return "Yesterday"

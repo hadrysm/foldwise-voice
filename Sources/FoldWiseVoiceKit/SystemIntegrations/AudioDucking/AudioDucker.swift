@@ -40,7 +40,9 @@ enum BoundedProcess {
 
         let timeoutState = TimeoutState()
         let forceKill = DispatchWorkItem {
-            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
         }
         let terminate = DispatchWorkItem {
             guard process.isRunning else { return }

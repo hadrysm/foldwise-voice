@@ -7,18 +7,6 @@ import AppKit
 import Foundation
 import os
 
-extension TranscriberDispatcher {
-    /// Production-only construction for the real ASR adapters. Keeping it in
-    /// the composition root leaves the dispatcher's decisions testable without
-    /// initializing or downloading a CoreML model.
-    static func buildEngine(_ engine: ASRModelCatalog.Engine) -> Transcribing {
-        switch engine {
-        case let .parakeet(version): Transcriber(version: version)
-        case let .whisper(variant): WhisperTranscriber(variant: variant)
-        }
-    }
-}
-
 final class LiveLLMModelManager: LLMModelManaging {
     func list() async -> [OllamaClient.InstalledModel] {
         await OllamaClient.listModels()
@@ -32,32 +20,6 @@ final class LiveLLMModelManager: LLMModelManaging {
 
     func delete(_ name: String) async -> String? {
         await OllamaClient.delete(model: name)
-    }
-}
-
-final class LiveASRModelManager: ASRModelManaging {
-    func prepare(
-        _ entry: ASRModelCatalog.Entry,
-        progress: @escaping ASRProgress,
-        loading: @escaping ASRLoading
-    ) async -> String? {
-        let engine = TranscriberDispatcher.buildEngine(entry.engine)
-        engine.onDownloadProgress = { fraction in
-            Task { @MainActor in progress(fraction) }
-        }
-        engine.onLoading = { isLoading in
-            Task { @MainActor in loading(isLoading) }
-        }
-        do {
-            try await engine.prepare()
-            return nil
-        } catch {
-            return "\(error)"
-        }
-    }
-
-    func delete(_ entry: ASRModelCatalog.Entry) async -> String? {
-        await Task.detached { ASRModelStore.delete(entry.engine) }.value
     }
 }
 
@@ -111,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeys: HotkeyBindingCoordinator!
     private var modeCycleCommand: ModeCycleCommand!
     private var updateChecker: UpdateChecker!
+    private let asrBadgePresentation = ASRBadgePresentation()
     private let shortcutCaptureGate = ShortcutCaptureGate()
     // swiftlint:enable implicitly_unwrapped_optional
 
@@ -141,14 +104,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = buildMainMenu()
 
         // Composition root: the one recorder is shared between the Pipeline
-        // and the Badge's level meter, and warmup is triggered here (below),
-        // not inside Pipeline.
+        // and the Badge's level meter, and lifecycle startup is triggered here
+        // (below), not inside Pipeline.
         let recorder = AudioRecorder(config: config, hardware: CoreAudioHardware())
-        // The dispatcher fronts the ASR engines behind the `Transcribing` seam
-        // (ADR-0005): it resolves the active engine from `config.asrModel` and
-        // subscribes to `.asrModel` changes itself. The Pipeline drives it as an
-        // ordinary transcriber and never learns there is more than one engine.
-        let transcriber = TranscriberDispatcher(config: config)
+        let asrLifecycle = ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [ParakeetASRModelAdapter(), WhisperASRModelAdapter()],
+            persistSelection: { [config] id in try config.setASRModel(id) }
+        )
         // One store shared between the record seam and the History pane, so a
         // dictation just spoken is on disk for the pane to load (PRD #78).
         let historyStore = JSONLHistoryStore(url: JSONLHistoryStore.defaultURL)
@@ -169,7 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statsStore.advance(on: entry.createdAt, calendar: .current)
         }
         pipeline = Pipeline(
-            config: config, recorder: recorder, transcriber: transcriber,
+            config: config, recorder: recorder, sessionProvider: asrLifecycle,
             record: { historyStore.append($0) }
         )
         badge = BadgeController(config: config) { [weak self] in
@@ -221,7 +184,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         settings = SettingsController(
             config: config, historyStore: historyStore, statsStore: statsStore,
-            inputDevices: recorder, hotkeys: hotkeys, captureGate: shortcutCaptureGate
+            inputDevices: recorder, hotkeys: hotkeys, captureGate: shortcutCaptureGate,
+            asrLifecycle: asrLifecycle
         )
         menuBar = MenuBarController(
             config: config,
@@ -235,6 +199,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         pipeline.onState = { [weak self] state in
             Task { @MainActor in self?.apply(state) }
+        }
+        Task { [weak self] in
+            for await snapshot in await asrLifecycle.snapshots() {
+                guard !Task.isCancelled else { return }
+                self?.applyASRLifecycle(snapshot)
+            }
         }
 
         updateChecker = UpdateChecker { [weak self] version in
@@ -251,12 +221,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 "Hotkey setup failed: \(error.localizedDescription, privacy: .public)"
             )
         }
-        transcriber.warmup()
+        Task { await asrLifecycle.start() }
 
         // The living idle pill is the ready signal (PRD #103); the hotkey
         // hint lives on Home, rendered from the live config.
         badge.show()
-        if config.isReadOnly { settings.show() }
+        if config.isReadOnly {
+            settings.show()
+        }
     }
 
     /// "Check for Updates…" from the menu bar: check immediately and always
@@ -299,14 +271,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func apply(_ state: PipelineState) {
         // The Badge folds the phase into its own state machine (BadgeReducer);
         // only the menu-bar icon mapping lives here.
-        badge.apply(state)
+        if let badgeState = asrBadgePresentation.pipelineDidChange(state) {
+            badge.apply(badgeState)
+        }
         switch state {
         case .listening:
             menuBar.setIcon(.listening)
-        case .downloadingModel, .loadingModel, .transcribing, .polishing:
+        case .downloadingModel, .loadingModel, .switchingASRModel, .transcribing, .polishing,
+             .recognitionUnavailable:
             menuBar.setIcon(.working)
         case .inserted, .clipboard, .error, .idle:
             menuBar.setIcon(.idle)
+        }
+    }
+
+    private func applyASRLifecycle(_ snapshot: ASRModelLifecycleSnapshot) {
+        if let state = asrBadgePresentation.lifecycleDidChange(
+            operation: snapshot.operation,
+            isDictationBlocked: snapshot.isDictationBlocked
+        ) {
+            badge.apply(state)
         }
     }
 

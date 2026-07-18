@@ -7,7 +7,251 @@ import XCTest
 
 private struct FailedSessionError: Error {}
 
+private struct BlockedRecordingState: Equatable {
+    let recorderStartCount: Int
+    let duckingEvents: [AudioDuckingEvent]
+    let pipelineStates: [PipelineState]
+}
+
+private struct QueuedASRSessionState: Equatable {
+    let insertedTexts: [String]
+    let captureCount: Int
+    let releaseCount: Int
+}
+
 final class PipelineSessionTests: XCTestCase {
+    func testSessionHandleReleasesAfterTranscriptionBeforePolishAndInsert() async {
+        let events = SessionHandleEventProbe()
+        let handle = FakeASRSessionHandle(
+            result: .success(
+                "this transcript is unquestionably longer than the forty character polish threshold"
+            ),
+            events: events
+        )
+        let provider = FakeASRSessionHandleProvider(handles: [handle], events: events)
+        let mode = Mode(
+            name: "Clean", asrModel: "", llmModel: "llama3", systemPrompt: nil, vocab: []
+        )
+        let pipeline = Pipeline(
+            config: makeTestConfig(mode: mode),
+            recorder: FakeRecorder(),
+            sessionProvider: provider,
+            polish: { text, _ in
+                events.append(.polish)
+                return text
+            },
+            insert: { _ in
+                events.append(.insert)
+                return true
+            },
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(events.events, [.capture, .transcribe, .release, .polish, .insert])
+    }
+
+    func testShutdownFromTranscribingReleasesCapturedSession() async {
+        let events = SessionHandleEventProbe()
+        let handle = FakeASRSessionHandle(result: .success("unused"), events: events)
+        let provider = FakeASRSessionHandleProvider(handles: [handle], events: events)
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: FakeRecorder(),
+            sessionProvider: provider,
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+        pipeline.onState = { state in
+            if state == .transcribing {
+                pipeline.shutdown()
+            }
+        }
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(events.events, [.capture, .release])
+    }
+
+    func testSessionHandleReleasesWhenAudioDoesNotReachTranscription() async {
+        let events = SessionHandleEventProbe()
+        let handle = FakeASRSessionHandle(result: .success("unused"), events: events)
+        let provider = FakeASRSessionHandleProvider(handles: [handle], events: events)
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: FakeRecorder(samples: FakeRecorder.speech(seconds: 0.05)),
+            sessionProvider: provider,
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(events.events, [.capture, .release])
+    }
+
+    func testSessionHandleReleasesWhenTranscriptionFails() async {
+        let events = SessionHandleEventProbe()
+        let handle = FakeASRSessionHandle(result: .failure(FailedSessionError()), events: events)
+        let provider = FakeASRSessionHandleProvider(handles: [handle], events: events)
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: FakeRecorder(),
+            sessionProvider: provider,
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(events.events, [.capture, .transcribe, .release])
+    }
+
+    func testSessionHandleReleasesWhenTranscriptionIsCanceled() async {
+        let events = SessionHandleEventProbe()
+        let handle = FakeASRSessionHandle(result: .success("unused"), events: events)
+        let transcribing = expectation(description: "transcription started")
+        let finishTranscribing = Latch()
+        handle.onTranscribe = {
+            transcribing.fulfill()
+            await finishTranscribing.wait()
+        }
+        let provider = FakeASRSessionHandleProvider(handles: [handle], events: events)
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: FakeRecorder(),
+            sessionProvider: provider,
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await fulfillment(of: [transcribing])
+        pipeline.shutdown()
+        await finishTranscribing.open()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(events.events, [.capture, .transcribe, .release])
+    }
+
+    func testSessionHandleReleasesWhenRecorderCannotStart() async {
+        let events = SessionHandleEventProbe()
+        let handle = FakeASRSessionHandle(result: .success("unused"), events: events)
+        let provider = FakeASRSessionHandleProvider(handles: [handle], events: events)
+        let recorder = FakeRecorder()
+        recorder.startError = .bindFailed(device: "Studio Mic")
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: recorder,
+            sessionProvider: provider,
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(events.events, [.capture, .release])
+    }
+
+    func testSessionHandleReleasesWhenRecorderFailsDuringCapture() async {
+        let events = SessionHandleEventProbe()
+        let handle = FakeASRSessionHandle(result: .success("unused"), events: events)
+        let provider = FakeASRSessionHandleProvider(handles: [handle], events: events)
+        let recorder = FakeRecorder()
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: recorder,
+            sessionProvider: provider,
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        recorder.fail(.configurationChanged)
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(events.events, [.capture, .release])
+    }
+
+    func testQueuedSessionsUseHandlesCapturedAtTheirRecordingStarts() async {
+        let events = SessionHandleEventProbe()
+        let first = FakeASRSessionHandle(result: .success("first model"), events: events)
+        let second = FakeASRSessionHandle(result: .success("second model"), events: events)
+        let provider = FakeASRSessionHandleProvider(handles: [first, second], events: events)
+        let inserted = InsertSpy()
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: FakeRecorder(),
+            sessionProvider: provider,
+            insert: { inserted.insert($0) },
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(
+            QueuedASRSessionState(
+                insertedTexts: inserted.texts,
+                captureCount: events.events.count { $0 == .capture },
+                releaseCount: events.events.count { $0 == .release }
+            ),
+            QueuedASRSessionState(
+                insertedTexts: ["first model", "second model"],
+                captureCount: 2,
+                releaseCount: 2
+            )
+        )
+    }
+
+    func testBlockedRecognitionPreventsRecordingFromStarting() {
+        let recorder = FakeRecorder()
+        let transcriber = FakeTranscriber()
+        transcriber.isDictationBlocked = true
+        let ducker = FakeAudioDucker()
+        let pipeline = Pipeline(
+            config: makeTestConfig(pauseAudio: true),
+            recorder: recorder,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
+            ducker: ducker,
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+        let collector = StateCollector()
+        pipeline.onState = { collector.append($0) }
+
+        pipeline.startRecording()
+
+        XCTAssertEqual(
+            BlockedRecordingState(
+                recorderStartCount: recorder.startCount,
+                duckingEvents: ducker.events,
+                pipelineStates: collector.states
+            ),
+            BlockedRecordingState(
+                recorderStartCount: 0,
+                duckingEvents: [],
+                pipelineStates: []
+            )
+        )
+    }
+
     func testCaptureStartupFailureEmitsErrorWithoutListeningOrLaterStages() async {
         let recorder = FakeRecorder()
         recorder.startError = .bindFailed(device: "Studio Mic")
@@ -17,7 +261,7 @@ final class PipelineSessionTests: XCTestCase {
         let recorded = RecordSpy()
         let pipeline = Pipeline(
             config: makeTestConfig(pauseAudio: true), recorder: recorder,
-            transcriber: transcriber, ducker: ducker,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber), ducker: ducker,
             insert: { inserted.insert($0) }, record: { recorded.record($0) },
             frontmostApp: { nil }
         )
@@ -46,7 +290,7 @@ final class PipelineSessionTests: XCTestCase {
         let recorded = RecordSpy()
         let pipeline = Pipeline(
             config: makeTestConfig(pauseAudio: true), recorder: recorder,
-            transcriber: transcriber, ducker: ducker,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber), ducker: ducker,
             insert: { inserted.insert($0) }, record: { recorded.record($0) },
             frontmostApp: { nil }
         )
@@ -77,7 +321,7 @@ final class PipelineSessionTests: XCTestCase {
         let pipeline = Pipeline(
             config: makeTestConfig(),
             recorder: FakeRecorder(),
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             polish: { text, _ in text },
             insert: { _ in true },
             record: { _ in },
@@ -103,7 +347,7 @@ final class PipelineSessionTests: XCTestCase {
         let pipeline = Pipeline(
             config: makeTestConfig(pauseAudio: true),
             recorder: FakeRecorder(),
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             ducker: ducker,
             polish: { text, _ in text },
             insert: { _ in true },
@@ -123,7 +367,7 @@ final class PipelineSessionTests: XCTestCase {
         let pipeline = Pipeline(
             config: makeTestConfig(pauseAudio: true),
             recorder: FakeRecorder(),
-            transcriber: FakeTranscriber(),
+            sessionProvider: FakeTranscriberSessionProvider(FakeTranscriber()),
             ducker: ducker,
             record: { _ in },
             frontmostApp: { nil }
@@ -142,7 +386,7 @@ final class PipelineSessionTests: XCTestCase {
         let pipeline = Pipeline(
             config: makeTestConfig(pauseAudio: true),
             recorder: FakeRecorder(),
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             ducker: ducker,
             record: { _ in },
             frontmostApp: { nil }

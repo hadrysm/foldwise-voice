@@ -28,7 +28,7 @@ final class PipelineOutcomeTests: XCTestCase {
         let pipeline = Pipeline(
             config: config,
             recorder: FakeRecorder(samples: samples),
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             polish: polish,
             insert: insert,
             record: { _ in },
@@ -175,7 +175,7 @@ final class PipelineOutcomeTests: XCTestCase {
         let pipeline = Pipeline(
             config: makeTestConfig(),
             recorder: FakeRecorder(),
-            transcriber: FakeTranscriber(),
+            sessionProvider: FakeTranscriberSessionProvider(FakeTranscriber()),
             polish: { text, _ in text },
             insert: { _ in true }
         )
@@ -192,7 +192,7 @@ final class PipelineOutcomeTests: XCTestCase {
         let pipeline = Pipeline(
             config: makeTestConfig(),
             recorder: FakeRecorder(),
-            transcriber: FakeTranscriber(),
+            sessionProvider: FakeTranscriberSessionProvider(FakeTranscriber()),
             polish: { text, _ in text },
             insert: { _ in true }
         )
@@ -210,7 +210,7 @@ final class PipelineOutcomeTests: XCTestCase {
         let pipeline = Pipeline(
             config: makeTestConfig(),
             recorder: FakeRecorder(),
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             polish: { text, _ in text },
             insert: { _ in true },
             record: { _ in },
@@ -236,7 +236,7 @@ final class PipelineOutcomeTests: XCTestCase {
         let pipeline = Pipeline(
             config: makeTestConfig(),
             recorder: FakeRecorder(),
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             insert: { insert.insert($0) },
             record: { _ in },
             frontmostApp: { nil }

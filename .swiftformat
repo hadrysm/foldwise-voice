@@ -4,6 +4,7 @@
 --exclude .build
 
 # Options
+--min-version 0.62.1          # includes the default rules enforced by current CI images
 --swiftversion 5.10            # matches Package.swift toolchain
 --indent 4                     # existing style
 --maxwidth 120                 # matches SwiftLint line_length warning

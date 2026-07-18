@@ -106,14 +106,18 @@ final class ModeLifecycleIntegrationTests: XCTestCase {
         let pipeline = Pipeline(
             config: fixture.config,
             recorder: recorder,
-            transcriber: transcriber,
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
             polish: { text, mode in
                 snapshots.append(mode)
-                if phase == .polishing { await gate.pause() }
+                if phase == .polishing {
+                    await gate.pause()
+                }
                 return text
             },
             insert: { _ in
-                if phase == .inserting { await gate.pause() }
+                if phase == .inserting {
+                    await gate.pause()
+                }
                 return true
             },
             record: { history.record($0) },

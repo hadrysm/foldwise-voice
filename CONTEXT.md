@@ -102,11 +102,9 @@ malformed response; the tell is answer-shaped output with little relation to
 what was said.
 _Avoid_: injected, jailbroken, hallucination
 
-**ASR engine** — A transcription backend behind the transcribe Stage's
-`Transcribing` seam: a library plus the family of speech models it runs.
-FoldWise has two — FluidAudio (the Parakeet family, on the Neural Engine) and
-WhisperKit (the Whisper family, CoreML). Each engine is one conformer of
-`Transcribing`.
+**ASR engine** — A transcription backend: a library plus the family of speech
+models it runs. FoldWise has two — FluidAudio (the Parakeet family, on the
+Neural Engine) and WhisperKit (the Whisper family, CoreML).
 _Avoid_: backend, provider, ASR
 
 **ASR model** — A specific set of speech weights an engine loads to transcribe,
@@ -114,6 +112,28 @@ e.g. Parakeet TDT v3, Whisper large-v3-turbo, Whisper small. One engine offers
 several models that trade download size for accuracy and language coverage; the
 Whisper models are what widen FoldWise's language reach beyond Parakeet's 25.
 _Avoid_: weights, checkpoint
+
+**ASR model availability** — Whether an ASR model is ready to use because its
+complete local model data passes its engine adapter's validation. Missing,
+incomplete, corrupt, or unrecognized data is unavailable. Availability and ASR
+model selection remain distinct facts; changing local data alone does not
+select a model.
+_Avoid_: installed model, cached model
+
+**ASR model selection** — The global ASR model chosen for transcription. It
+changes through explicit selection, or when deleting the selected optional model
+commits the default Parakeet selection; downloading never changes it. Each
+Dictation session captures the selection when it begins; a later change applies
+to the next Dictation session.
+_Avoid_: active engine, downloaded model
+
+**Effective ASR model** — The ASR model a Dictation session actually uses after
+availability and loading are resolved. It is normally the captured ASR model
+selection. When that selection is unavailable or unrecognized, FoldWise
+attempts to load its default ASR model without silently changing the selection.
+If that fallback cannot load, there is no effective ASR model and Dictation
+remains blocked.
+_Avoid_: runtime selection, resolved engine
 
 ## Batch workflow
 

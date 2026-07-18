@@ -35,7 +35,9 @@ final class HotkeyBindingCoordinatorTests: XCTestCase {
 
         func start() throws {
             events("start \(name)")
-            if let startError { throw startError }
+            if let startError {
+                throw startError
+            }
             onStart()
         }
 
@@ -140,7 +142,9 @@ final class HotkeyBindingCoordinatorTests: XCTestCase {
             prepare: { _, _ in
                 generation += 1
                 events.append("prepare \(generation)")
-                if generation == 2 { throw Failure(errorDescription: "prepare failed") }
+                if generation == 2 {
+                    throw Failure(errorDescription: "prepare failed")
+                }
                 return CannedListener(name: "old", events: { events.append($0) })
             }
         )

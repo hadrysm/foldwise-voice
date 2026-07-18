@@ -569,13 +569,17 @@ private final class FakeAudioHardware: AudioHardware {
     }
 
     func snapshot() throws -> AudioHardwareSnapshot {
-        if let snapshotError { throw snapshotError }
+        if let snapshotError {
+            throw snapshotError
+        }
         return currentSnapshot
     }
 
     func observeChanges(_ observer: @escaping (AudioHardwareChange) -> Void) throws {
         observeCount += 1
-        if let observeError { throw observeError }
+        if let observeError {
+            throw observeError
+        }
         self.observer = observer
     }
 
@@ -587,11 +591,15 @@ private final class FakeAudioHardware: AudioHardware {
         deviceUID: String,
         onFailure: @escaping (AudioCaptureError) -> Void
     ) throws -> any AudioCaptureSession {
-        if let startError { throw startError }
+        if let startError {
+            throw startError
+        }
         startedUIDs.append(deviceUID)
         let session = FakeAudioCaptureSession(onFailure: onFailure, onStop: onSessionStop)
         lastSession = session
-        if let failureDuringStart { onFailure(failureDuringStart) }
+        if let failureDuringStart {
+            onFailure(failureDuringStart)
+        }
         return session
     }
 

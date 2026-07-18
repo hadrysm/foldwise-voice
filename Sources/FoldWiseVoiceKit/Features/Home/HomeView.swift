@@ -289,20 +289,10 @@ struct HomeView: View {
 
     private var summaryLine: String {
         [
-            asrModelName,
+            model.effectiveASRModelName,
             model.selectedModel.isEmpty ? "no polish model" : model.selectedModel,
             model.axTrusted ? "accessibility granted" : "accessibility missing",
             "v\(AppInfo.version)",
         ].joined(separator: " · ")
-    }
-
-    /// The active ASR model, resolved like the transcriber resolves it: an
-    /// unknown/fossil id (ADR-0006) reads as the Parakeet default the app
-    /// actually transcribes with, so Home never claims a model that isn't
-    /// running.
-    private var asrModelName: String {
-        let entry = ASRModelCatalog.entry(for: model.asrModel)
-            ?? ASRModelCatalog.entry(for: ASRModelCatalog.defaultID)
-        return entry?.name ?? "Parakeet TDT v3"
     }
 }

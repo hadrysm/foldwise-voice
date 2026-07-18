@@ -55,6 +55,8 @@ struct SidebarPresentation: Equatable {
     /// threshold disarms it. The preference is never touched, so an
     /// auto-collapse can't silently overwrite the user's saved choice.
     mutating func widthChanged(to width: Double) {
-        if width >= Self.autoCollapseWidth { expandsWhileNarrow = false }
+        if width >= Self.autoCollapseWidth {
+            expandsWhileNarrow = false
+        }
     }
 }

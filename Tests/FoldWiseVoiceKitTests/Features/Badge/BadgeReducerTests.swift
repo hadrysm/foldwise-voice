@@ -54,6 +54,102 @@ final class BadgeReducerTests: XCTestCase {
         )
     }
 
+    func testBlockedRecognitionExplainsWhyDictationCannotStart() {
+        XCTAssertEqual(
+            reduce(.idle, .pipeline(.recognitionUnavailable)).state,
+            .working(status: "speech model unavailable")
+        )
+    }
+
+    func testASRSelectionSwitchExplainsWhyDictationIsPaused() {
+        XCTAssertEqual(
+            reduce(.idle, .pipeline(.switchingASRModel)).state,
+            .working(status: "switching speech model…")
+        )
+    }
+
+    func testASRSwitchKeepsBadgeBlockingThenRestoresPipelineWork() {
+        let presentation = ASRBadgePresentation()
+
+        let states = [
+            presentation.lifecycleDidChange(
+                operation: .switching(modelID: "whisper-small"),
+                isDictationBlocked: true
+            ),
+            presentation.pipelineDidChange(.polishing(model: "qwen2.5:3b")),
+            presentation.lifecycleDidChange(operation: nil, isDictationBlocked: false),
+        ]
+
+        XCTAssertEqual(states, [.switchingASRModel, nil, .polishing(model: "qwen2.5:3b")])
+    }
+
+    func testASRBootstrapPresentsLoadingThenDownloadProgress() {
+        let presentation = ASRBadgePresentation()
+
+        let states = [
+            presentation.lifecycleDidChange(
+                operation: .bootstrapping(fraction: nil),
+                isDictationBlocked: true
+            ),
+            presentation.lifecycleDidChange(
+                operation: .bootstrapping(fraction: 0.45),
+                isDictationBlocked: true
+            ),
+        ]
+
+        XCTAssertEqual(states, [.loadingModel, .downloadingModel(fraction: 0.45)])
+    }
+
+    func testOptionalASRDownloadLeavesBadgeUnchanged() {
+        let presentation = ASRBadgePresentation()
+
+        let state = presentation.lifecycleDidChange(
+            operation: .downloading(modelID: "whisper-small", fraction: 0.45),
+            isDictationBlocked: false
+        )
+
+        XCTAssertNil(state)
+    }
+
+    func testASRDeletionOnlyChangesBadgeWhenItBlocksDictation() {
+        let presentation = ASRBadgePresentation()
+
+        let states = [
+            presentation.lifecycleDidChange(
+                operation: .deleting(modelID: "whisper-small"),
+                isDictationBlocked: false
+            ),
+            presentation.lifecycleDidChange(
+                operation: .deleting(modelID: "whisper-small"),
+                isDictationBlocked: true
+            ),
+        ]
+
+        XCTAssertEqual(states, [nil, .switchingASRModel])
+    }
+
+    func testBlockedASRLifecycleWithoutOperationPresentsRecognitionUnavailable() {
+        let presentation = ASRBadgePresentation()
+
+        let state = presentation.lifecycleDidChange(
+            operation: nil,
+            isDictationBlocked: true
+        )
+
+        XCTAssertEqual(state, .recognitionUnavailable)
+    }
+
+    func testIdleASRLifecycleWithoutOperationLeavesBadgeUnchanged() {
+        let presentation = ASRBadgePresentation()
+
+        let state = presentation.lifecycleDidChange(
+            operation: nil,
+            isDictationBlocked: false
+        )
+
+        XCTAssertNil(state)
+    }
+
     func testInsertedEntersTheDoneBeat() {
         XCTAssertEqual(reduce(.working(status: nil), .pipeline(.inserted)).state, .done)
     }

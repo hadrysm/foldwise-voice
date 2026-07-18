@@ -109,6 +109,10 @@
     {
       "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Transcribe/WhisperTranscriber.swift",
       "reason": "Real WhisperKit model-loading and inference adapter"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Transcribe/ASRModelLibraryStorage.swift",
+      "reason": "Thin FluidAudio and WhisperKit network-storage boundary; mapping, progress, and availability policy live in covered adapters"
     }
   ]
 }

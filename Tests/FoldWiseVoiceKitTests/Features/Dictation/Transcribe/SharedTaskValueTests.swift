@@ -34,13 +34,67 @@ final class SharedTaskValueTests: XCTestCase {
             ["cancelled", "42"]
         )
     }
+
+    func testCancelledExclusiveWaiterWaitsForSharedTaskTeardown() async {
+        let events = SharedTaskEventLog()
+        let (loadLifetime, loadLifetimeContinuation) = AsyncStream.makeStream(of: Void.self)
+        let (cleanupGate, cleanupContinuation) = AsyncStream.makeStream(of: Void.self)
+        let (started, startedContinuation) = AsyncStream.makeStream(of: Void.self)
+        let shared = Task<Int, Error> {
+            startedContinuation.yield()
+            startedContinuation.finish()
+            for await _ in loadLifetime {}
+            await events.append("load-cancelled")
+            for await _ in cleanupGate {
+                break
+            }
+            await events.append("load-released")
+            throw ExclusiveLoadFailure()
+        }
+        for await _ in started {
+            break
+        }
+        let waiter = Task {
+            do {
+                _ = try await SharedTaskValue.waitExclusively(for: shared)
+            } catch is CancellationError {
+                await events.append("prepare-cancelled")
+            } catch {
+                await events.append("prepare-failed")
+            }
+        }
+
+        waiter.cancel()
+        cleanupContinuation.yield()
+        cleanupContinuation.finish()
+        await waiter.value
+        loadLifetimeContinuation.finish()
+        let recordedEvents = await events.values
+
+        XCTAssertEqual(
+            recordedEvents,
+            ["load-cancelled", "load-released", "prepare-cancelled"]
+        )
+    }
+}
+
+private struct ExclusiveLoadFailure: Error {}
+
+private actor SharedTaskEventLog {
+    private(set) var values: [String] = []
+
+    func append(_ event: String) {
+        values.append(event)
+    }
 }
 
 private extension Result where Failure == Error {
     var isWaiterCancellation: Bool {
         guard case let .failure(error) = self else { return false }
         guard let waitError = error as? SharedTaskValue.WaitError else { return false }
-        if case .waiterCancelled = waitError { return true }
+        if case .waiterCancelled = waitError {
+            return true
+        }
         return false
     }
 }

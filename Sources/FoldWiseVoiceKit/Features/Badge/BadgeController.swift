@@ -75,13 +75,17 @@ final class BadgeController: NSObject {
             } else if changes.contains(.selection), let menu = activeModeMenu {
                 refreshModeMenuChecks(menu)
             }
-            if changes.contains(.hotkeys) { model.hotkeyLabel = KeyMap.pretty(config.hotkey) }
+            if changes.contains(.hotkeys) {
+                model.hotkeyLabel = KeyMap.pretty(config.hotkey)
+            }
             panel?.isMovableByWindowBackground = !config.isReadOnly
         }
     }
 
     deinit {
-        if let moveObserver { NotificationCenter.default.removeObserver(moveObserver) }
+        if let moveObserver {
+            NotificationCenter.default.removeObserver(moveObserver)
+        }
     }
 
     // MARK: - public API (main thread)
@@ -114,7 +118,9 @@ final class BadgeController: NSObject {
         }
         modeSelectionRevision += 1
         handleModeCycle(.selectionChanged(transition.from))
-        if model.state == .hover { enter(.idle) }
+        if model.state == .hover {
+            enter(.idle)
+        }
         handleModeCycle(.committed(from: from, to: to))
     }
 
@@ -135,7 +141,9 @@ final class BadgeController: NSObject {
     // MARK: - reducer plumbing
 
     private func handle(_ event: BadgeEvent) {
-        if case .hoverChanged = event, !modeCycleState.allowsHover { return }
+        if case .hoverChanged = event, !modeCycleState.allowsHover {
+            return
+        }
         ensurePanel()
         let transition = BadgeReducer.reduce(
             model.state,
@@ -143,7 +151,9 @@ final class BadgeController: NSObject {
             deferredModeSelectionError: deferredModeSelectionError
         )
         deferredModeSelectionError = transition.deferredModeSelectionError
-        if transition.command == .stopRecording { onStop?() }
+        if transition.command == .stopRecording {
+            onStop?()
+        }
         if transition.state != model.state {
             enter(transition.state)
             panel?.orderFrontRegardless()
@@ -158,7 +168,9 @@ final class BadgeController: NSObject {
         modeCycleState = transition.state
         model.modeCycleDisplay = transition.state.display
         let showsError = transition.effects.contains { effect in
-            if case .showError = effect { return true }
+            if case .showError = effect {
+                return true
+            }
             return false
         }
         if fitPresentation, !showsError {
@@ -479,8 +491,8 @@ private extension PipelineState {
     var ownsBadge: Bool {
         switch self {
         case .idle: false
-        case .listening, .downloadingModel, .loadingModel, .transcribing,
-             .polishing, .inserted, .clipboard, .error: true
+        case .listening, .downloadingModel, .loadingModel, .switchingASRModel, .transcribing,
+             .polishing, .recognitionUnavailable, .inserted, .clipboard, .error: true
         }
     }
 }

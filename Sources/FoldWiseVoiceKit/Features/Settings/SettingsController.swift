@@ -13,6 +13,7 @@ final class SettingsController {
     private let inputDevices: (any AudioInputStateProviding)?
     private let hotkeys: HotkeyBindingCoordinator?
     private let captureGate: ShortcutCaptureGate
+    private let asrLifecycle: ASRModelLifecycle
     let model = SettingsModel()
     private lazy var workflow = SettingsWorkflow(
         config: config,
@@ -30,7 +31,8 @@ final class SettingsController {
                 try self?.config.setShortcutBindings(bindings)
             }
         },
-        captureGate: captureGate
+        captureGate: captureGate,
+        asrLifecycle: asrLifecycle
     )
     private var window: NSWindow?
     private var keyMonitor: Any?
@@ -46,7 +48,8 @@ final class SettingsController {
         config: Config, historyStore: HistoryStore, statsStore: StatsStore,
         inputDevices: (any AudioInputStateProviding)? = nil,
         hotkeys: HotkeyBindingCoordinator? = nil,
-        captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
+        captureGate: ShortcutCaptureGate = ShortcutCaptureGate(),
+        asrLifecycle: ASRModelLifecycle
     ) {
         self.config = config
         self.historyStore = historyStore
@@ -54,6 +57,7 @@ final class SettingsController {
         self.inputDevices = inputDevices
         self.hotkeys = hotkeys
         self.captureGate = captureGate
+        self.asrLifecycle = asrLifecycle
         if let inputDevices {
             model.inputState = inputDevices.inputState
             inputDevices.onInputStateChange = { [weak self] state in
@@ -65,12 +69,18 @@ final class SettingsController {
     }
 
     deinit {
-        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
-        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        if let closeObserver {
+            NotificationCenter.default.removeObserver(closeObserver)
+        }
+        if let resignObserver {
+            NotificationCenter.default.removeObserver(resignObserver)
+        }
     }
 
     func show() {
-        if window == nil { build() }
+        if window == nil {
+            build()
+        }
         populate()
         // Accessory apps never own the menu bar; become a regular app while
         // settings is open so the menu bar shows FoldWise Voice, not whatever
@@ -106,7 +116,8 @@ final class SettingsController {
         model.onRefreshModels = { [weak self] in self?.workflow.refreshLLMModels() }
         model.onSelectASRModel = { [weak self] id in self?.workflow.selectASRModel(id) }
         model.onDownloadASRModel = { [weak self] id in self?.workflow.downloadASRModel(id) }
-        model.onCancelASRDownload = { [weak self] in self?.workflow.cancelASRDownload() }
+        model.onCancelASROperation = { [weak self] in self?.workflow.cancelASROperation() }
+        model.onRetryASRBootstrap = { [weak self] in self?.workflow.retryASRBootstrap() }
         model.onDeleteASRModel = { [weak self] id in self?.workflow.deleteASRModel(id) }
         model.onCheckUpdates = { [weak self] in self?.workflow.checkForUpdates() }
         model.onHistoryCommand = { [weak self] entry, command in
@@ -160,7 +171,9 @@ final class SettingsController {
 
     private func populate() {
         workflow.populatePreferences()
-        if let inputDevices { model.inputState = inputDevices.inputState }
+        if let inputDevices {
+            model.inputState = inputDevices.inputState
+        }
         model.axTrusted = TextInserter.accessibilityTrusted()
         workflow.populateHistory()
         workflow.refreshLLMModels()
@@ -237,7 +250,9 @@ final class SettingsController {
     }
 
     private func stopKeyMonitor() {
-        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+        }
         keyMonitor = nil
     }
 
