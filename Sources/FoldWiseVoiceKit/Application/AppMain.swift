@@ -90,7 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeys: HotkeyBindingCoordinator!
     private var modeCycleCommand: ModeCycleCommand!
     private var updateChecker: UpdateChecker!
-    private var asrLifecycleWasBlocking = false
+    private let asrBadgePresentation = ASRBadgePresentation()
     private let shortcutCaptureGate = ShortcutCaptureGate()
     // swiftlint:enable implicitly_unwrapped_optional
 
@@ -286,7 +286,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func apply(_ state: PipelineState) {
         // The Badge folds the phase into its own state machine (BadgeReducer);
         // only the menu-bar icon mapping lives here.
-        badge.apply(state)
+        if let badgeState = asrBadgePresentation.pipelineDidChange(state) {
+            badge.apply(badgeState)
+        }
         switch state {
         case .listening:
             menuBar.setIcon(.listening)
@@ -299,21 +301,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func applyASRLifecycle(_ snapshot: ASRModelLifecycleSnapshot) {
-        switch snapshot.operation {
-        case let .bootstrapping(fraction):
-            badge.apply(fraction.map { .downloadingModel(fraction: $0) } ?? .loadingModel)
-        case .downloading:
-            break
-        case .switching, .restoring:
-            badge.apply(.switchingASRModel)
-        case nil where snapshot.isDictationBlocked:
-            badge.apply(.recognitionUnavailable)
-        case nil where asrLifecycleWasBlocking:
-            badge.apply(.idle)
-        case nil:
-            break
+        if let state = asrBadgePresentation.lifecycleDidChange(
+            operation: snapshot.operation,
+            isDictationBlocked: snapshot.isDictationBlocked
+        ) {
+            badge.apply(state)
         }
-        asrLifecycleWasBlocking = snapshot.isDictationBlocked
     }
 
     @objc private func quit() {

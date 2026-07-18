@@ -498,6 +498,38 @@ enum BadgeEvent: Equatable {
     case dwellElapsed
 }
 
+final class ASRBadgePresentation {
+    private var latestPipelineState: PipelineState = .idle
+    private var lifecycleIsBlocking = false
+
+    func pipelineDidChange(_ state: PipelineState) -> PipelineState? {
+        latestPipelineState = state
+        return lifecycleIsBlocking ? nil : state
+    }
+
+    func lifecycleDidChange(
+        operation: ASRModelLifecycleOperation?,
+        isDictationBlocked: Bool
+    ) -> PipelineState? {
+        let wasBlocking = lifecycleIsBlocking
+        lifecycleIsBlocking = isDictationBlocked
+        switch operation {
+        case let .bootstrapping(fraction):
+            return fraction.map { .downloadingModel(fraction: $0) } ?? .loadingModel
+        case .downloading:
+            return nil
+        case .switching, .restoring:
+            return .switchingASRModel
+        case nil where isDictationBlocked:
+            return .recognitionUnavailable
+        case nil where wasBlocking:
+            return latestPipelineState
+        case nil:
+            return nil
+        }
+    }
+}
+
 /// Side effect a transition asks the controller to perform.
 enum BadgeCommand: Equatable {
     case stopRecording

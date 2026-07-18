@@ -68,6 +68,21 @@ final class BadgeReducerTests: XCTestCase {
         )
     }
 
+    func testASRSwitchKeepsBadgeBlockingThenRestoresPipelineWork() {
+        let presentation = ASRBadgePresentation()
+
+        let states = [
+            presentation.lifecycleDidChange(
+                operation: .switching(modelID: "whisper-small"),
+                isDictationBlocked: true
+            ),
+            presentation.pipelineDidChange(.polishing(model: "qwen2.5:3b")),
+            presentation.lifecycleDidChange(operation: nil, isDictationBlocked: false),
+        ]
+
+        XCTAssertEqual(states, [.switchingASRModel, nil, .polishing(model: "qwen2.5:3b")])
+    }
+
     func testInsertedEntersTheDoneBeat() {
         XCTAssertEqual(reduce(.working(status: nil), .pipeline(.inserted)).state, .done)
     }
