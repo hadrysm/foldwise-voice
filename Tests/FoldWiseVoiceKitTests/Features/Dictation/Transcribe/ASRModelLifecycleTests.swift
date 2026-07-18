@@ -776,7 +776,7 @@ final class ASRModelLifecycleTests: XCTestCase {
 
     func testCanceledCandidateFinishingLateCannotCommitOrReplaceRestoredEngine() async {
         let residency = EngineResidencyProbe()
-        let preparation = LateCancellableSelectionPreparation()
+        let preparation = CancellableSelectionPreparation(finishesOnCancellation: false)
         let parakeet = FakeASRModelFamilyAdapter(
             modelIDs: ["parakeet-v3"],
             availableModelIDs: ["parakeet-v3"],
@@ -800,7 +800,7 @@ final class ASRModelLifecycleTests: XCTestCase {
         await preparation.waitUntilStarted()
         let cancellation = Task { await lifecycle.cancelCurrentOperation() }
         await preparation.waitUntilCancelled()
-        preparation.finishLateCompletion()
+        preparation.finish()
         await cancellation.value
         await selection.value
         let snapshot = await lifecycle.snapshot()
@@ -2709,7 +2709,12 @@ private final class CancellableSelectionPreparation: @unchecked Sendable {
     private let lock = NSLock()
     private let started = AsyncEvent()
     private let cancelled = AsyncEvent()
+    private let finishesOnCancellation: Bool
     private var continuation: CheckedContinuation<Void, Never>?
+
+    init(finishesOnCancellation: Bool = true) {
+        self.finishesOnCancellation = finishesOnCancellation
+    }
 
     func run() async {
         await withTaskCancellationHandler {
@@ -2719,7 +2724,9 @@ private final class CancellableSelectionPreparation: @unchecked Sendable {
             }
         } onCancel: {
             self.cancelled.signal()
-            self.finish()
+            if self.finishesOnCancellation {
+                self.finish()
+            }
         }
     }
 
@@ -2731,41 +2738,7 @@ private final class CancellableSelectionPreparation: @unchecked Sendable {
         await cancelled.wait()
     }
 
-    private func finish() {
-        let continuation = lock.withLock {
-            defer { self.continuation = nil }
-            return self.continuation
-        }
-        continuation?.resume()
-    }
-}
-
-private final class LateCancellableSelectionPreparation: @unchecked Sendable {
-    private let lock = NSLock()
-    private let started = AsyncEvent()
-    private let cancelled = AsyncEvent()
-    private var continuation: CheckedContinuation<Void, Never>?
-
-    func run() async {
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                lock.withLock { self.continuation = continuation }
-                started.signal()
-            }
-        } onCancel: {
-            self.cancelled.signal()
-        }
-    }
-
-    func waitUntilStarted() async {
-        await started.wait()
-    }
-
-    func waitUntilCancelled() async {
-        await cancelled.wait()
-    }
-
-    func finishLateCompletion() {
+    func finish() {
         let continuation = lock.withLock {
             defer { self.continuation = nil }
             return self.continuation

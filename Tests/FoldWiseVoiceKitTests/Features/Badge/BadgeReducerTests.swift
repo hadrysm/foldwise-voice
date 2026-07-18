@@ -83,6 +83,56 @@ final class BadgeReducerTests: XCTestCase {
         XCTAssertEqual(states, [.switchingASRModel, nil, .polishing(model: "qwen2.5:3b")])
     }
 
+    func testASRBootstrapPresentsLoadingThenDownloadProgress() {
+        let presentation = ASRBadgePresentation()
+
+        let states = [
+            presentation.lifecycleDidChange(
+                operation: .bootstrapping(fraction: nil),
+                isDictationBlocked: true
+            ),
+            presentation.lifecycleDidChange(
+                operation: .bootstrapping(fraction: 0.45),
+                isDictationBlocked: true
+            ),
+        ]
+
+        XCTAssertEqual(states, [.loadingModel, .downloadingModel(fraction: 0.45)])
+    }
+
+    func testOptionalASRDownloadLeavesBadgeUnchanged() {
+        let presentation = ASRBadgePresentation()
+
+        let state = presentation.lifecycleDidChange(
+            operation: .downloading(modelID: "whisper-small", fraction: 0.45),
+            isDictationBlocked: false
+        )
+
+        XCTAssertNil(state)
+    }
+
+    func testBlockedASRLifecycleWithoutOperationPresentsRecognitionUnavailable() {
+        let presentation = ASRBadgePresentation()
+
+        let state = presentation.lifecycleDidChange(
+            operation: nil,
+            isDictationBlocked: true
+        )
+
+        XCTAssertEqual(state, .recognitionUnavailable)
+    }
+
+    func testIdleASRLifecycleWithoutOperationLeavesBadgeUnchanged() {
+        let presentation = ASRBadgePresentation()
+
+        let state = presentation.lifecycleDidChange(
+            operation: nil,
+            isDictationBlocked: false
+        )
+
+        XCTAssertNil(state)
+    }
+
     func testInsertedEntersTheDoneBeat() {
         XCTAssertEqual(reduce(.working(status: nil), .pipeline(.inserted)).state, .done)
     }
