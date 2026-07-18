@@ -102,11 +102,9 @@ malformed response; the tell is answer-shaped output with little relation to
 what was said.
 _Avoid_: injected, jailbroken, hallucination
 
-**ASR engine** — A transcription backend behind the transcribe Stage's
-`Transcribing` seam: a library plus the family of speech models it runs.
-FoldWise has two — FluidAudio (the Parakeet family, on the Neural Engine) and
-WhisperKit (the Whisper family, CoreML). Each engine is one conformer of
-`Transcribing`.
+**ASR engine** — A transcription backend: a library plus the family of speech
+models it runs. FoldWise has two — FluidAudio (the Parakeet family, on the
+Neural Engine) and WhisperKit (the Whisper family, CoreML).
 _Avoid_: backend, provider, ASR
 
 **ASR model** — A specific set of speech weights an engine loads to transcribe,

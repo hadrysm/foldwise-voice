@@ -110,6 +110,14 @@ final class SettingsModel: ObservableObject {
         asrSnapshot?.models ?? []
     }
 
+    var effectiveASRModelName: String {
+        guard let effectiveSelection = asrSnapshot?.effectiveSelection else {
+            return "Speech unavailable"
+        }
+        return asrCatalog.first { $0.id == effectiveSelection }?.name
+            ?? "Speech unavailable"
+    }
+
     var asrDownloaded: Set<String> {
         Set(asrCatalog.filter(\.isAvailable).map(\.id))
     }

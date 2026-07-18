@@ -289,21 +289,10 @@ struct HomeView: View {
 
     private var summaryLine: String {
         [
-            asrModelName,
+            model.effectiveASRModelName,
             model.selectedModel.isEmpty ? "no polish model" : model.selectedModel,
             model.axTrusted ? "accessibility granted" : "accessibility missing",
             "v\(AppInfo.version)",
         ].joined(separator: " · ")
-    }
-
-    /// Home names the effective model reported by the lifecycle. It never
-    /// resolves catalog ids or fallback rules independently.
-    private var asrModelName: String {
-        guard let snapshot = model.asrSnapshot,
-              let effectiveSelection = snapshot.effectiveSelection else {
-            return "Speech unavailable"
-        }
-        return snapshot.models.first { $0.id == effectiveSelection }?.name
-            ?? "Speech unavailable"
     }
 }

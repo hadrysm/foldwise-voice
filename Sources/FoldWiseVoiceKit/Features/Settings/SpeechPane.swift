@@ -18,7 +18,7 @@ struct SpeechPane: View {
             Text(
                 "Choose which speech model transcribes your dictation — it applies to "
                     + "every mode. Parakeet is built in; Whisper reaches ~99 languages and "
-                    + "downloads on first use, then runs on-device."
+                    + "can be downloaded here, then runs on-device."
             )
             .font(Theme.ui(12))
             .foregroundStyle(Theme.textSecondary)

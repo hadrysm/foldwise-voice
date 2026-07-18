@@ -27,6 +27,7 @@ final class SettingsModelTests: XCTestCase {
                 downloading: model.asrDownloading,
                 fraction: model.asrDownloadFraction,
                 recovery: model.asrRecoveryMessage,
+                effectiveModelName: model.effectiveASRModelName,
                 actionsDisabled: model.hasActiveASRManagementOperation
             ),
             ASRPresentationState(
@@ -34,6 +35,7 @@ final class SettingsModelTests: XCTestCase {
                 downloading: "whisper-large-v3-turbo",
                 fraction: 0.4,
                 recovery: "Whisper small is unavailable. Using Parakeet TDT v3 until you download it again.",
+                effectiveModelName: "Parakeet TDT v3",
                 actionsDisabled: true
             )
         )
@@ -117,5 +119,6 @@ private struct ASRPresentationState: Equatable {
     let downloading: String?
     let fraction: Double?
     let recovery: String?
+    let effectiveModelName: String
     let actionsDisabled: Bool
 }

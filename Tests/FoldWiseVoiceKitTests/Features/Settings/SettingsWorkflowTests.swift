@@ -3293,10 +3293,19 @@ final class SettingsWorkflowTests: XCTestCase {
     }
 
     private func waitForASRState(
-        _: SettingsModel,
-        matching predicate: @escaping @MainActor () -> Bool
+        _ model: SettingsModel,
+        matching predicate: @escaping @MainActor () -> Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line
     ) async {
-        await waitUntil(predicate)
+        let published = expectation(description: "ASR snapshot matches predicate")
+        let cancellable = model.$asrSnapshot
+            .receive(on: DispatchQueue.main)
+            .first { _ in predicate() }
+            .sink { _ in published.fulfill() }
+        await fulfillment(of: [published], timeout: 1)
+        withExtendedLifetime(cancellable) {}
+        XCTAssertTrue(predicate(), file: file, line: line)
     }
 
     private func waitForPublishedValue<Value>(

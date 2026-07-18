@@ -1,8 +1,8 @@
 // The second ASR engine (ADR-0005): Whisper via WhisperKit, in-process on the
 // Neural Engine. Structural twin of `Transcriber` — it takes the recorder's
-// `[Float]@16 kHz` buffer verbatim, auto-downloads its CoreML weights from
-// Hugging Face on first load (~632 MB for large-v3-turbo), then runs offline.
-// `variant` is the exact `argmaxinc/whisperkit-coreml` folder the catalog names.
+// `[Float]@16 kHz` buffer verbatim and resolves the CoreML weights provisioned
+// by its family adapter. `variant` is the exact
+// `argmaxinc/whisperkit-coreml` folder the catalog names.
 
 import Foundation
 import WhisperKit
