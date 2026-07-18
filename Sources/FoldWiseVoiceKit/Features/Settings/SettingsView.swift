@@ -135,7 +135,9 @@ struct SettingsView: View {
         Binding(
             get: { model.modeEditor != nil },
             set: { isPresented in
-                if !isPresented { model.onCancelModeEditor?() }
+                if !isPresented {
+                    model.onCancelModeEditor?()
+                }
             }
         )
     }
@@ -530,7 +532,9 @@ struct SettingsView: View {
                                 Array(model.modeSelection.editableItems.enumerated()),
                                 id: \.element.id
                             ) { index, item in
-                                if index > 0 { Divider().padding(.leading, 14) }
+                                if index > 0 {
+                                    Divider().padding(.leading, 14)
+                                }
                                 modeLibraryRow(item, index: index)
                             }
                         }
@@ -1015,7 +1019,9 @@ struct SettingsView: View {
     }
 
     private var inputDeviceMessageIsError: Bool {
-        if case .unavailable = model.inputState.status { return true }
+        if case .unavailable = model.inputState.status {
+            return true
+        }
         return false
     }
 
@@ -1104,13 +1110,19 @@ struct SettingsView: View {
         key: String,
         field: SettingsModel.RecordingField
     ) -> String {
-        if model.recordingField == field { return "Capturing" }
-        if key.isEmpty { return "Not assigned" }
+        if model.recordingField == field {
+            return "Capturing"
+        }
+        if key.isEmpty {
+            return "Not assigned"
+        }
         return "Assigned to \(keycapLabel(key))"
     }
 }
 
 func keycapLabel(_ name: String) -> String {
-    if name.count == 1 { return name.uppercased() }
+    if name.count == 1 {
+        return name.uppercased()
+    }
     return KeyMap.pretty(name) // "right ⌥", "f19", "esc", …
 }

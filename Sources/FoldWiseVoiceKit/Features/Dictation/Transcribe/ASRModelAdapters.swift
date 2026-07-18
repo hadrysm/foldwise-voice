@@ -261,7 +261,9 @@ private enum ASRModelDataValidation {
             includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]
         ) else { return false }
         for case let url as URL in enumerator where url.lastPathComponent == name {
-            if containsUsableCompiledModel(at: url, validate: validate) { return true }
+            if containsUsableCompiledModel(at: url, validate: validate) {
+                return true
+            }
         }
         return false
     }
@@ -285,8 +287,12 @@ private enum ASRModelDataValidation {
                   let json = try? JSONSerialization.jsonObject(with: data) else { continue }
             if let dictionary = json as? [String: String],
                !dictionary.isEmpty,
-               dictionary.keys.allSatisfy({ Int($0) != nil }) { return true }
-            if let array = json as? [String], !array.isEmpty { return true }
+               dictionary.keys.allSatisfy({ Int($0) != nil }) {
+                return true
+            }
+            if let array = json as? [String], !array.isEmpty {
+                return true
+            }
         }
         return false
     }

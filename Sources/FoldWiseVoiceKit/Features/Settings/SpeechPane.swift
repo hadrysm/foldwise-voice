@@ -26,8 +26,12 @@ struct SpeechPane: View {
             let downloaded = model.asrCatalog.filter(\.isAvailable)
             let available = model.asrCatalog.filter { !$0.isAvailable }
 
-            if !downloaded.isEmpty { section("Your Models", downloaded) }
-            if !available.isEmpty { section("Available", available) }
+            if !downloaded.isEmpty {
+                section("Your Models", downloaded)
+            }
+            if !available.isEmpty {
+                section("Available", available)
+            }
 
             if let modelID = model.asrSwitching {
                 operationStatus("Switching to \(modelName(modelID))…", allowsCancellation: true)
@@ -62,7 +66,11 @@ struct SpeechPane: View {
             "Delete \(pendingDelete?.name ?? "")?",
             isPresented: Binding(
                 get: { pendingDelete != nil },
-                set: { if !$0 { pendingDelete = nil } }
+                set: {
+                    if !$0 {
+                        pendingDelete = nil
+                    }
+                }
             ),
             presenting: pendingDelete
         ) { entry in
@@ -82,7 +90,9 @@ struct SpeechPane: View {
         sectionHeader(title)
         Card {
             ForEach(Array(entries.enumerated()), id: \.element.id) { i, entry in
-                if i > 0 { Divider().padding(.leading, 14) }
+                if i > 0 {
+                    Divider().padding(.leading, 14)
+                }
                 row(entry)
             }
         }

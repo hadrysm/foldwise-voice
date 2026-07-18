@@ -3049,11 +3049,15 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
     ) async throws {
         lock.withLock {
             _downloadedModelIDs.append(id)
-            if _partialModelIDs.contains(id) { _reusedPartialModelIDs.append(id) }
+            if _partialModelIDs.contains(id) {
+                _reusedPartialModelIDs.append(id)
+            }
             activeDownloadID = id
             self.progress = progress
         }
-        if let downloadError { throw downloadError }
+        if let downloadError {
+            throw downloadError
+        }
         guard suspendDownloads else {
             if completeDownloadsImmediatelyAsAvailable {
                 _ = lock.withLock { _availableModelIDs.insert(id) }
@@ -3105,7 +3109,9 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
                 lock.withLock { deletionContinuation = continuation }
             }
         }
-        if let deletionError { throw deletionError }
+        if let deletionError {
+            throw deletionError
+        }
         _ = lock.withLock { _availableModelIDs.remove(id) }
         lock.withLock { _removedModelIDs.append(id) }
     }
@@ -3206,7 +3212,9 @@ private final class FakeLifecycleTranscriber: Transcribing {
 
     func transcribe(_ samples: [Float]) async throws -> String {
         await transcription?()
-        if let transcriptionError { throw transcriptionError }
+        if let transcriptionError {
+            throw transcriptionError
+        }
         onTranscribe(samples)
         return text
     }
@@ -3350,7 +3358,9 @@ private final class AsyncEvent: @unchecked Sendable {
                 waiters.append(continuation)
                 return false
             }
-            if shouldResume { continuation.resume() }
+            if shouldResume {
+                continuation.resume()
+            }
         }
     }
 }

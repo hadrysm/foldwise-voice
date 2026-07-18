@@ -250,7 +250,9 @@ final class SettingsControllerWiringTests: XCTestCase {
         let published = expectation(description: "Input state published to Settings")
         var observation: AnyCancellable?
         observation = controller.model.$inputState.dropFirst().sink { state in
-            if state == changed { published.fulfill() }
+            if state == changed {
+                published.fulfill()
+            }
         }
 
         inputDevices.onInputStateChange?(changed)

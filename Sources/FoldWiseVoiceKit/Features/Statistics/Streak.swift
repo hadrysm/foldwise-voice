@@ -156,7 +156,9 @@ final class JSONStatsStore: StatsStore {
         // deliberately conservative: a dictation whose recording predates the wipe
         // but persists just after is skipped too — it can only under-count the
         // streak, never resurrect erased data.
-        if let clearedThrough, day < clearedThrough { return }
+        if let clearedThrough, day < clearedThrough {
+            return
+        }
         let updated = StreakRules.advance(readRecord(), on: day, calendar: calendar)
         write(updated)
     }

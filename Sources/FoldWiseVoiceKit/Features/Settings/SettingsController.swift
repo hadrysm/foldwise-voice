@@ -69,12 +69,18 @@ final class SettingsController {
     }
 
     deinit {
-        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
-        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        if let closeObserver {
+            NotificationCenter.default.removeObserver(closeObserver)
+        }
+        if let resignObserver {
+            NotificationCenter.default.removeObserver(resignObserver)
+        }
     }
 
     func show() {
-        if window == nil { build() }
+        if window == nil {
+            build()
+        }
         populate()
         // Accessory apps never own the menu bar; become a regular app while
         // settings is open so the menu bar shows FoldWise Voice, not whatever
@@ -165,7 +171,9 @@ final class SettingsController {
 
     private func populate() {
         workflow.populatePreferences()
-        if let inputDevices { model.inputState = inputDevices.inputState }
+        if let inputDevices {
+            model.inputState = inputDevices.inputState
+        }
         model.axTrusted = TextInserter.accessibilityTrusted()
         workflow.populateHistory()
         workflow.refreshLLMModels()
@@ -242,7 +250,9 @@ final class SettingsController {
     }
 
     private func stopKeyMonitor() {
-        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+        }
         keyMonitor = nil
     }
 

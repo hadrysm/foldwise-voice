@@ -67,7 +67,9 @@ final class PipelineSessionTests: XCTestCase {
             frontmostApp: { nil }
         )
         pipeline.onState = { state in
-            if state == .transcribing { pipeline.shutdown() }
+            if state == .transcribing {
+                pipeline.shutdown()
+            }
         }
 
         pipeline.startRecording()

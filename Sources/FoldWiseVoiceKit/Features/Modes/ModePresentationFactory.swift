@@ -50,7 +50,9 @@ enum ModePresentationFactory {
     ) -> [NSMenuItem] {
         var items: [NSMenuItem] = []
         for (index, projectionItem) in projection.items.enumerated() {
-            if index == 1 { items.append(.separator()) }
+            if index == 1 {
+                items.append(.separator())
+            }
             let item = menuItem(for: projectionItem, target: target, action: action)
             item.isEnabled = isEnabled
             items.append(item)

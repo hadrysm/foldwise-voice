@@ -184,7 +184,9 @@ final class SettingsWorkflow {
             model.updateState = .unavailable
             return
         }
-        if case .checking = model.updateState { return }
+        if case .checking = model.updateState {
+            return
+        }
         model.updateState = .checking
         Task { @MainActor in
             switch await updates.check() {
@@ -298,7 +300,11 @@ final class SettingsWorkflow {
 
     func saveModeEditor() {
         guard var editor = model.modeEditor else { return }
-        let editingID: ModeID? = if case let .edit(id) = editor.purpose { id } else { nil }
+        let editingID: ModeID? = if case let .edit(id) = editor.purpose {
+            id
+        } else {
+            nil
+        }
         let evaluation = ModeEditorPolicy.evaluate(
             editor.draft,
             existingModes: config.orderedModes,
@@ -581,8 +587,12 @@ final class SettingsWorkflow {
         let cycle = model.cycleKey.trimmingCharacters(in: .whitespaces)
         do {
             _ = try KeyMap.parse(ptt)
-            if !toggle.isEmpty { _ = try KeyMap.parse(toggle) }
-            if !cycle.isEmpty { _ = try KeyMap.parse(cycle) }
+            if !toggle.isEmpty {
+                _ = try KeyMap.parse(toggle)
+            }
+            if !cycle.isEmpty {
+                _ = try KeyMap.parse(cycle)
+            }
         } catch {
             populateShortcutBindings()
             setStatus("⚠️ \(error.localizedDescription)", isError: true)

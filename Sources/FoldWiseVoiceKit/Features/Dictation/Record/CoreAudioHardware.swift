@@ -253,7 +253,9 @@ private final class AVAudioCaptureSession: AudioCaptureSession {
             latestLevel = 0
             return true
         }
-        if shouldShutDown { recovery.stop { shutDownEngine() } }
+        if shouldShutDown {
+            recovery.stop { shutDownEngine() }
+        }
     }
 
     private func shutDownEngine() {

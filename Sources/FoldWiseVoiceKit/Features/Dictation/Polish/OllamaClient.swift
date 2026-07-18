@@ -139,7 +139,9 @@ final class OllamaClient {
                 guard let data = line.data(using: .utf8),
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 else { continue }
-                if let error = json["error"] as? String { return error }
+                if let error = json["error"] as? String {
+                    return error
+                }
                 let status = json["status"] as? String ?? ""
                 var fraction: Double?
                 if let total = json["total"] as? Double, total > 0 {
@@ -180,7 +182,9 @@ final class OllamaClient {
     /// surfacing it as an error would only confuse. Anything else is a real
     /// failure with a human-readable message.
     static func deleteOutcome(status: Int) -> String? {
-        if (200 ..< 300).contains(status) || status == 404 { return nil }
+        if (200 ..< 300).contains(status) || status == 404 {
+            return nil
+        }
         return "Ollama returned an unexpected status (HTTP \(status))."
     }
 }

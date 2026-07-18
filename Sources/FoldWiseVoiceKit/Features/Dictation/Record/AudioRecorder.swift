@@ -192,7 +192,9 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
             session.close()
             throw failure
         }
-        if let state = outcome.state { onInputStateChange?(state) }
+        if let state = outcome.state {
+            onInputStateChange?(state)
+        }
     }
 
     func stop() -> [Float] {
@@ -217,7 +219,9 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
             let resetGeneration = reduceRoute(restored: false)
             return (samples, makeState(), resetGeneration)
         }
-        if let state = outcome.state { onInputStateChange?(state) }
+        if let state = outcome.state {
+            onInputStateChange?(state)
+        }
         scheduleReset(generation: outcome.resetGeneration)
         return outcome.samples
     }
@@ -292,7 +296,9 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
             update.session?.close()
             onInputStateChange?(update.state)
             scheduleReset(generation: update.resetGeneration)
-            if let failure = update.failure { onFailure?(failure) }
+            if let failure = update.failure {
+                onFailure?(failure)
+            }
         } catch {
             let state: AudioInputState? = lock.withLock {
                 guard !isClosed else { return nil }
@@ -301,7 +307,9 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
                 ))
                 return makeState()
             }
-            if let state { onInputStateChange?(state) }
+            if let state {
+                onInputStateChange?(state)
+            }
         }
     }
 
@@ -346,7 +354,9 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
             observationInstalled = true
             return true
         }
-        if !installed { hardware.stopObserving() }
+        if !installed {
+            hardware.stopObserving()
+        }
     }
 
     private func ensureObservation() throws {
@@ -386,7 +396,9 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
                 ))
                 return makeState()
             }
-            if let state { onInputStateChange?(state) }
+            if let state {
+                onInputStateChange?(state)
+            }
         }
     }
 
@@ -422,7 +434,9 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
     private func setStatus(_ status: AudioInputStatus) -> Int? {
         self.status = status
         statusGeneration += 1
-        if case .restored = status { return statusGeneration }
+        if case .restored = status {
+            return statusGeneration
+        }
         return nil
     }
 
@@ -446,7 +460,9 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
             ))
             return makeState()
         }
-        if let state { onInputStateChange?(state) }
+        if let state {
+            onInputStateChange?(state)
+        }
     }
 
     private func makeState() -> AudioInputState {
@@ -464,7 +480,9 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
     private static func resolve(
         preferredUID: String?, snapshot: AudioHardwareSnapshot
     ) -> AudioInputDevice? {
-        if let preferred = snapshot.device(uid: preferredUID) { return preferred }
+        if let preferred = snapshot.device(uid: preferredUID) {
+            return preferred
+        }
         return snapshot.systemDefault
     }
 

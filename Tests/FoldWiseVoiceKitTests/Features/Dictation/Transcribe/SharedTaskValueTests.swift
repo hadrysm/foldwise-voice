@@ -92,7 +92,9 @@ private extension Result where Failure == Error {
     var isWaiterCancellation: Bool {
         guard case let .failure(error) = self else { return false }
         guard let waitError = error as? SharedTaskValue.WaitError else { return false }
-        if case .waiterCancelled = waitError { return true }
+        if case .waiterCancelled = waitError {
+            return true
+        }
         return false
     }
 }

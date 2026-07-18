@@ -80,6 +80,8 @@ enum ASRModelLibraryStorage {
 
     private static func delete(_ engine: ASRModelCatalog.Engine) async throws {
         let failure = await Task.detached { ASRModelStore.delete(engine) }.value
-        if let failure { throw DeletionFailure(errorDescription: failure) }
+        if let failure {
+            throw DeletionFailure(errorDescription: failure)
+        }
     }
 }

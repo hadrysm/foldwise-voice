@@ -20,7 +20,9 @@ final class FakeRecorder: AudioRecording {
     }
 
     func start() throws {
-        if let startError { throw startError }
+        if let startError {
+            throw startError
+        }
         startCount += 1
     }
 
@@ -57,7 +59,9 @@ final class FakeTranscriber: Transcribing {
 
     func prepare() async throws {
         prepareCount += 1
-        if let prepareError { throw prepareError }
+        if let prepareError {
+            throw prepareError
+        }
     }
 
     func transcribe(_ samples: [Float]) async throws -> String {

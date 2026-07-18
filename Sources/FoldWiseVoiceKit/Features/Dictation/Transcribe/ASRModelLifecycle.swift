@@ -353,7 +353,9 @@ actor ASRModelLifecycle: ASRSessionHandleProviding {
     }
 
     func select(_ id: String) async {
-        if !didStart { await start() }
+        if !didStart {
+            await start()
+        }
         guard operation == nil,
               activeDownload == nil,
               activeSelection == nil,
@@ -500,7 +502,9 @@ actor ASRModelLifecycle: ASRSessionHandleProviding {
     }
 
     func delete(_ id: String) async {
-        if !didStart { await start() }
+        if !didStart {
+            await start()
+        }
         guard operation == nil,
               activeDownload == nil,
               activeSelection == nil,
@@ -761,7 +765,9 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
                 sessionDrainWaiters.append(continuation)
                 return false
             }
-            if shouldResume { continuation.resume() }
+            if shouldResume {
+                continuation.resume()
+            }
         }
     }
 
@@ -772,7 +778,9 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
                 modelSessionDrainWaiters[modelID, default: []].append(continuation)
                 return false
             }
-            if shouldResume { continuation.resume() }
+            if shouldResume {
+                continuation.resume()
+            }
         }
     }
 

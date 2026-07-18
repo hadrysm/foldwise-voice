@@ -14,7 +14,9 @@ final class ASRModelAdapterTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
-        if let directory { try FileManager.default.removeItem(at: directory) }
+        if let directory {
+            try FileManager.default.removeItem(at: directory)
+        }
     }
 
     func testWhisperReportsCompleteCoreMLDataAsAvailable() throws {

@@ -32,7 +32,9 @@ final class Transcriber: Transcribing {
     }
 
     private func ensureLoaded() -> Task<AsrManager, Error> {
-        if let loadTask { return loadTask }
+        if let loadTask {
+            return loadTask
+        }
         let version = ASRModelStore.fluidAudioVersion(version)
         let task = Task<AsrManager, Error> {
             let models = try await AsrModels.downloadAndLoad(version: version)

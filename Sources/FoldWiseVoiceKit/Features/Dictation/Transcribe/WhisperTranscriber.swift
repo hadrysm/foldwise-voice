@@ -56,7 +56,9 @@ enum SharedTaskValue {
         let waiter = Waiter<Value>()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                if waiter.registerIfActive(continuation) { onWaiterRegistered() }
+                if waiter.registerIfActive(continuation) {
+                    onWaiterRegistered()
+                }
                 Task { waiter.resolve(await task.result) }
             }
         } onCancel: {
@@ -115,7 +117,9 @@ final class WhisperTranscriber: Transcribing {
 
     private func ensureLoaded() -> Task<LoadedPipe, Error> {
         stateLock.withLock {
-            if let loadTask = _loadTask { return loadTask }
+            if let loadTask = _loadTask {
+                return loadTask
+            }
             let variant = variant
             let task = Task<LoadedPipe, Error> {
                 let folder = try await WhisperKit.download(variant: variant)
@@ -142,7 +146,9 @@ final class WhisperTranscriber: Transcribing {
 
     private func clearLoadTask(_ task: Task<LoadedPipe, Error>) {
         stateLock.withLock {
-            if _loadTask == task { _loadTask = nil }
+            if _loadTask == task {
+                _loadTask = nil
+            }
         }
     }
 

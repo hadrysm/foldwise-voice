@@ -226,7 +226,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The living idle pill is the ready signal (PRD #103); the hotkey
         // hint lives on Home, rendered from the live config.
         badge.show()
-        if config.isReadOnly { settings.show() }
+        if config.isReadOnly {
+            settings.show()
+        }
     }
 
     /// "Check for Updates…" from the menu bar: check immediately and always

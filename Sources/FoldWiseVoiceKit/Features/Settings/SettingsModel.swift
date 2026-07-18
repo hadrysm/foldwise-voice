@@ -143,22 +143,30 @@ final class SettingsModel: ObservableObject {
     }
 
     var isASRBootstrapping: Bool {
-        if case .bootstrapping = asrSnapshot?.operation { return true }
+        if case .bootstrapping = asrSnapshot?.operation {
+            return true
+        }
         return false
     }
 
     var asrSwitching: String? {
-        if case let .switching(modelID) = asrSnapshot?.operation { return modelID }
+        if case let .switching(modelID) = asrSnapshot?.operation {
+            return modelID
+        }
         return nil
     }
 
     var asrRestoring: String? {
-        if case let .restoring(modelID) = asrSnapshot?.operation { return modelID }
+        if case let .restoring(modelID) = asrSnapshot?.operation {
+            return modelID
+        }
         return nil
     }
 
     var asrDeleting: String? {
-        if case let .deleting(modelID) = asrSnapshot?.operation { return modelID }
+        if case let .deleting(modelID) = asrSnapshot?.operation {
+            return modelID
+        }
         return nil
     }
 

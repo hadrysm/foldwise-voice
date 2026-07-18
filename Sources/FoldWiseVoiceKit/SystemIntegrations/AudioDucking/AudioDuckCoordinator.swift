@@ -93,7 +93,9 @@ final class AudioDuckCoordinator: AudioDucking {
                 workerScheduled = false
             }
             lock.unlock()
-            if settled { return }
+            if settled {
+                return
+            }
         }
     }
 

@@ -49,13 +49,17 @@ final class BadgeIdleSilhouetteTests: XCTestCase {
         var runs: [ClosedRange<Int>] = []
         var start: Int?
         for (x, occupied) in occupiedColumns.enumerated() {
-            if occupied, start == nil { start = x }
+            if occupied, start == nil {
+                start = x
+            }
             if !occupied, let runStart = start {
                 runs.append(runStart ... (x - 1))
                 start = nil
             }
         }
-        if let start { runs.append(start ... (rep.pixelsWide - 1)) }
+        if let start {
+            runs.append(start ... (rep.pixelsWide - 1))
+        }
 
         return runs.map { run in
             let rows = (0 ..< rep.pixelsHigh).filter { y in

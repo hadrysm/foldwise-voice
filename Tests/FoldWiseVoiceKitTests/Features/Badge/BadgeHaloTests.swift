@@ -34,7 +34,9 @@ final class BadgeHaloTests: XCTestCase {
                 guard let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
                 else { continue }
                 let dimmest = min(color.redComponent, color.greenComponent, color.blueComponent)
-                if dimmest < 0.98 { nonWhite += 1 }
+                if dimmest < 0.98 {
+                    nonWhite += 1
+                }
             }
         }
 

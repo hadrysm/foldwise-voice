@@ -60,7 +60,9 @@ final class SettingsWorkflowTests: XCTestCase {
         }
 
         func start() throws {
-            if let startError { throw startError }
+            if let startError {
+                throw startError
+            }
             isStarted = true
         }
 
@@ -557,8 +559,12 @@ final class SettingsWorkflowTests: XCTestCase {
                 { fraction in progress(fraction) },
                 { _ in }
             )
-            if Task.isCancelled { throw CancellationError() }
-            if let failure { throw DownloadError(errorDescription: failure) }
+            if Task.isCancelled {
+                throw CancellationError()
+            }
+            if let failure {
+                throw DownloadError(errorDescription: failure)
+            }
             setAvailable(true, id: id)
         }
 
@@ -1759,7 +1765,9 @@ final class SettingsWorkflowTests: XCTestCase {
 
         workflow.checkForUpdates()
         await waitUntil {
-            if case .available = model.updateState { return true }
+            if case .available = model.updateState {
+                return true
+            }
             return false
         }
 
@@ -1777,7 +1785,9 @@ final class SettingsWorkflowTests: XCTestCase {
 
         workflow.checkForUpdates()
         await waitUntil {
-            if case .failed = model.updateState { return true }
+            if case .failed = model.updateState {
+                return true
+            }
             return false
         }
 

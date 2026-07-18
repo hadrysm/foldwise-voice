@@ -168,7 +168,9 @@ final class Pipeline {
                 )
                 return
             }
-            if config.pauseAudio { ducker.duck() }
+            if config.pauseAudio {
+                ducker.duck()
+            }
             recording = true
             let mode = config.mode
             do {
@@ -308,7 +310,9 @@ final class Pipeline {
         text = polished.text
         let isPolished = polished.isPolished
         if let verdict = polished.verdict {
-            if verdict.fellBack { logOffTaskFallback(verdict, mode: mode) }
+            if verdict.fellBack {
+                logOffTaskFallback(verdict, mode: mode)
+            }
             Log.pipeline.info("llm: \(text, privacy: .private)")
         }
 

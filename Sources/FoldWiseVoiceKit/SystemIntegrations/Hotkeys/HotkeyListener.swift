@@ -194,7 +194,9 @@ final class HotkeyListener: HotkeyListening {
         let keycode = { CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode)) }
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
-            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            if let tap {
+                CGEvent.tapEnable(tap: tap, enable: true)
+            }
         case .flagsChanged:
             dispatcher.process(.flagsChanged(keycode: keycode(), flags: event.flags))
         case .keyDown:
