@@ -1858,6 +1858,35 @@ final class ASRModelLifecycleTests: XCTestCase {
         )
     }
 
+    func testAutomaticRestorationNamesFallbackWhileFallbackPrepares() async {
+        let fallbackPreparation = SuspendAsyncOperations()
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"]
+        )
+        parakeet.enginePreparation = fallbackPreparation.run
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: ["whisper-small"]
+        )
+        whisper.enginePreparationErrors = ["whisper-small": EngineFailure()]
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "whisper-small",
+            adapters: [parakeet, whisper]
+        )
+
+        let start = Task { await lifecycle.start() }
+        await fallbackPreparation.waitUntilStarted()
+        let preparingFallback = await lifecycle.snapshot()
+        fallbackPreparation.finish()
+        await start.value
+
+        XCTAssertEqual(
+            preparingFallback.operation,
+            .restoring(modelID: "parakeet-v3")
+        )
+    }
+
     func testSelectingEffectiveFallbackClearsPreviousEngineLoadFailure() async {
         let parakeet = FakeASRModelFamilyAdapter(
             modelIDs: ["parakeet-v3"],

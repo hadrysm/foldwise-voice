@@ -116,25 +116,4 @@ enum ASRModelCatalog {
         guard let failure, !failure.isEmpty else { return nil }
         return "Couldn't download \(entry.name): \(failure)"
     }
-
-    /// Pure outcome of deleting a downloaded ASR model: the confirmation-dialog
-    /// body and whether the active selection must fall back to the default
-    /// engine. Deleting the active model commits Parakeet as the global selection
-    /// (ADR-0006). Tested with no I/O, mirroring
-    /// `OllamaClient.deleteOutcome`; the on-disk removal lives in `ASRModelStore`.
-    static func deleteOutcome(for entry: Entry, isActive: Bool) -> DeleteOutcome {
-        var message = "This removes \(entry.name)'s downloaded weights and frees \(entry.size)."
-        if isActive {
-            message += " It's your current speech model, so deletion selects Parakeet instead."
-        }
-        return DeleteOutcome(message: message, fallsBackToDefault: isActive)
-    }
-
-    struct DeleteOutcome: Equatable {
-        /// Body of the delete confirmation dialog.
-        let message: String
-        /// True when the deleted model was active, so the caller must re-select
-        /// the default (Parakeet) to keep dictation working.
-        let fallsBackToDefault: Bool
-    }
 }

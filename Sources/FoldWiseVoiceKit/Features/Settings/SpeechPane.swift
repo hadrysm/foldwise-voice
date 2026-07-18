@@ -70,7 +70,7 @@ struct SpeechPane: View {
             Button("Cancel", role: .cancel) {}
         } message: { entry in
             Text(
-                deleteConfirmation(for: entry)
+                model.asrDeleteConfirmation(for: entry)
             )
         }
     }
@@ -219,13 +219,5 @@ struct SpeechPane: View {
 
     private func modelName(_ id: String) -> String {
         model.asrCatalog.first { $0.id == id }?.name ?? id
-    }
-
-    private func deleteConfirmation(for entry: ASRModelDescriptor) -> String {
-        var message = "This removes \(entry.name)'s downloaded weights and frees \(entry.size)."
-        if model.asrModel == entry.id {
-            message += " It's your current speech model, so deletion selects Parakeet instead."
-        }
-        return message
     }
 }

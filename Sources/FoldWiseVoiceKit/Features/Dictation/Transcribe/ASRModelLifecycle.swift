@@ -203,6 +203,8 @@ actor ASRModelLifecycle: ASRSessionHandleProviding {
             if operation == nil {
                 operation = .restoring(modelID: targetID)
                 ownsAutomaticRestorationOperation = true
+            } else if ownsAutomaticRestorationOperation {
+                operation = .restoring(modelID: targetID)
             }
 
             await blockDictationThenReleaseEngine()

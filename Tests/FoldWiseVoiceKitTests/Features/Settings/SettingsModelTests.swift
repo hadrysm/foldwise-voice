@@ -41,6 +41,23 @@ final class SettingsModelTests: XCTestCase {
         )
     }
 
+    func testASRDeleteConfirmationExplainsSelectedModelCommit() async {
+        let lifecycle = ASRModelLifecycle(storedSelection: "whisper-small", adapters: [])
+        let snapshot = await lifecycle.snapshot()
+        let model = SettingsModel()
+        model.applyASRLifecycleSnapshot(snapshot)
+
+        let message = model.asrCatalog
+            .first { $0.id == "whisper-small" }
+            .map(model.asrDeleteConfirmation(for:))
+
+        XCTAssertEqual(
+            message,
+            "This removes Whisper small's downloaded weights and frees 483 MB. "
+                + "It's your current speech model, so deletion selects Parakeet instead."
+        )
+    }
+
     func testPaneIDsMatchEachDestination() {
         XCTAssertEqual(
             SettingsModel.Pane.allCases.map(\.id),
