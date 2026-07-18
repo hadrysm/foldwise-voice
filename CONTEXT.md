@@ -119,9 +119,10 @@ without changing the ASR model selection.
 _Avoid_: installed model, cached model
 
 **ASR model selection** — The global ASR model chosen for transcription. It
-changes only through explicit selection, never merely because another ASR model
-became available. Each Dictation session captures the selection when it begins;
-a later change applies to the next Dictation session.
+changes through explicit selection, or when deleting the selected optional model
+commits the default Parakeet selection; downloading never changes it. Each
+Dictation session captures the selection when it begins; a later change applies
+to the next Dictation session.
 _Avoid_: active engine, downloaded model
 
 **Effective ASR model** — The ASR model a Dictation session actually uses after

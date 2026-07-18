@@ -264,7 +264,7 @@ final class SettingsModel: ObservableObject {
     var onCancelASROperation: (() -> Void)?
     var onRetryASRBootstrap: (() -> Void)?
     /// Delete a downloaded model's on-disk weights to reclaim space (#95). If it
-    /// was active, dictation falls back to Parakeet until another is selected.
+    /// was selected, the lifecycle commits Parakeet before removing its data.
     var onDeleteASRModel: ((String) -> Void)?
     var onCheckUpdates: (() -> Void)?
     /// One semantic row-action seam. Clear All remains collection-level.

@@ -224,8 +224,7 @@ struct SpeechPane: View {
     private func deleteConfirmation(for entry: ASRModelDescriptor) -> String {
         var message = "This removes \(entry.name)'s downloaded weights and frees \(entry.size)."
         if model.asrModel == entry.id {
-            message += " It's your current speech model, so dictation falls back to "
-                + "Parakeet until you pick another."
+            message += " It's your current speech model, so deletion selects Parakeet instead."
         }
         return message
     }

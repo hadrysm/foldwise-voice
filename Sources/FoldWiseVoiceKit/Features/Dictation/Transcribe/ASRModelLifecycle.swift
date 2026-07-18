@@ -177,7 +177,14 @@ actor ASRModelLifecycle: ASRSessionHandleProviding {
             return
         }
         activationInProgress = true
-        defer { activationInProgress = false }
+        var ownsAutomaticRestorationOperation = false
+        defer {
+            activationInProgress = false
+            if ownsAutomaticRestorationOperation {
+                operation = nil
+                publishSnapshot()
+            }
+        }
 
         while true {
             let targetID = effectiveTargetID()
@@ -191,6 +198,11 @@ actor ASRModelLifecycle: ASRSessionHandleProviding {
                 sessionCoordinator.activate(engine, modelID: effectiveSelection)
                 publishSnapshot()
                 return
+            }
+
+            if operation == nil {
+                operation = .restoring(modelID: targetID)
+                ownsAutomaticRestorationOperation = true
             }
 
             await blockDictationThenReleaseEngine()
@@ -306,8 +318,11 @@ actor ASRModelLifecycle: ASRSessionHandleProviding {
             publishSnapshot()
             return
         }
-        operation = nil
+        operation = .bootstrapping(fraction: nil)
+        publishSnapshot()
         await ensureEffectiveEngine()
+        operation = nil
+        publishSnapshot()
     }
 
     func reconcileAvailability() async {

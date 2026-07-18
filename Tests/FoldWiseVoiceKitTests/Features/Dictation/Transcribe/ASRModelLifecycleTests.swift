@@ -151,6 +151,47 @@ final class ASRModelLifecycleTests: XCTestCase {
         )
     }
 
+    func testBootstrapPreparationSerializesOtherManagementOperations() async {
+        let preparation = SuspendAsyncOperations()
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: []
+        )
+        parakeet.suspendDownloads = true
+        parakeet.enginePreparation = preparation.run
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: []
+        )
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "parakeet-v3",
+            adapters: [parakeet, whisper]
+        )
+
+        let start = Task { await lifecycle.start() }
+        await parakeet.waitForDownloadStart()
+        parakeet.finishDownload(availableAfterDownload: true)
+        await preparation.waitUntilStarted()
+        await lifecycle.download("whisper-small")
+        let preparing = await lifecycle.snapshot()
+        preparation.finish()
+        await start.value
+        let completed = await lifecycle.snapshot()
+
+        XCTAssertEqual(
+            BootstrapPreparationSerializationState(
+                operationWhilePreparing: preparing.operation,
+                overlappingDownloads: whisper.downloadedModelIDs,
+                completedSelection: completed.effectiveSelection
+            ),
+            BootstrapPreparationSerializationState(
+                operationWhilePreparing: .bootstrapping(fraction: nil),
+                overlappingDownloads: [],
+                completedSelection: "parakeet-v3"
+            )
+        )
+    }
+
     func testFailedBootstrapDoesNotRepeatUntilExplicitRetry() async {
         let parakeet = FakeASRModelFamilyAdapter(
             modelIDs: ["parakeet-v3"],
@@ -1598,6 +1639,51 @@ final class ASRModelLifecycleTests: XCTestCase {
         )
     }
 
+    func testRepairedSelectionRestorationSerializesOtherManagementOperations() async {
+        let residency = EngineResidencyProbe()
+        let preparation = SuspendAsyncOperations()
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3", "parakeet-v2"],
+            availableModelIDs: ["parakeet-v3"],
+            residency: residency
+        )
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: [],
+            residency: residency
+        )
+        whisper.enginePreparation = preparation.run
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "whisper-small",
+            adapters: [parakeet, whisper]
+        )
+        await lifecycle.start()
+        whisper.setAvailable(true, id: "whisper-small")
+
+        let restoration = Task { await lifecycle.reconcileAvailability() }
+        await preparation.waitUntilStarted()
+        await lifecycle.download("parakeet-v2")
+        let restoring = await lifecycle.snapshot()
+        preparation.finish()
+        await restoration.value
+        let completed = await lifecycle.snapshot()
+
+        XCTAssertEqual(
+            AutomaticRestorationSerializationState(
+                operationWhilePreparing: restoring.operation,
+                overlappingDownloads: parakeet.downloadedModelIDs,
+                completedSelection: completed.effectiveSelection,
+                maximumResidentEngines: residency.maximumResidentEngines
+            ),
+            AutomaticRestorationSerializationState(
+                operationWhilePreparing: .restoring(modelID: "whisper-small"),
+                overlappingDownloads: [],
+                completedSelection: "whisper-small",
+                maximumResidentEngines: 1
+            )
+        )
+    }
+
     func testAnotherSelectionRequestIsIgnoredWhileCandidatePrepares() async {
         let residency = EngineResidencyProbe()
         let preparation = SuspendAsyncOperations()
@@ -2666,6 +2752,12 @@ final class ASRModelLifecycleTests: XCTestCase {
         let downloadedModelIDs: [String]
     }
 
+    private struct BootstrapPreparationSerializationState: Equatable {
+        let operationWhilePreparing: ASRModelLifecycleOperation?
+        let overlappingDownloads: [String]
+        let completedSelection: String?
+    }
+
     private struct WarmEngineState: Equatable {
         let text: String
         let loadedModelIDs: [String]
@@ -2748,6 +2840,13 @@ final class ASRModelLifecycleTests: XCTestCase {
         let recovery: ASRModelLifecycleRecovery?
         let downloadedModelIDs: [String]
         let eventLog: [String]
+        let maximumResidentEngines: Int
+    }
+
+    private struct AutomaticRestorationSerializationState: Equatable {
+        let operationWhilePreparing: ASRModelLifecycleOperation?
+        let overlappingDownloads: [String]
+        let completedSelection: String?
         let maximumResidentEngines: Int
     }
 

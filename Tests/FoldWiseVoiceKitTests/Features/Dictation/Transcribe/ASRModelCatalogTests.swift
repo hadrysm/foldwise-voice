@@ -127,6 +127,6 @@ final class ASRModelCatalogTests: XCTestCase {
     func testDeleteOutcomeForActiveModelFallsBackToDefault() {
         let outcome = ASRModelCatalog.deleteOutcome(for: whisper, isActive: true)
         XCTAssertTrue(outcome.fallsBackToDefault)
-        XCTAssertTrue(outcome.message.contains("falls back to Parakeet"))
+        XCTAssertTrue(outcome.message.contains("selects Parakeet"))
     }
 }

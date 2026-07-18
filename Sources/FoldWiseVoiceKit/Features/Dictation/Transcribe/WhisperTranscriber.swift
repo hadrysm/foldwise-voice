@@ -63,6 +63,23 @@ enum SharedTaskValue {
             waiter.cancel()
         }
     }
+
+    static func waitExclusively<Value: Sendable>(
+        for task: Task<Value, Error>
+    ) async throws -> Value {
+        do {
+            let value = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            try Task.checkCancellation()
+            return value
+        } catch {
+            try Task.checkCancellation()
+            throw error
+        }
+    }
 }
 
 final class WhisperTranscriber: Transcribing {
@@ -87,11 +104,9 @@ final class WhisperTranscriber: Transcribing {
     func prepare() async throws {
         let task = ensureLoaded()
         do {
-            // Cancel only this waiter. Active transcription or another lifecycle
-            // preparation may still depend on the shared engine load.
-            _ = try await SharedTaskValue.wait(for: task)
-        } catch SharedTaskValue.WaitError.waiterCancelled {
-            throw CancellationError()
+            // Engine activation is exclusive. Cancellation must finish tearing
+            // down this load before the lifecycle restores another resident engine.
+            _ = try await SharedTaskValue.waitExclusively(for: task)
         } catch {
             clearLoadTask(task) // allow a retry after a shared-load failure
             throw error
