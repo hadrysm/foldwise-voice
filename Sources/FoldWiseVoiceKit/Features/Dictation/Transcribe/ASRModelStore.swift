@@ -1,7 +1,7 @@
-// Resolves and frees the on-disk weight caches for the ASR engines (slice 5,
-// PRD #90). This is the one library-coupled seam — it turns a catalog entry
-// into the directory its downloaded weights live in — so the Speech pane can
-// reclaim disk space. FluidAudio exposes a public cache-directory accessor;
+// Resolves and frees the on-disk weight caches for the ASR engines. This is the
+// library-coupled storage seam used by the engine-family adapters to turn a
+// catalog entry into the directory its downloaded weights live in. FluidAudio
+// exposes a public cache-directory accessor;
 // WhisperKit downloads via the Hugging Face Hub convention into
 // ~/Documents/huggingface/models. Both couplings live here alone, so if a
 // library moves its files this is the only place to revise.

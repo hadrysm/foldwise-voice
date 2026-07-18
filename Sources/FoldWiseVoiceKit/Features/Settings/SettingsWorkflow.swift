@@ -20,7 +20,6 @@ protocol SettingsUpdateChecking {
 final class SettingsWorkflow {
     typealias ScheduleStatusClear = @MainActor ((@MainActor () -> Void)?) -> Void
     typealias Copy = @MainActor (String) -> Void
-    typealias DeleteASRModel = @MainActor (String) async -> String?
 
     private let config: Config
     private let model: SettingsModel
@@ -28,7 +27,6 @@ final class SettingsWorkflow {
     private let now: () -> Date
     private let scheduleStatusClear: ScheduleStatusClear
     private let llmModels: any LLMModelManaging
-    private let deleteASRModel: DeleteASRModel
     private let asrLifecycle: ASRModelLifecycle
     private let copy: Copy
     private let statsStore: StatsStore
@@ -67,7 +65,6 @@ final class SettingsWorkflow {
             now: now,
             scheduleStatusClear: scheduleStatusClear,
             llmModels: LiveLLMModelManager(),
-            deleteASRModel: deleteStoredASRModel,
             asrLifecycle: asrLifecycle,
             copy: copy,
             statsStore: statsStore,
@@ -87,7 +84,6 @@ final class SettingsWorkflow {
         now: @escaping () -> Date,
         scheduleStatusClear: @escaping ScheduleStatusClear,
         llmModels: any LLMModelManaging,
-        deleteASRModel: @escaping DeleteASRModel,
         asrLifecycle: ASRModelLifecycle,
         copy: @escaping Copy,
         statsStore: StatsStore = JSONStatsStore(url: JSONStatsStore.defaultURL),
@@ -104,7 +100,6 @@ final class SettingsWorkflow {
         self.now = now
         self.scheduleStatusClear = scheduleStatusClear
         self.llmModels = llmModels
-        self.deleteASRModel = deleteASRModel
         self.asrLifecycle = asrLifecycle
         self.copy = copy
         self.statsStore = statsStore
@@ -176,6 +171,8 @@ final class SettingsWorkflow {
         model.asrDownloaded = Set(snapshot.models.filter(\.isAvailable).map(\.id))
         model.asrSwitching = nil
         model.asrRestoring = nil
+        model.asrDeleting = nil
+        model.asrDeleteError = ""
         switch snapshot.recovery {
         case let .storedSelectionUnavailable(modelID, fallbackModelID):
             let selected = asrModelName(modelID, in: snapshot.models)
@@ -206,6 +203,11 @@ final class SettingsWorkflow {
             model.asrDownloading = nil
             model.asrDownloadFraction = nil
             model.isASRBootstrapping = false
+        case let .deleting(modelID):
+            model.asrDeleting = modelID
+            model.asrDownloading = nil
+            model.asrDownloadFraction = nil
+            model.isASRBootstrapping = false
         case nil:
             model.asrDownloading = nil
             model.asrDownloadFraction = nil
@@ -233,6 +235,11 @@ final class SettingsWorkflow {
             let fallback = asrModelName(fallbackModelID, in: snapshot.models)
             let detail = reason.map { ": \($0)" } ?? "."
             model.asrDownloadError = "Couldn't restore \(selected). Using \(fallback)\(detail)"
+        case let .deletionFailed(modelID, reason),
+             let .deletionSelectionFailed(modelID, reason):
+            let name = asrModelName(modelID, in: snapshot.models)
+            model.asrDeleteError = "Couldn't delete \(name): \(reason)"
+            model.asrDownloadError = ""
         case nil:
             model.asrDownloadError = ""
         }
@@ -636,7 +643,8 @@ final class SettingsWorkflow {
     }
 
     func selectASRModel(_ id: String) {
-        guard !model.hasActiveASRManagementOperation else { return }
+        guard asrDeleteID == nil, asrDownloadID == nil,
+              !model.hasActiveASRManagementOperation else { return }
         Task { await asrLifecycle.select(id) }
     }
 
@@ -671,21 +679,10 @@ final class SettingsWorkflow {
               descriptor.allowsDeletion else { return }
         let operationID = UUID()
         asrDeleteID = operationID
-        model.asrDeleting = id
-        model.asrDeleteError = ""
         Task { @MainActor in
-            let failure = await deleteASRModel(id)
+            await asrLifecycle.delete(id)
             guard asrDeleteID == operationID else { return }
             asrDeleteID = nil
-            model.asrDeleting = nil
-            if let failure {
-                model.asrDeleteError = "Couldn't delete \(descriptor.name): \(failure)"
-                return
-            }
-            await asrLifecycle.reconcileAvailability()
-            if model.asrModel == id {
-                selectASRModel(ASRModelCatalog.defaultID)
-            }
         }
     }
 

@@ -150,6 +150,27 @@ final class ASRModelAdapterTests: XCTestCase {
         )
     }
 
+    func testAdaptersWithoutDeletionBoundaryFailExplicitly() async {
+        let parakeet = ParakeetASRModelAdapter(
+            availability: { _ in true },
+            download: { _, _ in }
+        )
+        let whisper = WhisperASRModelAdapter(
+            modelDirectory: { _ in nil },
+            download: { _, _ in }
+        )
+
+        let errors = [
+            await unknownModelError { try await parakeet.removeModelData(for: "parakeet-v2") },
+            await unknownModelError { try await whisper.removeModelData(for: "whisper-small") },
+        ]
+
+        XCTAssertEqual(errors, [
+            "ASR model deletion is unavailable.",
+            "ASR model deletion is unavailable.",
+        ])
+    }
+
     private func constructionFails(_ construct: () throws -> Transcribing) -> Bool {
         do {
             _ = try construct()
@@ -281,6 +302,19 @@ final class ASRModelAdapterTests: XCTestCase {
         )
     }
 
+    func testWhisperDeletionMapsCatalogIDToLibraryVariant() async throws {
+        let probe = DownloadProbe<String>()
+        let adapter = WhisperASRModelAdapter(
+            modelDirectory: { _ in nil },
+            download: { _, _ in },
+            delete: { probe.record($0) }
+        )
+
+        try await adapter.removeModelData(for: "whisper-small")
+
+        XCTAssertEqual(probe.values, ["openai_whisper-small"])
+    }
+
     func testWhisperRejectsUnknownAndWrongFamilyIDs() async {
         let adapter = WhisperASRModelAdapter(
             modelDirectory: { _ in nil },
@@ -290,16 +324,21 @@ final class ASRModelAdapterTests: XCTestCase {
         let error = await unknownModelError {
             try await adapter.downloadModelData(for: "unknown") { _ in }
         }
+        let deletionError = await unknownModelError {
+            try await adapter.removeModelData(for: "unknown")
+        }
         XCTAssertEqual(
             RejectionState(
                 unknownIsAvailable: adapter.isModelDataAvailable(for: "unknown"),
                 wrongFamilyIsAvailable: adapter.isModelDataAvailable(for: "parakeet-v3"),
-                error: error
+                error: error,
+                deletionError: deletionError
             ),
             RejectionState(
                 unknownIsAvailable: false,
                 wrongFamilyIsAvailable: false,
-                error: "Unknown ASR model: unknown"
+                error: "Unknown ASR model: unknown",
+                deletionError: "Unknown ASR model: unknown"
             )
         )
     }
@@ -320,6 +359,19 @@ final class ASRModelAdapterTests: XCTestCase {
             ),
             ParakeetMappingState(mappedValues: [.v2], isAvailable: true)
         )
+    }
+
+    func testParakeetDeletionMapsCatalogIDToLibraryVariant() async throws {
+        let probe = DownloadProbe<ASRModelCatalog.ParakeetVariant>()
+        let adapter = ParakeetASRModelAdapter(
+            availability: { _ in true },
+            download: { _, _ in },
+            delete: { probe.record($0) }
+        )
+
+        try await adapter.removeModelData(for: "parakeet-v2")
+
+        XCTAssertEqual(probe.values, [.v2])
     }
 
     func testParakeetRequiresEveryLibraryModelArtifact() throws {
@@ -447,16 +499,21 @@ final class ASRModelAdapterTests: XCTestCase {
         let error = await unknownModelError {
             try await adapter.downloadModelData(for: "whisper-small") { _ in }
         }
+        let deletionError = await unknownModelError {
+            try await adapter.removeModelData(for: "whisper-small")
+        }
         XCTAssertEqual(
             RejectionState(
                 unknownIsAvailable: adapter.isModelDataAvailable(for: "unknown"),
                 wrongFamilyIsAvailable: adapter.isModelDataAvailable(for: "whisper-small"),
-                error: error
+                error: error,
+                deletionError: deletionError
             ),
             RejectionState(
                 unknownIsAvailable: false,
                 wrongFamilyIsAvailable: false,
-                error: "Unknown ASR model: whisper-small"
+                error: "Unknown ASR model: whisper-small",
+                deletionError: "Unknown ASR model: whisper-small"
             )
         )
     }
@@ -623,6 +680,7 @@ private struct RejectionState: Equatable {
     let unknownIsAvailable: Bool
     let wrongFamilyIsAvailable: Bool
     let error: String?
+    let deletionError: String?
 }
 
 private final class DownloadProbe<Value>: @unchecked Sendable {

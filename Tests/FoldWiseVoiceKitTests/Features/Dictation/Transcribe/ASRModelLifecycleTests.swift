@@ -22,6 +22,10 @@ final class ASRModelLifecycleTests: XCTestCase {
         let errorDescription: String? = "config write failed"
     }
 
+    private struct DeletionFailure: LocalizedError {
+        let errorDescription: String? = "permission denied"
+    }
+
     func testInitialSnapshotAndTranscribingSeamBothBlockUntilStartupCompletes() async {
         let lifecycle = ASRModelLifecycle(
             storedSelection: "parakeet-v3",
@@ -1872,6 +1876,401 @@ final class ASRModelLifecycleTests: XCTestCase {
         )
     }
 
+    func testDeletingSelectedModelCommitsDefaultAndWaitsForCapturedSession() async throws {
+        let residency = EngineResidencyProbe()
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"],
+            residency: residency
+        )
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: ["whisper-small"],
+            residency: residency
+        )
+        whisper.transcriptionTextByModelID = ["whisper-small": "captured whisper"]
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "whisper-small",
+            adapters: [parakeet, whisper],
+            persistSelection: { id in residency.record("persist-\(id)") }
+        )
+        await lifecycle.start()
+        let session = try lifecycle.captureSession()
+
+        let deletion = Task { await lifecycle.delete("whisper-small") }
+        let deleting = await snapshot(from: lifecycle) {
+            $0.operation == .deleting(modelID: "whisper-small")
+                && $0.storedSelection == "parakeet-v3"
+        }
+        let blockedCapture = await failureDescription { _ = try lifecycle.captureSession() }
+        let transcript = try await session.transcribe([0.2])
+
+        XCTAssertEqual(
+            DeletionState(
+                storedSelection: deleting.storedSelection,
+                effectiveSelection: deleting.effectiveSelection,
+                operation: deleting.operation,
+                isDictationBlocked: deleting.isDictationBlocked,
+                targetIsAvailable: deleting.models.first { $0.id == "whisper-small" }?.isAvailable,
+                failure: deleting.failure,
+                transcript: transcript,
+                captureFailure: blockedCapture,
+                events: residency.events
+            ),
+            DeletionState(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "whisper-small",
+                operation: .deleting(modelID: "whisper-small"),
+                isDictationBlocked: true,
+                targetIsAvailable: true,
+                failure: nil,
+                transcript: "captured whisper",
+                captureFailure: "Speech recognition is unavailable.",
+                events: ["construct-whisper-small", "persist-parakeet-v3"]
+            )
+        )
+
+        session.release()
+        await deletion.value
+        let completed = await lifecycle.snapshot()
+
+        XCTAssertEqual(
+            DeletionState(
+                storedSelection: completed.storedSelection,
+                effectiveSelection: completed.effectiveSelection,
+                operation: completed.operation,
+                isDictationBlocked: completed.isDictationBlocked,
+                targetIsAvailable: completed.models.first { $0.id == "whisper-small" }?.isAvailable,
+                failure: completed.failure,
+                transcript: nil,
+                captureFailure: nil,
+                events: residency.events
+            ),
+            DeletionState(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                operation: nil,
+                isDictationBlocked: false,
+                targetIsAvailable: false,
+                failure: nil,
+                transcript: nil,
+                captureFailure: nil,
+                events: [
+                    "construct-whisper-small",
+                    "persist-parakeet-v3",
+                    "release-whisper-small",
+                    "delete-whisper-small",
+                    "construct-parakeet-v3",
+                ]
+            )
+        )
+    }
+
+    func testSelectedModelDeletionFailureKeepsFallbackSelectionAndOldDataAvailable() async {
+        let residency = EngineResidencyProbe()
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"],
+            residency: residency
+        )
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: ["whisper-small"],
+            residency: residency
+        )
+        whisper.deletionError = DeletionFailure()
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "whisper-small",
+            adapters: [parakeet, whisper],
+            persistSelection: { id in residency.record("persist-\(id)") }
+        )
+        await lifecycle.start()
+
+        await lifecycle.delete("whisper-small")
+        let snapshot = await lifecycle.snapshot()
+
+        XCTAssertEqual(
+            DeletionOutcome(
+                storedSelection: snapshot.storedSelection,
+                effectiveSelection: snapshot.effectiveSelection,
+                operation: snapshot.operation,
+                isDictationBlocked: snapshot.isDictationBlocked,
+                availableModelIDs: snapshot.models.filter(\.isAvailable).map(\.id),
+                failure: snapshot.failure,
+                removedModelIDs: whisper.removedModelIDs,
+                events: residency.events
+            ),
+            DeletionOutcome(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                operation: nil,
+                isDictationBlocked: false,
+                availableModelIDs: ["parakeet-v3", "whisper-small"],
+                failure: .deletionFailed(modelID: "whisper-small", reason: "permission denied"),
+                removedModelIDs: [],
+                events: [
+                    "construct-whisper-small",
+                    "persist-parakeet-v3",
+                    "release-whisper-small",
+                    "delete-whisper-small",
+                    "construct-parakeet-v3",
+                ]
+            )
+        )
+    }
+
+    func testSelectedModelDeletionStopsWhenFallbackSelectionCannotPersist() async {
+        let residency = EngineResidencyProbe()
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"],
+            residency: residency
+        )
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: ["whisper-small"],
+            residency: residency
+        )
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "whisper-small",
+            adapters: [parakeet, whisper],
+            persistSelection: { id in
+                residency.record("persist-\(id)")
+                throw SelectionPersistenceFailure()
+            }
+        )
+        await lifecycle.start()
+
+        await lifecycle.delete("whisper-small")
+        let snapshot = await lifecycle.snapshot()
+
+        XCTAssertEqual(
+            DeletionOutcome(
+                storedSelection: snapshot.storedSelection,
+                effectiveSelection: snapshot.effectiveSelection,
+                operation: snapshot.operation,
+                isDictationBlocked: snapshot.isDictationBlocked,
+                availableModelIDs: snapshot.models.filter(\.isAvailable).map(\.id),
+                failure: snapshot.failure,
+                removedModelIDs: whisper.removedModelIDs,
+                events: residency.events
+            ),
+            DeletionOutcome(
+                storedSelection: "whisper-small",
+                effectiveSelection: "whisper-small",
+                operation: nil,
+                isDictationBlocked: false,
+                availableModelIDs: ["parakeet-v3", "whisper-small"],
+                failure: .deletionSelectionFailed(
+                    modelID: "whisper-small",
+                    reason: "config write failed"
+                ),
+                removedModelIDs: [],
+                events: ["construct-whisper-small", "persist-parakeet-v3"]
+            )
+        )
+    }
+
+    func testDeletingNonSelectedAndAlreadyAbsentModelsPreservesWarmSelection() async {
+        let residency = EngineResidencyProbe()
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3", "parakeet-v2"],
+            availableModelIDs: ["parakeet-v3", "parakeet-v2"],
+            residency: residency
+        )
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: [],
+            residency: residency
+        )
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "parakeet-v3",
+            adapters: [parakeet, whisper]
+        )
+        await lifecycle.start()
+
+        await lifecycle.delete("parakeet-v2")
+        await lifecycle.delete("whisper-small")
+        let snapshot = await lifecycle.snapshot()
+
+        XCTAssertEqual(
+            DeletionOutcome(
+                storedSelection: snapshot.storedSelection,
+                effectiveSelection: snapshot.effectiveSelection,
+                operation: snapshot.operation,
+                isDictationBlocked: snapshot.isDictationBlocked,
+                availableModelIDs: snapshot.models.filter(\.isAvailable).map(\.id),
+                failure: snapshot.failure,
+                removedModelIDs: parakeet.removedModelIDs + whisper.removedModelIDs,
+                events: residency.events
+            ),
+            DeletionOutcome(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                operation: nil,
+                isDictationBlocked: false,
+                availableModelIDs: ["parakeet-v3"],
+                failure: nil,
+                removedModelIDs: ["parakeet-v2", "whisper-small"],
+                events: [
+                    "construct-parakeet-v3",
+                    "delete-parakeet-v2",
+                    "delete-whisper-small",
+                ]
+            )
+        )
+    }
+
+    func testDeletingNonSelectedModelDoesNotWaitForUnrelatedSession() async throws {
+        let residency = EngineResidencyProbe()
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"],
+            residency: residency
+        )
+        parakeet.transcriptionTextByModelID = ["parakeet-v3": "captured parakeet"]
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: ["whisper-small"],
+            residency: residency
+        )
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "parakeet-v3",
+            adapters: [parakeet, whisper]
+        )
+        await lifecycle.start()
+        let session = try lifecycle.captureSession()
+
+        await lifecycle.delete("whisper-small")
+        let transcript = try await session.transcribe([0.3])
+        let snapshot = await lifecycle.snapshot()
+        session.release()
+
+        XCTAssertEqual(
+            DeletionState(
+                storedSelection: snapshot.storedSelection,
+                effectiveSelection: snapshot.effectiveSelection,
+                operation: snapshot.operation,
+                isDictationBlocked: snapshot.isDictationBlocked,
+                targetIsAvailable: snapshot.models.first { $0.id == "whisper-small" }?.isAvailable,
+                failure: snapshot.failure,
+                transcript: transcript,
+                captureFailure: nil,
+                events: residency.events
+            ),
+            DeletionState(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                operation: nil,
+                isDictationBlocked: false,
+                targetIsAvailable: false,
+                failure: nil,
+                transcript: "captured parakeet",
+                captureFailure: nil,
+                events: ["construct-parakeet-v3", "delete-whisper-small"]
+            )
+        )
+    }
+
+    func testDeletingUnavailableStoredModelKeepsEffectiveFallbackReady() async {
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"]
+        )
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small"],
+            availableModelIDs: []
+        )
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "whisper-small",
+            adapters: [parakeet, whisper]
+        )
+        await lifecycle.start()
+
+        await lifecycle.delete("whisper-small")
+        let snapshot = await lifecycle.snapshot()
+
+        XCTAssertEqual(
+            DeletionOutcome(
+                storedSelection: snapshot.storedSelection,
+                effectiveSelection: snapshot.effectiveSelection,
+                operation: snapshot.operation,
+                isDictationBlocked: snapshot.isDictationBlocked,
+                availableModelIDs: snapshot.models.filter(\.isAvailable).map(\.id),
+                failure: snapshot.failure,
+                removedModelIDs: whisper.removedModelIDs,
+                events: []
+            ),
+            DeletionOutcome(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                operation: nil,
+                isDictationBlocked: false,
+                availableModelIDs: ["parakeet-v3"],
+                failure: nil,
+                removedModelIDs: ["whisper-small"],
+                events: []
+            )
+        )
+    }
+
+    func testDefaultDeletionIsUnavailable() async {
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"]
+        )
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "parakeet-v3",
+            adapters: [parakeet]
+        )
+        await lifecycle.start()
+
+        await lifecycle.delete("parakeet-v3")
+
+        XCTAssertEqual(parakeet.removedModelIDs, [])
+    }
+
+    func testDeletionSerializesOtherManagementOperationsUntilAdapterFinishes() async {
+        let parakeet = FakeASRModelFamilyAdapter(
+            modelIDs: ["parakeet-v3"],
+            availableModelIDs: ["parakeet-v3"]
+        )
+        let whisper = FakeASRModelFamilyAdapter(
+            modelIDs: ["whisper-small", "whisper-large-v3"],
+            availableModelIDs: ["whisper-small", "whisper-large-v3"]
+        )
+        whisper.suspendDeletions = true
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: "parakeet-v3",
+            adapters: [parakeet, whisper]
+        )
+        await lifecycle.start()
+
+        let deletion = Task { await lifecycle.delete("whisper-small") }
+        await whisper.waitForDeletionStart()
+        await lifecycle.download("whisper-large-v3")
+        await lifecycle.select("whisper-large-v3")
+        let deleting = await lifecycle.snapshot()
+        let deletingState = SerializedDeletionState(
+            operation: deleting.operation,
+            downloadedModelIDs: whisper.downloadedModelIDs,
+            loadedModelIDs: whisper.loadedModelIDs,
+            removedModelIDs: whisper.removedModelIDs
+        )
+        whisper.finishDeletion()
+        await deletion.value
+
+        XCTAssertEqual(
+            deletingState,
+            SerializedDeletionState(
+                operation: .deleting(modelID: "whisper-small"),
+                downloadedModelIDs: [],
+                loadedModelIDs: [],
+                removedModelIDs: []
+            )
+        )
+    }
+
     func testDefaultDescriptorDoesNotAllowDeletion() async {
         let lifecycle = ASRModelLifecycle(
             storedSelection: "parakeet-v3",
@@ -2432,6 +2831,36 @@ final class ASRModelLifecycleTests: XCTestCase {
         let recovery: ASRModelLifecycleRecovery?
         let catalogContainsStoredSelection: Bool
     }
+
+    private struct DeletionState: Equatable {
+        let storedSelection: String
+        let effectiveSelection: String?
+        let operation: ASRModelLifecycleOperation?
+        let isDictationBlocked: Bool
+        let targetIsAvailable: Bool?
+        let failure: ASRModelLifecycleFailure?
+        let transcript: String?
+        let captureFailure: String?
+        let events: [String]
+    }
+
+    private struct DeletionOutcome: Equatable {
+        let storedSelection: String
+        let effectiveSelection: String?
+        let operation: ASRModelLifecycleOperation?
+        let isDictationBlocked: Bool
+        let availableModelIDs: [String]
+        let failure: ASRModelLifecycleFailure?
+        let removedModelIDs: [String]
+        let events: [String]
+    }
+
+    private struct SerializedDeletionState: Equatable {
+        let operation: ASRModelLifecycleOperation?
+        let downloadedModelIDs: [String]
+        let loadedModelIDs: [String]
+        let removedModelIDs: [String]
+    }
 }
 
 private struct AvailabilityOnlyASRModelFamilyAdapter: ASRModelFamilyAdapting {
@@ -2449,13 +2878,17 @@ private struct AvailabilityOnlyASRModelFamilyAdapter: ASRModelFamilyAdapting {
     func makeEngine(for id: String) throws -> Transcribing {
         throw EngineConstructionFailure(modelID: id)
     }
+
+    func removeModelData(for _: String) async throws {}
 }
 
 private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecked Sendable {
     let modelIDs: Set<String>
     var suspendDownloads = false
+    var suspendDeletions = false
     var completeDownloadsImmediatelyAsAvailable = false
     var downloadError: Error?
+    var deletionError: Error?
     var removesAvailabilityOnPreparationFailure = true
     var availableModelIDs: Set<String> {
         lock.withLock { _availableModelIDs }
@@ -2471,6 +2904,10 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
 
     var loadedModelIDs: [String] {
         lock.withLock { _loadedModelIDs }
+    }
+
+    var removedModelIDs: [String] {
+        lock.withLock { _removedModelIDs }
     }
 
     var transcribedSamples: [[Float]] {
@@ -2493,6 +2930,7 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
     private var _partialModelIDs: Set<String> = []
     private var _reusedPartialModelIDs: [String] = []
     private var _loadedModelIDs: [String] = []
+    private var _removedModelIDs: [String] = []
     private var _transcribedSamples: [[Float]] = []
     private weak var _latestEngine: FakeLifecycleTranscriber?
     private var activeDownloadID: String?
@@ -2500,6 +2938,8 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
     private var continuation: CheckedContinuation<Void, Error>?
     private let downloadStarted = AsyncEvent()
     private let cancellationRequested = AsyncEvent()
+    private let deletionStarted = AsyncEvent()
+    private var deletionContinuation: CheckedContinuation<Void, Never>?
 
     private let residency: EngineResidencyProbe?
 
@@ -2571,6 +3011,31 @@ private final class FakeASRModelFamilyAdapter: ASRModelFamilyAdapting, @unchecke
         )
         lock.withLock { _latestEngine = engine }
         return engine
+    }
+
+    func removeModelData(for id: String) async throws {
+        residency?.record("delete-\(id)")
+        deletionStarted.signal()
+        if suspendDeletions {
+            await withCheckedContinuation { continuation in
+                lock.withLock { deletionContinuation = continuation }
+            }
+        }
+        if let deletionError { throw deletionError }
+        _ = lock.withLock { _availableModelIDs.remove(id) }
+        lock.withLock { _removedModelIDs.append(id) }
+    }
+
+    func waitForDeletionStart() async {
+        await deletionStarted.wait()
+    }
+
+    func finishDeletion() {
+        let continuation = lock.withLock {
+            defer { deletionContinuation = nil }
+            return deletionContinuation
+        }
+        continuation?.resume()
     }
 
     func waitForDownloadStart() async {

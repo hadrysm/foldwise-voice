@@ -27,7 +27,6 @@ private extension SettingsWorkflow {
             now: now,
             scheduleStatusClear: scheduleStatusClear,
             llmModels: LiveLLMModelManager(),
-            deleteASRModel: deleteStoredASRModel,
             asrLifecycle: ASRModelLifecycle(
                 storedSelection: config.asrModel,
                 adapters: []
@@ -479,7 +478,6 @@ final class SettingsWorkflowTests: XCTestCase {
             String, @escaping LLMModelManaging.LLMProgress
         ) async -> String?
         let deleteLLMResult: @MainActor (String) async -> String?
-        let deleteASRResult: @MainActor (ASRModelCatalog.Entry) async -> String?
 
         init(
             list: @escaping @MainActor () async -> [OllamaClient.InstalledModel],
@@ -497,8 +495,7 @@ final class SettingsWorkflowTests: XCTestCase {
             listResult = list
             pullResult = pull
             deleteLLMResult = deleteLLM
-            deleteASRResult = deleteASR
-            asrAdapter = CannedASRAdapter(download: prepareASR)
+            asrAdapter = CannedASRAdapter(download: prepareASR, delete: deleteASR)
         }
 
         func list() async -> [OllamaClient.InstalledModel] {
@@ -512,17 +509,14 @@ final class SettingsWorkflowTests: XCTestCase {
         func delete(_ name: String) async -> String? {
             await deleteLLMResult(name)
         }
-
-        func deleteASRModel(_ id: String) async -> String? {
-            guard let entry = ASRModelCatalog.entry(for: id) else { return "unknown model" }
-            let result = await deleteASRResult(entry)
-            if result == nil { asrAdapter.setAvailable(false, id: entry.id) }
-            return result
-        }
     }
 
     private final class CannedASRAdapter: ASRModelFamilyAdapting, @unchecked Sendable {
         private struct DownloadError: LocalizedError {
+            let errorDescription: String?
+        }
+
+        private struct DeletionError: LocalizedError {
             let errorDescription: String?
         }
 
@@ -535,15 +529,18 @@ final class SettingsWorkflowTests: XCTestCase {
             @escaping ASRProgress,
             @escaping ASRLoading
         ) async -> String?
+        private let delete: @MainActor (ASRModelCatalog.Entry) async -> String?
 
         init(
             download: @escaping @MainActor (
                 ASRModelCatalog.Entry,
                 @escaping ASRProgress,
                 @escaping ASRLoading
-            ) async -> String?
+            ) async -> String?,
+            delete: @escaping @MainActor (ASRModelCatalog.Entry) async -> String?
         ) {
             self.download = download
+            self.delete = delete
         }
 
         func isModelDataAvailable(for id: String) -> Bool {
@@ -569,6 +566,14 @@ final class SettingsWorkflowTests: XCTestCase {
             let engine = FakeTranscriber()
             engine.prepareError = lock.withLock { enginePreparationError }
             return engine
+        }
+
+        func removeModelData(for id: String) async throws {
+            guard let entry = ASRModelCatalog.entry(for: id) else { return }
+            if let failure = await delete(entry) {
+                throw DeletionError(errorDescription: failure)
+            }
+            setAvailable(false, id: id)
         }
 
         func setEnginePreparationError(_ error: Error?) {
@@ -2998,7 +3003,7 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
-    func testScheduledASRDownloadPreventsLegacyDeletionFromStarting() async {
+    func testScheduledASRDownloadPreventsDeletionFromStarting() async {
         let preparation = SuspendedASRPreparation()
         let config = makeConfig()
         let model = SettingsModel()
@@ -3024,6 +3029,25 @@ final class SettingsWorkflowTests: XCTestCase {
         preparation.finish(nil)
 
         XCTAssertNil(deletingModel)
+    }
+
+    func testASRDeletionUsesLifecycleAdapter() async {
+        var adapterDeleteCalled = false
+        let config = makeConfig()
+        let model = SettingsModel()
+        let effects = makeModelEffects(deleteASR: { _ in
+            adapterDeleteCalled = true
+            return nil
+        })
+        effects.asrAdapter.setAvailable(true, id: "whisper-small")
+        let workflow = makeWorkflow(config: config, model: model, effects: effects)
+        workflow.populatePreferences()
+        await waitForPublishedValue(model.$asrDownloaded) { $0.contains("whisper-small") }
+
+        workflow.deleteASRModel("whisper-small")
+        await waitForPublishedValue(model.$asrDownloaded) { !$0.contains("whisper-small") }
+
+        XCTAssertTrue(adapterDeleteCalled)
     }
 
     func testDeletingActiveASRModelFallsBackToDefault() async throws {
@@ -3229,7 +3253,6 @@ final class SettingsWorkflowTests: XCTestCase {
             now: now,
             scheduleStatusClear: { _ in },
             llmModels: effects,
-            deleteASRModel: effects.deleteASRModel,
             asrLifecycle: asrLifecycle,
             copy: { text in
                 pasteboard.clearContents()

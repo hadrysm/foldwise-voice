@@ -111,6 +111,23 @@ final class BadgeReducerTests: XCTestCase {
         XCTAssertNil(state)
     }
 
+    func testASRDeletionOnlyChangesBadgeWhenItBlocksDictation() {
+        let presentation = ASRBadgePresentation()
+
+        let states = [
+            presentation.lifecycleDidChange(
+                operation: .deleting(modelID: "whisper-small"),
+                isDictationBlocked: false
+            ),
+            presentation.lifecycleDidChange(
+                operation: .deleting(modelID: "whisper-small"),
+                isDictationBlocked: true
+            ),
+        ]
+
+        XCTAssertEqual(states, [nil, .switchingASRModel])
+    }
+
     func testBlockedASRLifecycleWithoutOperationPresentsRecognitionUnavailable() {
         let presentation = ASRBadgePresentation()
 

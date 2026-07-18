@@ -520,6 +520,8 @@ final class ASRBadgePresentation {
             return nil
         case .switching, .restoring:
             return .switchingASRModel
+        case .deleting:
+            return isDictationBlocked ? .switchingASRModel : nil
         case nil where isDictationBlocked:
             return .recognitionUnavailable
         case nil where wasBlocking:

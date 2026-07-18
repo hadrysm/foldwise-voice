@@ -46,6 +46,7 @@ enum ASRModelLifecycleOperation: Equatable {
     case bootstrapping(fraction: Double?)
     case switching(modelID: String)
     case restoring(modelID: String)
+    case deleting(modelID: String)
 }
 
 enum ASRModelLifecycleFailure: Equatable {
@@ -56,6 +57,8 @@ enum ASRModelLifecycleFailure: Equatable {
     case selectionFailed(modelID: String, reason: String)
     case selectionCanceled(modelID: String)
     case selectionDegraded(modelID: String, fallbackModelID: String, reason: String?)
+    case deletionFailed(modelID: String, reason: String)
+    case deletionSelectionFailed(modelID: String, reason: String)
 
     var allowsBootstrapRetry: Bool {
         switch self {
@@ -64,7 +67,7 @@ enum ASRModelLifecycleFailure: Equatable {
         case let .engineLoadFailed(modelID, _):
             modelID == ASRModelCatalog.defaultID
         case .downloadFailed, .downloadedDataInvalid, .selectionFailed, .selectionCanceled,
-             .selectionDegraded:
+             .selectionDegraded, .deletionFailed, .deletionSelectionFailed:
             false
         }
     }
@@ -78,6 +81,7 @@ protocol ASRModelFamilyAdapting: Sendable {
         progress: @escaping @Sendable (Double) -> Void
     ) async throws
     func makeEngine(for id: String) throws -> Transcribing
+    func removeModelData(for id: String) async throws
 }
 
 enum ASRModelLifecycleError: LocalizedError {
@@ -213,8 +217,8 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
                 return
             }
             guard targetID != effectiveSelection || engine == nil else {
-                dictationBlocked = false
-                sessionCoordinator.activate(engine)
+                dictationBlocked = engine == nil
+                sessionCoordinator.activate(engine, modelID: effectiveSelection)
                 publishSnapshot()
                 return
             }
@@ -249,7 +253,7 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
                 engine = candidate
                 effectiveSelection = targetID
                 dictationBlocked = false
-                sessionCoordinator.activate(candidate)
+                sessionCoordinator.activate(candidate, modelID: targetID)
                 publishSnapshot()
                 return
             } catch {
@@ -292,7 +296,7 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
             try Task.checkCancellation()
         } catch {
             dictationBlocked = false
-            sessionCoordinator.activate(engine)
+            sessionCoordinator.activate(engine, modelID: effectiveSelection)
             throw error
         }
         engine = nil
@@ -430,7 +434,7 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
             operation = nil
             dictationBlocked = false
             activeSelection = nil
-            sessionCoordinator.activate(candidate)
+            sessionCoordinator.activate(candidate, modelID: id)
             publishSnapshot()
         } catch {
             candidate = nil
@@ -508,6 +512,70 @@ actor ASRModelLifecycle: Transcribing, ASRSessionHandleProviding {
 
         let result = await task.result
         await finishDownload(operationID: operationID, modelID: id, result: result)
+    }
+
+    func delete(_ id: String) async {
+        if !didStart { await start() }
+        guard operation == nil,
+              activeDownload == nil,
+              activeSelection == nil,
+              id != ASRModelCatalog.defaultID,
+              let adapter = adapter(for: id)
+        else { return }
+
+        let deletesSelectedModel = id == storedSelection
+        let deletesEffectiveEngine = id == effectiveSelection
+        operation = .deleting(modelID: id)
+        failure = nil
+
+        if deletesSelectedModel {
+            dictationBlocked = true
+            _ = sessionCoordinator.beginBlockingSessions()
+            publishSnapshot()
+            do {
+                try await persistSelection(ASRModelCatalog.defaultID)
+                storedSelection = ASRModelCatalog.defaultID
+            } catch {
+                operation = nil
+                failure = .deletionSelectionFailed(
+                    modelID: id,
+                    reason: error.localizedDescription
+                )
+                dictationBlocked = engine == nil
+                sessionCoordinator.activate(engine, modelID: effectiveSelection)
+                publishSnapshot()
+                return
+            }
+        }
+        publishSnapshot()
+
+        if sessionCoordinator.hasActiveSessions(for: id) {
+            await sessionCoordinator.waitForSessionsToDrain(modelID: id)
+        }
+        if deletesEffectiveEngine {
+            engine = nil
+            effectiveSelection = nil
+        }
+
+        let deletionFailure: Error?
+        do {
+            try await adapter.removeModelData(for: id)
+            deletionFailure = nil
+        } catch {
+            deletionFailure = error
+        }
+        reconcileAvailabilityFromAdapters()
+        if deletesEffectiveEngine {
+            await ensureEffectiveEngine()
+        } else if deletesSelectedModel {
+            dictationBlocked = engine == nil
+            sessionCoordinator.activate(engine, modelID: effectiveSelection)
+        }
+        operation = nil
+        if let deletionFailure {
+            failure = .deletionFailed(modelID: id, reason: deletionFailure.localizedDescription)
+        }
+        publishSnapshot()
     }
 
     func cancelCurrentOperation() async {
@@ -650,8 +718,13 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
     private var _ready = false
     private var _isDictationBlocked = true
     private var engine: Transcribing?
+    private var engineModelID: String?
     private var activeSessionCount = 0
+    private var activeSessionCountsByModelID: [String: Int] = [:]
     private var sessionDrainWaiters: [CheckedContinuation<Void, Never>] = []
+    private var modelSessionDrainWaiters: [
+        String: [CheckedContinuation<Void, Never>]
+    ] = [:]
     private var cancellableSessionDrainWaiters: [
         UUID: CheckedContinuation<Void, Error>
     ] = [:]
@@ -680,9 +753,10 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
         lock.withLock { _isDictationBlocked = blocked }
     }
 
-    func activate(_ engine: Transcribing?) {
+    func activate(_ engine: Transcribing?, modelID: String?) {
         lock.withLock {
             self.engine = engine
+            engineModelID = modelID
             _ready = engine != nil
             _isDictationBlocked = engine == nil
         }
@@ -691,6 +765,7 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
     func beginBlockingSessions() -> Bool {
         lock.withLock {
             engine = nil
+            engineModelID = nil
             _ready = false
             _isDictationBlocked = true
             return activeSessionCount > 0
@@ -698,16 +773,21 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
     }
 
     func captureSession() throws -> any ASRSessionHandle {
-        let capturedEngine = try lock.withLock { () throws -> Transcribing in
-            guard !_isDictationBlocked, let engine else {
+        let capture = try lock.withLock { () throws -> (Transcribing, String) in
+            guard !_isDictationBlocked, let engine, let engineModelID else {
                 throw ASRModelLifecycleError.recognitionBlocked
             }
             activeSessionCount += 1
-            return engine
+            activeSessionCountsByModelID[engineModelID, default: 0] += 1
+            return (engine, engineModelID)
         }
-        return ASRLifecycleSessionHandle(engine: capturedEngine) { [weak self] in
-            self?.releaseSession()
+        return ASRLifecycleSessionHandle(engine: capture.0) { [weak self] in
+            self?.releaseSession(modelID: capture.1)
         }
+    }
+
+    func hasActiveSessions(for modelID: String) -> Bool {
+        lock.withLock { activeSessionCountsByModelID[modelID, default: 0] > 0 }
     }
 
     func waitForSessionsToDrain() async {
@@ -715,6 +795,17 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
             let shouldResume = lock.withLock {
                 guard activeSessionCount > 0 else { return true }
                 sessionDrainWaiters.append(continuation)
+                return false
+            }
+            if shouldResume { continuation.resume() }
+        }
+    }
+
+    func waitForSessionsToDrain(modelID: String) async {
+        await withCheckedContinuation { continuation in
+            let shouldResume = lock.withLock {
+                guard activeSessionCountsByModelID[modelID, default: 0] > 0 else { return true }
+                modelSessionDrainWaiters[modelID, default: []].append(continuation)
                 return false
             }
             if shouldResume { continuation.resume() }
@@ -742,24 +833,41 @@ private final class ASRLifecycleSessionCoordinator: @unchecked Sendable {
         }
     }
 
-    private func releaseSession() {
+    private func releaseSession(modelID: String) {
         let waiters = lock.withLock { () -> (
             [CheckedContinuation<Void, Never>],
-            [CheckedContinuation<Void, Error>]
+            [CheckedContinuation<Void, Error>],
+            [CheckedContinuation<Void, Never>]
         ) in
             activeSessionCount -= 1
-            guard activeSessionCount == 0 else { return ([], []) }
+            let remainingModelSessions = activeSessionCountsByModelID[modelID, default: 1] - 1
+            let modelWaiters: [CheckedContinuation<Void, Never>]
+            if remainingModelSessions == 0 {
+                activeSessionCountsByModelID.removeValue(forKey: modelID)
+                modelWaiters = modelSessionDrainWaiters.removeValue(forKey: modelID) ?? []
+            } else {
+                activeSessionCountsByModelID[modelID] = remainingModelSessions
+                modelWaiters = []
+            }
+            guard activeSessionCount == 0 else { return ([], [], modelWaiters) }
             defer {
                 sessionDrainWaiters.removeAll()
                 cancellableSessionDrainWaiters.removeAll()
             }
-            return (sessionDrainWaiters, Array(cancellableSessionDrainWaiters.values))
+            return (
+                sessionDrainWaiters,
+                Array(cancellableSessionDrainWaiters.values),
+                modelWaiters
+            )
         }
         for waiter in waiters.0 {
             waiter.resume()
         }
         for waiter in waiters.1 {
             waiter.resume(returning: ())
+        }
+        for waiter in waiters.2 {
+            waiter.resume()
         }
     }
 
@@ -801,15 +909,22 @@ private final class ASRLifecycleSessionHandle: ASRSessionHandle, @unchecked Send
     }
 
     func release() {
-        let callback = lock.withLock { () -> (() -> Void)? in
+        takeReleaseCallback()?()
+    }
+
+    private func takeReleaseCallback() -> (() -> Void)? {
+        lock.withLock { () -> (() -> Void)? in
             engine = nil
             defer { onRelease = nil }
             return onRelease
         }
-        callback?()
     }
 
     deinit {
-        release()
+        guard let callback = takeReleaseCallback() else { return }
+        Task {
+            await Task.yield()
+            callback()
+        }
     }
 }

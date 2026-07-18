@@ -17,17 +17,21 @@ struct ParakeetASRModelAdapter: ASRModelFamilyAdapting {
         @escaping @Sendable (Double) -> Void
     ) async throws -> Void
     typealias CompiledModelValidation = @Sendable (URL) -> Bool
+    typealias Delete = @Sendable (ASRModelCatalog.ParakeetVariant) async throws -> Void
 
     let modelIDs: Set<String> = ["parakeet-v3", "parakeet-v2"]
     private let availability: Availability
     private let download: Download
+    private let delete: Delete
 
     init(
         availability: @escaping Availability,
-        download: @escaping Download
+        download: @escaping Download,
+        delete: @escaping Delete = { _ in throw ASRModelAdapterError.deletionUnavailable }
     ) {
         self.availability = availability
         self.download = download
+        self.delete = delete
     }
 
     init(
@@ -36,9 +40,11 @@ struct ParakeetASRModelAdapter: ASRModelFamilyAdapting {
         compiledModelIsUsable: @escaping CompiledModelValidation = {
             ASRModelDataValidation.canLoadCompiledModel(at: $0)
         },
-        download: @escaping Download
+        download: @escaping Download,
+        delete: @escaping Delete = { _ in throw ASRModelAdapterError.deletionUnavailable }
     ) {
         self.download = download
+        self.delete = delete
         availability = { variant in
             guard let directory = modelDirectory(variant), modelsExist(directory, variant) else {
                 return false
@@ -66,7 +72,8 @@ struct ParakeetASRModelAdapter: ASRModelFamilyAdapting {
         self.init(
             modelDirectory: ASRModelLibraryStorage.parakeetModelDirectory,
             modelsExist: ASRModelLibraryStorage.parakeetModelsExist,
-            download: { try await Self.downloadFromLibrary($0, $1) }
+            download: { try await Self.downloadFromLibrary($0, $1) },
+            delete: ASRModelLibraryStorage.deleteParakeet
         )
     }
 
@@ -115,6 +122,11 @@ struct ParakeetASRModelAdapter: ASRModelFamilyAdapting {
         return Transcriber(version: variant)
     }
 
+    func removeModelData(for id: String) async throws {
+        guard let variant = variant(for: id) else { throw ASRModelAdapterError.unknownModel(id) }
+        try await delete(variant)
+    }
+
     private func variant(for id: String) -> ASRModelCatalog.ParakeetVariant? {
         guard let entry = ASRModelCatalog.entry(for: id),
               case let .parakeet(version) = entry.engine else { return nil }
@@ -139,6 +151,7 @@ struct WhisperASRModelAdapter: ASRModelFamilyAdapting {
         @escaping @Sendable (Double) -> Void
     ) async throws -> Void
     typealias ModelValidation = @Sendable (URL) -> Bool
+    typealias Delete = @Sendable (String) async throws -> Void
 
     let modelIDs: Set<String> = [
         "whisper-large-v3-turbo", "whisper-small", "whisper-large-v3",
@@ -148,6 +161,7 @@ struct WhisperASRModelAdapter: ASRModelFamilyAdapting {
     private let compiledModelIsUsable: ModelValidation
     private let packageIsUsable: ModelValidation
     private let download: Download
+    private let delete: Delete
 
     init(
         modelDirectory: @escaping ModelDirectory,
@@ -158,13 +172,15 @@ struct WhisperASRModelAdapter: ASRModelFamilyAdapting {
         packageIsUsable: @escaping ModelValidation = {
             ASRModelDataValidation.canCompileModelPackage(at: $0)
         },
-        download: @escaping Download
+        download: @escaping Download,
+        delete: @escaping Delete = { _ in throw ASRModelAdapterError.deletionUnavailable }
     ) {
         self.modelDirectory = modelDirectory
         self.tokenizerDirectory = tokenizerDirectory
         self.compiledModelIsUsable = compiledModelIsUsable
         self.packageIsUsable = packageIsUsable
         self.download = download
+        self.delete = delete
     }
 
     init() {
@@ -173,6 +189,7 @@ struct WhisperASRModelAdapter: ASRModelFamilyAdapting {
         compiledModelIsUsable = { ASRModelDataValidation.canLoadCompiledModel(at: $0) }
         packageIsUsable = { ASRModelDataValidation.canCompileModelPackage(at: $0) }
         download = { try await Self.downloadFromLibrary($0, $1) }
+        delete = ASRModelLibraryStorage.deleteWhisper
     }
 
     static func downloadFromLibrary(
@@ -215,6 +232,11 @@ struct WhisperASRModelAdapter: ASRModelFamilyAdapting {
     func makeEngine(for id: String) throws -> Transcribing {
         guard let variant = variant(for: id) else { throw ASRModelAdapterError.unknownModel(id) }
         return WhisperTranscriber(variant: variant)
+    }
+
+    func removeModelData(for id: String) async throws {
+        guard let variant = variant(for: id) else { throw ASRModelAdapterError.unknownModel(id) }
+        try await delete(variant)
     }
 
     private func variant(for id: String) -> String? {
@@ -318,11 +340,13 @@ private enum ASRModelDataValidation {
 private enum ASRModelAdapterError: LocalizedError {
     case unknownModel(String)
     case modelDirectoryUnavailable
+    case deletionUnavailable
 
     var errorDescription: String? {
         switch self {
         case let .unknownModel(id): "Unknown ASR model: \(id)"
         case .modelDirectoryUnavailable: "Couldn't locate the ASR model directory."
+        case .deletionUnavailable: "ASR model deletion is unavailable."
         }
     }
 }

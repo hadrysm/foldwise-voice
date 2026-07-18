@@ -3,6 +3,10 @@ import Foundation
 import WhisperKit
 
 enum ASRModelLibraryStorage {
+    private struct DeletionFailure: LocalizedError {
+        let errorDescription: String?
+    }
+
     static let parakeetModelDirectory: @Sendable (
         ASRModelCatalog.ParakeetVariant
     ) -> URL? = { variant in
@@ -31,6 +35,12 @@ enum ASRModelLibraryStorage {
             variant: variant,
             progressHandler: { progress($0.fractionCompleted) }
         )
+    }
+
+    static let deleteParakeet: @Sendable (
+        ASRModelCatalog.ParakeetVariant
+    ) async throws -> Void = { variant in
+        try await delete(.parakeet(version: variant))
     }
 
     static let whisperModelDirectory: @Sendable (String) -> URL? = { variant in
@@ -62,5 +72,14 @@ enum ASRModelLibraryStorage {
         ) {
             progress($0.fractionCompleted)
         }
+    }
+
+    static let deleteWhisper: @Sendable (String) async throws -> Void = { variant in
+        try await delete(.whisper(variant: variant))
+    }
+
+    private static func delete(_ engine: ASRModelCatalog.Engine) async throws {
+        let failure = await Task.detached { ASRModelStore.delete(engine) }.value
+        if let failure { throw DeletionFailure(errorDescription: failure) }
     }
 }
