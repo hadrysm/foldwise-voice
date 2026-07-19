@@ -1,64 +1,49 @@
 # Streaming transcript event contract
 
-Research answer for **Define the streaming transcript event contract across
-engines**, audited on 2026-07-19. This note distinguishes model output truth
-from presentation stability and keeps recorder, ASR engine, and Dictation
-session responsibilities separate.
+Status: research decision for
+[Define the streaming transcript event contract across engines](https://github.com/hadrysm/foldwise-voice/issues/194),
+2026-07-19. This supersedes the withdrawn transcribe.cpp/Handy analysis that
+previously occupied this note.
 
-> **Status: withdrawn as a FoldWise decision.** While this research was in
-> progress, the parent map rejected external catalog parity and reopened the
-> runtime investigation against a FoldWise-owned ASR catalog baseline. The
-> transcribe.cpp findings below remain source-backed reference material, but the
-> seven-model inventory, selected runtime, and proposed contract are not an
-> accepted FoldWise product or architecture decision. Re-run the ticket after
-> the independent runtime strategy is resolved.
+## Answer
 
-## Executive answer
+The independent seven-row catalog contains exactly two streaming rows:
+**Parakeet Unified EN 0.6B** and **Nemotron 3.5 ASR Streaming Multilingual
+0.6B**. Both run through FluidAudio 0.15.4; the other five catalog rows are
+batch or sliding-window paths and must not be made to look live by repeatedly
+rerunning them. The selected catalog and runtime decisions establish this scope
+([catalog baseline](independent-asr-catalog-baseline.md),
+[runtime coverage](independent-asr-runtime-strategy.md#coverage-proof)).
 
-The seven entries in the pinned Handy catalog that declare streaming reduce to
-three streaming architecture families in the selected transcribe.cpp v0.1.3
-runtime: Parakeet/Nemotron, Moonshine Streaming, and Voxtral Realtime. They all
-fit one FoldWise boundary, but not a boundary containing only `committed` and
-`tentative` text.
+At the pinned FluidAudio revision, both streaming managers expose the same
+important text truth: a callback or getter returns the **whole running
+transcript**, built only by appending newly emitted RNNT tokens. Neither manager
+exposes a tentative suffix, replacement range, confidence that a suffix may
+change, or engine revision number. Unified appends decoded pieces directly to
+an accumulated text cache; Nemotron appends token IDs and re-decodes that
+growing ID list after each token-bearing chunk
+([Unified accumulation](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/StreamingUnifiedAsrManager.swift#L281-L329),
+[Nemotron accumulation and callback](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager%2BPipeline.swift#L545-L581)).
 
-transcribe.cpp defines `full_text` as the authoritative current hypothesis.
-Its `committed_text` is an append-only display aid and its `tentative_text` is a
-volatile suffix. A growing-context model can revise bytes that were already
-committed; in that case `committed_text + tentative_text` deliberately stops
-reconstructing `full_text`. Successful finalization also does not rewrite an
-incompatible committed prefix. FoldWise must therefore carry authoritative
-current and final text separately from the committed/tentative presentation
-pair ([canonical stream text contract](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/include/transcribe.h#L1701-L1745),
-[finalization semantics](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/include/transcribe.h#L1908-L1945)).
-
-The smallest truthful engine-neutral boundary is an ordered sequence of full
-snapshot updates followed by exactly one terminal outcome:
+The smallest FoldWise boundary that preserves that truth and the selected Badge
+vocabulary is therefore an ordered sequence of full text snapshots followed by
+exactly one terminal outcome:
 
 ```swift
 struct StreamingTranscriptSnapshot: Sendable, Equatable {
-    /// Monotonic within one stream; it is an ordering/deduplication key,
-    /// not proof that visible text changed.
-    let revision: UInt64
-
-    /// The engine's authoritative current raw hypothesis.
-    let currentText: String
-
-    /// Append-only, flicker-resistant presentation text.
+    /// Stable, append-only text for this catalog baseline.
     let committedText: String
 
-    /// Volatile presentation text. It may be replaced on every update.
+    /// Volatile replacement suffix. Always empty for both baseline engines;
+    /// an adapter may populate it only for a future engine with native evidence.
     let tentativeText: String
 }
 
-enum StreamingTranscriptCompleteness: Sendable, Equatable {
-    case complete
-    case truncated
-}
-
 enum StreamingTranscriptTerminal: Sendable, Equatable {
-    case completed(text: String, completeness: StreamingTranscriptCompleteness)
+    /// Authoritative value returned by the engine's successful finish call.
+    case completed(text: String)
     case cancelled
-    case failed(ASRStreamingFailure, lastSnapshot: StreamingTranscriptSnapshot?)
+    case failed(ASRStreamingFailure)
 }
 
 enum StreamingTranscriptEvent: Sendable, Equatable {
@@ -67,188 +52,121 @@ enum StreamingTranscriptEvent: Sendable, Equatable {
 }
 ```
 
-`feed(audio:)`, `finishInput()`, and `cancel()` are commands on the captured ASR
-session, not transcript events. The adapter serializes native calls, publishes
-only whole owned-string snapshots, and emits one terminal event. This preserves
-ADR-0002 and ADR-0005: Pipeline still holds an opaque Dictation-session handle,
-while concrete transcribe.cpp state stays inside the lifecycle's engine adapter.
+`appendAudio`, `processBufferedAudio`, `finishInput`, and `cancel` are session
+commands, not transcript events. Event order is the revision order; the
+boundary does not need an engine revision field that neither engine supplies.
+Token timing is an optional adapter capability, not part of the live-text event,
+because the two native timing APIs do not have one interchangeable meaning.
+There is no end-of-utterance event: Dictation decides when input ends and sends
+`finishInput`.
 
-## Streaming catalog coverage
+## Comparison matrix
 
-The pinned Handy catalog at commit
-[`cdbc223`](https://github.com/cjpais/Handy/blob/cdbc22390987643237756382ef367f7244b2844f/src-tauri/src/catalog/catalog.json)
-marks exactly these seven entries as streaming:
+| Semantic | Unified streaming | Nemotron 3.5 multilingual streaming | Truth at FoldWise boundary |
+| --- | --- | --- | --- |
+| Running text | Native full snapshot; token pieces append to `transcriptCache`; callback fires only when a window emits tokens ([source](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/StreamingUnifiedAsrManager.swift#L281-L329)) | Native full snapshot; emitted token IDs append and the complete filtered list is decoded for the callback/getter ([source](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager.swift#L1070-L1077), [callback](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager%2BPipeline.swift#L572-L581)) | `.update` carries a full snapshot, not a delta. |
+| Committed text | Native append-only token sequence; the stateless encoder re-encodes context but the decoder visits only not-yet-decoded frames ([windower](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/UnifiedStreamingWindower.swift#L65-L78), [append](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/StreamingUnifiedAsrManager.swift#L289-L299)) | Native append-only RNNT token sequence; callbacks decode accumulated IDs and language-tag IDs are filtered rather than displayed ([pipeline](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager%2BPipeline.swift#L545-L581), [filter](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/NemotronMultilingualTokenizer.swift#L35-L58)) | Put all native running text in `committedText`. “Committed” means the engine will not retract the emitted token sequence, not that recognition is linguistically correct. |
+| Tentative/revisable text | Not exposed | Not exposed | `tentativeText == ""`. Never invent a tentative suffix by chopping words or holding back tokens. |
+| Revision | No counter or replacement range; callback is notification of a token-bearing window ([API](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/StreamingUnifiedAsrManager.swift#L324-L356)) | No counter or replacement range; a language-tag-only emission can notify with unchanged visible text because tags are removed during decoding ([callback](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager%2BPipeline.swift#L557-L581), [filter](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/NemotronMultilingualTokenizer.swift#L41-L58)) | Preserve actor/stream order and suppress duplicate snapshots. A sequence number may be adapter-synthesized for telemetry or UI deduplication, but is not engine semantics and is not required in the core event. |
+| Publication timing | A first non-final window requires chunk plus right context; the reviewed `[70,13,13]` profile is 1.04 s chunk + 1.04 s right context, 2.08 s theoretical latency ([configuration](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/UnifiedConfig.swift#L43-L77), [window rule](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/UnifiedStreamingWindower.swift#L39-L65)) | Processes complete metadata-defined chunks and notifies only when a chunk emits visible or filtered tokens; the exact audited catalog artifact is `multilingual/2240ms` ([buffer drain](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager.swift#L951-L991), [metadata-derived chunk](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/NemotronMultilingualStreamingConfig.swift#L73-L102), [audited profile](https://github.com/hadrysm/foldwise-voice/blob/a3b684f1b04c6165645a8a6787bb9fa7b566534b/docs/research/foldwise-asr-catalog-license-and-artifact-audit.md#L30-L43)) | An event has ordering, not an implied wall-clock cadence. Measure receipt time in FoldWise telemetry if needed; do not promise a fixed update interval. |
+| Token timing | Native drain API returns newly accumulated token timings. Starts use global encoder frames; a frontier token has a provisional one-frame end, and a later token can back-fill the preceding end while it remains buffered ([API and caveat](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/StreamingUnifiedAsrManager.swift#L181-L190), [construction](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/StreamingUnifiedAsrManager.swift#L293-L318)) | Native current/final arrays contain absolute per-token start and one-frame end; language tags are omitted and confidence is hard-coded to `1.0` ([construction](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager%2BDecode.swift#L494-L515), [current/final APIs](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager.swift#L1080-L1097)) | Keep out of the minimal transcript event. A later timing capability must name provisionality, confidence provenance, token/text alignment, and snapshot-vs-drain behavior instead of flattening both arrays into “timestamps.” |
+| End of utterance | None. The manager remains usable until caller `finish()` or `reset()` ([streaming API](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/StreamingUnifiedAsrManager.swift#L158-L202)) | None. An optional, default-off RMS gate skips sustained-silence chunks for compute efficiency but publishes no endpoint and does not finish the stream ([gate configuration](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager%2BBuffers.swift#L62-L94), [skip behavior](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager%2BPipeline.swift#L78-L104)) | No `.endOfUtterance` event. Recorder/product policy decides when to send `finishInput`. FluidAudio's separate Parakeet EOU manager is not one of the two reviewed catalog rows. |
+| Flush | Native `finish()` runs the final window with zero right-context holdback, including an exact-chunk-boundary re-encode, then returns current text ([finish](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/StreamingUnifiedAsrManager.swift#L170-L175), [final-window rule](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/UnifiedStreamingWindower.swift#L39-L65)) | Native `finish()` zero-pads and processes a remaining partial chunk, then returns the decode of all accumulated IDs; if no partial chunk remains there is no extra decoder pass ([finish](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager.swift#L994-L1042)) | `finishInput` is a serialized command. It may cause final `.update` events, and only its successful return permits `.terminal(.completed)`. |
+| Final result | `finish()` returns the authoritative accumulated transcript and retains it until reset ([source](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/StreamingUnifiedAsrManager.swift#L170-L201)) | `finish()` returns the authoritative decode, snapshots final timing diagnostics, and clears working token IDs/timings. Its optional capitalization/punctuation heuristic is off by default and must remain off at the ASR truth boundary ([source](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager.swift#L69-L75), [finish](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager.swift#L1024-L1042)) | Terminal completed text always comes from the successful `finish()` return; it replaces the Badge snapshot even if formatting differs. No separate native completeness/truncation signal exists. |
+| Cancellation | No cancel/abort API or cancellation callback in the manager's public streaming surface; `reset()` clears buffer, text, timing, and decoder state ([source](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/StreamingUnifiedAsrManager.swift#L158-L202)) | No cancel/abort API or cancellation callback; `reset()` clears stream buffers, IDs, timing, and decoder/cache state ([reset](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager.swift#L798-L823)) | `.cancelled` is adapter/session-synthesized from accepted user intent. Stop accepting audio, do not call `finish`, discard snapshots, reset before reuse, and emit one cancelled terminal. In-flight Core ML inference has no source-backed prompt-abort guarantee; cancellation latency must be measured. |
+| Failure | Streaming calls throw `ASRError`; partial state may remain readable until reset ([API](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/StreamingAsrManager.swift#L21-L59)) | Streaming calls throw; the native getter explicitly supports salvaging token timings after a mid-stream failure ([source](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager.swift#L1092-L1097)) | Map the thrown failure to exactly one `.failed` terminal, then reset. Do not turn the last partial into success. |
 
-| Handy catalog entry | transcribe.cpp family | Live hypothesis and commitment |
-| --- | --- | --- |
-| `parakeet-unified-en-0.6b` | Parakeet buffered streaming | Native emitted tokens advance the committed boundary; finalization drains the remaining right-context/tail audio. |
-| `nemotron-3.5-asr-streaming-0.6b` | Parakeet cache-aware streaming | Native token commitment with a selectable trained lookahead; finalization emits a final partial chunk. |
-| `nemotron-speech-streaming-en-0.6b` | Parakeet cache-aware streaming | Native token commitment with constant-memory caches; finalization emits a final partial chunk. |
-| `moonshine-streaming-tiny` | Moonshine Streaming | Re-decodes a growing prefix; commitment uses token-ID agreement, three agreeing hypotheses by default. |
-| `moonshine-streaming-small` | Moonshine Streaming | Same event semantics as Tiny. |
-| `moonshine-streaming-medium` | Moonshine Streaming | Same event semantics as Tiny. |
-| `Voxtral-Mini-4B-Realtime-2602` | Voxtral Realtime | Throttled revisable hypotheses; generic UTF-8 text agreement commits a prefix, while finalization runs the authoritative final path. |
+## Native truth versus adapter synthesis
 
-The family behaviors are documented and implemented in the pinned runtime:
+The two concrete managers' native facts are deliberately narrow:
 
-- Parakeet selects native commitment rather than agreement and supports both
-  buffered and cache-aware variants
-  ([stable-prefix dispatch](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/src/transcribe.cpp#L1042-L1073),
-  [Parakeet feed/finalize](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/src/arch/parakeet/model.cpp#L2725-L2990)).
-- Moonshine Streaming uses family token agreement and has no timestamps
-  ([family capabilities](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/src/arch/moonshine_streaming/capabilities.cpp),
-  [model-family contract](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/docs/models/moonshine-streaming.md)).
-- Voxtral Realtime falls back to generic repeated-text agreement. Its trained
-  delay and publication cadence affect latency, but they do not create an
-  engine-level end-of-utterance signal
-  ([family contract](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/docs/models/voxtral-realtime.md),
-  [feed/finalize implementation](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/src/arch/voxtral_realtime/model.cpp#L1967-L2031)).
+- full running text notifications/getters;
+- an append-only emitted-token history;
+- explicit caller-driven flush returning final text;
+- thrown processing failures; and
+- engine-specific token timing accessors
+  ([Unified API](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/StreamingUnifiedAsrManager.swift#L158-L202),
+  [multilingual Nemotron API](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/Nemotron/StreamingNemotronMultilingualAsrManager.swift#L935-L1097)).
 
-The remaining 58 catalog entries are not streaming-capable in this baseline.
-FoldWise should use their existing batch-shaped path and must not synthesize live
-events by repeatedly rerunning batch transcription.
+The FoldWise adapter must synthesize only boundary mechanics: serial command
+ordering, duplicate suppression, the empty tentative suffix, terminal failure
+mapping, and user-cancellation completion. It must not synthesize token
+stability by timing, split a native transcript into guessed committed/tentative
+regions, infer endpointing from silence, advertise a fabricated engine revision,
+or publish a partial transcript as a successful final result.
 
-## Exact semantic decisions
+One source-level integration wrinkle belongs to the later ownership ticket:
+Unified conforms to FluidAudio's `StreamingAsrManager`, but the multilingual
+Nemotron concrete manager does not; FluidAudio's generic Nemotron factory
+constructs the English manager. FoldWise therefore needs its own concrete
+multilingual wrapper rather than assuming both catalog rows can travel through
+FluidAudio's generic factory
+([protocol and documented conformers](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/StreamingAsrManager.swift#L1-L59),
+[generic factory](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Streaming/ParakeetModelVariant.swift#L91-L127),
+[Unified conformance](https://github.com/FluidInference/FluidAudio/blob/b9d43724cbdb5a980e441fd54180964e94d470f7/Sources/FluidAudio/ASR/Parakeet/Unified/StreamingUnifiedAsrManager.swift#L337-L357)).
 
-### Committed, tentative, and revision
+The three reviewed Whisper profiles remain batch. WhisperKit 1.0.0 includes an
+`AudioStreamTranscriber`, but the selected exact packages are not
+publisher-native streaming catalog rows; routing repeated Whisper decodes into
+this contract would change their reviewed capability rather than normalize it
+([runtime decision](independent-asr-runtime-strategy.md#runtime-semantics-and-architecture-boundary),
+[pinned WhisperKit helper](https://github.com/argmaxinc/argmax-oss-swift/blob/25c62997041c134b03ca82731ce2f6fd2cae1eb9/Sources/WhisperKit/Core/Audio/AudioStreamTranscriber.swift#L76-L205)).
+That helper repeatedly retranscribes its accumulated buffer and classifies all
+but the last two segments as “confirmed”; those confirmed/unconfirmed labels are
+WhisperKit wrapper heuristics, not publisher-model commitment semantics
+([state and confirmation count](https://github.com/argmaxinc/argmax-oss-swift/blob/25c62997041c134b03ca82731ce2f6fd2cae1eb9/Sources/WhisperKit/Core/Audio/AudioStreamTranscriber.swift#L6-L74),
+[segment update heuristic](https://github.com/argmaxinc/argmax-oss-swift/blob/25c62997041c134b03ca82731ce2f6fd2cae1eb9/Sources/WhisperKit/Core/Audio/AudioStreamTranscriber.swift#L164-L205)).
 
-- `currentText` is the only authoritative live hypothesis.
-- `committedText` is append-only during one stream and is appropriate for the
-  Badge's stable visual emphasis. “Committed” does not mean immutable model
-  truth or guaranteed membership in the final transcript.
-- `tentativeText` is volatile and may be wholly replaced.
-- The UI may normally render `committedText + tentativeText`, matching the
-  selected Badge prototype, but must replace that presentation with the
-  terminal completed text after finalization. Consumers that require exact live
-  truth render `currentText`.
-- `revision` is stream-local and monotonic. Native revision advances for any
-  observable snapshot or lifecycle change, including a finalize transition with
-  unchanged visible text. Adapters for future engines may synthesize the same
-  monotonic sequence; consumers must not interpret a bump as “text changed”
-  ([update contract](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/include/transcribe.h#L1838-L1906),
-  [revision accessor](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/include/transcribe.h#L2121-L2133)).
+## Contract invariants
 
-Snapshots contain owned Swift strings. Native pointers are borrowed and may be
-invalidated by every feed/finalize mutation; the official Swift binding already
-copies them at the FFI boundary
-([Swift `StreamText`](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/bindings/swift/Sources/TranscribeCpp/Streaming.swift#L54-L69)).
+1. A session emits zero or more `.update` events and exactly one `.terminal`;
+   nothing follows the terminal.
+2. Events preserve the actor-serialized order of accepted audio, processing,
+   and `finishInput`/`cancel` commands.
+3. For this baseline, each nonduplicate update's `committedText` has the previous
+   update's `committedText` as a prefix and `tentativeText` is empty.
+4. `.completed(text:)` is emitted only after native `finish()` returns
+   successfully; its text is authoritative even when no final update fired.
+5. Once cancellation wins command serialization, FoldWise accepts no more audio,
+   never calls `finish()`, publishes no completion/failure from abandoned work,
+   resets the manager before reuse, and emits only `.cancelled`.
+6. A thrown append/process/finish operation yields `.failed`, never `.completed`.
+   Any last snapshot is UI state or diagnostics, not a final transcript.
+7. The adapter keeps Nemotron's display-only punctuation heuristic disabled.
+   Capitalization, punctuation repair, and Polish remain downstream transforms.
 
-### Timing and timestamps
+## Limitations and downstream consequences
 
-transcribe.cpp exposes three per-call audio cursors: input received, audio
-committed, and buffered milliseconds. They are family-reported progress/drain
-hints, not text offsets. `audio_committed_ms` does not map to a byte boundary in
-`committedText`; `buffered_ms` describes internal audio waiting for family
-context rather than total recognition latency
-([cursor contract](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/include/transcribe.h#L1867-L1885)).
+- “Committed” is structural decoder stability, not semantic certainty. A wrong
+  word can be append-only.
+- No native operation promises immediate interruption of an in-flight Core ML
+  prediction. The implementation plan needs a cancellation-latency acceptance
+  test and must keep insertion/History gated on the terminal outcome.
+- Native timestamps are useful evidence but not yet one product contract. If
+  word highlighting, diarization, or seeking earns a timing surface, specify it
+  separately and validate text alignment, provisional ends, confidence meaning,
+  and finalization behavior for each profile.
+- The contract intentionally says nothing about microphone endpoint policy,
+  Polish, insertion, History, batch fallback, or model switching. Those belong
+  to **Define end-to-end streaming Dictation session semantics** and **Choose the
+  adapter and runtime ownership architecture**.
 
-They are not reliable enough for the engine-neutral transcript event:
+## Primary-source baseline
 
-- `ON_FINALIZE` deliberately reports zero committed audio during feeds.
-- Voxtral reports zero buffered milliseconds despite its model delay, and its
-  v0.1.3 cursor bookkeeping is tied to an internally trimmed PCM buffer.
-- Family cadence and lookahead differ materially, so equal cursor values do not
-  imply equal transcript stability.
+- FoldWise pins FluidAudio `0.15.4` at
+  [`b9d43724`](https://github.com/FluidInference/FluidAudio/tree/b9d43724cbdb5a980e441fd54180964e94d470f7)
+  and WhisperKit `1.0.0` at
+  [`25c62997`](https://github.com/argmaxinc/argmax-oss-swift/tree/25c62997041c134b03ca82731ce2f6fd2cae1eb9)
+  ([local lockfile](../../Package.resolved)).
+- Catalog membership and exact profile choice come from
+  [FoldWise's independent catalog baseline](independent-asr-catalog-baseline.md).
+- Runtime ownership and the exclusion of pseudo-streaming Whisper rows come from
+  [the independent runtime strategy](independent-asr-runtime-strategy.md).
 
-Keep these values in adapter diagnostics and performance tests. Add optional
-progress metadata later only if a concrete product consumer earns it.
+## Bottom line
 
-Recognition timestamps are a different capability. Parakeet entries expose
-token/word timing; Moonshine Streaming and Voxtral Realtime expose none. An
-active stream may also carry structural token rows even when it has no real
-token timestamps. The final-result layer must therefore use the runtime's
-reported timestamp granularity, never infer timestamps from token rows
-([streaming timestamp rule](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/include/transcribe.h#L1724-L1738)).
-Timestamps are not required by the selected Badge behavior and stay outside the
-small live-event contract.
-
-### End of utterance and flush
-
-None of the three runtime families exposes a VAD, endpoint, or spontaneous
-end-of-utterance event. A stream remains active until the caller explicitly
-finalizes or resets it. FoldWise's record Stage therefore owns the decision
-that input ended—hotkey release, Badge stop, recorder failure, or a separately
-specified VAD policy—and then calls `finishInput()`.
-
-`finishInput()` maps to native `finalize()`: it consumes every feed queued
-before it, flushes buffered audio, satisfies right-context/lookahead, and emits
-remaining text. Only a successful native finalize followed by the terminal
-state/completeness checks may publish `.completed`; native `is_final` merely
-means “this update came from the finalize call” and is set even when that call
-fails
-([finalize contract](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/include/transcribe.h#L2084-L2096),
-[Swift finalize wrapper](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/bindings/swift/Sources/TranscribeCpp/Streaming.swift#L135-L149)).
-
-### Cancellation and failure
-
-There are two native mechanisms with different meanings:
-
-- the abort callback interrupts in-flight feed/finalize compute at chunk or
-  decode-step boundaries, returns `ABORTED`, transitions the stream to failed,
-  and preserves readable partial results; and
-- `reset()` abandons the stream without flushing and clears all result-visible
-  state.
-
-FoldWise user cancellation needs both: signal the cancellation token so any
-in-flight compute unwinds, then reset/release the native stream. The public
-terminal outcome is `.cancelled`; partial text is discarded and the Dictation
-session inserts and saves nothing, matching the selected Badge behavior. An ASR
-fault is `.failed(error:lastSnapshot:)`, preserving the last snapshot for
-diagnostics or a later product-level fallback decision without presenting it as
-a successful transcript
-([native cancellation contract](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/include/transcribe.h#L1740-L1745),
-[Swift cancellation token](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/bindings/swift/Sources/TranscribeCpp/Cancellation.swift)).
-
-### Final result and truncation
-
-After successful finalize, the adapter reads authoritative `full` text, not the
-presentation `display` string. It then checks truncation before publishing the
-terminal outcome. Streaming truncation is exceptional in v0.1.3: Moonshine
-Streaming can reach its decoder output window and Voxtral can reach its absolute
-position cap while finalize still returns success. The only truthful signal is
-`wasTruncated`
-([streaming input-limit exception](https://github.com/handy-computer/transcribe.cpp/blob/a94e021ef658dc7c788837341a13f6acea3baf3c/docs/input-limits.md#L177-L191)).
-
-The terminal contract retains `.completed(..., completeness: .truncated)` so
-the adapter never lies about completeness. Whether FoldWise blocks insertion,
-offers recovery, or accepts a truncated transcript is a product decision for
-**Define end-to-end streaming Dictation session semantics**, not an engine
-adapter decision.
-
-## Handy reference behavior
-
-Handy's pinned implementation validates the useful orchestration shape but is
-not sufficient as FoldWise's truth boundary:
-
-- audio feeds and finalize/cancel share a FIFO command channel, ensuring all
-  accepted audio precedes flush;
-- its UI event contains only committed and tentative strings;
-- revision and audio cursors are logged, not emitted;
-- cancel resets and discards the stream; and
-- finalize returns `stream.text().display()` and falls back to batch on an
-  unusable stream.
-
-See Handy's
-[`StreamCmd` and `StreamTextEvent`](https://github.com/cjpais/Handy/blob/cdbc22390987643237756382ef367f7244b2844f/src-tauri/src/managers/transcription.rs#L47-L157),
-[`feed`/`finalize`/`cancel` worker](https://github.com/cjpais/Handy/blob/cdbc22390987643237756382ef367f7244b2844f/src-tauri/src/managers/transcription.rs#L917-L1020),
-and
-[`finalize_stream`](https://github.com/cjpais/Handy/blob/cdbc22390987643237756382ef367f7244b2844f/src-tauri/src/managers/transcription.rs#L1041-L1083).
-
-FoldWise should preserve the FIFO command ordering, but add authoritative
-current/final text, explicit terminal outcomes, and completeness. That is the
-minimum needed to keep the Badge and Pipeline truthful across all seven
-streaming catalog entries.
-
-## Consequences for later wayfinding tickets
-
-- **Choose the adapter and runtime ownership architecture** can place the event
-  sequence behind the existing opaque ASR session handle; no model identifier or
-  transcribe.cpp type needs to leak into Pipeline.
-- **Define end-to-end streaming Dictation session semantics** owns recorder
-  endpoint policy, batch fallback, truncation UX, Polish transition, insertion,
-  History, and what the Badge displays when stable presentation diverges from
-  authoritative live text.
-- No new ticket is required from this research. Performance acceptance can
-  measure time-to-first-update, revision cadence, finalize latency, cancellation
-  latency, and final-vs-batch equality without promoting native cursor hints into
-  the product contract.
+For the reviewed baseline, live ASR is simpler than the withdrawn transcribe.cpp
+design: both engines expose stable append-only full text plus caller-driven
+finalization. Use full snapshots with an empty tentative suffix, followed by one
+completed/cancelled/failed terminal. Do not put fabricated revisions, endpoint
+events, or flattened token timings into the core boundary.
