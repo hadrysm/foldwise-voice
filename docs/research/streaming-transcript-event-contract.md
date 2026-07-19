@@ -5,6 +5,14 @@ engines**, audited on 2026-07-19. This note distinguishes model output truth
 from presentation stability and keeps recorder, ASR engine, and Dictation
 session responsibilities separate.
 
+> **Status: withdrawn as a FoldWise decision.** While this research was in
+> progress, the parent map rejected external catalog parity and reopened the
+> runtime investigation against a FoldWise-owned ASR catalog baseline. The
+> transcribe.cpp findings below remain source-backed reference material, but the
+> seven-model inventory, selected runtime, and proposed contract are not an
+> accepted FoldWise product or architecture decision. Re-run the ticket after
+> the independent runtime strategy is resolved.
+
 ## Executive answer
 
 The seven entries in the pinned Handy catalog that declare streaming reduce to
