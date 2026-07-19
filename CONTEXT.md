@@ -113,6 +113,11 @@ several models that trade download size for accuracy and language coverage; the
 Whisper models are what widen FoldWise's language reach beyond Parakeet's 25.
 _Avoid_: weights, checkpoint
 
+**ASR catalog baseline** — FoldWise's reviewed, versioned inventory of the ASR
+models and variants it promises to represent. Changes enter a later baseline
+only through an explicit catalog update; no third-party catalog controls it.
+_Avoid_: upstream catalog, live catalog, synced catalog
+
 **ASR model availability** — Whether an ASR model is ready to use because its
 complete local model data passes its engine adapter's validation. Missing,
 incomplete, corrupt, or unrecognized data is unavailable. Availability and ASR

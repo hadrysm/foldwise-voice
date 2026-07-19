@@ -1,5 +1,3 @@
-const catalogURL = "https://raw.githubusercontent.com/cjpais/Handy/cdbc22390987643237756382ef367f7244b2844f/src-tauri/src/catalog/catalog.json";
-
 const variants = [
   { key: "A", name: "Inspector rail", thesis: "Your active model first; the complete catalog one selection away." },
   { key: "B", name: "Comparison table", thesis: "Compare every declared fact without pretending unknowns are scores." },
@@ -7,20 +5,20 @@ const variants = [
 ];
 
 const fallbackCatalog = [
-  { id: "handy-computer/parakeet-unified-en-0.6b-gguf", name: "Parakeet Unified EN 0.6B", architecture: "parakeet", family: "parakeet", parameters: "0.6B", base_model: "nvidia/parakeet-unified-en-0.6b", license: "cc-by-4.0", languages: ["en"], capabilities: { streaming: true, translate: false, lang_detect: false, timestamps: "token" }, default_quant: "Q8_0", files: [{ quant: "Q8_0", size_bytes: 731357568 }], recommended_rank: 1, description: "Fast, accurate live English transcription" },
-  { id: "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf", name: "Nemotron Streaming 3.5", architecture: "parakeet", family: "nemotron", parameters: "0.6B", base_model: "nvidia/nemotron-3.5-asr-streaming-0.6b", license: "other", languages: ["en", "es", "fr", "it", "pt", "nl", "de", "tr", "ru", "ar", "hi", "ja", "ko", "vi", "uk", "pl", "sv", "cs", "nb", "da", "bg", "fi", "hr", "sk", "zh", "hu", "ro", "et"], capabilities: { streaming: true, translate: false, lang_detect: true, timestamps: "token" }, default_quant: "Q8_0", files: [{ quant: "Q8_0", size_bytes: 751094240 }], recommended_rank: 2, description: "Live multilingual transcription across 28 languages" },
-  { id: "handy-computer/canary-180m-flash-gguf", name: "Canary 180M Flash", architecture: "canary", family: "canary", parameters: "180M", base_model: "nvidia/canary-180m-flash", license: "cc-by-4.0", languages: ["en", "de", "es", "fr"], capabilities: { streaming: false, translate: true, lang_detect: false, timestamps: "none" }, default_quant: "Q8_0", files: [{ quant: "Q8_0", size_bytes: 218447552 }], recommended_rank: 3, description: "Tiny and instant, runs well on any hardware" },
-  { id: "handy-computer/whisper-medium-gguf", name: "Whisper Medium", architecture: "whisper", family: "whisper", parameters: "764M", base_model: "openai/whisper-medium", license: "apache-2.0", languages: ["en", "pl", "de", "fr", "es"], capabilities: { streaming: false, translate: true, lang_detect: true, timestamps: "segment" }, default_quant: "Q8_0", files: [{ quant: "Q8_0", size_bytes: 831538144 }], recommended_rank: 5, description: "Broadest language coverage, but may run a bit slow" },
+  { id: "parakeet-unified-en-0.6b", name: "Parakeet Unified EN 0.6B", architecture: "parakeet", family: "parakeet", parameters: "0.6B", base_model: "nvidia/parakeet-unified-en-0.6b", license: "cc-by-4.0", languages: ["en"], capabilities: { streaming: true, translate: false, lang_detect: false, timestamps: "token" }, default_quant: "Q8_0", files: [{ quant: "Q8_0", size_bytes: 731357568 }], recommended_rank: 1, description: "Fast, accurate live English transcription" },
+  { id: "nemotron-3.5-asr-streaming-0.6b", name: "Nemotron Streaming 3.5", architecture: "parakeet", family: "nemotron", parameters: "0.6B", base_model: "nvidia/nemotron-3.5-asr-streaming-0.6b", license: "other", languages: ["en", "es", "fr", "it", "pt", "nl", "de", "tr", "ru", "ar", "hi", "ja", "ko", "vi", "uk", "pl", "sv", "cs", "nb", "da", "bg", "fi", "hr", "sk", "zh", "hu", "ro", "et"], capabilities: { streaming: true, translate: false, lang_detect: true, timestamps: "token" }, default_quant: "Q8_0", files: [{ quant: "Q8_0", size_bytes: 751094240 }], recommended_rank: 2, description: "Live multilingual transcription across 28 languages" },
+  { id: "canary-180m-flash", name: "Canary 180M Flash", architecture: "canary", family: "canary", parameters: "180M", base_model: "nvidia/canary-180m-flash", license: "cc-by-4.0", languages: ["en", "de", "es", "fr"], capabilities: { streaming: false, translate: true, lang_detect: false, timestamps: "none" }, default_quant: "Q8_0", files: [{ quant: "Q8_0", size_bytes: 218447552 }], recommended_rank: 3, description: "Tiny and instant, runs well on any hardware" },
+  { id: "whisper-medium", name: "Whisper Medium", architecture: "whisper", family: "whisper", parameters: "764M", base_model: "openai/whisper-medium", license: "apache-2.0", languages: ["en", "pl", "de", "fr", "es"], capabilities: { streaming: false, translate: true, lang_detect: true, timestamps: "segment" }, default_quant: "Q8_0", files: [{ quant: "Q8_0", size_bytes: 831538144 }], recommended_rank: 5, description: "Broadest language coverage, but may run a bit slow" },
 ];
 
 const state = {
   catalog: [],
-  selectedID: "handy-computer/parakeet-unified-en-0.6b-gguf",
-  inspectedID: "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf",
+  selectedID: "parakeet-unified-en-0.6b",
+  inspectedID: "nemotron-3.5-asr-streaming-0.6b",
   installed: new Set([
-    "handy-computer/parakeet-unified-en-0.6b-gguf",
-    "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf",
-    "handy-computer/canary-180m-flash-gguf",
+    "parakeet-unified-en-0.6b",
+    "nemotron-3.5-asr-streaming-0.6b",
+    "canary-180m-flash",
   ]),
   quantization: new Map(),
   search: "",
@@ -92,7 +90,7 @@ function compatibility(model) {
 
 function chips(model, compact = false) {
   const items = [];
-  if (model.capabilities.streaming) items.push(`<span class="live-chip" title="Declared by Handy; FoldWise runtime verification pending">Live</span>`);
+  if (model.capabilities.streaming) items.push(`<span class="live-chip" title="FoldWise runtime verification pending">Live</span>`);
   if (!compact && model.capabilities.translate) items.push(`<span class="fact-chip">Translation</span>`);
   if (!compact && model.capabilities.lang_detect) items.push(`<span class="fact-chip">Language detect</span>`);
   items.push(`<span class="language-fact">${escapeHTML(languageText(model))}</span>`);
@@ -128,7 +126,7 @@ function filteredCatalog() {
 
 function toolbar() {
   return `<div class="toolbar">
-    <label class="search-field"><input id="catalogSearch" type="search" placeholder="Search 65 models, families, or languages…" value="${escapeHTML(state.search)}" aria-label="Search catalog"></label>
+    <label class="search-field"><input id="catalogSearch" type="search" placeholder="Search ${state.catalog.length} models, families, or languages…" value="${escapeHTML(state.search)}" aria-label="Search catalog"></label>
     <select id="languageFilter" aria-label="Language"><option value="all">All languages</option><option value="en" ${state.language === "en" ? "selected" : ""}>English</option><option value="pl" ${state.language === "pl" ? "selected" : ""}>Polish</option><option value="de" ${state.language === "de" ? "selected" : ""}>German</option><option value="es" ${state.language === "es" ? "selected" : ""}>Spanish</option><option value="zh" ${state.language === "zh" ? "selected" : ""}>Chinese</option></select>
     <select id="capabilityFilter" aria-label="Capability"><option value="all">All capabilities</option><option value="live" ${state.capability === "live" ? "selected" : ""}>Live transcript</option><option value="translate" ${state.capability === "translate" ? "selected" : ""}>Translation</option><option value="detect" ${state.capability === "detect" ? "selected" : ""}>Language detect</option></select>
     <select id="statusFilter" aria-label="Download status"><option value="all">Any status</option><option value="downloaded" ${state.status === "downloaded" ? "selected" : ""}>Downloaded</option><option value="available" ${state.status === "available" ? "selected" : ""}>Available</option></select>
@@ -166,7 +164,7 @@ function inspector(model) {
         <div class="fact-cell"><span>License label</span><strong>${escapeHTML(model.license)}</strong></div>
         <div class="fact-cell"><span>Source model</span><strong>${escapeHTML(model.base_model)}</strong></div>
       </div>
-      <div class="truth-note"><strong>Catalog evidence, not a FoldWise guarantee.</strong> Capabilities and license are Handy-declared. Compatibility, behavior, legal terms, speed, and accuracy still need FoldWise verification.</div>
+      <div class="truth-note"><strong>Catalog evidence, not a FoldWise guarantee.</strong> Compatibility, behavior, legal terms, speed, and accuracy still need FoldWise verification.</div>
       <div class="quant-row"><label><span>Quantization</span><select data-quant="${escapeHTML(model.id)}">${model.files.map((candidate) => `<option value="${candidate.quant}" ${candidate.quant === file.quant ? "selected" : ""}>${candidate.quant} · ${formatBytes(candidate.size_bytes)}</option>`).join("")}</select></label><div class="storage-impact"><span>Download size</span><strong>${formatBytes(file.size_bytes)}</strong></div></div>
       ${downloading ? `<div class="progress-track" style="--progress:${state.download.progress}%"><i></i></div>` : ""}
       <div class="actions">
@@ -183,7 +181,7 @@ function renderVariantA() {
   const recommended = state.status === "all" ? models.filter((model) => model.recommended_rank) : [];
   const remaining = state.status === "all" ? models.filter((model) => !model.recommended_rank) : models;
   const rows = state.status === "all"
-    ? `${recommended.length ? `<div class="catalog-group-label">Handy recommended <span>${recommended.length}</span></div>${recommended.map(modelRow).join("")}` : ""}<div class="catalog-group-label">Complete catalog <span>${remaining.length}</span></div>${remaining.map(modelRow).join("")}`
+    ? `${recommended.length ? `<div class="catalog-group-label">FoldWise picks <span>${recommended.length}</span></div>${recommended.map(modelRow).join("")}` : ""}<div class="catalog-group-label">Complete catalog <span>${remaining.length}</span></div>${remaining.map(modelRow).join("")}`
     : models.map(modelRow).join("");
   return `<div class="variant-a">${activeAnchor()}${toolbar()}<div class="master-detail">
     <section class="catalog-list"><div class="list-head"><strong>${state.status === "downloaded" ? "Downloaded" : "Catalog"}</strong><span>${models.length} of ${state.catalog.length}</span></div><div class="model-scroll">${rows || emptyResult()}</div></section>
@@ -347,16 +345,7 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("popstate", render);
 
 async function loadCatalog() {
-  try {
-    const response = await fetch(catalogURL);
-    if (!response.ok) throw new Error(`Catalog request failed: ${response.status}`);
-    const payload = await response.json();
-    state.catalog = payload.models;
-  } catch (error) {
-    console.warn(error);
-    state.catalog = fallbackCatalog;
-    showToast("Pinned catalog unavailable — showing the four-model layout fallback");
-  }
+  state.catalog = fallbackCatalog;
   for (const model of state.catalog) state.quantization.set(model.id, model.default_quant);
   if (!modelByID(state.inspectedID)) state.inspectedID = state.catalog[0].id;
   loading.hidden = true;

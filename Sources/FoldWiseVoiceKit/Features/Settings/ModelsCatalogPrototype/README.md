@@ -14,6 +14,10 @@ Then open <http://localhost:4174/?variant=A>. Use the floating switcher or the l
 - **B — Comparison table:** the full catalog is treated as a sortable data set.
 - **C — Guided shelves:** the page leads with a language/job choice and progressively discloses families.
 
-All variants render the same pinned 65-entry Handy catalog baseline and share in-memory selection, download, quantization, filtering, and deletion state. Switch to **Polish** to evaluate separating the two jobs without adding another sidebar destination.
+All variants render the same small, self-contained FoldWise fixture and share
+in-memory selection, download, quantization, filtering, and deletion state.
+Switch to **Polish** to evaluate separating the two jobs without adding another
+sidebar destination.
 
-The prototype is intentionally dependency-free and read-only with respect to FoldWise. It fetches the immutable Handy catalog pinned by the wayfinding research; a small fallback data set keeps the layout usable if that request fails. It should be deleted after its interaction decisions are captured.
+The prototype is intentionally dependency-free and read-only with respect to
+FoldWise. It should be deleted after its interaction decisions are captured.
