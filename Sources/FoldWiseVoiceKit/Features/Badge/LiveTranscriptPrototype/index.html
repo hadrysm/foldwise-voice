@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FoldWise Badge live transcript prototype</title>
+    <link rel="stylesheet" href="prototype.css" />
+  </head>
+  <body>
+    <!--
+      THROWAWAY PROTOTYPE — issue #195.
+      Three live-transcript Badge variants, switchable via ?variant=, on one local route.
+    -->
+    <main class="desktop" aria-label="Mock macOS desktop">
+      <div class="menu-bar" aria-hidden="true">
+        <span class="apple">●</span>
+        <strong>TextEdit</strong>
+        <span>File</span><span>Edit</span><span>Format</span><span>View</span>
+        <span class="menu-spacer"></span>
+        <span>•••</span><span>Sun 19 Jul&nbsp;&nbsp;18:42</span>
+      </div>
+
+      <section class="mock-document" aria-label="Example document behind the Badge">
+        <div class="traffic-lights" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="document-toolbar" aria-hidden="true">
+          <span>Helvetica</span><span>14</span><span>↤</span><span>↔</span><span>↦</span>
+        </div>
+        <div class="paper">
+          <p>Project notes</p>
+          <p class="insertion-line"><span id="insertedText">The next release should </span><span class="document-caret"></span></p>
+        </div>
+      </section>
+
+      <aside class="lab-controls" aria-label="Prototype controls">
+        <div class="lab-eyebrow">Prototype controls</div>
+        <div class="segmented" role="group" aria-label="Language">
+          <button data-language="en" class="selected">English</button>
+          <button data-language="pl">Polski</button>
+        </div>
+        <div class="segmented" role="group" aria-label="Dictation selection">
+          <button data-mode="raw" class="selected">Voice to Text</button>
+          <button data-mode="polish">Polish · Email</button>
+        </div>
+        <div class="segmented" role="group" aria-label="Badge position">
+          <button data-position="top">Top · grow down</button>
+          <button data-position="bottom" class="selected">Bottom · grow up</button>
+        </div>
+        <label class="toggle-row">
+          <input type="checkbox" id="reduceMotion" />
+          <span>Reduce Motion</span>
+        </label>
+        <label class="field-label" for="outcome">Finish as</label>
+        <select id="outcome">
+          <option value="success">Success</option>
+          <option value="recognition-error">Recognition error</option>
+          <option value="polish-error">Polish fallback</option>
+          <option value="clipboard">Copied, not inserted</option>
+        </select>
+        <button id="restart" class="restart-button">Restart scenario</button>
+        <p class="hint">Start, let the transcript overflow, then Stop. Cancel is always immediate.</p>
+      </aside>
+
+      <section id="badgeStage" class="badge-stage variant-a" aria-live="polite">
+        <div id="transcriptSurface" class="transcript-surface">
+          <div class="surface-kicker"><span>Live transcript</span><span id="languageTag">EN</span></div>
+          <div id="transcriptViewport" class="transcript-viewport">
+            <p id="variantAText" class="continuous-text">
+              <span class="committed"></span><span class="tentative"></span><span class="stream-caret"></span>
+            </p>
+            <div id="variantCStack" class="segment-stack"></div>
+          </div>
+        </div>
+
+        <div id="badge" class="badge is-idle" role="group" aria-label="FoldWise Badge" title="Click while listening to Stop">
+          <div class="idle-glyph" aria-hidden="true">
+            <i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          </div>
+
+          <div class="badge-live-row">
+            <span id="stateDot" class="state-dot"></span>
+            <div class="ribbon" aria-hidden="true">
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+            <div id="variantBRail" class="transcript-rail">
+              <span class="committed"></span><span class="tentative"></span><span class="stream-caret"></span>
+            </div>
+            <span id="timer" class="timer">0:00</span>
+            <span id="workLabel" class="work-label"></span>
+            <button id="cancel" class="cancel-button" aria-label="Cancel Dictation session">×</button>
+          </div>
+
+          <div class="badge-result-row">
+            <span id="resultIcon" class="result-icon">✓</span>
+            <span id="resultLabel">inserted</span>
+          </div>
+        </div>
+
+        <button id="primaryAction" class="primary-action">Start Dictation</button>
+        <div id="stateCaption" class="state-caption">Idle · compact Badge</div>
+      </section>
+    </main>
+
+    <nav class="prototype-switcher" aria-label="Prototype variant switcher">
+      <button id="previousVariant" aria-label="Previous variant">←</button>
+      <div>
+        <strong id="variantLabel">A — Attached panel</strong>
+        <span>Use ← and → to compare</span>
+      </div>
+      <button id="nextVariant" aria-label="Next variant">→</button>
+    </nav>
+
+    <script src="prototype.js"></script>
+  </body>
+</html>
