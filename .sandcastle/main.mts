@@ -35,7 +35,7 @@ import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 
 // Maximum number of implement→review cycles to run before stopping.
 // Each cycle works on one issue. Raise this to process more issues per run.
-const MAX_ITERATIONS = 10;
+const MAX_ITERATIONS = 50;
 
 type RunEffort = "low" | "medium" | "high" | "xhigh" | "max";
 type Provider = "claude-code" | "codex";
