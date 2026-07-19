@@ -83,6 +83,27 @@ final class BadgeReducerTests: XCTestCase {
         XCTAssertEqual(states, [.switchingASRModel, nil, .polishing(model: "qwen2.5:3b")])
     }
 
+    func testCompletedStartupRestorationClearsTheSwitchingBadge() {
+        let presentation = ASRBadgePresentation()
+        var badgeState = BadgeState.idle
+        let snapshots: [(ASRModelLifecycleOperation?, Bool)] = [
+            (.restoring(modelID: "parakeet-v3"), true),
+            (.restoring(modelID: "parakeet-v3"), false),
+            (nil, false),
+        ]
+
+        for (operation, isDictationBlocked) in snapshots {
+            if let pipelineState = presentation.lifecycleDidChange(
+                operation: operation,
+                isDictationBlocked: isDictationBlocked
+            ) {
+                badgeState = reduce(badgeState, .pipeline(pipelineState)).state
+            }
+        }
+
+        XCTAssertEqual(badgeState, .idle)
+    }
+
     func testASRBootstrapPresentsLoadingThenDownloadProgress() {
         let presentation = ASRBadgePresentation()
 

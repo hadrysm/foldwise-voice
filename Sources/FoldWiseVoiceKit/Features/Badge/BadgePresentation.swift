@@ -513,19 +513,21 @@ final class ASRBadgePresentation {
     ) -> PipelineState? {
         let wasBlocking = lifecycleIsBlocking
         lifecycleIsBlocking = isDictationBlocked
+        if wasBlocking, !isDictationBlocked {
+            return latestPipelineState
+        }
+
         switch operation {
         case let .bootstrapping(fraction):
             return fraction.map { .downloadingModel(fraction: $0) } ?? .loadingModel
         case .downloading:
             return nil
         case .switching, .restoring:
-            return .switchingASRModel
+            return isDictationBlocked ? .switchingASRModel : nil
         case .deleting:
             return isDictationBlocked ? .switchingASRModel : nil
         case nil where isDictationBlocked:
             return .recognitionUnavailable
-        case nil where wasBlocking:
-            return latestPipelineState
         case nil:
             return nil
         }
