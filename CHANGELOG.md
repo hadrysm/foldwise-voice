@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.0](https://github.com/hadrysm/foldwise-voice/compare/v0.14.0...v0.15.0) (2026-07-19)
+
+
+### Features
+
+* add audio input, appearance, and shared dictation rows ([#159](https://github.com/hadrysm/foldwise-voice/issues/159)) ([9f8293e](https://github.com/hadrysm/foldwise-voice/commit/9f8293e51aa3c9ec7c4a5b74dd81bc6cd276f9c9))
+* add custom modes UI and cycling hotkey ([#178](https://github.com/hadrysm/foldwise-voice/issues/178)) ([98bccc4](https://github.com/hadrysm/foldwise-voice/commit/98bccc4b25e9753bcb6fa928b134d2ab2770be5e))
+* unify the ASR model lifecycle ([#186](https://github.com/hadrysm/foldwise-voice/issues/186)) ([b53372d](https://github.com/hadrysm/foldwise-voice/commit/b53372d18cc0604cecf91a028b3de2a3a3b154fa))
+
+
+### Bug Fixes
+
+* clear stale speech model switching badge ([#187](https://github.com/hadrysm/foldwise-voice/issues/187)) ([c474d70](https://github.com/hadrysm/foldwise-voice/commit/c474d7050c0a7f43f732a351635d02eb2036cd0e))
+
 ## [0.14.0](https://github.com/hadrysm/foldwise-voice/compare/v0.13.0...v0.14.0) (2026-07-12)
 
 
