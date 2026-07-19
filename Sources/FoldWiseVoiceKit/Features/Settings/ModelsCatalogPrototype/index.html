@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FoldWise complete Models catalog prototype</title>
+    <link rel="stylesheet" href="prototype.css" />
+  </head>
+  <body>
+    <!--
+      THROWAWAY PROTOTYPE — issue #196.
+      Three Models catalog variants, switchable via ?variant=, inside the existing app shell.
+    -->
+    <main class="app-window" aria-label="FoldWise Models prototype">
+      <header class="titlebar" aria-hidden="true">
+        <div class="traffic-lights"><i></i><i></i><i></i></div>
+        <span class="sidebar-toggle">▯</span>
+        <strong>FoldWise Voice</strong>
+      </header>
+
+      <aside class="sidebar" aria-label="FoldWise navigation">
+        <nav>
+          <button><span>⌂</span>Home</button>
+          <button><span>✦</span>Modes</button>
+          <button class="active"><span>⬡</span>Models</button>
+          <button><span>◷</span>History</button>
+          <button><span>▥</span>Stats</button>
+          <button><span>☷</span>Settings</button>
+        </nav>
+        <small>v0.15.0 · up to date</small>
+      </aside>
+
+      <section class="content-shell">
+        <div class="page-heading">
+          <div>
+            <h1>Models</h1>
+            <p id="variantThesis">Your active model first; the complete catalog one selection away.</p>
+          </div>
+          <div class="job-switch" role="tablist" aria-label="Model type">
+            <button class="selected" role="tab" data-job="speech">Speech</button>
+            <button role="tab" data-job="polish">Polish</button>
+          </div>
+        </div>
+
+        <div id="catalogLoading" class="loading-state">Loading the pinned 65-model catalog…</div>
+        <section id="speechSurface" aria-live="polite"></section>
+        <section id="polishSurface" class="polish-surface" hidden>
+          <div class="polish-intro">
+            <span class="eyebrow">Polish · Ollama</span>
+            <h2>Writing models</h2>
+            <p>These models rewrite a raw transcript after speech recognition. They do not change which speech model listens to you.</p>
+          </div>
+          <div class="polish-card">
+            <div><strong>qwen2.5:3b</strong><span>Used by Casual and Email</span></div>
+            <span class="status ready">Ready</span>
+            <button class="quiet-button">Manage in Ollama</button>
+          </div>
+          <div class="polish-card muted-card">
+            <div><strong>llama3.2:3b</strong><span>Available in Ollama</span></div>
+            <span class="status">Not used</span>
+            <button class="quiet-button">Add to a Mode</button>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <nav class="prototype-switcher" aria-label="Prototype variant switcher">
+      <button id="previousVariant" aria-label="Previous variant">←</button>
+      <div>
+        <strong id="variantLabel">A — Inspector rail</strong>
+        <span>Use ← and → to compare</span>
+      </div>
+      <button id="nextVariant" aria-label="Next variant">→</button>
+    </nav>
+
+    <div id="toast" class="toast" role="status"></div>
+    <script src="prototype.js"></script>
+  </body>
+</html>
