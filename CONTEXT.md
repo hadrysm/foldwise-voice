@@ -44,11 +44,28 @@ _Avoid_: safe mode, fallback configuration
 
 ## Dictation pipeline
 
-**Dictation session** — One press-to-insert cycle: from holding the hotkey
-and speaking, through to the (optionally polished) text landing in the
-focused app — or left on the clipboard when it can't be pasted. The unit the
-app sequences and reports progress for.
+**Dictation session** — One press-to-deliver cycle: from holding the hotkey and
+speaking, through to the (optionally polished) text being sent to the focused
+app, left on the clipboard, or retained for recovery. The unit the app sequences
+and reports progress for.
 _Avoid_: recording, dictation
+
+**Dictation session identity** — The stable identity assigned when a Dictation
+session begins and retained by every outcome that belongs to it, including its
+History entry when one is saved.
+_Avoid_: job ID, transcript ID, recording ID
+
+**Dictation target** — The focused accessibility element captured when a
+Dictation session begins. FoldWise requests a paste only while that exact target
+still has focus; an unknown or changed target receives clipboard-only delivery.
+_Avoid_: source app, current app, paste destination
+
+**Dictation delivery** — The handoff outcome for completed Dictation text:
+`paste requested` when FoldWise posts Cmd-V without claiming the target accepted
+it, `clipboard only` when the user must paste, or `delivery failed` when the text
+remains in FoldWise for recovery. A successful Copy retry advances `delivery
+failed` to `clipboard only` for the same Dictation session.
+_Avoid_: insertion result, paste success
 
 **Input device** — The global microphone source used by the record Stage. It is
 either the live macOS system default or a specifically chosen connected device.
@@ -83,6 +100,11 @@ _Avoid_: profile, preset
 of an optional stable Mode ID plus the Mode name captured by that Dictation
 session. The captured name remains the fallback when the Mode cannot be resolved.
 _Avoid_: mode reference, history mode
+
+**ASR attribution** — The captured ASR model selection and the Effective ASR
+model recorded for a History entry. The two differ when FoldWise transcribes the
+Dictation session with its default fallback.
+_Avoid_: model used, speech model metadata
 
 **In-place Mode** — A Mode whose Polish output tracks the transcript closely:
 same words, same rough length, fixed punctuation/casing. E.g. "Casual". Off-task
