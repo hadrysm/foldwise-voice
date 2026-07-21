@@ -37,6 +37,13 @@ struct ModelsCombinedPane: View {
         }
         .onChange(of: model.asrSnapshot) { previous, current in
             applyASRFocusTransition(from: previous, to: current)
+            announceASRTransition(from: previous, to: current)
+        }
+        .onChange(of: model.polishModelsState) { previous, current in
+            applyPolishFocusTransition(from: previous, to: current)
+            announce(
+                ModelsPolishAnnouncementTransition.resolve(from: previous, to: current)
+            )
         }
         .alert(
             pendingDestructiveAction?.confirmationTitle ?? "Remove model?",
@@ -76,15 +83,32 @@ struct ModelsCombinedPane: View {
     }
 
     private func ledger(_ presentation: ModelsWorkspaceProjection) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                ForEach(presentation.sections, id: \.id) { section in
-                    familySection(section, inspectedID: presentation.inspector?.id)
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    ForEach(presentation.sections, id: \.id) { section in
+                        familySection(section, inspectedID: presentation.inspector?.id)
+                    }
                 }
+                .padding(18)
             }
-            .padding(18)
+            .background(Theme.sidebarBackground.opacity(0.46))
+            .focusable(!presentation.ledgerRowIDs.isEmpty)
+            .focused(
+                $focusedControl,
+                equals: presentation.inspector.map { .ledgerInspection($0.id) } ?? .ledger
+            )
+            .onMoveCommand { direction in
+                moveInspection(direction, in: presentation, scrollProxy: scrollProxy)
+            }
+            .onChange(of: presentation.inspector?.id) { previous, current in
+                guard previous != current, let current else { return }
+                scrollProxy.scrollTo(current, anchor: .center)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Models comparison ledger")
+            .accessibilityValue(presentation.inspector?.name ?? "No model selected")
         }
-        .background(Theme.sidebarBackground.opacity(0.46))
     }
 
     private func familySection(
@@ -112,11 +136,16 @@ struct ModelsCombinedPane: View {
                 familyPlaceholder(
                     placeholder,
                     family: section.id,
-                    isInspected: inspectedID == .polishPlaceholder
+                    isInspected: inspectedID == .polishPlaceholder,
+                    isKeyboardFocused: focusedControl == .ledgerInspection(.polishPlaceholder)
                 )
             }
             ForEach(section.rows, id: \.id) { row in
-                ledgerRow(row, isInspected: row.id == inspectedID)
+                ledgerRow(
+                    row,
+                    isInspected: row.id == inspectedID,
+                    isKeyboardFocused: focusedControl == .ledgerInspection(row.id)
+                )
             }
         }
     }
@@ -124,7 +153,8 @@ struct ModelsCombinedPane: View {
     private func familyPlaceholder(
         _ placeholder: ModelsFamilyPlaceholder,
         family: ModelsFamilyID,
-        isInspected: Bool
+        isInspected: Bool,
+        isKeyboardFocused: Bool
     ) -> some View {
         Button {
             if family == .polish {
@@ -148,12 +178,17 @@ struct ModelsCombinedPane: View {
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(Theme.hairline)
+                    .strokeBorder(
+                        isKeyboardFocused ? Theme.accent : Theme.hairline,
+                        lineWidth: isKeyboardFocused ? 2 : 1
+                    )
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focusable(false)
         .disabled(family != .polish || placeholder.showsProgress)
+        .id(ModelsRowID.polishPlaceholder)
         .accessibilityLabel(placeholder.text)
     }
 
@@ -200,24 +235,34 @@ struct ModelsCombinedPane: View {
 
     private func ledgerRow(
         _ row: ModelsRowPresentation,
-        isInspected: Bool
+        isInspected: Bool,
+        isKeyboardFocused: Bool
     ) -> some View {
         HStack(spacing: 6) {
             Button {
                 inspectedID = row.id
             } label: {
                 if row.kind == .utility {
-                    utilityLedgerRow(row, isInspected: isInspected)
+                    utilityLedgerRow(
+                        row,
+                        isInspected: isInspected,
+                        isKeyboardFocused: isKeyboardFocused
+                    )
                 } else {
-                    modelLedgerRow(row, isInspected: isInspected)
+                    modelLedgerRow(
+                        row,
+                        isInspected: isInspected,
+                        isKeyboardFocused: isKeyboardFocused
+                    )
                 }
             }
             .buttonStyle(.plain)
+            .focusable(false)
             .frame(maxWidth: .infinity)
-            .focused($focusedControl, equals: .row(row.id))
             .help(row.accessibilityLabel)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(row.accessibilityLabel)
+            .accessibilityValue(row.progress?.accessibilityValue ?? "")
             .accessibilityAddTraits(isInspected ? .isSelected : [])
             if row.progress?.allowsCancellation == true {
                 Button("Cancel") { model.onCancelASROperation?() }
@@ -227,11 +272,13 @@ struct ModelsCombinedPane: View {
                     .accessibilityLabel("Cancel \(row.progress?.label.lowercased() ?? "operation") for \(row.name)")
             }
         }
+        .id(row.id)
     }
 
     private func modelLedgerRow(
         _ row: ModelsRowPresentation,
-        isInspected: Bool
+        isInspected: Bool,
+        isKeyboardFocused: Bool
     ) -> some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
@@ -263,12 +310,16 @@ struct ModelsCombinedPane: View {
             rating(row.quality)
             ledgerState(row)
         }
-        .modelsLedgerRowChrome(isInspected: isInspected)
+        .modelsLedgerRowChrome(
+            isInspected: isInspected,
+            isKeyboardFocused: isKeyboardFocused
+        )
     }
 
     private func utilityLedgerRow(
         _ row: ModelsRowPresentation,
-        isInspected: Bool
+        isInspected: Bool,
+        isKeyboardFocused: Bool
     ) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "plus.circle")
@@ -289,7 +340,10 @@ struct ModelsCombinedPane: View {
                 ledgerState(row)
             }
         }
-        .modelsLedgerRowChrome(isInspected: isInspected)
+        .modelsLedgerRowChrome(
+            isInspected: isInspected,
+            isKeyboardFocused: isKeyboardFocused
+        )
     }
 
     @ViewBuilder
@@ -472,6 +526,7 @@ struct ModelsCombinedPane: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(progress.label), \(progress.status)")
+            .accessibilityValue(progress.accessibilityValue)
             if progress.allowsCancellation, let id {
                 Button("Cancel") { model.onCancelASROperation?() }
                     .controlSize(.small)
@@ -490,6 +545,14 @@ struct ModelsCombinedPane: View {
         disabledReason: String?
     ) -> some View {
         switch action {
+        case .checking:
+            HStack(spacing: 7) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Checking…")
+            }
+            .font(Theme.ui(10.5, .medium))
+            .foregroundStyle(Theme.textSecondary)
         case .selected:
             Label("Selected", systemImage: "checkmark.circle.fill")
                 .font(Theme.ui(10.5, .semibold))
@@ -594,8 +657,16 @@ struct ModelsCombinedPane: View {
     }
 
     private func reconcileInspection(with presentation: ModelsWorkspaceProjection) {
+        let previousInspection = inspectedID
         if inspectedID != presentation.inspector?.id {
             inspectedID = presentation.inspector?.id
+            if let previousInspection,
+               focusedControl?.inspectedID == previousInspection,
+               let updatedInspection = presentation.inspector?.id {
+                DispatchQueue.main.async {
+                    focusedControl = .inspectorPrimary(updatedInspection)
+                }
+            }
         }
         if let requested = model.requestedPolishInspection,
            presentation.inspector?.id == .polish(requested) {
@@ -606,6 +677,32 @@ struct ModelsCombinedPane: View {
         if previousPolishRowIDs != currentPolishRowIDs {
             previousPolishRowIDs = currentPolishRowIDs
         }
+    }
+
+    private func moveInspection(
+        _ direction: MoveCommandDirection,
+        in presentation: ModelsWorkspaceProjection,
+        scrollProxy: ScrollViewProxy
+    ) {
+        let navigationDirection: ModelsLedgerNavigation.Direction
+        switch direction {
+        case .up:
+            navigationDirection = .up
+        case .down:
+            navigationDirection = .down
+        case .left, .right:
+            return
+        @unknown default:
+            return
+        }
+        let navigation = ModelsLedgerNavigation(
+            rowIDs: presentation.ledgerRowIDs,
+            inspectedID: presentation.inspector?.id
+        )
+        guard let nextID = navigation.move(navigationDirection) else { return }
+        inspectedID = nextID
+        focusedControl = .ledgerInspection(nextID)
+        scrollProxy.scrollTo(nextID, anchor: .center)
     }
 
     private func applyASRFocusTransition(
@@ -627,6 +724,50 @@ struct ModelsCombinedPane: View {
         }
     }
 
+    private func announceASRTransition(
+        from previous: ASRModelLifecycleSnapshot?,
+        to current: ASRModelLifecycleSnapshot?
+    ) {
+        guard let previous,
+              let current,
+              let message = ModelsASRAnnouncementTransition.resolve(
+                  from: previous,
+                  to: current
+              )
+        else { return }
+        announce(message)
+    }
+
+    private func applyPolishFocusTransition(
+        from previous: ModelsPolishState,
+        to current: ModelsPolishState
+    ) {
+        guard let currentInspection = projection.inspector?.id,
+              let transition = ModelsPolishFocusTransition.resolve(
+                  from: previous,
+                  to: current,
+                  projection: projection,
+                  inspectedID: currentInspection
+              )
+        else { return }
+        inspectedID = transition.inspectedID
+        DispatchQueue.main.async {
+            focusedControl = transition.target
+        }
+    }
+
+    private func announce(_ message: String?) {
+        guard let message else { return }
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: message,
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+            ]
+        )
+    }
+
     private func perform(_ action: ModelsDestructiveAction) {
         switch action.command {
         case let .deleteASR(id): model.onDeleteASRModel?(id)
@@ -635,8 +776,23 @@ struct ModelsCombinedPane: View {
     }
 }
 
+private extension ModelsFocusTarget {
+    var inspectedID: ModelsRowID? {
+        switch self {
+        case .ledger:
+            nil
+        case let .ledgerInspection(id), let .inlineCancel(id), let .inspectorCancel(id),
+             let .inspectorPrimary(id), let .inspectorDestructive(id):
+            id
+        }
+    }
+}
+
 private extension View {
-    func modelsLedgerRowChrome(isInspected: Bool) -> some View {
+    func modelsLedgerRowChrome(
+        isInspected: Bool,
+        isKeyboardFocused: Bool
+    ) -> some View {
         padding(.horizontal, 10)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -646,7 +802,12 @@ private extension View {
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(isInspected ? Theme.hairline : Color.clear)
+                    .strokeBorder(
+                        isKeyboardFocused
+                            ? Theme.accent
+                            : (isInspected ? Theme.hairline : Color.clear),
+                        lineWidth: isKeyboardFocused ? 2 : 1
+                    )
             }
             .contentShape(Rectangle())
     }
@@ -657,23 +818,10 @@ private struct ModelsNativeSplit<Leading: View, Trailing: View>: NSViewControlle
     let trailing: Trailing
 
     func makeNSViewController(context _: Context) -> NSSplitViewController {
-        let controller = NSSplitViewController()
-        controller.splitView.isVertical = true
-        controller.splitView.dividerStyle = .thin
-
-        let leadingItem = NSSplitViewItem(
-            viewController: NSHostingController(rootView: leading)
+        let controller = ModelsNativeSplitController.make(
+            leading: leading,
+            trailing: trailing
         )
-        leadingItem.minimumThickness = ModelsSplitGeometry.ledgerMinimum
-        leadingItem.canCollapse = false
-        controller.addSplitViewItem(leadingItem)
-
-        let trailingItem = NSSplitViewItem(
-            viewController: NSHostingController(rootView: trailing)
-        )
-        trailingItem.minimumThickness = ModelsSplitGeometry.inspectorMinimum
-        trailingItem.canCollapse = false
-        controller.addSplitViewItem(trailingItem)
 
         DispatchQueue.main.async { [weak controller] in
             guard let splitView = controller?.splitView else { return }
@@ -695,5 +843,32 @@ private struct ModelsNativeSplit<Leading: View, Trailing: View>: NSViewControlle
         else { return }
         leadingController.rootView = leading
         trailingController.rootView = trailing
+    }
+}
+
+@MainActor
+enum ModelsNativeSplitController {
+    static func make(
+        leading: some View,
+        trailing: some View
+    ) -> NSSplitViewController {
+        let controller = NSSplitViewController()
+        controller.splitView.isVertical = true
+        controller.splitView.dividerStyle = .thin
+
+        let leadingItem = NSSplitViewItem(
+            viewController: NSHostingController(rootView: leading)
+        )
+        leadingItem.minimumThickness = ModelsSplitGeometry.ledgerMinimum
+        leadingItem.canCollapse = false
+        controller.addSplitViewItem(leadingItem)
+
+        let trailingItem = NSSplitViewItem(
+            viewController: NSHostingController(rootView: trailing)
+        )
+        trailingItem.minimumThickness = ModelsSplitGeometry.inspectorMinimum
+        trailingItem.canCollapse = false
+        controller.addSplitViewItem(trailingItem)
+        return controller
     }
 }

@@ -2787,6 +2787,30 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
+    func testFailedLLMInstallPublishesFailureBeforeEndingOperation() async {
+        let model = SettingsModel()
+        let workflow = makeWorkflow(
+            config: makeConfig(),
+            model: model,
+            effects: makeModelEffects(pull: { _, _ in "connection refused" })
+        )
+        var failureWhenOperationEnded: String?
+        let operationSubscription = model.$pullingModel.dropFirst().sink { target in
+            if target == nil {
+                failureWhenOperationEnded = model.pullFailures.message(for: "llama3.2:3b")
+            }
+        }
+
+        workflow.installLLMModel("llama3.2:3b")
+        await waitUntil { model.pullingModel == nil }
+
+        XCTAssertEqual(
+            failureWhenOperationEnded,
+            "Couldn't install llama3.2:3b: connection refused"
+        )
+        withExtendedLifetime(operationSubscription) {}
+    }
+
     func testCustomLLMInstallTrimsOnlyOuterWhitespaceAndPreservesInputAfterFailure() async {
         let config = makeConfig()
         let model = SettingsModel()
@@ -2887,7 +2911,6 @@ final class SettingsWorkflowTests: XCTestCase {
                 }
             )
         )
-
         workflow.deleteLLMModel("old:latest")
         await waitUntil { model.installed != nil }
 
@@ -2908,7 +2931,6 @@ final class SettingsWorkflowTests: XCTestCase {
                 deleteLLM: { _ in "busy" }
             )
         )
-
         workflow.deleteLLMModel("old:latest")
         await waitUntil { model.deletingModel == nil }
 
@@ -2916,6 +2938,27 @@ final class SettingsWorkflowTests: XCTestCase {
             [model.deleteFailures.message(for: "old:latest"), String(listCount)],
             ["Couldn't uninstall old:latest: busy", "0"]
         )
+    }
+
+    func testFailedLLMDeletePublishesFailureBeforeEndingOperation() async {
+        let model = SettingsModel()
+        let workflow = makeWorkflow(
+            config: makeConfig(),
+            model: model,
+            effects: makeModelEffects(deleteLLM: { _ in "busy" })
+        )
+        var failureWhenOperationEnded: String?
+        let operationSubscription = model.$deletingModel.dropFirst().sink { target in
+            if target == nil {
+                failureWhenOperationEnded = model.deleteFailures.message(for: "old:latest")
+            }
+        }
+
+        workflow.deleteLLMModel("old:latest")
+        await waitUntil { model.deletingModel == nil }
+
+        XCTAssertEqual(failureWhenOperationEnded, "Couldn't uninstall old:latest: busy")
+        withExtendedLifetime(operationSubscription) {}
     }
 
     func testRetryingOneUninstallClearsOnlyThatModelsFailure() async {

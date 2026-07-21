@@ -551,10 +551,11 @@ final class SettingsWorkflow {
             }
             guard llmMutationID == operationID else { return }
             llmMutationID = nil
-            model.pullingModel = nil
             if let error {
                 model.pullFailures.record("Couldn't install \(name): \(error)", for: name)
+                model.pullingModel = nil
             } else {
+                model.pullingModel = nil
                 if isCustomInstall {
                     model.customModel = ""
                 }
@@ -576,10 +577,11 @@ final class SettingsWorkflow {
             let error = await llmModels.delete(name)
             guard llmMutationID == operationID else { return }
             llmMutationID = nil
-            model.deletingModel = nil
             if let error {
                 model.deleteFailures.record("Couldn't uninstall \(name): \(error)", for: name)
+                model.deletingModel = nil
             } else {
+                model.deletingModel = nil
                 refreshLLMModels(preservingInventory: true, inspecting: nil)
             }
         }

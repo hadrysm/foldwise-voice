@@ -31,22 +31,49 @@ enum ModelsRowKind: Equatable {
 }
 
 enum ModelsFocusTarget: Hashable {
-    case row(ModelsRowID)
+    case ledger
+    case ledgerInspection(ModelsRowID)
     case inlineCancel(ModelsRowID)
     case inspectorCancel(ModelsRowID)
     case inspectorPrimary(ModelsRowID)
     case inspectorDestructive(ModelsRowID)
 }
 
-struct ModelsASRFocusTransition: Equatable {
+struct ModelsFocusTransition: Equatable {
     let inspectedID: ModelsRowID
     let target: ModelsFocusTarget
+}
 
+struct ModelsLedgerNavigation {
+    enum Direction {
+        case up
+        case down
+    }
+
+    let rowIDs: [ModelsRowID]
+    let inspectedID: ModelsRowID?
+
+    func move(_ direction: Direction) -> ModelsRowID? {
+        guard let first = rowIDs.first else { return nil }
+        guard let inspectedID,
+              let index = rowIDs.firstIndex(of: inspectedID)
+        else { return first }
+
+        switch direction {
+        case .up:
+            return rowIDs[max(rowIDs.startIndex, index - 1)]
+        case .down:
+            return rowIDs[min(rowIDs.index(before: rowIDs.endIndex), index + 1)]
+        }
+    }
+}
+
+enum ModelsASRFocusTransition {
     static func resolve(
         from previous: ASRModelLifecycleSnapshot,
         to current: ASRModelLifecycleSnapshot,
         inspectedID: ModelsRowID
-    ) -> ModelsASRFocusTransition? {
+    ) -> ModelsFocusTransition? {
         guard previous.operation?.focusIdentity != current.operation?.focusIdentity else {
             return nil
         }
@@ -54,20 +81,20 @@ struct ModelsASRFocusTransition: Equatable {
            let targetID = operation.targetModelID {
             let target = ModelsRowID.speechRecognition(targetID)
             if operation.allowsCancellation {
-                return ModelsASRFocusTransition(
+                return ModelsFocusTransition(
                     inspectedID: inspectedID,
                     target: .inlineCancel(target)
                 )
             }
-            return ModelsASRFocusTransition(
+            return ModelsFocusTransition(
                 inspectedID: inspectedID,
-                target: .row(inspectedID)
+                target: .ledgerInspection(inspectedID)
             )
         }
         if case .selectionCanceled = current.failure {
-            return ModelsASRFocusTransition(
+            return ModelsFocusTransition(
                 inspectedID: inspectedID,
-                target: .row(inspectedID)
+                target: .ledgerInspection(inspectedID)
             )
         }
         let failure = ModelsWorkspaceProjection.speechFailure(in: current)
@@ -77,10 +104,76 @@ struct ModelsASRFocusTransition: Equatable {
         let completedTarget = ModelsRowID.speechRecognition(completedTargetID)
         let focusTarget = failure?.focusTarget(for: completedTarget)
             ?? .inspectorPrimary(completedTarget)
-        return ModelsASRFocusTransition(
+        return ModelsFocusTransition(
             inspectedID: completedTarget,
             target: focusTarget
         )
+    }
+}
+
+enum ModelsASRAnnouncementTransition {
+    static func resolve(
+        from previous: ASRModelLifecycleSnapshot,
+        to current: ASRModelLifecycleSnapshot
+    ) -> String? {
+        guard previous.operation?.focusIdentity != current.operation?.focusIdentity else {
+            return nil
+        }
+        if let currentOperation = current.operation {
+            let started = "\(subject(for: currentOperation, in: current)) started."
+            guard let previousOperation = previous.operation else { return started }
+            return "\(sentence(terminalMessage(for: previousOperation, from: previous, to: current))) "
+                + started
+        }
+        guard let previousOperation = previous.operation else { return nil }
+        return terminalMessage(for: previousOperation, from: previous, to: current)
+    }
+
+    private static func terminalMessage(
+        for operation: ASRModelLifecycleOperation,
+        from previous: ASRModelLifecycleSnapshot,
+        to current: ASRModelLifecycleSnapshot
+    ) -> String {
+        let subject = subject(for: operation, in: previous)
+        let operationTarget = operation.targetModelID ?? ASRModelCatalog.defaultID
+        if current.failure?.targetModelID == operationTarget {
+            if case .selectionCanceled = current.failure {
+                return "\(subject) canceled."
+            }
+            if let failure = ModelsWorkspaceProjection.speechFailure(in: current) {
+                return "\(subject) failed. \(failure.message)"
+            }
+        }
+        if case let .downloading(modelID, _) = operation,
+           current.models.first(where: { $0.id == modelID })?.isAvailable != true {
+            return "\(subject) canceled."
+        }
+        return "\(subject) completed."
+    }
+
+    private static func sentence(_ message: String) -> String {
+        guard message.last?.isPunctuation != true else { return message }
+        return message + "."
+    }
+
+    private static func subject(
+        for operation: ASRModelLifecycleOperation,
+        in snapshot: ASRModelLifecycleSnapshot
+    ) -> String {
+        let modelID = operation.targetModelID ?? ASRModelCatalog.defaultID
+        let name = snapshot.models.first { $0.id == modelID }?.name ?? modelID
+        switch operation {
+        case .downloading:
+            return "Download for \(name)"
+        case .bootstrapping:
+            return "Preparation of \(name)"
+        case .switching:
+            return "Switch to \(name)"
+        case .restoring:
+            return "Restore of \(name)"
+        case .deleting:
+            return "Deletion of \(name)"
+        }
     }
 }
 
@@ -143,6 +236,7 @@ enum ModelsRating: Equatable {
 }
 
 enum ModelsPrimaryAction: Equatable {
+    case checking
     case selected
     case selectASR(String)
     case downloadASR(String)
@@ -155,6 +249,7 @@ enum ModelsPrimaryAction: Equatable {
 
     var statusSymbol: String {
         switch self {
+        case .checking: "hourglass"
         case .selected: "checkmark.circle.fill"
         case .installed: "shippingbox.fill"
         case .selectASR: "circle"
@@ -217,6 +312,10 @@ struct ModelsProgressPresentation: Equatable {
 
     var compactState: String {
         fraction.map { "\(Int($0 * 100))%" } ?? label
+    }
+
+    var accessibilityValue: String {
+        fraction.map { "\(Int($0 * 100)) percent" } ?? "In progress"
     }
 }
 
@@ -332,6 +431,139 @@ struct ModelsPolishState: Equatable {
     }
 }
 
+enum ModelsPolishOperation: Equatable {
+    case installing(String)
+    case uninstalling(String)
+
+    var name: String {
+        switch self {
+        case let .installing(name), let .uninstalling(name):
+            name
+        }
+    }
+
+    var subject: String {
+        switch self {
+        case let .installing(name):
+            "Installation of \(name)"
+        case let .uninstalling(name):
+            "Uninstallation of \(name)"
+        }
+    }
+
+    func failure(in state: ModelsPolishState) -> String? {
+        switch self {
+        case let .installing(name):
+            state.pullFailures.message(for: name)
+        case let .uninstalling(name):
+            state.deleteFailures.message(for: name)
+        }
+    }
+}
+
+extension ModelsPolishState {
+    var operation: ModelsPolishOperation? {
+        if let pullingModel {
+            return .installing(pullingModel)
+        }
+        if let deletingModel {
+            return .uninstalling(deletingModel)
+        }
+        return nil
+    }
+}
+
+enum ModelsPolishFocusTransition {
+    static func resolve(
+        from previous: ModelsPolishState,
+        to current: ModelsPolishState,
+        projection: ModelsWorkspaceProjection,
+        inspectedID: ModelsRowID
+    ) -> ModelsFocusTransition? {
+        let previousOperation = previous.operation
+        let currentOperation = current.operation
+        guard previousOperation != currentOperation else {
+            if previous.installed?.isEmpty == true, current.installed == nil {
+                return ModelsFocusTransition(
+                    inspectedID: inspectedID,
+                    target: .ledgerInspection(inspectedID)
+                )
+            }
+            if previous.installed == nil, let installed = current.installed {
+                if installed.isEmpty {
+                    return ModelsFocusTransition(
+                        inspectedID: .polishPlaceholder,
+                        target: .inspectorPrimary(.polishPlaceholder)
+                    )
+                }
+                if let recoveredModel = installed.first {
+                    let recoveredID = ModelsRowID.polish(recoveredModel.name)
+                    if projection.sections
+                        .first(where: { $0.id == .polish })?.rows
+                        .contains(where: { $0.id == recoveredID }) == true {
+                        return ModelsFocusTransition(
+                            inspectedID: recoveredID,
+                            target: .inspectorPrimary(recoveredID)
+                        )
+                    }
+                }
+            }
+            return nil
+        }
+        if currentOperation != nil {
+            return ModelsFocusTransition(
+                inspectedID: inspectedID,
+                target: .ledgerInspection(inspectedID)
+            )
+        }
+        guard let previousOperation else { return nil }
+        let failure = previousOperation.failure(in: current)
+        let rows = projection.sections.flatMap(\.rows)
+        let operationRowID = rows.first {
+            $0.id == .polish(previousOperation.name)
+        }?.id
+        let customInstallFailureID = rows.first {
+            failure != nil && $0.id == .installAnotherPolish && $0.errorMessage != nil
+        }?.id
+        let targetID = operationRowID
+            ?? customInstallFailureID
+            ?? projection.inspector?.id
+        guard let targetID else { return nil }
+        let target: ModelsFocusTarget = if failure != nil,
+                                           case .uninstalling = previousOperation {
+            .inspectorDestructive(targetID)
+        } else {
+            .inspectorPrimary(targetID)
+        }
+        return ModelsFocusTransition(inspectedID: targetID, target: target)
+    }
+}
+
+enum ModelsPolishAnnouncementTransition {
+    static func resolve(from previous: ModelsPolishState, to current: ModelsPolishState) -> String? {
+        let previousOperation = previous.operation
+        let currentOperation = current.operation
+        guard previousOperation != currentOperation else {
+            if previous.installed?.isEmpty == true, current.installed == nil {
+                return "Polish inventory check started."
+            }
+            if previous.installed == nil, let installed = current.installed {
+                return installed.isEmpty
+                    ? "Polish inventory check failed. Ollama isn't running."
+                    : "Polish inventory check completed."
+            }
+            return nil
+        }
+        if let currentOperation {
+            return "\(currentOperation.subject) started."
+        }
+        guard let previousOperation else { return nil }
+        return previousOperation.failure(in: current)
+            .map { "\(previousOperation.subject) failed. \($0)" }
+            ?? "\(previousOperation.subject) completed."
+    }
+}
+
 struct ModelsRowPresentation: Equatable {
     let id: ModelsRowID
     let family: ModelsFamilyID
@@ -396,13 +628,14 @@ struct ModelsRowPresentation: Equatable {
         if kind == .utility {
             return "Install another Polish model by name"
         }
+        let accessibleState = progress.map { "\($0.label) in progress" } ?? state
         var parts = [
             name,
             fit,
             "Size \(size == "—" ? "Not available" : size)",
             "Speed \(speed.accessibilityText)",
             "Quality \(quality.accessibilityText)",
-            state,
+            accessibleState,
         ]
         if family == .speechRecognition {
             parts.append(
@@ -482,6 +715,18 @@ struct ModelsFamilyPresentation: Equatable {
 struct ModelsWorkspaceProjection: Equatable {
     let sections: [ModelsFamilyPresentation]
     let inspector: ModelsInspectorPresentation?
+
+    var ledgerRowIDs: [ModelsRowID] {
+        sections.flatMap { section in
+            let placeholderIDs: [ModelsRowID] = if section.id == .polish,
+                                                   section.placeholder?.showsProgress == false {
+                [.polishPlaceholder]
+            } else {
+                []
+            }
+            return placeholderIDs + section.rows.map(\.id)
+        }
+    }
 
     static func make(
         asrSnapshot: ASRModelLifecycleSnapshot?,
@@ -1018,20 +1263,35 @@ struct ModelsWorkspaceProjection: Equatable {
         id: ModelsRowID?,
         placeholder: ModelsFamilyPlaceholder?
     ) -> ModelsInspectorPresentation? {
-        guard id == .polishPlaceholder,
-              case .unavailable = placeholder else { return nil }
-        return ModelsInspectorPresentation(
-            id: .polishPlaceholder,
-            familyLabel: "Polish",
-            semanticLabel: "Mode inventory",
-            name: "Ollama isn't running",
-            fit: "Inventory unavailable",
-            description: "Start the Ollama app or run `brew services start ollama`, then retry.",
-            status: "Unavailable",
-            familyExplanation: "Speech recognition remains available while Polish inventory is unavailable.",
-            primaryAction: .retryPolish,
-            destructiveAction: nil
-        )
+        guard id == .polishPlaceholder, let placeholder else { return nil }
+        switch placeholder {
+        case .checking:
+            return ModelsInspectorPresentation(
+                id: .polishPlaceholder,
+                familyLabel: "Polish",
+                semanticLabel: "Mode inventory",
+                name: "Checking Ollama…",
+                fit: "Inventory checking",
+                description: "FoldWise is checking which Polish models are available locally.",
+                status: "Checking",
+                familyExplanation: "Speech recognition remains available while Polish inventory is checked.",
+                primaryAction: .checking,
+                destructiveAction: nil
+            )
+        case .unavailable:
+            return ModelsInspectorPresentation(
+                id: .polishPlaceholder,
+                familyLabel: "Polish",
+                semanticLabel: "Mode inventory",
+                name: "Ollama isn't running",
+                fit: "Inventory unavailable",
+                description: "Start the Ollama app or run `brew services start ollama`, then retry.",
+                status: "Unavailable",
+                familyExplanation: "Speech recognition remains available while Polish inventory is unavailable.",
+                primaryAction: .retryPolish,
+                destructiveAction: nil
+            )
+        }
     }
 
     private static func inspector(

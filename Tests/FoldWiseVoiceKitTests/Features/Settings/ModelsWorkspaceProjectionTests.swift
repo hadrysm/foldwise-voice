@@ -2,6 +2,413 @@ import XCTest
 @testable import FoldWiseVoiceKit
 
 final class ModelsWorkspaceProjectionTests: XCTestCase {
+    func testLedgerNavigationMovesInspectionWithinOneOrderedKeyboardStop() {
+        let navigation = ModelsLedgerNavigation(
+            rowIDs: [
+                .speechRecognition("parakeet-v3"),
+                .speechRecognition("whisper-small"),
+                .polish("qwen2.5:3b"),
+            ],
+            inspectedID: .speechRecognition("whisper-small")
+        )
+
+        XCTAssertEqual(
+            [navigation.move(.up), navigation.move(.down)],
+            [.speechRecognition("parakeet-v3"), .polish("qwen2.5:3b")]
+        )
+    }
+
+    func testLedgerKeyboardOrderIncludesDirectedPlaceholdersButSkipsChecking() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            installedPolishModels: [],
+            inspectedID: nil
+        )
+
+        XCTAssertEqual(projection.ledgerRowIDs, [.polishPlaceholder])
+    }
+
+    func testASRAnnouncementsIgnorePercentageChangesAndReportOperationBoundaries() {
+        let idle = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3"]
+        )
+        let started = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3"],
+            operation: .downloading(modelID: "whisper-small", fraction: 0.1)
+        )
+        let progressed = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3"],
+            operation: .downloading(modelID: "whisper-small", fraction: 0.7)
+        )
+        let completed = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"]
+        )
+
+        XCTAssertEqual(
+            [
+                ModelsASRAnnouncementTransition.resolve(from: idle, to: started),
+                ModelsASRAnnouncementTransition.resolve(from: started, to: progressed),
+                ModelsASRAnnouncementTransition.resolve(from: progressed, to: completed),
+            ],
+            [
+                "Download for Whisper small started.",
+                nil,
+                "Download for Whisper small completed.",
+            ]
+        )
+    }
+
+    func testPolishAnnouncementsIgnoreProgressChangesAndReportFailure() {
+        let idle = ModelsPolishState(installed: [])
+        let started = ModelsPolishState(
+            installed: [],
+            pullingModel: "qwen2.5:3b",
+            pullStatus: "pulling manifest",
+            pullFraction: 0.1
+        )
+        let progressed = ModelsPolishState(
+            installed: [],
+            pullingModel: "qwen2.5:3b",
+            pullStatus: "pulling layers",
+            pullFraction: 0.8
+        )
+        var failures = ModelsOperationFailures()
+        failures.record("connection reset", for: "qwen2.5:3b")
+        let failed = ModelsPolishState(installed: [], pullFailures: failures)
+
+        XCTAssertEqual(
+            [
+                ModelsPolishAnnouncementTransition.resolve(from: idle, to: started),
+                ModelsPolishAnnouncementTransition.resolve(from: started, to: progressed),
+                ModelsPolishAnnouncementTransition.resolve(from: progressed, to: failed),
+            ],
+            [
+                "Installation of qwen2.5:3b started.",
+                nil,
+                "Installation of qwen2.5:3b failed. connection reset",
+            ]
+        )
+    }
+
+    func testPolishInventoryRetryFocusesCheckingThenRecovery() {
+        let unavailable = ModelsPolishState(installed: [])
+        let checking = ModelsPolishState(installed: nil)
+        let checkingProjection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: checking,
+            inspectedID: .polishPlaceholder
+        )
+        let failedProjection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: unavailable,
+            inspectedID: .polishPlaceholder
+        )
+
+        XCTAssertEqual(
+            [
+                ModelsPolishFocusTransition.resolve(
+                    from: unavailable,
+                    to: checking,
+                    projection: checkingProjection,
+                    inspectedID: .polishPlaceholder
+                ),
+                ModelsPolishFocusTransition.resolve(
+                    from: checking,
+                    to: unavailable,
+                    projection: failedProjection,
+                    inspectedID: .polishPlaceholder
+                ),
+            ],
+            [
+                ModelsFocusTransition(
+                    inspectedID: .polishPlaceholder,
+                    target: .ledgerInspection(.polishPlaceholder)
+                ),
+                ModelsFocusTransition(
+                    inspectedID: .polishPlaceholder,
+                    target: .inspectorPrimary(.polishPlaceholder)
+                ),
+            ]
+        )
+    }
+
+    func testPolishInventoryRetryAnnouncesCheckingThenFailure() {
+        let unavailable = ModelsPolishState(installed: [])
+        let checking = ModelsPolishState(installed: nil)
+
+        XCTAssertEqual(
+            [
+                ModelsPolishAnnouncementTransition.resolve(from: unavailable, to: checking),
+                ModelsPolishAnnouncementTransition.resolve(from: checking, to: unavailable),
+            ],
+            [
+                "Polish inventory check started.",
+                "Polish inventory check failed. Ollama isn't running.",
+            ]
+        )
+    }
+
+    func testSuccessfulPolishInventoryRetryFocusesRecoveredInventory() {
+        let checking = ModelsPolishState(installed: nil)
+        let available = ModelsPolishState(
+            installed: [.init(name: "qwen2.5:3b", sizeBytes: 1)]
+        )
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: available,
+            inspectedID: .polishPlaceholder
+        )
+
+        XCTAssertEqual(
+            ModelsPolishFocusTransition.resolve(
+                from: checking,
+                to: available,
+                projection: projection,
+                inspectedID: .polish("qwen2.5:3b")
+            ),
+            ModelsFocusTransition(
+                inspectedID: .polish("qwen2.5:3b"),
+                target: .inspectorPrimary(.polish("qwen2.5:3b"))
+            )
+        )
+    }
+
+    func testPolishOperationFocusReturnsToLedgerThenMovesToFailedAction() {
+        let installed = [OllamaClient.InstalledModel(name: "qwen2.5:3b", sizeBytes: 1)]
+        let idle = ModelsPolishState(installed: installed)
+        let pulling = ModelsPolishState(
+            installed: installed,
+            pullingModel: "gemma3:4b",
+            pullStatus: "pulling manifest"
+        )
+        var failures = ModelsOperationFailures()
+        failures.record("Couldn't install gemma3:4b: connection reset", for: "gemma3:4b")
+        let failed = ModelsPolishState(installed: installed, pullFailures: failures)
+        let failedProjection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: failed,
+            inspectedID: .polish("gemma3:4b")
+        )
+
+        XCTAssertEqual(
+            [
+                ModelsPolishFocusTransition.resolve(
+                    from: idle,
+                    to: pulling,
+                    projection: failedProjection,
+                    inspectedID: .polish("qwen2.5:3b")
+                ),
+                ModelsPolishFocusTransition.resolve(
+                    from: pulling,
+                    to: failed,
+                    projection: failedProjection,
+                    inspectedID: .polish("qwen2.5:3b")
+                ),
+            ],
+            [
+                ModelsFocusTransition(
+                    inspectedID: .polish("qwen2.5:3b"),
+                    target: .ledgerInspection(.polish("qwen2.5:3b"))
+                ),
+                ModelsFocusTransition(
+                    inspectedID: .polish("gemma3:4b"),
+                    target: .inspectorPrimary(.polish("gemma3:4b"))
+                ),
+            ]
+        )
+    }
+
+    func testCompletedPolishInstallFocusesResultingPrimaryAction() {
+        let installed = [OllamaClient.InstalledModel(name: "qwen2.5:3b", sizeBytes: 1)]
+        let pulling = ModelsPolishState(installed: installed, pullingModel: "gemma3:4b")
+        let completedModels = installed + [
+            OllamaClient.InstalledModel(name: "gemma3:4b", sizeBytes: 2),
+        ]
+        let completed = ModelsPolishState(installed: completedModels)
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: completed,
+            inspectedID: .polish("qwen2.5:3b")
+        )
+
+        XCTAssertEqual(
+            ModelsPolishFocusTransition.resolve(
+                from: pulling,
+                to: completed,
+                projection: projection,
+                inspectedID: .polish("qwen2.5:3b")
+            ),
+            ModelsFocusTransition(
+                inspectedID: .polish("gemma3:4b"),
+                target: .inspectorPrimary(.polish("gemma3:4b"))
+            )
+        )
+    }
+
+    func testFailedPolishUninstallFocusesDestructiveRecoveryAction() {
+        let installed = [OllamaClient.InstalledModel(name: "acme/custom:Q4", sizeBytes: 1)]
+        let deleting = ModelsPolishState(
+            installed: installed,
+            deletingModel: "acme/custom:Q4"
+        )
+        var failures = ModelsOperationFailures()
+        failures.record("Couldn't uninstall acme/custom:Q4: busy", for: "acme/custom:Q4")
+        let failed = ModelsPolishState(installed: installed, deleteFailures: failures)
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: failed,
+            inspectedID: .polish("acme/custom:Q4")
+        )
+
+        XCTAssertEqual(
+            ModelsPolishFocusTransition.resolve(
+                from: deleting,
+                to: failed,
+                projection: projection,
+                inspectedID: .polish("qwen2.5:3b")
+            ),
+            ModelsFocusTransition(
+                inspectedID: .polish("acme/custom:Q4"),
+                target: .inspectorDestructive(.polish("acme/custom:Q4"))
+            )
+        )
+    }
+
+    func testASRAnnouncementClosesOneOperationBeforeAnnouncingAutomaticRestore() {
+        let download = snapshot(
+            storedSelection: "whisper-small",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3"],
+            operation: .downloading(modelID: "whisper-small", fraction: 0.9)
+        )
+        let restore = snapshot(
+            storedSelection: "whisper-small",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            operation: .restoring(modelID: "whisper-small")
+        )
+
+        XCTAssertEqual(
+            ModelsASRAnnouncementTransition.resolve(from: download, to: restore),
+            "Download for Whisper small completed. Restore of Whisper small started."
+        )
+    }
+
+    func testASRAnnouncementsDistinguishCancellationFromFailure() {
+        let switching = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            operation: .switching(modelID: "whisper-small")
+        )
+        let canceled = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            failure: .selectionCanceled(modelID: "whisper-small")
+        )
+        let failed = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            failure: .selectionFailed(modelID: "whisper-small", reason: "engine rejected data")
+        )
+
+        XCTAssertEqual(
+            [
+                ModelsASRAnnouncementTransition.resolve(from: switching, to: canceled),
+                ModelsASRAnnouncementTransition.resolve(from: switching, to: failed),
+            ],
+            [
+                "Switch to Whisper small canceled.",
+                "Switch to Whisper small failed. Couldn't switch to Whisper small: engine rejected data",
+            ]
+        )
+    }
+
+    func testASRAnnouncementsKeepSwitchFailureSeparateFromItsRestore() {
+        let switching = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            operation: .switching(modelID: "whisper-small")
+        )
+        let restoring = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: nil,
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            operation: .restoring(modelID: "parakeet-v3"),
+            failure: .selectionFailed(modelID: "whisper-small", reason: "engine rejected data")
+        )
+        let restored = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            failure: .selectionFailed(modelID: "whisper-small", reason: "engine rejected data")
+        )
+
+        XCTAssertEqual(
+            [
+                ModelsASRAnnouncementTransition.resolve(from: switching, to: restoring),
+                ModelsASRAnnouncementTransition.resolve(from: restoring, to: restored),
+            ],
+            [
+                "Switch to Whisper small failed. Couldn't switch to Whisper small: engine rejected data. "
+                    + "Restore of Parakeet TDT v3 started.",
+                "Restore of Parakeet TDT v3 completed.",
+            ]
+        )
+    }
+
+    func testProgressRowAccessibilityKeepsChangingPercentageOutOfItsLabel() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"],
+                operation: .downloading(modelID: "whisper-small", fraction: 0.42)
+            ),
+            installedPolishModels: nil,
+            inspectedID: .speechRecognition("whisper-small")
+        )
+        let row = projection.sections
+            .flatMap(\.rows)
+            .first { $0.id == .speechRecognition("whisper-small") }
+
+        XCTAssertEqual(
+            row?.accessibilityLabel,
+            "Whisper small, ~99 languages, Size 483 MB, Speed 4 out of 5, "
+                + "Quality 3 out of 5, Downloading in progress, "
+                + "Not saved as the global ASR model selection"
+        )
+    }
+
+    func testProgressAccessibilityExposesCurrentValueSeparatelyFromAnnouncements() {
+        XCTAssertEqual(
+            [
+                ModelsProgressPresentation(
+                    label: "Downloading",
+                    status: "Downloading Whisper small…",
+                    fraction: 0.42
+                ).accessibilityValue,
+                ModelsProgressPresentation(
+                    label: "Switching",
+                    status: "Switching to Whisper small…",
+                    fraction: nil
+                ).accessibilityValue,
+            ],
+            ["42 percent", "In progress"]
+        )
+    }
+
     func testSplitGeometryProtectsBothMinimumsAtCompactWidth() {
         let ledgerWidth = ModelsSplitGeometry.initialLedgerWidth(
             totalWidth: 617,
@@ -406,7 +813,7 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
                 to: downloading,
                 inspectedID: .polish("qwen2.5:3b")
             ),
-            ModelsASRFocusTransition(
+            ModelsFocusTransition(
                 inspectedID: .polish("qwen2.5:3b"),
                 target: .inlineCancel(.speechRecognition("whisper-small"))
             )
@@ -432,10 +839,54 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
                 to: restoring,
                 inspectedID: .polish("qwen2.5:3b")
             ),
-            ModelsASRFocusTransition(
+            ModelsFocusTransition(
                 inspectedID: .polish("qwen2.5:3b"),
-                target: .row(.polish("qwen2.5:3b"))
+                target: .ledgerInspection(.polish("qwen2.5:3b"))
             )
+        )
+    }
+
+    func testASRBootstrapFocusesInspectedRowThenDefaultRecoveryAction() {
+        let idle = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: nil,
+            availableIDs: []
+        )
+        let bootstrapping = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: nil,
+            availableIDs: [],
+            operation: .bootstrapping(fraction: nil)
+        )
+        let completed = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3"]
+        )
+
+        XCTAssertEqual(
+            [
+                ModelsASRFocusTransition.resolve(
+                    from: idle,
+                    to: bootstrapping,
+                    inspectedID: .polish("qwen2.5:3b")
+                ),
+                ModelsASRFocusTransition.resolve(
+                    from: bootstrapping,
+                    to: completed,
+                    inspectedID: .polish("qwen2.5:3b")
+                ),
+            ],
+            [
+                ModelsFocusTransition(
+                    inspectedID: .polish("qwen2.5:3b"),
+                    target: .ledgerInspection(.polish("qwen2.5:3b"))
+                ),
+                ModelsFocusTransition(
+                    inspectedID: .speechRecognition("parakeet-v3"),
+                    target: .inspectorPrimary(.speechRecognition("parakeet-v3"))
+                ),
+            ]
         )
     }
 
@@ -458,7 +909,7 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
                 to: completed,
                 inspectedID: .polish("qwen2.5:3b")
             ),
-            ModelsASRFocusTransition(
+            ModelsFocusTransition(
                 inspectedID: .speechRecognition("whisper-small"),
                 target: .inspectorPrimary(.speechRecognition("whisper-small"))
             )
@@ -485,9 +936,9 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
                 to: canceled,
                 inspectedID: .polish("qwen2.5:3b")
             ),
-            ModelsASRFocusTransition(
+            ModelsFocusTransition(
                 inspectedID: .polish("qwen2.5:3b"),
-                target: .row(.polish("qwen2.5:3b"))
+                target: .ledgerInspection(.polish("qwen2.5:3b"))
             )
         )
     }
@@ -512,7 +963,7 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
                 to: failed,
                 inspectedID: .polish("qwen2.5:3b")
             ),
-            ModelsASRFocusTransition(
+            ModelsFocusTransition(
                 inspectedID: .speechRecognition("whisper-small"),
                 target: .inspectorDestructive(.speechRecognition("whisper-small"))
             )
@@ -539,7 +990,7 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
                 to: failed,
                 inspectedID: .speechRecognition("parakeet-v3")
             ),
-            ModelsASRFocusTransition(
+            ModelsFocusTransition(
                 inspectedID: .speechRecognition("whisper-small"),
                 target: .inspectorPrimary(.speechRecognition("whisper-small"))
             )
@@ -566,7 +1017,7 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
                 to: failed,
                 inspectedID: .polish("qwen2.5:3b")
             ),
-            ModelsASRFocusTransition(
+            ModelsFocusTransition(
                 inspectedID: .speechRecognition("whisper-small"),
                 target: .inspectorPrimary(.speechRecognition("whisper-small"))
             )
@@ -619,6 +1070,30 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
                 status: "Unavailable",
                 familyExplanation: "Speech recognition remains available while Polish inventory is unavailable.",
                 primaryAction: .retryPolish,
+                destructiveAction: nil
+            )
+        )
+    }
+
+    func testCheckingPolishPlaceholderKeepsNeutralInspector() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            installedPolishModels: nil,
+            inspectedID: .polishPlaceholder
+        )
+
+        XCTAssertEqual(
+            projection.inspector,
+            ModelsInspectorPresentation(
+                id: .polishPlaceholder,
+                familyLabel: "Polish",
+                semanticLabel: "Mode inventory",
+                name: "Checking Ollama…",
+                fit: "Inventory checking",
+                description: "FoldWise is checking which Polish models are available locally.",
+                status: "Checking",
+                familyExplanation: "Speech recognition remains available while Polish inventory is checked.",
+                primaryAction: .checking,
                 destructiveAction: nil
             )
         )
