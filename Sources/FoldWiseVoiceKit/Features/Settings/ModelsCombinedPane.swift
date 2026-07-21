@@ -459,25 +459,28 @@ struct ModelsCombinedPane: View {
         id: ModelsRowID?
     ) -> some View {
         HStack(spacing: 10) {
-            if let fraction = progress.fraction {
-                ProgressView(value: fraction)
-                    .frame(width: 110)
-                Text("\(Int(fraction * 100))% — \(progress.status)")
-            } else {
-                ProgressView()
-                    .controlSize(.small)
-                Text(progress.status)
+            HStack(spacing: 10) {
+                if let fraction = progress.fraction {
+                    ProgressView(value: fraction)
+                        .frame(width: 110)
+                    Text("\(Int(fraction * 100))% — \(progress.status)")
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(progress.status)
+                }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(progress.label), \(progress.status)")
             if progress.allowsCancellation, let id {
                 Button("Cancel") { model.onCancelASROperation?() }
                     .controlSize(.small)
                     .focused($focusedControl, equals: .inspectorCancel(id))
+                    .accessibilityLabel("Cancel \(progress.label.lowercased())")
             }
         }
         .font(Theme.ui(10.5, .medium))
         .foregroundStyle(Theme.textSecondary)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(progress.label), \(progress.status)")
     }
 
     @ViewBuilder

@@ -611,6 +611,13 @@ struct ModelsWorkspaceProjection: Equatable {
         } else {
             action
         }
+        let projectedState: String = if let progress {
+            progress.compactState
+        } else if errorMessage != nil {
+            "Error"
+        } else {
+            state
+        }
         return ModelsRowPresentation(
             id: .speechRecognition(descriptor.id),
             family: .speechRecognition,
@@ -619,7 +626,7 @@ struct ModelsWorkspaceProjection: Equatable {
             size: descriptor.size,
             speed: .rated(descriptor.speed),
             quality: .rated(descriptor.quality),
-            state: progress?.compactState ?? (errorMessage == nil ? state : "Error"),
+            state: projectedState,
             primaryAction: projectedAction,
             destructiveAction: destructiveASRAction(
                 descriptor,
