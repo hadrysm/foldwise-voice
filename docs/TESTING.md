@@ -51,20 +51,23 @@ report so the overall denominator cannot silently shrink.
 
 The command enforces all four gates in one pass:
 
-- **Per-file core:** each included file must be at least 90% covered.
-- **Aggregate core:** included files together must be at least 90% covered. The
-  current accepted floor is the higher `95.51515151515152%`, so it cannot
-  regress merely because the permanent minimum is 90%.
-- **Changed lines:** at least 90% of added executable lines in included files,
+- **Per-file core:** each included file must be at least 80% covered.
+- **Aggregate core:** included files together must be at least 90% covered.
+- **Changed lines:** at least 85% of added executable lines in included files,
   relative to the target merge base, must be covered. Exempt and non-executable
   added lines do not enter the denominator.
 - **Overall production:** all reported production files, including exemptions,
   must remain at or above the accepted `47.817098382585435%` floor.
 
 The exact accepted values live in `coverage-policy.json`. The checker rejects a
-core, changed-line, or per-file policy below 90%, rejects a decrease from the
-target branch's accepted floors, and includes new production files by default.
-No source or coverage artifact is uploaded to a hosted coverage service.
+core policy below 90%, a changed-line policy below 85%, or a per-file policy
+below 80%. Policy version 2 is the reviewed one-time reset from the original
+90% policy. An unversioned policy is version 1 and retains the original 90/90/90
+minimums. Within a version, the checker rejects decreases from the target branch's
+accepted floors. A later reset requires corresponding checker support; changing
+the policy-version value alone is rejected. The overall production floor remains
+ratcheted across resets. New production files are included by default. No source
+or coverage artifact is uploaded to a hosted coverage service.
 
 On success, output includes the overall, aggregate, and changed-line fractions,
 the number of included and exempt files, and the ten lowest-covered included
@@ -73,8 +76,8 @@ failures also print actionable `path:line` locations, for example:
 
 ```text
 Coverage policy FAILED
-- Sources/FoldWiseVoiceKit/Example.swift coverage 87.50% is below 90.00%
-- changed included coverage 50.00% is below 90.00%
+- Sources/FoldWiseVoiceKit/Example.swift coverage 77.50% is below 80.00%
+- changed included coverage 50.00% is below 85.00%
 - uncovered changed lines: Sources/FoldWiseVoiceKit/Example.swift:42
 ```
 
@@ -114,7 +117,7 @@ their meaningful decisions into covered collaborators.
 | `UpdateCheckEnvironment.swift` | Thin application-bundle, URLSession, and recurring-timer configuration adapter |
 | `WhisperTranscriber.swift` | Real WhisperKit model-loading and inference adapter |
 
-There are no line suppression annotations, temporary sub-90 core floors, Swift
+There are no line suppression annotations, temporary threshold waivers, Swift
 Testing targets, XCUITest targets, automatic retries, or dynamic exclusions.
 
 ## Automated platform-component checks

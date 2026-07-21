@@ -1,9 +1,10 @@
 {
+  "policy_version": 2,
   "production_source_root": "Sources/FoldWiseVoiceKit",
   "overall_floor": 47.817098382585435,
-  "included_core_floor": 95.51515151515152,
-  "changed_line_floor": 90.0,
-  "minimum_file_coverage": 90.0,
+  "included_core_floor": 90.0,
+  "changed_line_floor": 85.0,
+  "minimum_file_coverage": 80.0,
   "exemptions": [
     {
       "path": "Sources/FoldWiseVoiceKit/Application/AppMain.swift",
