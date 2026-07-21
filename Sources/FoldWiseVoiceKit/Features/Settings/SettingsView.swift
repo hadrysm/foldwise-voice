@@ -425,7 +425,7 @@ struct SettingsView: View {
                 case .modes:
                     paneScroll("Modes") { modesPane }
                 case .models:
-                    paneScroll("Models") { ModelsCombinedPane(model: model) }
+                    ModelsCombinedPane(model: model)
                 case .history:
                     paneScroll("History") { HistoryPane(model: model) }
                 case .stats:

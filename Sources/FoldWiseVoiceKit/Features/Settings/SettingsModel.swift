@@ -170,14 +170,6 @@ final class SettingsModel: ObservableObject {
         return nil
     }
 
-    func asrDeleteConfirmation(for entry: ASRModelDescriptor) -> String {
-        var message = "This removes \(entry.name)'s downloaded weights and frees \(entry.size)."
-        if asrModel == entry.id {
-            message += " It's your current speech model, so deletion selects Parakeet instead."
-        }
-        return message
-    }
-
     var asrRecoveryMessage: String? {
         switch asrSnapshot?.recovery {
         case let .storedSelectionUnavailable(modelID, fallbackModelID):
