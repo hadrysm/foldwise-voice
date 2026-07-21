@@ -238,15 +238,22 @@ struct ModelsCombinedPane: View {
         isInspected: Bool,
         isKeyboardFocused: Bool
     ) -> some View {
-        HStack(spacing: 8) {
+        let showsInlineCancel = row.progress?.allowsCancellation == true
+        return HStack(spacing: 8) {
             Button {
                 inspectedID = row.id
             } label: {
-                if row.kind == .utility {
-                    utilityLedgerRow(row)
-                } else {
-                    modelLedgerRow(row)
+                HStack(spacing: 8) {
+                    if row.kind == .utility {
+                        utilityLedgerRow(row)
+                    } else {
+                        modelLedgerRow(row)
+                    }
+                    if !showsInlineCancel {
+                        ledgerState(row)
+                    }
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .focusable(false)
@@ -256,7 +263,9 @@ struct ModelsCombinedPane: View {
             .accessibilityLabel(row.accessibilityLabel)
             .accessibilityValue(row.progress?.accessibilityValue ?? "")
             .accessibilityAddTraits(isInspected ? .isSelected : [])
-            ledgerState(row)
+            if showsInlineCancel {
+                ledgerState(row)
+            }
         }
         .modelsLedgerRowChrome(
             isInspected: isInspected,
