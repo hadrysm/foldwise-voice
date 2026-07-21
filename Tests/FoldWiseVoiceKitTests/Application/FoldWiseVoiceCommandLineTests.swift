@@ -28,7 +28,7 @@ final class FoldWiseVoiceCommandLineTests: XCTestCase {
     }
 
     func testUnknownAndPositionalArgumentsRemainIgnored() {
-        let action = FoldWiseVoiceCommandLine().evaluate(arguments: [
+        let action = FoldWiseVoiceCommandLine(environment: [:]).evaluate(arguments: [
             "FoldWiseVoice", "--unknown", "positional",
         ])
 
@@ -52,7 +52,7 @@ final class FoldWiseVoiceCommandLineTests: XCTestCase {
     }
 
     func testMissingConfigValueRemainsAnEmptyOverride() {
-        let action = FoldWiseVoiceCommandLine().evaluate(arguments: [
+        let action = FoldWiseVoiceCommandLine(environment: [:]).evaluate(arguments: [
             "FoldWiseVoice", "--config",
         ])
 
@@ -60,7 +60,7 @@ final class FoldWiseVoiceCommandLineTests: XCTestCase {
     }
 
     func testConfigValueMayBeginWithOptionPrefix() {
-        let action = FoldWiseVoiceCommandLine().evaluate(arguments: [
+        let action = FoldWiseVoiceCommandLine(environment: [:]).evaluate(arguments: [
             "FoldWiseVoice", "--config", "--mode",
         ])
 
