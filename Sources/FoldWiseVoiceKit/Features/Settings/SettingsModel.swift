@@ -66,10 +66,11 @@ final class SettingsModel: ObservableObject {
     @Published var pullingModel: String?
     @Published var pullStatus = ""
     @Published var pullFraction: Double?
-    @Published var pullError = ""
+    @Published var pullFailures = ModelsOperationFailures()
     @Published var deletingModel: String?
-    @Published var deleteError = ""
+    @Published var deleteFailures = ModelsOperationFailures()
     @Published var customModel = ""
+    @Published var requestedPolishInspection: String?
     @Published var pttKey = ""
     @Published var toggleKey = ""
     @Published var cycleKey = ""
@@ -261,6 +262,7 @@ final class SettingsModel: ObservableObject {
     var onSaveModeEditor: (() -> Void)?
     var onCancelModeEditor: (() -> Void)?
     var onInstallModel: ((String) -> Void)?
+    var onInstallCustomModel: (() -> Void)?
     var onDeleteModel: ((String) -> Void)?
     var onRefreshModels: (() -> Void)?
     /// Speech pane actions select an already-downloaded model as active or
@@ -287,6 +289,19 @@ final class SettingsModel: ObservableObject {
 
     var ollamaDown: Bool {
         installed?.isEmpty ?? false
+    }
+
+    var polishModelsState: ModelsPolishState {
+        ModelsPolishState(
+            installed: installed,
+            pullingModel: pullingModel,
+            pullStatus: pullStatus,
+            pullFraction: pullFraction,
+            deletingModel: deletingModel,
+            pullFailures: pullFailures,
+            deleteFailures: deleteFailures,
+            customModel: customModel
+        )
     }
 
     /// False only when we can see Ollama's model list and ours isn't in it.

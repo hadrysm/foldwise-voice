@@ -48,6 +48,34 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
         )
     }
 
+    func testUnavailablePolishPlaceholderOffersDirectedRetry() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            installedPolishModels: [],
+            inspectedID: .polishPlaceholder
+        )
+
+        XCTAssertEqual(
+            projection.inspector,
+            ModelsInspectorPresentation(
+                id: .polishPlaceholder,
+                familyLabel: "Polish",
+                semanticLabel: "Mode inventory",
+                name: "Ollama isn't running",
+                fit: "Inventory unavailable",
+                description: "Start the Ollama app or run `brew services start ollama`, then retry.",
+                status: "Unavailable",
+                familyExplanation: "Speech recognition remains available while Polish inventory is unavailable.",
+                primaryAction: .retryPolish,
+                destructiveAction: nil
+            )
+        )
+    }
+
     func testProjectionBuildsBaselineComparisonRowsAndActions() {
         let snapshot = snapshot(
             storedSelection: "parakeet-v3",
@@ -106,16 +134,288 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
                     action: .installed, saved: false
                 ),
                 RowSummary(
-                    id: .polish("acme/custom:Q4"), fit: "External model", size: "—",
-                    speed: .notRated, quality: .notRated, state: "Installed",
-                    action: .installed, saved: false
-                ),
-                RowSummary(
                     id: .polish("gemma3:4b"), fit: "Cleanup + rewrites", size: "3.3 GB",
                     speed: .rated(4), quality: .rated(4), state: "Install",
                     action: .installPolish("gemma3:4b"), saved: false
                 ),
+                RowSummary(
+                    id: .polish("acme/custom:Q4"), fit: "External model", size: "—",
+                    speed: .notRated, quality: .notRated, state: "Installed",
+                    action: .installed, saved: false
+                ),
             ]
+        )
+    }
+
+    func testPolishPullProjectsProgressAndDisablesCompetingMutations() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            polishState: ModelsPolishState(
+                installed: [
+                    OllamaClient.InstalledModel(name: "qwen2.5:3b", sizeBytes: 1_900_000_000),
+                ],
+                pullingModel: "gemma3:4b",
+                pullStatus: "pulling layers",
+                pullFraction: 0.41
+            ),
+            inspectedID: .polish("gemma3:4b")
+        )
+        let polishRows = projection.sections.first { $0.id == .polish }?.rows ?? []
+
+        XCTAssertEqual(
+            PolishProgressSummary(
+                targetProgress: polishRows.first { $0.id == .polish("gemma3:4b") }?.progress,
+                competingDisabledReason: polishRows
+                    .first { $0.id == .polish("qwen2.5:3b") }?.managementDisabledReason,
+                inspectorFraction: projection.inspector?.progress?.fraction
+            ),
+            PolishProgressSummary(
+                targetProgress: ModelsProgressPresentation(
+                    label: "Installing",
+                    status: "pulling layers",
+                    fraction: 0.41
+                ),
+                competingDisabledReason: "Another Polish model operation is in progress.",
+                inspectorFraction: 0.41
+            )
+        )
+    }
+
+    func testPolishFailuresStayWithTheirAffectedRowsAndInspector() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: ModelsPolishState(
+                installed: [
+                    OllamaClient.InstalledModel(name: "acme/custom:Q4", sizeBytes: 0),
+                ],
+                pullFailures: ModelsOperationFailures([
+                    "gemma3:4b": "Couldn't install gemma3:4b: connection refused after a long wait",
+                ]),
+                deleteFailures: ModelsOperationFailures([
+                    "acme/custom:Q4": "Couldn't uninstall acme/custom:Q4: model is still in use",
+                ])
+            ),
+            inspectedID: .polish("gemma3:4b")
+        )
+        let polishRows = projection.sections.first { $0.id == .polish }?.rows ?? []
+
+        XCTAssertEqual(
+            PolishFailureSummary(
+                rowFailures: polishRows.compactMap { row -> String? in
+                    guard row.state == "Error" else { return nil }
+                    return "\(row.name):\(row.errorMessage ?? "")"
+                },
+                inspectorError: projection.inspector?.errorMessage
+            ),
+            PolishFailureSummary(
+                rowFailures: [
+                    "gemma3:4b:Couldn't install gemma3:4b: connection refused after a long wait",
+                    "acme/custom:Q4:Couldn't uninstall acme/custom:Q4: model is still in use",
+                ],
+                inspectorError: "Couldn't install gemma3:4b: connection refused after a long wait"
+            )
+        )
+    }
+
+    func testPolishEndsWithAnUnscoredInstallByNameUtilityRow() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: ModelsPolishState(
+                installed: [
+                    OllamaClient.InstalledModel(name: "qwen2.5:3b", sizeBytes: 1),
+                ],
+                customModel: "acme/very-long-custom-model:Q4"
+            ),
+            inspectedID: .installAnotherPolish
+        )
+        let utility = projection.sections.first { $0.id == .polish }?.rows.last
+
+        XCTAssertEqual(
+            PolishUtilitySummary(
+                id: utility?.id,
+                kind: utility?.kind,
+                accessibilityLabel: utility?.accessibilityLabel,
+                showsForm: projection.inspector?.showsInstallByNameForm,
+                primaryAction: projection.inspector?.primaryAction
+            ),
+            PolishUtilitySummary(
+                id: .installAnotherPolish,
+                kind: .utility,
+                accessibilityLabel: "Install another Polish model by name",
+                showsForm: true,
+                primaryAction: .installCustomPolish
+            )
+        )
+    }
+
+    func testInstallByNameRejectsWhitespaceWithoutDisablingCatalogInstalls() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: ModelsPolishState(
+                installed: [
+                    OllamaClient.InstalledModel(name: "qwen2.5:3b", sizeBytes: 1),
+                ],
+                customModel: " \n\t "
+            ),
+            inspectedID: .installAnotherPolish
+        )
+        let polishRows = projection.sections.first { $0.id == .polish }?.rows ?? []
+
+        XCTAssertEqual(
+            [
+                projection.inspector?.managementDisabledReason,
+                projection.inspector?.inputDisabledReason,
+                polishRows.first { $0.id == .polish("gemma3:4b") }?.managementDisabledReason,
+            ],
+            ["Enter a model name.", nil, nil]
+        )
+    }
+
+    func testPolishIndeterminatePullProjectsSpinnerStatus() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: ModelsPolishState(
+                installed: [
+                    OllamaClient.InstalledModel(name: "qwen2.5:3b", sizeBytes: 1),
+                ],
+                pullingModel: "gemma3:4b",
+                pullStatus: "waiting for Ollama"
+            ),
+            inspectedID: .polish("gemma3:4b")
+        )
+
+        XCTAssertEqual(
+            projection.inspector?.progress,
+            ModelsProgressPresentation(
+                label: "Installing",
+                status: "waiting for Ollama",
+                fraction: nil
+            )
+        )
+    }
+
+    func testCompleteCuratedLibraryExplainsThatAllRecommendationsAreInstalled() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: ModelsPolishState(
+                installed: ModelCatalog.entries.map {
+                    OllamaClient.InstalledModel(name: $0.name, sizeBytes: 1)
+                }
+            ),
+            inspectedID: .installAnotherPolish
+        )
+
+        XCTAssertEqual(
+            projection.inspector?.description,
+            "All recommended models are installed. You can still install any model from "
+                + "ollama.com/library by name."
+        )
+    }
+
+    func testRemovedExternalPolishInspectionFallsWithinPolishFamily() {
+        let priorIDs: [ModelsRowID] = [
+            .polish("qwen2.5:3b"),
+            .polish("acme/custom:Q4"),
+            .polish("gemma3:4b"),
+            .installAnotherPolish,
+        ]
+        let withNextRow = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            polishState: ModelsPolishState(
+                installed: [
+                    OllamaClient.InstalledModel(name: "qwen2.5:3b", sizeBytes: 1),
+                ]
+            ),
+            inspectedID: .polish("acme/custom:Q4"),
+            previousPolishRowIDs: priorIDs
+        )
+        let withNoRows = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            polishState: ModelsPolishState(installed: []),
+            inspectedID: .polish("acme/custom:Q4"),
+            previousPolishRowIDs: [.polish("acme/custom:Q4")]
+        )
+
+        XCTAssertEqual(
+            [withNextRow.inspector?.id, withNoRows.inspector?.id],
+            [.polish("gemma3:4b"), .polishPlaceholder]
+        )
+    }
+
+    func testRemovedLastExternalPolishInspectionFallsBackToPreviousRow() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: ModelsPolishState(
+                installed: [
+                    OllamaClient.InstalledModel(name: "qwen2.5:3b", sizeBytes: 1),
+                ]
+            ),
+            inspectedID: .polish("acme/custom:Q4"),
+            previousPolishRowIDs: [
+                .polish("qwen2.5:3b"),
+                .polish("acme/custom:Q4"),
+            ]
+        )
+
+        XCTAssertEqual(projection.inspector?.id, .polish("qwen2.5:3b"))
+    }
+
+    func testPolishUninstallProjectsIndeterminateNonCancelableProgress() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: ModelsPolishState(
+                installed: [
+                    OllamaClient.InstalledModel(name: "acme/custom:Q4", sizeBytes: 0),
+                ],
+                deletingModel: "acme/custom:Q4"
+            ),
+            inspectedID: .polish("acme/custom:Q4")
+        )
+
+        XCTAssertEqual(
+            projection.inspector?.progress,
+            ModelsProgressPresentation(
+                label: "Uninstalling",
+                status: "Removing model from Ollama…",
+                fraction: nil
+            )
+        )
+    }
+
+    func testRemovedCatalogPolishModelTransitionsInPlaceToInstall() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: nil,
+            polishState: ModelsPolishState(
+                installed: [
+                    OllamaClient.InstalledModel(name: "qwen2.5:3b", sizeBytes: 1),
+                ]
+            ),
+            inspectedID: .polish("gemma3:4b")
+        )
+        let rows = projection.sections.first { $0.id == .polish }?.rows ?? []
+        let row = rows.first { $0.id == .polish("gemma3:4b") }
+
+        XCTAssertEqual(
+            CatalogTransitionSummary(
+                rowIndex: rows.firstIndex { $0.id == .polish("gemma3:4b") },
+                action: row?.primaryAction
+            ),
+            CatalogTransitionSummary(
+                rowIndex: ModelCatalog.entries.firstIndex { $0.name == "gemma3:4b" },
+                action: .installPolish("gemma3:4b")
+            )
         )
     }
 
@@ -127,7 +427,7 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
                 availableIDs: ["parakeet-v3", "whisper-large-v3-turbo"]
             ),
             installedPolishModels: [],
-            inspectedID: nil
+            inspectedID: .polish("qwen2.5:3b")
         )
 
         XCTAssertEqual(
@@ -253,7 +553,7 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
             inspectedID: nil
         )
 
-        XCTAssertEqual(projection.inspector?.id, .polish("qwen2.5:3b"))
+        XCTAssertEqual(projection.inspector?.id, .polish("gemma3:1b"))
     }
 
     func testPolishUninstallActionExplainsAffectedModesAndRawTextFallback() {
@@ -271,7 +571,7 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
                 OllamaClient.InstalledModel(name: "qwen2.5:3b", sizeBytes: 0),
             ],
             modes: [mode(name: "Email"), mode(name: "Bullets")],
-            inspectedID: nil
+            inspectedID: .polish("qwen2.5:3b")
         )
 
         XCTAssertEqual(
@@ -279,6 +579,30 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
             "This permanently removes qwen2.5:3b from Ollama. It's used by Email, Bullets, "
                 + "so those Modes will use raw text until another model is assigned."
         )
+    }
+
+    private struct PolishProgressSummary: Equatable {
+        let targetProgress: ModelsProgressPresentation?
+        let competingDisabledReason: String?
+        let inspectorFraction: Double?
+    }
+
+    private struct PolishFailureSummary: Equatable {
+        let rowFailures: [String]
+        let inspectorError: String?
+    }
+
+    private struct PolishUtilitySummary: Equatable {
+        let id: ModelsRowID?
+        let kind: ModelsRowKind?
+        let accessibilityLabel: String?
+        let showsForm: Bool?
+        let primaryAction: ModelsPrimaryAction?
+    }
+
+    private struct CatalogTransitionSummary: Equatable {
+        let rowIndex: Int?
+        let action: ModelsPrimaryAction?
     }
 
     private struct RowSummary: Equatable {

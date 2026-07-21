@@ -66,6 +66,38 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertFalse(model.ollamaDown)
     }
 
+    func testPolishModelsStateCapturesOneCoherentLifecycleValue() {
+        let model = SettingsModel()
+        model.installed = [installed("qwen2.5:3b")]
+        model.pullingModel = "gemma3:4b"
+        model.pullStatus = "pulling layers"
+        model.pullFraction = 0.4
+        model.pullFailures = ModelsOperationFailures([
+            "old:model": "Couldn't install old:model: failed",
+        ])
+        model.deleteFailures = ModelsOperationFailures([
+            "stale:model": "Couldn't uninstall stale:model: busy",
+        ])
+        model.customModel = "custom:model"
+
+        XCTAssertEqual(
+            model.polishModelsState,
+            ModelsPolishState(
+                installed: [installed("qwen2.5:3b")],
+                pullingModel: "gemma3:4b",
+                pullStatus: "pulling layers",
+                pullFraction: 0.4,
+                pullFailures: ModelsOperationFailures([
+                    "old:model": "Couldn't install old:model: failed",
+                ]),
+                deleteFailures: ModelsOperationFailures([
+                    "stale:model": "Couldn't uninstall stale:model: busy",
+                ]),
+                customModel: "custom:model"
+            )
+        )
+    }
+
     func testSelectedModelIsAllowedWhileAvailabilityIsUnknownOrOllamaIsDown() {
         let model = SettingsModel()
         model.selectedModel = "qwen2.5:3b"

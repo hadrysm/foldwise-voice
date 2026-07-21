@@ -5,13 +5,15 @@ struct ModelsCombinedPane: View {
     @ObservedObject var model: SettingsModel
     @State private var inspectedID: ModelsRowID?
     @State private var pendingDestructiveAction: ModelsDestructiveAction?
+    @State private var previousPolishRowIDs: [ModelsRowID] = []
 
     private var projection: ModelsWorkspaceProjection {
         ModelsWorkspaceProjection.make(
             asrSnapshot: model.asrSnapshot,
-            installedPolishModels: model.installed,
+            polishState: model.polishModelsState,
             modes: model.modes,
-            inspectedID: inspectedID
+            inspectedID: model.requestedPolishInspection.map(ModelsRowID.polish) ?? inspectedID,
+            previousPolishRowIDs: previousPolishRowIDs
         )
     }
 
@@ -88,30 +90,52 @@ struct ModelsCombinedPane: View {
             familyHeading(section)
             columnHeaders
             if let placeholder = section.placeholder {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .opacity(placeholder.showsProgress ? 1 : 0)
-                    Text(placeholder.text)
-                        .font(Theme.ui(11))
-                        .foregroundStyle(Theme.textSecondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 10)
-                .frame(minHeight: 42)
-                .background(
-                    Theme.cardBackground,
-                    in: RoundedRectangle(cornerRadius: 7)
+                familyPlaceholder(
+                    placeholder,
+                    family: section.id,
+                    isInspected: inspectedID == .polishPlaceholder
                 )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 7)
-                        .strokeBorder(Theme.hairline)
-                }
             }
             ForEach(section.rows, id: \.id) { row in
                 ledgerRow(row, isInspected: row.id == inspectedID)
             }
         }
+    }
+
+    private func familyPlaceholder(
+        _ placeholder: ModelsFamilyPlaceholder,
+        family: ModelsFamilyID,
+        isInspected: Bool
+    ) -> some View {
+        Button {
+            if family == .polish {
+                inspectedID = .polishPlaceholder
+            }
+        } label: {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                    .opacity(placeholder.showsProgress ? 1 : 0)
+                Text(placeholder.text)
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .frame(minHeight: 42)
+            .background(
+                isInspected ? Theme.activeNavBackground : Theme.cardBackground,
+                in: RoundedRectangle(cornerRadius: 7)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 7)
+                    .strokeBorder(Theme.hairline)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(family != .polish || placeholder.showsProgress)
+        .accessibilityLabel(placeholder.text)
     }
 
     private func familyHeading(_ section: ModelsFamilyPresentation) -> some View {
@@ -162,62 +186,132 @@ struct ModelsCombinedPane: View {
         Button {
             inspectedID = row.id
         } label: {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 5) {
-                        if row.isSavedASRSelection {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(Theme.accent)
-                                .accessibilityHidden(true)
-                        }
-                        Text(row.name)
-                            .font(Theme.ui(11.5, .semibold))
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                    Text(row.fit)
-                        .font(Theme.ui(9))
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Text(row.size)
-                    .font(Theme.ui(9.5, .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
-                    .frame(width: 42, alignment: .trailing)
-                rating(row.speed)
-                rating(row.quality)
-                Text(row.state)
-                    .font(Theme.ui(8.5, .semibold))
-                    .foregroundStyle(
-                        row.isSavedASRSelection
-                            ? AnyShapeStyle(Theme.accent)
-                            : AnyShapeStyle(Theme.textSecondary)
-                    )
-                    .lineLimit(1)
-                    .frame(width: 64, alignment: .trailing)
+            if row.kind == .utility {
+                utilityLedgerRow(row, isInspected: isInspected)
+            } else {
+                modelLedgerRow(row, isInspected: isInspected)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                isInspected ? Theme.activeNavBackground : Color.clear,
-                in: RoundedRectangle(cornerRadius: 7)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(isInspected ? Theme.hairline : Color.clear)
-            }
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(row.accessibilityLabel)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(row.accessibilityLabel)
         .accessibilityAddTraits(isInspected ? .isSelected : [])
+    }
+
+    private func modelLedgerRow(
+        _ row: ModelsRowPresentation,
+        isInspected: Bool
+    ) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    if row.isSavedASRSelection {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Theme.accent)
+                            .accessibilityHidden(true)
+                    }
+                    Text(row.name)
+                        .font(Theme.ui(11.5, .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Text(row.fit)
+                    .font(Theme.ui(9))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(row.size)
+                .font(Theme.ui(9.5, .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+                .frame(width: 42, alignment: .trailing)
+            rating(row.speed)
+            rating(row.quality)
+            ledgerState(row)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            isInspected ? Theme.activeNavBackground : Color.clear,
+            in: RoundedRectangle(cornerRadius: 7)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(isInspected ? Theme.hairline : Color.clear)
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func utilityLedgerRow(
+        _ row: ModelsRowPresentation,
+        isInspected: Bool
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "plus.circle")
+                .foregroundStyle(Theme.textSecondary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.name)
+                    .font(Theme.ui(11.5, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Text(row.fit)
+                    .font(Theme.ui(9))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            if row.progress != nil || !row.state.isEmpty {
+                ledgerState(row)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            isInspected ? Theme.activeNavBackground : Color.clear,
+            in: RoundedRectangle(cornerRadius: 7)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(isInspected ? Theme.hairline : Color.clear)
+        }
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func ledgerState(_ row: ModelsRowPresentation) -> some View {
+        if let progress = row.progress {
+            VStack(alignment: .trailing, spacing: 2) {
+                if let fraction = progress.fraction {
+                    ProgressView(value: fraction)
+                        .frame(width: 64)
+                } else {
+                    ProgressView()
+                        .controlSize(.mini)
+                }
+                Text(progress.compactState)
+                    .font(Theme.ui(8.5, .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+            }
+            .frame(width: 64, alignment: .trailing)
+        } else {
+            Text(row.state)
+                .font(Theme.ui(8.5, .semibold))
+                .foregroundStyle(
+                    row.isSavedASRSelection
+                        ? AnyShapeStyle(Theme.accent)
+                        : AnyShapeStyle(Theme.textSecondary)
+                )
+                .lineLimit(1)
+                .frame(width: 64, alignment: .trailing)
+        }
     }
 
     private func rating(_ rating: ModelsRating) -> some View {
@@ -272,6 +366,23 @@ struct ModelsCombinedPane: View {
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if presentation.showsInstallByNameForm {
+                TextField("model:tag", text: $model.customModel)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(presentation.inputDisabledReason != nil)
+                    .help(
+                        presentation.inputDisabledReason
+                            ?? "Enter an Ollama model name in model:tag form"
+                    )
+                    .accessibilityLabel("Ollama model name")
+                    .accessibilityHint(presentation.inputDisabledReason ?? "")
+            }
+            if let error = presentation.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(Theme.ui(11))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             VStack(alignment: .leading, spacing: 8) {
                 Text(presentation.semanticLabel.uppercased())
                     .font(Theme.sectionLabel)
@@ -304,12 +415,21 @@ struct ModelsCombinedPane: View {
 
     private func inspectorFooter(_ presentation: ModelsInspectorPresentation?) -> some View {
         HStack(spacing: 10) {
-            if let action = presentation?.primaryAction {
-                primaryAction(action)
+            if let progress = presentation?.progress {
+                inspectorProgress(progress)
+            } else if let presentation {
+                primaryAction(
+                    presentation.primaryAction,
+                    disabledReason: presentation.managementDisabledReason
+                )
             }
             Spacer()
-            if let action = presentation?.destructiveAction {
-                destructiveMenu(action)
+            if presentation?.progress == nil,
+               let action = presentation?.destructiveAction {
+                destructiveMenu(
+                    action,
+                    disabledReason: presentation?.managementDisabledReason
+                )
             }
         }
         .padding(.horizontal, 26)
@@ -317,8 +437,29 @@ struct ModelsCombinedPane: View {
         .background(Theme.windowBackground)
     }
 
+    private func inspectorProgress(_ progress: ModelsProgressPresentation) -> some View {
+        HStack(spacing: 10) {
+            if let fraction = progress.fraction {
+                ProgressView(value: fraction)
+                    .frame(width: 110)
+                Text("\(Int(fraction * 100))% — \(progress.status)")
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                Text(progress.status)
+            }
+        }
+        .font(Theme.ui(10.5, .medium))
+        .foregroundStyle(Theme.textSecondary)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(progress.label), \(progress.status)")
+    }
+
     @ViewBuilder
-    private func primaryAction(_ action: ModelsPrimaryAction) -> some View {
+    private func primaryAction(
+        _ action: ModelsPrimaryAction,
+        disabledReason: String?
+    ) -> some View {
         switch action {
         case .selected:
             Label("Selected", systemImage: "checkmark.circle.fill")
@@ -337,10 +478,25 @@ struct ModelsCombinedPane: View {
         case let .installPolish(name):
             Button("Install") { model.onInstallModel?(name) }
                 .buttonStyle(.borderedProminent)
+                .disabled(disabledReason != nil)
+                .help(disabledReason ?? "Install \(name)")
+                .accessibilityHint(disabledReason ?? "")
+        case .installCustomPolish:
+            Button("Install") { model.onInstallCustomModel?() }
+                .buttonStyle(.borderedProminent)
+                .disabled(disabledReason != nil)
+                .help(disabledReason ?? "Install the entered Ollama model")
+                .accessibilityHint(disabledReason ?? "")
+        case .retryPolish:
+            Button("Retry") { model.onRefreshModels?() }
+                .buttonStyle(.borderedProminent)
         }
     }
 
-    private func destructiveMenu(_ action: ModelsDestructiveAction) -> some View {
+    private func destructiveMenu(
+        _ action: ModelsDestructiveAction,
+        disabledReason: String?
+    ) -> some View {
         Menu {
             Button(action.menuTitle, role: .destructive) {
                 pendingDestructiveAction = action
@@ -356,12 +512,25 @@ struct ModelsCombinedPane: View {
         .menuIndicator(.hidden)
         .controlSize(.small)
         .fixedSize()
+        .disabled(disabledReason != nil)
+        .help(disabledReason ?? action.menuTitle)
         .accessibilityLabel(action.accessibilityLabel)
+        .accessibilityHint(disabledReason ?? "")
     }
 
     private func reconcileInspection(with presentation: ModelsWorkspaceProjection) {
-        guard inspectedID != presentation.inspector?.id else { return }
-        inspectedID = presentation.inspector?.id
+        if inspectedID != presentation.inspector?.id {
+            inspectedID = presentation.inspector?.id
+        }
+        if let requested = model.requestedPolishInspection,
+           presentation.inspector?.id == .polish(requested) {
+            model.requestedPolishInspection = nil
+        }
+        let currentPolishRowIDs = presentation.sections
+            .first { $0.id == .polish }?.rows.map(\.id) ?? []
+        if previousPolishRowIDs != currentPolishRowIDs {
+            previousPolishRowIDs = currentPolishRowIDs
+        }
     }
 
     private func perform(_ action: ModelsDestructiveAction) {
