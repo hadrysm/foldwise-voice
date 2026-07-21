@@ -238,22 +238,14 @@ struct ModelsCombinedPane: View {
         isInspected: Bool,
         isKeyboardFocused: Bool
     ) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Button {
                 inspectedID = row.id
             } label: {
                 if row.kind == .utility {
-                    utilityLedgerRow(
-                        row,
-                        isInspected: isInspected,
-                        isKeyboardFocused: isKeyboardFocused
-                    )
+                    utilityLedgerRow(row)
                 } else {
-                    modelLedgerRow(
-                        row,
-                        isInspected: isInspected,
-                        isKeyboardFocused: isKeyboardFocused
-                    )
+                    modelLedgerRow(row)
                 }
             }
             .buttonStyle(.plain)
@@ -264,22 +256,16 @@ struct ModelsCombinedPane: View {
             .accessibilityLabel(row.accessibilityLabel)
             .accessibilityValue(row.progress?.accessibilityValue ?? "")
             .accessibilityAddTraits(isInspected ? .isSelected : [])
-            if row.progress?.allowsCancellation == true {
-                Button("Cancel") { model.onCancelASROperation?() }
-                    .controlSize(.small)
-                    .focused($focusedControl, equals: .inlineCancel(row.id))
-                    .help("Cancel \(row.progress?.label.lowercased() ?? "operation")")
-                    .accessibilityLabel("Cancel \(row.progress?.label.lowercased() ?? "operation") for \(row.name)")
-            }
+            ledgerState(row)
         }
+        .modelsLedgerRowChrome(
+            isInspected: isInspected,
+            isKeyboardFocused: isKeyboardFocused
+        )
         .id(row.id)
     }
 
-    private func modelLedgerRow(
-        _ row: ModelsRowPresentation,
-        isInspected: Bool,
-        isKeyboardFocused: Bool
-    ) -> some View {
+    private func modelLedgerRow(_ row: ModelsRowPresentation) -> some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
@@ -308,19 +294,11 @@ struct ModelsCombinedPane: View {
                 .frame(width: 42, alignment: .trailing)
             rating(row.speed)
             rating(row.quality)
-            ledgerState(row)
         }
-        .modelsLedgerRowChrome(
-            isInspected: isInspected,
-            isKeyboardFocused: isKeyboardFocused
-        )
+        .contentShape(Rectangle())
     }
 
-    private func utilityLedgerRow(
-        _ row: ModelsRowPresentation,
-        isInspected: Bool,
-        isKeyboardFocused: Bool
-    ) -> some View {
+    private func utilityLedgerRow(_ row: ModelsRowPresentation) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "plus.circle")
                 .foregroundStyle(Theme.textSecondary)
@@ -336,34 +314,53 @@ struct ModelsCombinedPane: View {
                     .lineLimit(1)
             }
             Spacer()
-            if row.progress != nil || !row.state.isEmpty {
-                ledgerState(row)
-            }
         }
-        .modelsLedgerRowChrome(
-            isInspected: isInspected,
-            isKeyboardFocused: isKeyboardFocused
-        )
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
     private func ledgerState(_ row: ModelsRowPresentation) -> some View {
         if let progress = row.progress {
-            VStack(alignment: .trailing, spacing: 2) {
-                if let fraction = progress.fraction {
-                    ProgressView(value: fraction)
-                        .frame(width: 64)
-                } else {
-                    ProgressView()
-                        .controlSize(.mini)
-                }
-                Text(progress.compactState)
+            if progress.allowsCancellation {
+                Button { model.onCancelASROperation?() } label: {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        if let fraction = progress.fraction {
+                            ProgressView(value: fraction)
+                                .frame(width: 64)
+                            Text("\(Int(fraction * 100))% · Cancel")
+                        } else {
+                            HStack(spacing: 4) {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                Text("Cancel")
+                            }
+                        }
+                    }
                     .font(Theme.ui(8.5, .semibold))
                     .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .frame(width: 64, alignment: .trailing)
+                .focused($focusedControl, equals: .inlineCancel(row.id))
+                .help("Cancel \(progress.label.lowercased())")
+                .accessibilityLabel("Cancel \(progress.label.lowercased()) for \(row.name)")
+            } else {
+                VStack(alignment: .trailing, spacing: 2) {
+                    if let fraction = progress.fraction {
+                        ProgressView(value: fraction)
+                            .frame(width: 64)
+                    } else {
+                        ProgressView()
+                            .controlSize(.mini)
+                    }
+                    Text(progress.compactState)
+                }
+                .frame(width: 64, alignment: .trailing)
+                .accessibilityHidden(true)
+                .font(Theme.ui(8.5, .semibold))
+                .foregroundStyle(Theme.textSecondary)
             }
-            .frame(width: 64, alignment: .trailing)
-        } else {
+        } else if !row.state.isEmpty {
             Text(row.state)
                 .font(Theme.ui(8.5, .semibold))
                 .foregroundStyle(
@@ -373,6 +370,7 @@ struct ModelsCombinedPane: View {
                 )
                 .lineLimit(1)
                 .frame(width: 64, alignment: .trailing)
+                .accessibilityHidden(true)
         }
     }
 

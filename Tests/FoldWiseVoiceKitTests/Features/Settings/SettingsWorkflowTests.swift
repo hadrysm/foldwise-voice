@@ -3076,6 +3076,10 @@ final class SettingsWorkflowTests: XCTestCase {
         )
         workflow.populatePreferences()
         await lifecycle.start()
+        await waitForASRState(model) {
+            model.asrSnapshot?.effectiveSelection == ASRModelCatalog.defaultID
+                && model.asrSnapshot?.operation == nil
+        }
 
         workflow.selectASRModel("whisper-small")
         await waitUntil { config.asrModel == "whisper-small" }
