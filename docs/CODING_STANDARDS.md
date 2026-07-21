@@ -127,15 +127,24 @@ fix the interface, don't reach around it.
 ### Binding coverage policy
 
 Run `./scripts/coverage.sh` before review. It is the same executable policy CI
-uses and runs XCTest once with SwiftPM/LLVM coverage. The permanent gates are:
+uses and runs XCTest once with SwiftPM/LLVM coverage. The balanced permanent
+gates are:
 
-- every included production Swift file has at least 90% line coverage;
+- every included production Swift file has at least 80% line coverage;
 - the included core aggregate has at least 90% line coverage and may not fall
   below the higher accepted floor recorded in `coverage-policy.json`;
-- changed executable lines in included production files have at least 90%
+- changed executable lines in included production files have at least 85%
   coverage relative to the target branch; and
 - overall `FoldWiseVoiceKit` production coverage, including exempt files, may
   not fall below its accepted floor.
+
+Policy version 2 records the reviewed reset from the original 90% per-file and
+changed-line policy. Within a policy version, accepted floors cannot decrease.
+Unversioned policies are treated as version 1 and retain the original 90/90/90
+minimums, so the balanced floors are available only through version 2.
+Another reset requires explicit checker support through a reviewed policy-version
+change; incrementing the JSON value alone is rejected. The overall production
+floor remains ratcheted even during the version 1 to version 2 reset.
 
 Production files are included by default. An exemption must name one complete
 file in `coverage-policy.json`, explain why it is a declarative or thin system

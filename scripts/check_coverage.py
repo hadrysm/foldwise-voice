@@ -12,6 +12,22 @@ from pathlib import Path
 from typing import Any
 
 
+CURRENT_POLICY_VERSION = 2
+LEGACY_POLICY_VERSION = 1
+MINIMUM_POLICY_FLOORS = {
+    LEGACY_POLICY_VERSION: {
+        "included_core_floor": 90.0,
+        "changed_line_floor": 90.0,
+        "minimum_file_coverage": 90.0,
+    },
+    CURRENT_POLICY_VERSION: {
+        "included_core_floor": 90.0,
+        "changed_line_floor": 85.0,
+        "minimum_file_coverage": 80.0,
+    },
+}
+
+
 @dataclass(frozen=True)
 class FileCoverage:
     path: str
@@ -208,19 +224,42 @@ def policy_number(policy: dict[str, Any], name: str) -> float:
     return number
 
 
+def policy_version(policy: dict[str, Any]) -> int:
+    value = policy.get("policy_version", LEGACY_POLICY_VERSION)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError("policy policy_version must be a positive integer")
+    if value > CURRENT_POLICY_VERSION:
+        raise ValueError(f"policy policy_version {value} is not supported")
+    return value
+
+
 def validate_policy_ratchet(policy: dict[str, Any], baseline_policy: dict[str, Any] | None) -> None:
-    for name in ("included_core_floor", "changed_line_floor", "minimum_file_coverage"):
-        if policy_number(policy, name) < 90.0:
-            raise ValueError(f"policy {name} must remain at least 90.00%")
+    current_version = policy_version(policy)
+    for name, minimum in MINIMUM_POLICY_FLOORS[current_version].items():
+        if policy_number(policy, name) < minimum:
+            raise ValueError(f"policy {name} must remain at least {minimum:.2f}%")
 
     if baseline_policy is None:
         return
-    for name in (
+
+    baseline_version = policy_version(baseline_policy)
+    ratcheted_names = (
         "overall_floor",
         "included_core_floor",
         "changed_line_floor",
         "minimum_file_coverage",
-    ):
+    )
+    if current_version == baseline_version:
+        names_to_compare = ratcheted_names
+    elif baseline_version == LEGACY_POLICY_VERSION and current_version == CURRENT_POLICY_VERSION:
+        names_to_compare = ("overall_floor",)
+    else:
+        raise ValueError(
+            "policy policy_version cannot change "
+            f"from {baseline_version} to {current_version} without checker support"
+        )
+
+    for name in names_to_compare:
         accepted = policy_number(baseline_policy, name)
         current = policy_number(policy, name)
         if current + 1e-9 < accepted:

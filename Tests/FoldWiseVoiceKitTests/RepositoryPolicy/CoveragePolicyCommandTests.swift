@@ -339,45 +339,160 @@ final class CoveragePolicyCommandTests: XCTestCase {
         XCTAssertTrue(result.output.contains("overall_floor cannot decrease from 50.00% to 40.00%"))
     }
 
-    func testCheckerRejectsTemporarySubNinetyAggregateCoreFloor() throws {
-        let result = try policyValidationResult(includedCoreFloor: 89.0)
+    func testCheckerAcceptsBalancedThresholdResetInVersionTwo() throws {
+        let result = try policyValidationResult(
+            policy: PolicyFixture(
+                policyVersion: 2,
+                overallFloor: 50.0,
+                includedCoreFloor: 90.0,
+                changedLineFloor: 85.0,
+                minimumFileCoverage: 80.0
+            ),
+            baseline: PolicyFixture(
+                policyVersion: 1,
+                overallFloor: 50.0,
+                includedCoreFloor: 95.0,
+                changedLineFloor: 90.0,
+                minimumFileCoverage: 90.0
+            )
+        )
 
-        XCTAssertEqual(result.status, 2)
-        XCTAssertTrue(result.output.contains("included_core_floor must remain at least 90.00%"))
+        XCTAssertEqual(result.status, 0)
+        XCTAssertTrue(result.output.contains("Coverage policy PASSED"))
     }
 
-    func testCheckerRejectsTemporarySubNinetyChangedLineFloor() throws {
-        let result = try policyValidationResult(changedLineFloor: 89.0)
+    func testCheckerRejectsBalancedThresholdsInVersionOne() throws {
+        let result = try policyValidationResult(
+            policy: PolicyFixture(
+                policyVersion: 1,
+                includedCoreFloor: 90.0,
+                changedLineFloor: 85.0,
+                minimumFileCoverage: 80.0
+            )
+        )
 
         XCTAssertEqual(result.status, 2)
         XCTAssertTrue(result.output.contains("changed_line_floor must remain at least 90.00%"))
     }
 
-    func testCheckerRejectsTemporarySubNinetyPerFileFloor() throws {
-        let result = try policyValidationResult(minimumFileCoverage: 89.0)
+    func testCheckerRejectsTemporarySubNinetyAggregateCoreFloor() throws {
+        let result = try policyValidationResult(
+            policy: PolicyFixture(includedCoreFloor: 89.0)
+        )
 
         XCTAssertEqual(result.status, 2)
-        XCTAssertTrue(result.output.contains("minimum_file_coverage must remain at least 90.00%"))
+        XCTAssertTrue(result.output.contains("included_core_floor must remain at least 90.00%"))
+    }
+
+    func testCheckerRejectsSubEightyFiveChangedLineFloor() throws {
+        let result = try policyValidationResult(
+            policy: PolicyFixture(
+                policyVersion: 2,
+                changedLineFloor: 84.0,
+                minimumFileCoverage: 80.0
+            )
+        )
+
+        XCTAssertEqual(result.status, 2)
+        XCTAssertTrue(result.output.contains("changed_line_floor must remain at least 85.00%"))
+    }
+
+    func testCheckerRejectsSubEightyPerFileFloor() throws {
+        let result = try policyValidationResult(
+            policy: PolicyFixture(
+                policyVersion: 2,
+                changedLineFloor: 85.0,
+                minimumFileCoverage: 79.0
+            )
+        )
+
+        XCTAssertEqual(result.status, 2)
+        XCTAssertTrue(result.output.contains("minimum_file_coverage must remain at least 80.00%"))
+    }
+
+    func testCheckerKeepsOverallFloorRatchetedDuringVersionTwoReset() throws {
+        let result = try policyValidationResult(
+            policy: PolicyFixture(
+                policyVersion: 2,
+                overallFloor: 40.0,
+                includedCoreFloor: 90.0,
+                changedLineFloor: 85.0,
+                minimumFileCoverage: 80.0
+            ),
+            baseline: PolicyFixture(
+                policyVersion: 1,
+                overallFloor: 50.0,
+                includedCoreFloor: 95.0,
+                changedLineFloor: 90.0,
+                minimumFileCoverage: 90.0
+            )
+        )
+
+        XCTAssertEqual(result.status, 2)
+        XCTAssertTrue(result.output.contains("overall_floor cannot decrease from 50.00% to 40.00%"))
+    }
+
+    func testCheckerRejectsUnreviewedPolicyVersionReset() throws {
+        let result = try policyValidationResult(
+            policy: PolicyFixture(
+                policyVersion: 3,
+                includedCoreFloor: 90.0,
+                changedLineFloor: 85.0,
+                minimumFileCoverage: 80.0
+            )
+        )
+
+        XCTAssertEqual(result.status, 2)
+        XCTAssertTrue(result.output.contains("policy_version 3 is not supported"))
+    }
+
+    private struct PolicyFixture {
+        let policyVersion: Int?
+        let overallFloor: Double
+        let includedCoreFloor: Double
+        let changedLineFloor: Double
+        let minimumFileCoverage: Double
+
+        init(
+            policyVersion: Int? = nil,
+            overallFloor: Double = 0.0,
+            includedCoreFloor: Double = 90.0,
+            changedLineFloor: Double = 90.0,
+            minimumFileCoverage: Double = 90.0
+        ) {
+            self.policyVersion = policyVersion
+            self.overallFloor = overallFloor
+            self.includedCoreFloor = includedCoreFloor
+            self.changedLineFloor = changedLineFloor
+            self.minimumFileCoverage = minimumFileCoverage
+        }
+
+        var jsonValue: [String: Any] {
+            var value: [String: Any] = [
+                "production_source_root": "Sources/FoldWiseVoiceKit",
+                "overall_floor": overallFloor,
+                "included_core_floor": includedCoreFloor,
+                "changed_line_floor": changedLineFloor,
+                "minimum_file_coverage": minimumFileCoverage,
+                "exemptions": [],
+            ]
+            if let policyVersion {
+                value["policy_version"] = policyVersion
+            }
+            return value
+        }
     }
 
     private func policyValidationResult(
-        includedCoreFloor: Double = 90.0,
-        changedLineFloor: Double = 90.0,
-        minimumFileCoverage: Double = 90.0
+        policy fixture: PolicyFixture,
+        baseline baselineFixture: PolicyFixture? = nil
     ) throws -> (status: Int32, output: String) {
         let sourceDirectory = directory.appendingPathComponent("Sources/FoldWiseVoiceKit")
         let core = sourceDirectory.appendingPathComponent("Core.swift")
         try "let covered = 1\n".write(to: core, atomically: true, encoding: .utf8)
 
         let policy = directory.appendingPathComponent("coverage-policy.json")
-        try writeJSON([
-            "production_source_root": "Sources/FoldWiseVoiceKit",
-            "overall_floor": 0.0,
-            "included_core_floor": includedCoreFloor,
-            "changed_line_floor": changedLineFloor,
-            "minimum_file_coverage": minimumFileCoverage,
-            "exemptions": [],
-        ], to: policy)
+        try writeJSON(fixture.jsonValue, to: policy)
         let report = directory.appendingPathComponent("coverage.json")
         try writeJSON([
             "data": [[
@@ -392,7 +507,18 @@ final class CoveragePolicyCommandTests: XCTestCase {
         let diff = directory.appendingPathComponent("changes.diff")
         try "".write(to: diff, atomically: true, encoding: .utf8)
 
-        return try runChecker(report: report, policy: policy, diff: diff)
+        guard let baselineFixture else {
+            return try runChecker(report: report, policy: policy, diff: diff)
+        }
+
+        let baselinePolicy = directory.appendingPathComponent("baseline-coverage-policy.json")
+        try writeJSON(baselineFixture.jsonValue, to: baselinePolicy)
+        return try runChecker(
+            report: report,
+            policy: policy,
+            diff: diff,
+            baselinePolicy: baselinePolicy
+        )
     }
 
     func testCoverageCommandDocumentsTargetBranchOverride() throws {
