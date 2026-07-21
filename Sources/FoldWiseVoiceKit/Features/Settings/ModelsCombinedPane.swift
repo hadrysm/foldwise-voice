@@ -793,7 +793,15 @@ private extension View {
         isInspected: Bool,
         isKeyboardFocused: Bool
     ) -> some View {
-        padding(.horizontal, 10)
+        let borderColor: Color = if isKeyboardFocused {
+            Theme.accent
+        } else if isInspected {
+            Theme.hairline
+        } else {
+            .clear
+        }
+
+        return padding(.horizontal, 10)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
@@ -803,9 +811,7 @@ private extension View {
             .overlay {
                 RoundedRectangle(cornerRadius: 7)
                     .strokeBorder(
-                        isKeyboardFocused
-                            ? Theme.accent
-                            : (isInspected ? Theme.hairline : Color.clear),
+                        borderColor,
                         lineWidth: isKeyboardFocused ? 2 : 1
                     )
             }
