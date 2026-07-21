@@ -1,6 +1,6 @@
-// PROTOTYPE ONLY — Wayfinder ticket "Compare three comparison-first Models view structures".
-// Three variants of the Models settings page, switchable in one native macOS window.
-// Run with `swift run ModelsViewPrototype`; delete after the design decision is captured.
+// PROTOTYPE ONLY — selected outcome of the Wayfinder comparison ticket.
+// Compact model list + detail inspector, with state controls kept outside the proposed UI.
+// Run with `swift run ModelsViewPrototype`; rewrite properly during implementation.
 
 import AppKit
 import SwiftUI
@@ -133,24 +133,6 @@ private struct PrototypeModel: Identifiable {
     ]
 }
 
-private enum PrototypeVariant: String, CaseIterable, Identifiable {
-    case grouped = "A"
-    case cards = "B"
-    case inspector = "C"
-
-    var id: String {
-        rawValue
-    }
-
-    var title: String {
-        switch self {
-        case .grouped: "Refined grouped list"
-        case .cards: "Model-card grid"
-        case .inspector: "Compact list + inspector"
-        }
-    }
-}
-
 private enum PressureState: String, CaseIterable, Identifiable {
     case baseline = "Baseline"
     case activity = "In progress"
@@ -162,17 +144,11 @@ private enum PressureState: String, CaseIterable, Identifiable {
 }
 
 private struct PrototypeShell: View {
-    @State private var variant: PrototypeVariant
     @State private var pressure: PressureState = .baseline
     @State private var didExportSnapshots = false
-    @FocusState private var catchesArrowKeys: Bool
     private let allowsSnapshotExport: Bool
 
-    init(
-        initialVariant: PrototypeVariant = .grouped,
-        allowsSnapshotExport: Bool = true
-    ) {
-        _variant = State(initialValue: initialVariant)
+    init(allowsSnapshotExport: Bool = true) {
         self.allowsSnapshotExport = allowsSnapshotExport
     }
 
@@ -184,20 +160,8 @@ private struct PrototypeShell: View {
         }
         .background(PrototypeTheme.windowBackground)
         .foregroundStyle(PrototypeTheme.textPrimary)
-        .overlay(alignment: .bottom) { switcher }
-        .focusable()
-        .focused($catchesArrowKeys)
-        .onAppear {
-            catchesArrowKeys = true
-            exportSnapshotsIfRequested()
-        }
-        .onMoveCommand { direction in
-            switch direction {
-            case .left: cycle(by: -1)
-            case .right: cycle(by: 1)
-            default: break
-            }
-        }
+        .overlay(alignment: .bottomTrailing) { prototypeStateMenu }
+        .onAppear { exportSnapshotsIfRequested() }
     }
 
     private var sidebar: some View {
@@ -255,12 +219,6 @@ private struct PrototypeShell: View {
                         .foregroundStyle(PrototypeTheme.textSecondary)
                 }
                 Spacer()
-                Picker("State", selection: $pressure) {
-                    ForEach(PressureState.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 285)
             }
             .padding(.horizontal, PrototypeTheme.contentPadding)
             .padding(.top, 28)
@@ -268,47 +226,37 @@ private struct PrototypeShell: View {
 
             Divider()
 
-            Group {
-                switch variant {
-                case .grouped: GroupedListVariant(pressure: pressure)
-                case .cards: CardGridVariant(pressure: pressure)
-                case .inspector: InspectorVariant(pressure: pressure)
+            InspectorVariant(pressure: pressure)
+                .id(pressure.rawValue)
+        }
+    }
+
+    private var prototypeStateMenu: some View {
+        Menu {
+            ForEach(PressureState.allCases) { state in
+                Button {
+                    pressure = state
+                } label: {
+                    if pressure == state {
+                        Label(state.rawValue, systemImage: "checkmark")
+                    } else {
+                        Text(state.rawValue)
+                    }
                 }
             }
-            .id("\(variant.rawValue)-\(pressure.rawValue)")
-        }
-    }
-
-    private var switcher: some View {
-        HStack(spacing: 6) {
-            Button { cycle(by: -1) } label: {
-                Image(systemName: "chevron.left").frame(width: 24, height: 24)
-            }
-            .buttonStyle(.plain)
-            .help("Previous variant (←)")
-
-            Text("\(variant.rawValue) — \(variant.title)")
-                .font(PrototypeTheme.ui(12, .semibold))
-                .frame(minWidth: 190)
-
-            Button { cycle(by: 1) } label: {
-                Image(systemName: "chevron.right").frame(width: 24, height: 24)
-            }
-            .buttonStyle(.plain)
-            .help("Next variant (→)")
+        } label: {
+            Label("Prototype state: \(pressure.rawValue)", systemImage: "testtube.2")
+                .font(PrototypeTheme.ui(11, .semibold))
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background(PrototypeTheme.textPrimary, in: Capsule())
         }
         .foregroundStyle(PrototypeTheme.windowBackground)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(PrototypeTheme.textPrimary, in: Capsule())
-        .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
-        .padding(.bottom, 16)
-    }
-
-    private func cycle(by offset: Int) {
-        let variants = PrototypeVariant.allCases
-        guard let index = variants.firstIndex(of: variant) else { return }
-        variant = variants[(index + offset + variants.count) % variants.count]
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+        .padding(16)
     }
 
     @MainActor
@@ -321,241 +269,35 @@ private struct PrototypeShell: View {
 
         let output = URL(fileURLWithPath: directory, isDirectory: true)
         try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        for variant in PrototypeVariant.allCases {
-            let view = PrototypeShell(
-                initialVariant: variant,
-                allowsSnapshotExport: false
-            )
+        let view = PrototypeShell(allowsSnapshotExport: false)
             .frame(width: 1180, height: 800)
-            let hosting = NSHostingView(rootView: view)
-            hosting.frame = NSRect(x: 0, y: 0, width: 1180, height: 800)
-            let window = NSWindow(
-                contentRect: hosting.frame,
-                styleMask: [.borderless],
-                backing: .buffered,
-                defer: false
-            )
-            window.contentView = hosting
-            window.orderFrontRegardless()
-            hosting.layoutSubtreeIfNeeded()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-            guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
-                window.orderOut(nil)
-                continue
-            }
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let hosting = NSHostingView(rootView: view)
+        hosting.frame = NSRect(x: 0, y: 0, width: 1180, height: 800)
+        let window = NSWindow(
+            contentRect: hosting.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = hosting
+        window.orderFrontRegardless()
+        hosting.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
             window.orderOut(nil)
-            guard let png = bitmap.representation(using: .png, properties: [:]) else { continue }
-            try? png.write(to: output.appendingPathComponent("variant-\(variant.rawValue.lowercased()).png"))
+            NSApp.terminate(nil)
+            return
+        }
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        window.orderOut(nil)
+        if let png = bitmap.representation(using: .png, properties: [:]) {
+            try? png.write(to: output.appendingPathComponent("selected-c.png"))
         }
         NSApp.terminate(nil)
     }
 }
 
-// MARK: - A: refined grouped list
-
-private struct GroupedListVariant: View {
-    let pressure: PressureState
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
-                StateNotice(pressure: pressure)
-                family(.speech)
-                family(.polish)
-            }
-            .padding(.horizontal, PrototypeTheme.contentPadding)
-            .padding(.top, 22)
-            .padding(.bottom, 90)
-        }
-    }
-
-    private func family(_ family: ModelFamily) -> some View {
-        let models = PrototypeModel.catalog.filter { $0.family == family }
-        return VStack(alignment: .leading, spacing: 10) {
-            FamilyHeading(family: family)
-            VStack(spacing: 0) {
-                columnHeader
-                ForEach(Array(models.enumerated()), id: \.element.id) { index, model in
-                    if index > 0 {
-                        Divider().padding(.leading, 14)
-                    }
-                    groupedRow(model)
-                }
-                if family == .polish {
-                    Divider().padding(.leading, 14)
-                    customInstallRow
-                }
-            }
-            .prototypeCard()
-        }
-    }
-
-    private var columnHeader: some View {
-        HStack(spacing: 12) {
-            Text("Model / task fit").frame(maxWidth: .infinity, alignment: .leading)
-            Text("Size").frame(width: 58, alignment: .trailing)
-            Text("Speed").frame(width: 68, alignment: .trailing)
-            Text("Quality").frame(width: 68, alignment: .trailing)
-            Text("Status").frame(width: 86, alignment: .trailing)
-        }
-        .font(PrototypeTheme.ui(9.5, .bold))
-        .textCase(.uppercase)
-        .kerning(0.6)
-        .foregroundStyle(PrototypeTheme.textTertiary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-
-    private func groupedRow(_ model: PrototypeModel) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            HStack(alignment: .top, spacing: 9) {
-                if model.family == .speech, model.isInstalled {
-                    Image(systemName: model.isSelected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(model.isSelected ? PrototypeTheme.accent : PrototypeTheme.textTertiary)
-                        .padding(.top, 1)
-                } else {
-                    Color.clear.frame(width: 16, height: 16)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.name).font(PrototypeTheme.ui(13, .semibold))
-                    Text(model.fit).font(PrototypeTheme.ui(10.5)).foregroundStyle(PrototypeTheme.textSecondary)
-                    Text(model.blurb)
-                        .font(PrototypeTheme.ui(10.5))
-                        .foregroundStyle(PrototypeTheme.textSecondary)
-                        .lineLimit(2)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Text(model.size).metricColumn(width: 58)
-            RatingBar(value: model.speed).frame(width: 68, alignment: .trailing)
-            RatingBar(value: model.quality).frame(width: 68, alignment: .trailing)
-            ModelAction(model: model, pressure: pressure).frame(width: 86, alignment: .trailing)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .contentShape(Rectangle())
-    }
-
-    private var customInstallRow: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Install another Ollama model").font(PrototypeTheme.ui(12, .semibold))
-                Text("Paste any name from ollama.com/library")
-                    .font(PrototypeTheme.ui(10.5)).foregroundStyle(PrototypeTheme.textSecondary)
-            }
-            Spacer()
-            TextField("model:tag", text: .constant(""))
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 180)
-            Button("Install") {}
-                .controlSize(.small)
-        }
-        .padding(14)
-    }
-}
-
-// MARK: - B: model-card comparison grid
-
-private struct CardGridVariant: View {
-    let pressure: PressureState
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                StateNotice(pressure: pressure)
-                cardFamily(.speech)
-                cardFamily(.polish)
-            }
-            .padding(.horizontal, PrototypeTheme.contentPadding)
-            .padding(.top, 22)
-            .padding(.bottom, 90)
-        }
-    }
-
-    private func cardFamily(_ family: ModelFamily) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            FamilyHeading(family: family)
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 225, maximum: 340), spacing: 12)],
-                alignment: .leading,
-                spacing: 12
-            ) {
-                ForEach(PrototypeModel.catalog.filter { $0.family == family }) { model in
-                    modelCard(model)
-                }
-                if family == .polish {
-                    addModelCard
-                }
-            }
-        }
-    }
-
-    private func modelCard(_ model: PrototypeModel) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(model.name)
-                        .font(PrototypeTheme.ui(13, .semibold))
-                        .lineLimit(2)
-                    Text(model.fit)
-                        .font(PrototypeTheme.ui(10.5))
-                        .foregroundStyle(PrototypeTheme.textSecondary)
-                }
-                Spacer(minLength: 4)
-                if model.family == .speech, model.isInstalled {
-                    Image(systemName: model.isSelected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(model.isSelected ? PrototypeTheme.accent : PrototypeTheme.textTertiary)
-                }
-            }
-            HStack(spacing: 6) {
-                FactChip(text: model.size)
-                if model.speed > 0 {
-                    FactChip(text: "Speed \(model.speed)/5")
-                }
-                if model.quality > 0 {
-                    FactChip(text: "Quality \(model.quality)/5")
-                }
-            }
-            Text(model.blurb)
-                .font(PrototypeTheme.ui(10.5))
-                .foregroundStyle(PrototypeTheme.textSecondary)
-                .lineLimit(3)
-                .frame(minHeight: 38, alignment: .topLeading)
-            Divider()
-            HStack {
-                Text(model.availability)
-                    .font(PrototypeTheme.ui(10.5, .medium))
-                    .foregroundStyle(PrototypeTheme.textSecondary)
-                Spacer()
-                ModelAction(model: model, pressure: pressure)
-            }
-        }
-        .padding(13)
-        .frame(maxWidth: .infinity, minHeight: 164, alignment: .topLeading)
-        .prototypeCard()
-    }
-
-    private var addModelCard: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Image(systemName: "plus.circle").foregroundStyle(PrototypeTheme.textSecondary)
-            Text("Install by name").font(PrototypeTheme.ui(13, .semibold))
-            Text("Add any model from ollama.com/library.")
-                .font(PrototypeTheme.ui(10.5)).foregroundStyle(PrototypeTheme.textSecondary)
-            Spacer()
-            HStack {
-                TextField("model:tag", text: .constant(""))
-                    .textFieldStyle(.roundedBorder)
-                Button("Install") {}.controlSize(.small)
-            }
-        }
-        .padding(13)
-        .frame(maxWidth: .infinity, minHeight: 164, alignment: .topLeading)
-        .prototypeCard()
-    }
-}
-
-// MARK: - C: compact list and detail inspector
+// MARK: - Selected structure: compact list and detail inspector
 
 private struct InspectorVariant: View {
     let pressure: PressureState
@@ -852,34 +594,6 @@ private struct ModelAction: View {
     }
 }
 
-private struct RatingBar: View {
-    let value: Int
-
-    var body: some View {
-        HStack(spacing: 2.5) {
-            ForEach(0 ..< 5, id: \.self) { index in
-                Circle()
-                    .fill(index < value ? PrototypeTheme.textSecondary : PrototypeTheme.hairline)
-                    .frame(width: 5, height: 5)
-            }
-        }
-    }
-}
-
-private struct FactChip: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(PrototypeTheme.ui(9.5, .medium))
-            .foregroundStyle(PrototypeTheme.textSecondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(PrototypeTheme.windowBackground, in: Capsule())
-            .overlay(Capsule().strokeBorder(PrototypeTheme.hairline))
-    }
-}
-
 private struct DetailFact: View {
     let label: String
     let value: String
@@ -905,11 +619,5 @@ private extension View {
                 RoundedRectangle(cornerRadius: PrototypeTheme.cardRadius)
                     .strokeBorder(PrototypeTheme.hairline, lineWidth: 1)
             )
-    }
-
-    func metricColumn(width: CGFloat) -> some View {
-        font(PrototypeTheme.ui(10.5))
-            .foregroundStyle(PrototypeTheme.textSecondary)
-            .frame(width: width, alignment: .trailing)
     }
 }
