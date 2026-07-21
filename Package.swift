@@ -23,6 +23,9 @@ let package = Package(
             name: "FoldWiseVoice",
             dependencies: ["FoldWiseVoiceKit"]
         ),
+        // PROTOTYPE ONLY (Wayfinder #225): three throwaway Models-view structures.
+        // Run with `swift run ModelsViewPrototype`; delete after the design decision.
+        .executableTarget(name: "ModelsViewPrototype"),
         .testTarget(
             name: "FoldWiseVoiceKitTests",
             dependencies: ["FoldWiseVoiceKit"]
