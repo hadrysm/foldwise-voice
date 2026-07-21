@@ -32,7 +32,23 @@ final class FoldWiseVoiceCommandLineTests: XCTestCase {
             "FoldWiseVoice", "--unknown", "positional",
         ])
 
-        XCTAssertEqual(action, .launch(configPath: nil))
+        XCTAssertEqual(action, .launch(configPath: nil, showSettings: false))
+    }
+
+    func testShowSettingsOptionRequestsVisibleWorkspace() {
+        let action = FoldWiseVoiceCommandLine(environment: [:]).evaluate(arguments: [
+            "FoldWiseVoice", "--show-settings",
+        ])
+
+        XCTAssertEqual(action, .launch(configPath: nil, showSettings: true))
+    }
+
+    func testShowSettingsEnvironmentRequestsVisibleWorkspace() {
+        let action = FoldWiseVoiceCommandLine(environment: [
+            "FOLDWISE_SHOW_SETTINGS": "1",
+        ]).evaluate(arguments: ["FoldWiseVoice"])
+
+        XCTAssertEqual(action, .launch(configPath: nil, showSettings: true))
     }
 
     func testMissingConfigValueRemainsAnEmptyOverride() {
@@ -40,7 +56,7 @@ final class FoldWiseVoiceCommandLineTests: XCTestCase {
             "FoldWiseVoice", "--config",
         ])
 
-        XCTAssertEqual(action, .launch(configPath: nil))
+        XCTAssertEqual(action, .launch(configPath: nil, showSettings: false))
     }
 
     func testConfigValueMayBeginWithOptionPrefix() {
@@ -48,7 +64,7 @@ final class FoldWiseVoiceCommandLineTests: XCTestCase {
             "FoldWiseVoice", "--config", "--mode",
         ])
 
-        XCTAssertEqual(action, .launch(configPath: "--mode"))
+        XCTAssertEqual(action, .launch(configPath: "--mode", showSettings: false))
     }
 
     func testPrintConfigRejectsRecoveryWithoutPrintingFallbackDefaults() throws {

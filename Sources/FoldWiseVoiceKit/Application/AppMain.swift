@@ -59,6 +59,7 @@ private func acquireInstanceLock(port: UInt16) -> Bool {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let configPath: String?
+    let showSettingsOnLaunch: Bool
 
     // Standard AppKit delayed-init: these exist for the app's whole life but
     // can only be built in applicationDidFinishLaunching. Optionals would
@@ -77,8 +78,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shortcutCaptureGate = ShortcutCaptureGate()
     // swiftlint:enable implicitly_unwrapped_optional
 
-    init(configPath: String?) {
+    init(configPath: String?, showSettingsOnLaunch: Bool) {
         self.configPath = configPath
+        self.showSettingsOnLaunch = showSettingsOnLaunch
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -226,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The living idle pill is the ready signal (PRD #103); the hotkey
         // hint lives on Home, rendered from the live config.
         badge.show()
-        if config.isReadOnly {
+        if showSettingsOnLaunch || config.isReadOnly {
             settings.show()
         }
     }
@@ -358,9 +360,11 @@ public enum FoldWiseVoiceApp {
     public static func main() {
         let action = FoldWiseVoiceCommandLine().evaluate(arguments: CommandLine.arguments)
         let cliConfig: String?
+        let showSettingsOnLaunch: Bool
         switch action {
-        case let .launch(configPath):
+        case let .launch(configPath, showSettings):
             cliConfig = configPath
+            showSettingsOnLaunch = showSettings
         case let .terminate(result):
             if let output = result.standardOutput.data(using: .utf8) {
                 FileHandle.standardOutput.write(output)
@@ -373,7 +377,10 @@ public enum FoldWiseVoiceApp {
 
         MainActor.assumeIsolated {
             let app = NSApplication.shared
-            let delegate = AppDelegate(configPath: cliConfig)
+            let delegate = AppDelegate(
+                configPath: cliConfig,
+                showSettingsOnLaunch: showSettingsOnLaunch
+            )
             app.delegate = delegate
             app.setActivationPolicy(.accessory)
             app.run()

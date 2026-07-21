@@ -93,7 +93,12 @@ def build_bundle(binary: Path, dest: Path, name: str, icon: Path,
         # Point the local install at the repo's config.json. Never set for the
         # .dmg build: the repo path doesn't exist on other machines, and the
         # app falls back to ~/Library/Application Support/FoldWise Voice/.
-        plist["LSEnvironment"] = {"FOLDWISE_CONFIG": str(REPO / "config.json")}
+        # A development build opens Settings so launching the LSUIElement app
+        # is visible even when its menu-bar icon is hidden by a crowded notch.
+        plist["LSEnvironment"] = {
+            "FOLDWISE_CONFIG": str(REPO / "config.json"),
+            "FOLDWISE_SHOW_SETTINGS": "1",
+        }
     shutil.copy2(icon, resources / "icon.icns")
     plist["CFBundleIconFile"] = "icon"
 
