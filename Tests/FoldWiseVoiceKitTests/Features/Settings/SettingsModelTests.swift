@@ -41,10 +41,52 @@ final class SettingsModelTests: XCTestCase {
         )
     }
 
+    func testUnrelatedASROperationKeepsExistingModelFailure() {
+        let model = SettingsModel()
+        let failure = ASRModelLifecycleFailure.downloadFailed(
+            modelID: "whisper-small",
+            reason: "disk full"
+        )
+        model.applyASRLifecycleSnapshot(snapshot(failure: failure))
+        model.applyASRLifecycleSnapshot(snapshot(
+            operation: .downloading(modelID: "whisper-large-v3-turbo", fraction: 0.2)
+        ))
+
+        XCTAssertEqual(model.asrFailures.failure(for: "whisper-small"), failure)
+    }
+
+    func testRelevantASROperationClearsExistingModelFailure() {
+        let model = SettingsModel()
+        model.applyASRLifecycleSnapshot(snapshot(failure: .downloadFailed(
+            modelID: "whisper-small",
+            reason: "disk full"
+        )))
+        model.applyASRLifecycleSnapshot(snapshot(
+            operation: .downloading(modelID: "whisper-small", fraction: nil)
+        ))
+
+        XCTAssertNil(model.asrFailures.failure(for: "whisper-small"))
+    }
+
     func testPaneIDsMatchEachDestination() {
         XCTAssertEqual(
             SettingsModel.Pane.allCases.map(\.id),
             ["Home", "Modes", "Models", "History", "Stats", "Settings"]
+        )
+    }
+
+    private func snapshot(
+        operation: ASRModelLifecycleOperation? = nil,
+        failure: ASRModelLifecycleFailure? = nil
+    ) -> ASRModelLifecycleSnapshot {
+        ASRModelLifecycleSnapshot(
+            models: ASRModelCatalog.entries.map { ASRModelDescriptor(entry: $0, isAvailable: true) },
+            storedSelection: ASRModelCatalog.defaultID,
+            effectiveSelection: ASRModelCatalog.defaultID,
+            recovery: nil,
+            operation: operation,
+            failure: failure,
+            isDictationBlocked: false
         )
     }
 

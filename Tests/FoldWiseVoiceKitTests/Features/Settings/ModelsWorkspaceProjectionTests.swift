@@ -48,6 +48,554 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
         )
     }
 
+    func testKnownUnavailableSavedSpeechModelPreservesIntentAndExplainsFallback() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "whisper-small",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"],
+                recovery: .storedSelectionUnavailable(
+                    modelID: "whisper-small",
+                    fallbackModelID: "parakeet-v3"
+                )
+            ),
+            installedPolishModels: nil,
+            inspectedID: .speechRecognition("whisper-small")
+        )
+        let speech = projection.sections.first { $0.id == .speechRecognition }
+        let saved = speech?.rows.first { $0.id == .speechRecognition("whisper-small") }
+        let fallback = speech?.rows.first { $0.id == .speechRecognition("parakeet-v3") }
+
+        XCTAssertEqual(
+            SpeechRecoverySummary(
+                notice: speech?.recoveryNotice?.message,
+                savedState: saved?.state,
+                savedAction: saved?.primaryAction,
+                savedIndicator: saved?.isSavedASRSelection,
+                fallbackState: fallback?.state,
+                fallbackIndicator: fallback?.isSavedASRSelection,
+                inspectorStatusExplanation: projection.inspector?.statusExplanation
+            ),
+            SpeechRecoverySummary(
+                notice: "Whisper small is saved but unavailable. Parakeet TDT v3 is the "
+                    + "Effective ASR model until you download Whisper small again.",
+                savedState: "Saved · unavailable",
+                savedAction: .downloadAgainASR("whisper-small"),
+                savedIndicator: true,
+                fallbackState: "Effective fallback",
+                fallbackIndicator: false,
+                inspectorStatusExplanation: "Parakeet TDT v3 remains the Effective ASR model "
+                    + "until this saved model is downloaded and restored."
+            )
+        )
+    }
+
+    func testUnknownSavedSpeechIdentifierAppearsOnlyInRecoveryNotice() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "retired/private-model",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"],
+                recovery: .storedSelectionUnknown(
+                    modelID: "retired/private-model",
+                    fallbackModelID: "parakeet-v3"
+                )
+            ),
+            installedPolishModels: nil,
+            inspectedID: nil
+        )
+        let speech = projection.sections.first { $0.id == .speechRecognition }
+
+        XCTAssertEqual(
+            UnknownSpeechRecoverySummary(
+                notice: speech?.recoveryNotice?.message,
+                rowIDs: speech?.rows.map(\.id),
+                inspectedID: projection.inspector?.id,
+                fallbackState: speech?.rows.first {
+                    $0.id == .speechRecognition("parakeet-v3")
+                }?.state
+            ),
+            UnknownSpeechRecoverySummary(
+                notice: "The saved ASR model “retired/private-model” isn't recognized. "
+                    + "Parakeet TDT v3 is the Effective ASR model; the saved identifier is unchanged.",
+                rowIDs: ASRModelCatalog.entries.map { .speechRecognition($0.id) },
+                inspectedID: .speechRecognition("parakeet-v3"),
+                fallbackState: "Effective fallback"
+            )
+        )
+    }
+
+    func testOptionalASRDownloadProjectsCancelableProgressAndFamilyLocalExclusion() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"],
+                operation: .downloading(modelID: "whisper-small", fraction: 0.42)
+            ),
+            installedPolishModels: [
+                OllamaClient.InstalledModel(name: "qwen2.5:3b", sizeBytes: 1),
+            ],
+            inspectedID: .speechRecognition("whisper-small")
+        )
+        let speechRows = projection.sections.first { $0.id == .speechRecognition }?.rows ?? []
+        let target = speechRows.first { $0.id == .speechRecognition("whisper-small") }
+        let polish = projection.sections.first { $0.id == .polish }?.rows.first
+
+        XCTAssertEqual(
+            ASROperationSummary(
+                targetState: target?.state,
+                progress: target?.progress,
+                disabledReasons: Set(speechRows.compactMap(\.managementDisabledReason)),
+                inspectorProgress: projection.inspector?.progress,
+                polishDisabledReason: polish?.managementDisabledReason
+            ),
+            ASROperationSummary(
+                targetState: "42%",
+                progress: ModelsProgressPresentation(
+                    label: "Downloading",
+                    status: "Downloading Whisper small…",
+                    fraction: 0.42,
+                    allowsCancellation: true
+                ),
+                disabledReasons: ["Another Speech recognition model operation is in progress."],
+                inspectorProgress: ModelsProgressPresentation(
+                    label: "Downloading",
+                    status: "Downloading Whisper small…",
+                    fraction: 0.42,
+                    allowsCancellation: true
+                ),
+                polishDisabledReason: nil
+            )
+        )
+    }
+
+    func testASROperationMatrixProjectsCompactAndFullStatus() {
+        let cases: [(ASRModelLifecycleOperation, String, ModelsProgressPresentation)] = [
+            (
+                .bootstrapping(fraction: nil),
+                "parakeet-v3",
+                ModelsProgressPresentation(
+                    label: "Preparing",
+                    status: "Preparing Parakeet TDT v3…",
+                    fraction: nil
+                )
+            ),
+            (
+                .switching(modelID: "whisper-small"),
+                "whisper-small",
+                ModelsProgressPresentation(
+                    label: "Switching",
+                    status: "Switching to Whisper small…",
+                    fraction: nil,
+                    allowsCancellation: true
+                )
+            ),
+            (
+                .restoring(modelID: "whisper-small"),
+                "whisper-small",
+                ModelsProgressPresentation(
+                    label: "Restoring",
+                    status: "Restoring Whisper small as the Effective ASR model…",
+                    fraction: nil
+                )
+            ),
+            (
+                .deleting(modelID: "whisper-small"),
+                "whisper-small",
+                ModelsProgressPresentation(
+                    label: "Deleting",
+                    status: "Deleting Whisper small's downloaded data…",
+                    fraction: nil
+                )
+            ),
+        ]
+
+        XCTAssertEqual(
+            cases.map { operation, targetID, _ in
+                let projection = speechProjection(operation: operation, inspectedID: targetID)
+                let row = projection.sections.first { $0.id == .speechRecognition }?.rows.first {
+                    $0.id == .speechRecognition(targetID)
+                }
+                return row?.progress
+            },
+            cases.map { Optional($0.2) }
+        )
+    }
+
+    func testTypedASRFailuresProjectPersistentTargetedRecovery() {
+        let cases: [(ASRModelLifecycleFailure, String, String, ModelsPrimaryAction?)] = [
+            (
+                .downloadFailed(modelID: "whisper-small", reason: "disk full"),
+                "whisper-small",
+                "Couldn't download Whisper small: disk full",
+                .downloadASR("whisper-small")
+            ),
+            (
+                .downloadedDataInvalid(modelID: "whisper-small"),
+                "whisper-small",
+                "Downloaded data for Whisper small is incomplete or corrupt.",
+                .downloadASR("whisper-small")
+            ),
+            (
+                .bootstrapFailed(reason: "network unavailable"),
+                "parakeet-v3",
+                "Couldn't prepare the default speech model: network unavailable",
+                .retryASRBootstrap
+            ),
+            (
+                .engineLoadFailed(modelID: "whisper-small", reason: "CoreML rejected it"),
+                "whisper-small",
+                "Couldn't load Whisper small: CoreML rejected it",
+                .selectASR("whisper-small")
+            ),
+            (
+                .selectionFailed(modelID: "whisper-small", reason: "out of memory"),
+                "whisper-small",
+                "Couldn't switch to Whisper small: out of memory",
+                .selectASR("whisper-small")
+            ),
+            (
+                .selectionDegraded(
+                    modelID: "whisper-small",
+                    fallbackModelID: "parakeet-v3",
+                    reason: "restore failed"
+                ),
+                "whisper-small",
+                "Couldn't restore Whisper small. Using Parakeet TDT v3: restore failed",
+                .selectASR("whisper-small")
+            ),
+            (
+                .deletionFailed(modelID: "whisper-small", reason: "permission denied"),
+                "whisper-small",
+                "Couldn't delete Whisper small: permission denied",
+                .selectASR("whisper-small")
+            ),
+            (
+                .deletionSelectionFailed(modelID: "whisper-small", reason: "config is read-only"),
+                "whisper-small",
+                "Couldn't delete Whisper small: config is read-only",
+                .selectASR("whisper-small")
+            ),
+        ]
+
+        XCTAssertEqual(
+            cases.map { failure, targetID, _, _ in
+                let projection = speechFailureProjection(failure, inspectedID: targetID)
+                let row = projection.sections.first { $0.id == .speechRecognition }?.rows.first {
+                    $0.id == .speechRecognition(targetID)
+                }
+                return ASRFailureSummary(
+                    state: row?.state,
+                    message: projection.inspector?.errorMessage,
+                    action: projection.inspector?.primaryAction
+                )
+            },
+            cases.map { _, _, message, action in
+                ASRFailureSummary(state: "Error", message: message, action: action)
+            }
+        )
+    }
+
+    func testModelFailureRemainsVisibleDuringUnrelatedASRWork() {
+        let failure = ASRModelLifecycleFailure.downloadFailed(
+            modelID: "whisper-small",
+            reason: "disk full"
+        )
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"],
+                operation: .downloading(modelID: "whisper-large-v3-turbo", fraction: 0.2)
+            ),
+            asrFailures: ModelsASRFailures(["whisper-small": failure]),
+            installedPolishModels: nil,
+            inspectedID: .speechRecognition("whisper-small")
+        )
+
+        XCTAssertEqual(
+            ASRFailureSummary(
+                state: projection.inspector?.status,
+                message: projection.inspector?.errorMessage,
+                action: projection.inspector?.primaryAction
+            ),
+            ASRFailureSummary(
+                state: "Error",
+                message: "Couldn't download Whisper small: disk full",
+                action: .downloadASR("whisper-small")
+            )
+        )
+    }
+
+    func testPersistedBootstrapFailureKeepsRetryWhileRecognitionRemainsBlockedAndIdle() {
+        let failure = ASRModelLifecycleFailure.bootstrapFailed(reason: "network unavailable")
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: nil,
+                availableIDs: [],
+                isDictationBlocked: true
+            ),
+            asrFailures: ModelsASRFailures(["parakeet-v3": failure]),
+            installedPolishModels: nil,
+            inspectedID: .speechRecognition("parakeet-v3")
+        )
+
+        XCTAssertEqual(projection.inspector?.primaryAction, .retryASRBootstrap)
+    }
+
+    func testSelectedASRDeletionExplainsCommittedFallbackDuringTeardown() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "whisper-small",
+                availableIDs: ["parakeet-v3", "whisper-small"],
+                operation: .deleting(modelID: "whisper-small")
+            ),
+            installedPolishModels: nil,
+            inspectedID: .speechRecognition("whisper-small")
+        )
+
+        XCTAssertEqual(
+            projection.inspector?.statusExplanation,
+            "Parakeet TDT v3 is now the saved ASR model selection. Existing Dictation sessions "
+                + "may still be using Whisper small until deletion finishes."
+        )
+    }
+
+    func testCanceledASRSelectionDoesNotProjectAnError() {
+        let projection = speechFailureProjection(
+            .selectionCanceled(modelID: "whisper-small"),
+            inspectedID: "whisper-small"
+        )
+        let target = projection.sections.first { $0.id == .speechRecognition }?.rows.first {
+            $0.id == .speechRecognition("whisper-small")
+        }
+
+        XCTAssertEqual(
+            ASRFailureSummary(
+                state: target?.state,
+                message: projection.inspector?.errorMessage,
+                action: projection.inspector?.primaryAction
+            ),
+            ASRFailureSummary(
+                state: "Ready",
+                message: nil,
+                action: .selectASR("whisper-small")
+            )
+        )
+    }
+
+    func testCancelableASROperationStartFocusesInlineCancelWithoutChangingInspection() {
+        let idle = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3"]
+        )
+        let downloading = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3"],
+            operation: .downloading(modelID: "whisper-small", fraction: nil)
+        )
+
+        XCTAssertEqual(
+            ModelsASRFocusTransition.resolve(
+                from: idle,
+                to: downloading,
+                inspectedID: .polish("qwen2.5:3b")
+            ),
+            ModelsASRFocusTransition(
+                inspectedID: .polish("qwen2.5:3b"),
+                target: .inlineCancel(.speechRecognition("whisper-small"))
+            )
+        )
+    }
+
+    func testNonCancelableASROperationStartReturnsFocusToInspectedRow() {
+        let idle = snapshot(
+            storedSelection: "whisper-small",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"]
+        )
+        let restoring = snapshot(
+            storedSelection: "whisper-small",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            operation: .restoring(modelID: "whisper-small")
+        )
+
+        XCTAssertEqual(
+            ModelsASRFocusTransition.resolve(
+                from: idle,
+                to: restoring,
+                inspectedID: .polish("qwen2.5:3b")
+            ),
+            ModelsASRFocusTransition(
+                inspectedID: .polish("qwen2.5:3b"),
+                target: .row(.polish("qwen2.5:3b"))
+            )
+        )
+    }
+
+    func testCompletedASROperationFocusesResultingInspectorAction() {
+        let downloading = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3"],
+            operation: .downloading(modelID: "whisper-small", fraction: nil)
+        )
+        let completed = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"]
+        )
+
+        XCTAssertEqual(
+            ModelsASRFocusTransition.resolve(
+                from: downloading,
+                to: completed,
+                inspectedID: .polish("qwen2.5:3b")
+            ),
+            ModelsASRFocusTransition(
+                inspectedID: .speechRecognition("whisper-small"),
+                target: .inspectorPrimary(.speechRecognition("whisper-small"))
+            )
+        )
+    }
+
+    func testCanceledASRSwitchReturnsFocusWithoutChangingInspection() {
+        let switching = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: nil,
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            operation: .switching(modelID: "whisper-small")
+        )
+        let canceled = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            failure: .selectionCanceled(modelID: "whisper-small")
+        )
+
+        XCTAssertEqual(
+            ModelsASRFocusTransition.resolve(
+                from: switching,
+                to: canceled,
+                inspectedID: .polish("qwen2.5:3b")
+            ),
+            ModelsASRFocusTransition(
+                inspectedID: .polish("qwen2.5:3b"),
+                target: .row(.polish("qwen2.5:3b"))
+            )
+        )
+    }
+
+    func testASRDeletionFailureFocusesDestructiveRecoveryAction() {
+        let deleting = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            operation: .deleting(modelID: "whisper-small")
+        )
+        let failed = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            failure: .deletionFailed(modelID: "whisper-small", reason: "permission denied")
+        )
+
+        XCTAssertEqual(
+            ModelsASRFocusTransition.resolve(
+                from: deleting,
+                to: failed,
+                inspectedID: .polish("qwen2.5:3b")
+            ),
+            ModelsASRFocusTransition(
+                inspectedID: .speechRecognition("whisper-small"),
+                target: .inspectorDestructive(.speechRecognition("whisper-small"))
+            )
+        )
+    }
+
+    func testASRDeletionFailureFocusesPrimaryRecoveryWhenDataWasAlreadyRemoved() {
+        let deleting = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            operation: .deleting(modelID: "whisper-small")
+        )
+        let failed = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3"],
+            failure: .deletionFailed(modelID: "whisper-small", reason: "cleanup failed")
+        )
+
+        XCTAssertEqual(
+            ModelsASRFocusTransition.resolve(
+                from: deleting,
+                to: failed,
+                inspectedID: .speechRecognition("parakeet-v3")
+            ),
+            ModelsASRFocusTransition(
+                inspectedID: .speechRecognition("whisper-small"),
+                target: .inspectorPrimary(.speechRecognition("whisper-small"))
+            )
+        )
+    }
+
+    func testFailedASRSwitchFocusesTheFailedTargetAfterRestoringThePriorModel() {
+        let restoring = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            operation: .restoring(modelID: "parakeet-v3")
+        )
+        let failed = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3", "whisper-small"],
+            failure: .selectionFailed(modelID: "whisper-small", reason: "out of memory")
+        )
+
+        XCTAssertEqual(
+            ModelsASRFocusTransition.resolve(
+                from: restoring,
+                to: failed,
+                inspectedID: .polish("qwen2.5:3b")
+            ),
+            ModelsASRFocusTransition(
+                inspectedID: .speechRecognition("whisper-small"),
+                target: .inspectorPrimary(.speechRecognition("whisper-small"))
+            )
+        )
+    }
+
+    func testASRProgressUpdatesDoNotMoveFocusAgain() {
+        let started = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3"],
+            operation: .downloading(modelID: "whisper-small", fraction: nil)
+        )
+        let progressing = snapshot(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3"],
+            operation: .downloading(modelID: "whisper-small", fraction: 0.37)
+        )
+
+        XCTAssertNil(
+            ModelsASRFocusTransition.resolve(
+                from: started,
+                to: progressing,
+                inspectedID: .speechRecognition("parakeet-v3")
+            )
+        )
+    }
+
     func testUnavailablePolishPlaceholderOffersDirectedRetry() {
         let projection = ModelsWorkspaceProjection.make(
             asrSnapshot: snapshot(
@@ -633,6 +1181,37 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
         let inspectorFraction: Double?
     }
 
+    private struct SpeechRecoverySummary: Equatable {
+        let notice: String?
+        let savedState: String?
+        let savedAction: ModelsPrimaryAction?
+        let savedIndicator: Bool?
+        let fallbackState: String?
+        let fallbackIndicator: Bool?
+        let inspectorStatusExplanation: String?
+    }
+
+    private struct UnknownSpeechRecoverySummary: Equatable {
+        let notice: String?
+        let rowIDs: [ModelsRowID]?
+        let inspectedID: ModelsRowID?
+        let fallbackState: String?
+    }
+
+    private struct ASROperationSummary: Equatable {
+        let targetState: String?
+        let progress: ModelsProgressPresentation?
+        let disabledReasons: Set<String>
+        let inspectorProgress: ModelsProgressPresentation?
+        let polishDisabledReason: String?
+    }
+
+    private struct ASRFailureSummary: Equatable {
+        let state: String?
+        let message: String?
+        let action: ModelsPrimaryAction?
+    }
+
     private struct PolishFailureSummary: Equatable {
         let rowFailures: [String]
         let inspectorError: String?
@@ -672,6 +1251,46 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
         )
     }
 
+    private func speechProjection(
+        operation: ASRModelLifecycleOperation,
+        inspectedID: String
+    ) -> ModelsWorkspaceProjection {
+        ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3", "whisper-small"],
+                operation: operation
+            ),
+            installedPolishModels: nil,
+            inspectedID: .speechRecognition(inspectedID)
+        )
+    }
+
+    private func speechFailureProjection(
+        _ failure: ASRModelLifecycleFailure,
+        inspectedID: String
+    ) -> ModelsWorkspaceProjection {
+        let availableIDs: Set<String> = switch failure {
+        case .downloadFailed, .downloadedDataInvalid:
+            ["parakeet-v3"]
+        case .bootstrapFailed, .engineLoadFailed, .selectionFailed, .selectionCanceled,
+             .selectionDegraded, .deletionFailed, .deletionSelectionFailed:
+            ["parakeet-v3", "whisper-small"]
+        }
+        return ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: availableIDs,
+                failure: failure,
+                isDictationBlocked: failure.allowsBootstrapRetry
+            ),
+            installedPolishModels: nil,
+            inspectedID: .speechRecognition(inspectedID)
+        )
+    }
+
     private struct RowSummary: Equatable {
         let id: ModelsRowID
         let fit: String
@@ -686,7 +1305,11 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
     private func snapshot(
         storedSelection: String,
         effectiveSelection: String?,
-        availableIDs: Set<String>
+        availableIDs: Set<String>,
+        recovery: ASRModelLifecycleRecovery? = nil,
+        operation: ASRModelLifecycleOperation? = nil,
+        failure: ASRModelLifecycleFailure? = nil,
+        isDictationBlocked: Bool = false
     ) -> ASRModelLifecycleSnapshot {
         ASRModelLifecycleSnapshot(
             models: ASRModelCatalog.entries.map {
@@ -694,10 +1317,10 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
             },
             storedSelection: storedSelection,
             effectiveSelection: effectiveSelection,
-            recovery: nil,
-            operation: nil,
-            failure: nil,
-            isDictationBlocked: false
+            recovery: recovery,
+            operation: operation,
+            failure: failure,
+            isDictationBlocked: isDictationBlocked
         )
     }
 

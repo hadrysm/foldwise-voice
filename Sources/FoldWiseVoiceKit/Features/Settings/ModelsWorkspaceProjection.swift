@@ -30,6 +30,99 @@ enum ModelsRowKind: Equatable {
     case utility
 }
 
+enum ModelsFocusTarget: Hashable {
+    case row(ModelsRowID)
+    case inlineCancel(ModelsRowID)
+    case inspectorCancel(ModelsRowID)
+    case inspectorPrimary(ModelsRowID)
+    case inspectorDestructive(ModelsRowID)
+}
+
+struct ModelsASRFocusTransition: Equatable {
+    let inspectedID: ModelsRowID
+    let target: ModelsFocusTarget
+
+    static func resolve(
+        from previous: ASRModelLifecycleSnapshot,
+        to current: ASRModelLifecycleSnapshot,
+        inspectedID: ModelsRowID
+    ) -> ModelsASRFocusTransition? {
+        guard previous.operation?.focusIdentity != current.operation?.focusIdentity else {
+            return nil
+        }
+        if let operation = current.operation,
+           let targetID = operation.targetModelID {
+            let target = ModelsRowID.speechRecognition(targetID)
+            if operation.allowsCancellation {
+                return ModelsASRFocusTransition(
+                    inspectedID: inspectedID,
+                    target: .inlineCancel(target)
+                )
+            }
+            return ModelsASRFocusTransition(
+                inspectedID: inspectedID,
+                target: .row(inspectedID)
+            )
+        }
+        if case .selectionCanceled = current.failure {
+            return ModelsASRFocusTransition(
+                inspectedID: inspectedID,
+                target: .row(inspectedID)
+            )
+        }
+        let failure = ModelsWorkspaceProjection.speechFailure(in: current)
+        guard let completedTargetID = failure?.targetModelID
+            ?? previous.operation?.targetModelID
+        else { return nil }
+        let completedTarget = ModelsRowID.speechRecognition(completedTargetID)
+        let focusTarget = failure?.focusTarget(for: completedTarget)
+            ?? .inspectorPrimary(completedTarget)
+        return ModelsASRFocusTransition(
+            inspectedID: completedTarget,
+            target: focusTarget
+        )
+    }
+}
+
+private enum ModelsASROperationFocusIdentity: Equatable {
+    case downloading(String)
+    case bootstrapping
+    case switching(String)
+    case restoring(String)
+    case deleting(String)
+}
+
+private extension ASRModelLifecycleOperation {
+    var focusIdentity: ModelsASROperationFocusIdentity {
+        switch self {
+        case let .downloading(modelID, _): .downloading(modelID)
+        case .bootstrapping: .bootstrapping
+        case let .switching(modelID): .switching(modelID)
+        case let .restoring(modelID): .restoring(modelID)
+        case let .deleting(modelID): .deleting(modelID)
+        }
+    }
+
+    var targetModelID: String? {
+        switch self {
+        case let .downloading(modelID, _), let .switching(modelID),
+             let .restoring(modelID), let .deleting(modelID):
+            modelID
+        case .bootstrapping:
+            ASRModelCatalog.defaultID
+        }
+    }
+
+    var allowsCancellation: Bool {
+        switch self {
+        case .downloading, .switching:
+            true
+        case .bootstrapping, .restoring, .deleting:
+            false
+        }
+    }
+}
+
 enum ModelsRating: Equatable {
     case rated(Int)
     case notRated
@@ -53,6 +146,8 @@ enum ModelsPrimaryAction: Equatable {
     case selected
     case selectASR(String)
     case downloadASR(String)
+    case downloadAgainASR(String)
+    case retryASRBootstrap
     case installed
     case installPolish(String)
     case installCustomPolish
@@ -63,8 +158,9 @@ enum ModelsPrimaryAction: Equatable {
         case .selected: "checkmark.circle.fill"
         case .installed: "shippingbox.fill"
         case .selectASR: "circle"
-        case .downloadASR, .installPolish, .installCustomPolish: "arrow.down.circle"
-        case .retryPolish: "arrow.clockwise"
+        case .downloadASR, .downloadAgainASR, .installPolish, .installCustomPolish:
+            "arrow.down.circle"
+        case .retryASRBootstrap, .retryPolish: "arrow.clockwise"
         }
     }
 }
@@ -105,9 +201,39 @@ struct ModelsProgressPresentation: Equatable {
     let label: String
     let status: String
     let fraction: Double?
+    let allowsCancellation: Bool
+
+    init(
+        label: String,
+        status: String,
+        fraction: Double?,
+        allowsCancellation: Bool = false
+    ) {
+        self.label = label
+        self.status = status
+        self.fraction = fraction
+        self.allowsCancellation = allowsCancellation
+    }
 
     var compactState: String {
         fraction.map { "\(Int($0 * 100))%" } ?? label
+    }
+}
+
+struct ModelsRecoveryNotice: Equatable {
+    let message: String
+}
+
+private struct ModelsASRFailurePresentation {
+    let targetModelID: String
+    let message: String
+    let allowsRetry: Bool
+    let focusesDestructiveAction: Bool
+
+    func focusTarget(for rowID: ModelsRowID) -> ModelsFocusTarget {
+        focusesDestructiveAction
+            ? .inspectorDestructive(rowID)
+            : .inspectorPrimary(rowID)
     }
 }
 
@@ -128,6 +254,44 @@ struct ModelsOperationFailures: Equatable {
 
     func message(for target: String) -> String? {
         messagesByTarget[target]
+    }
+}
+
+struct ModelsASRFailures: Equatable {
+    private var failuresByTarget: [String: ASRModelLifecycleFailure]
+
+    init(_ failuresByTarget: [String: ASRModelLifecycleFailure] = [:]) {
+        self.failuresByTarget = failuresByTarget
+    }
+
+    mutating func apply(_ snapshot: ASRModelLifecycleSnapshot) {
+        if let target = snapshot.operation?.targetModelID {
+            failuresByTarget[target] = nil
+        }
+        guard let failure = snapshot.failure else { return }
+        if case .selectionCanceled = failure {
+            failuresByTarget[failure.targetModelID] = nil
+        } else {
+            failuresByTarget[failure.targetModelID] = failure
+        }
+    }
+
+    func failure(for target: String) -> ASRModelLifecycleFailure? {
+        failuresByTarget[target]
+    }
+}
+
+private extension ASRModelLifecycleFailure {
+    var targetModelID: String {
+        switch self {
+        case let .downloadFailed(modelID, _), let .downloadedDataInvalid(modelID),
+             let .engineLoadFailed(modelID, _), let .selectionFailed(modelID, _),
+             let .selectionCanceled(modelID), let .selectionDegraded(modelID, _, _),
+             let .deletionFailed(modelID, _), let .deletionSelectionFailed(modelID, _):
+            modelID
+        case .bootstrapFailed:
+            ASRModelCatalog.defaultID
+        }
     }
 }
 
@@ -185,6 +349,7 @@ struct ModelsRowPresentation: Equatable {
     let managementDisabledReason: String?
     let inputDisabledReason: String?
     let errorMessage: String?
+    let statusExplanation: String?
     let kind: ModelsRowKind
 
     init(
@@ -204,6 +369,7 @@ struct ModelsRowPresentation: Equatable {
         managementDisabledReason: String? = nil,
         inputDisabledReason: String? = nil,
         errorMessage: String? = nil,
+        statusExplanation: String? = nil,
         kind: ModelsRowKind = .model
     ) {
         self.id = id
@@ -222,6 +388,7 @@ struct ModelsRowPresentation: Equatable {
         self.managementDisabledReason = managementDisabledReason
         self.inputDisabledReason = inputDisabledReason
         self.errorMessage = errorMessage
+        self.statusExplanation = statusExplanation
         self.kind = kind
     }
 
@@ -263,6 +430,7 @@ struct ModelsInspectorPresentation: Equatable {
     let managementDisabledReason: String?
     let inputDisabledReason: String?
     let errorMessage: String?
+    let statusExplanation: String?
     let showsInstallByNameForm: Bool
 
     init(
@@ -280,6 +448,7 @@ struct ModelsInspectorPresentation: Equatable {
         managementDisabledReason: String? = nil,
         inputDisabledReason: String? = nil,
         errorMessage: String? = nil,
+        statusExplanation: String? = nil,
         showsInstallByNameForm: Bool = false
     ) {
         self.id = id
@@ -296,6 +465,7 @@ struct ModelsInspectorPresentation: Equatable {
         self.managementDisabledReason = managementDisabledReason
         self.inputDisabledReason = inputDisabledReason
         self.errorMessage = errorMessage
+        self.statusExplanation = statusExplanation
         self.showsInstallByNameForm = showsInstallByNameForm
     }
 }
@@ -304,6 +474,7 @@ struct ModelsFamilyPresentation: Equatable {
     let id: ModelsFamilyID
     let title: String
     let semanticLabel: String
+    let recoveryNotice: ModelsRecoveryNotice?
     let placeholder: ModelsFamilyPlaceholder?
     let rows: [ModelsRowPresentation]
 }
@@ -314,6 +485,7 @@ struct ModelsWorkspaceProjection: Equatable {
 
     static func make(
         asrSnapshot: ASRModelLifecycleSnapshot?,
+        asrFailures: ModelsASRFailures = ModelsASRFailures(),
         installedPolishModels: [OllamaClient.InstalledModel]?,
         modes: [Mode] = [],
         inspectedID: ModelsRowID?,
@@ -321,6 +493,7 @@ struct ModelsWorkspaceProjection: Equatable {
     ) -> ModelsWorkspaceProjection {
         make(
             asrSnapshot: asrSnapshot,
+            asrFailures: asrFailures,
             polishState: ModelsPolishState(installed: installedPolishModels),
             modes: modes,
             inspectedID: inspectedID,
@@ -330,14 +503,19 @@ struct ModelsWorkspaceProjection: Equatable {
 
     static func make(
         asrSnapshot: ASRModelLifecycleSnapshot?,
+        asrFailures: ModelsASRFailures = ModelsASRFailures(),
         polishState: ModelsPolishState,
         modes: [Mode] = [],
         inspectedID: ModelsRowID?,
         previousPolishRowIDs: [ModelsRowID] = []
     ) -> ModelsWorkspaceProjection {
-        let speechRows = asrSnapshot?.models.map {
-            speechRow($0, storedSelection: asrSnapshot?.storedSelection)
-        } ?? []
+        let speechRows: [ModelsRowPresentation] = if let asrSnapshot {
+            asrSnapshot.models.map {
+                speechRow($0, snapshot: asrSnapshot, failures: asrFailures)
+            }
+        } else {
+            []
+        }
         let polishRows: [ModelsRowPresentation] = if let installed = polishState.installed,
                                                      !installed.isEmpty {
             polishRows(installed: installed, modes: modes, state: polishState)
@@ -351,11 +529,12 @@ struct ModelsWorkspaceProjection: Equatable {
         } else {
             nil
         }
-        let sections = [
+        let sections: [ModelsFamilyPresentation] = [
             ModelsFamilyPresentation(
                 id: .speechRecognition,
                 title: "Speech recognition",
                 semanticLabel: "Global selection",
+                recoveryNotice: asrSnapshot.flatMap(speechRecoveryNotice),
                 placeholder: asrSnapshot == nil
                     ? .checking("Checking speech models…")
                     : nil,
@@ -365,6 +544,7 @@ struct ModelsWorkspaceProjection: Equatable {
                 id: .polish,
                 title: "Polish",
                 semanticLabel: "Mode inventory",
+                recoveryNotice: nil,
                 placeholder: polishPlaceholder,
                 rows: polishRows
             ),
@@ -387,20 +567,49 @@ struct ModelsWorkspaceProjection: Equatable {
 
     private static func speechRow(
         _ descriptor: ASRModelDescriptor,
-        storedSelection: String?
+        snapshot: ASRModelLifecycleSnapshot,
+        failures: ModelsASRFailures
     ) -> ModelsRowPresentation {
-        let isSaved = descriptor.id == storedSelection
+        let isSaved = descriptor.id == snapshot.storedSelection
+        let isEffectiveFallback = descriptor.id == snapshot.effectiveSelection
+            && descriptor.id != snapshot.storedSelection
         let action: ModelsPrimaryAction
         let state: String
-        if isSaved, descriptor.isAvailable {
+        let statusExplanation: String?
+        if isSaved, !descriptor.isAvailable {
+            action = .downloadAgainASR(descriptor.id)
+            state = "Saved · unavailable"
+            statusExplanation = effectiveModelName(in: snapshot).map {
+                "\($0) remains the Effective ASR model until this saved model is downloaded and restored."
+            }
+        } else if isEffectiveFallback {
+            action = descriptor.isAvailable ? .selectASR(descriptor.id) : .downloadASR(descriptor.id)
+            state = "Effective fallback"
+            statusExplanation = "This model is temporarily handling Dictation while the saved "
+                + "ASR model selection remains unchanged."
+        } else if isSaved, descriptor.isAvailable {
             action = .selected
             state = "Selected"
+            statusExplanation = nil
         } else if descriptor.isAvailable {
             action = .selectASR(descriptor.id)
             state = "Ready"
+            statusExplanation = nil
         } else {
             action = .downloadASR(descriptor.id)
             state = "Download"
+            statusExplanation = nil
+        }
+        let progress = speechProgress(for: descriptor, snapshot: snapshot)
+        let recordedFailure = failures.failure(for: descriptor.id)
+            ?? snapshot.failure.flatMap { $0.targetModelID == descriptor.id ? $0 : nil }
+        let failure = recordedFailure.flatMap { speechFailure($0, in: snapshot) }
+        let errorMessage = failure?.message
+        let projectedAction: ModelsPrimaryAction = if errorMessage != nil,
+                                                      failure?.allowsRetry == true {
+            .retryASRBootstrap
+        } else {
+            action
         }
         return ModelsRowPresentation(
             id: .speechRecognition(descriptor.id),
@@ -410,15 +619,167 @@ struct ModelsWorkspaceProjection: Equatable {
             size: descriptor.size,
             speed: .rated(descriptor.speed),
             quality: .rated(descriptor.quality),
-            state: state,
-            primaryAction: action,
+            state: progress?.compactState ?? (errorMessage == nil ? state : "Error"),
+            primaryAction: projectedAction,
             destructiveAction: destructiveASRAction(
                 descriptor,
                 isSavedSelection: isSaved
             ),
             isSavedASRSelection: isSaved,
-            description: descriptor.blurb
+            description: descriptor.blurb,
+            progress: progress,
+            managementDisabledReason: snapshot.operation == nil
+                ? nil
+                : "Another Speech recognition model operation is in progress.",
+            errorMessage: errorMessage,
+            statusExplanation: speechOperationExplanation(
+                for: descriptor,
+                snapshot: snapshot
+            ) ?? statusExplanation
         )
+    }
+
+    fileprivate static func speechFailure(
+        in snapshot: ASRModelLifecycleSnapshot
+    ) -> ModelsASRFailurePresentation? {
+        guard let failure = snapshot.failure else { return nil }
+        return speechFailure(failure, in: snapshot)
+    }
+
+    private static func speechFailure(
+        _ failure: ASRModelLifecycleFailure,
+        in snapshot: ASRModelLifecycleSnapshot
+    ) -> ModelsASRFailurePresentation? {
+        let targetModelID = failure.targetModelID
+        let message: String
+        var focusesDestructiveAction = false
+        switch failure {
+        case let .downloadFailed(modelID, reason):
+            message = "Couldn't download \(displayName(modelID, in: snapshot)): \(reason)"
+        case let .downloadedDataInvalid(modelID):
+            message = "Downloaded data for \(displayName(modelID, in: snapshot)) is incomplete or corrupt."
+        case let .bootstrapFailed(reason):
+            message = "Couldn't prepare the default speech model: \(reason)"
+        case let .engineLoadFailed(modelID, reason):
+            message = "Couldn't load \(displayName(modelID, in: snapshot)): \(reason)"
+        case let .selectionFailed(modelID, reason):
+            message = "Couldn't switch to \(displayName(modelID, in: snapshot)): \(reason)"
+        case .selectionCanceled:
+            return nil
+        case let .selectionDegraded(modelID, fallbackModelID, reason):
+            message = "Couldn't restore \(displayName(modelID, in: snapshot)). Using "
+                + displayName(fallbackModelID, in: snapshot)
+                + (reason.map { ": \($0)" } ?? ".")
+        case let .deletionFailed(modelID, reason),
+             let .deletionSelectionFailed(modelID, reason):
+            message = "Couldn't delete \(displayName(modelID, in: snapshot)): \(reason)"
+            focusesDestructiveAction = snapshot.models.first { $0.id == modelID }
+                .map { $0.isAvailable && $0.allowsDeletion }
+                ?? false
+        }
+        return ModelsASRFailurePresentation(
+            targetModelID: targetModelID,
+            message: message,
+            allowsRetry: snapshot.isDictationBlocked
+                && snapshot.operation == nil
+                && failure.allowsBootstrapRetry,
+            focusesDestructiveAction: focusesDestructiveAction
+        )
+    }
+
+    private static func speechOperationExplanation(
+        for descriptor: ASRModelDescriptor,
+        snapshot: ASRModelLifecycleSnapshot
+    ) -> String? {
+        guard snapshot.operation == .deleting(modelID: descriptor.id),
+              snapshot.effectiveSelection == descriptor.id,
+              let savedName = modelName(snapshot.storedSelection, in: snapshot)
+        else { return nil }
+        return "\(savedName) is now the saved ASR model selection. Existing Dictation sessions "
+            + "may still be using \(descriptor.name) until deletion finishes."
+    }
+
+    private static func speechProgress(
+        for descriptor: ASRModelDescriptor,
+        snapshot: ASRModelLifecycleSnapshot
+    ) -> ModelsProgressPresentation? {
+        switch snapshot.operation {
+        case let .downloading(modelID, fraction) where modelID == descriptor.id:
+            ModelsProgressPresentation(
+                label: "Downloading",
+                status: "Downloading \(descriptor.name)…",
+                fraction: fraction,
+                allowsCancellation: true
+            )
+        case let .bootstrapping(fraction) where descriptor.isDefault:
+            ModelsProgressPresentation(
+                label: "Preparing",
+                status: "Preparing \(descriptor.name)…",
+                fraction: fraction
+            )
+        case let .switching(modelID) where modelID == descriptor.id:
+            ModelsProgressPresentation(
+                label: "Switching",
+                status: "Switching to \(descriptor.name)…",
+                fraction: nil,
+                allowsCancellation: true
+            )
+        case let .restoring(modelID) where modelID == descriptor.id:
+            ModelsProgressPresentation(
+                label: "Restoring",
+                status: "Restoring \(descriptor.name) as the Effective ASR model…",
+                fraction: nil
+            )
+        case let .deleting(modelID) where modelID == descriptor.id:
+            ModelsProgressPresentation(
+                label: "Deleting",
+                status: "Deleting \(descriptor.name)'s downloaded data…",
+                fraction: nil
+            )
+        case .downloading, .bootstrapping, .switching, .restoring, .deleting, nil:
+            nil
+        }
+    }
+
+    private static func speechRecoveryNotice(
+        snapshot: ASRModelLifecycleSnapshot
+    ) -> ModelsRecoveryNotice? {
+        switch snapshot.recovery {
+        case let .storedSelectionUnavailable(modelID, fallbackModelID):
+            guard let savedName = modelName(modelID, in: snapshot),
+                  let fallbackName = modelName(fallbackModelID, in: snapshot)
+            else { return nil }
+            return ModelsRecoveryNotice(
+                message: "\(savedName) is saved but unavailable. \(fallbackName) is the "
+                    + "Effective ASR model until you download \(savedName) again."
+            )
+        case let .storedSelectionUnknown(modelID, fallbackModelID):
+            guard let fallbackName = modelName(fallbackModelID, in: snapshot) else { return nil }
+            return ModelsRecoveryNotice(
+                message: "The saved ASR model “\(modelID)” isn't recognized. \(fallbackName) "
+                    + "is the Effective ASR model; the saved identifier is unchanged."
+            )
+        case nil:
+            return nil
+        }
+    }
+
+    private static func effectiveModelName(in snapshot: ASRModelLifecycleSnapshot) -> String? {
+        snapshot.effectiveSelection.flatMap { modelName($0, in: snapshot) }
+    }
+
+    private static func modelName(
+        _ id: String,
+        in snapshot: ASRModelLifecycleSnapshot
+    ) -> String? {
+        snapshot.models.first { $0.id == id }?.name
+    }
+
+    private static func displayName(
+        _ id: String,
+        in snapshot: ASRModelLifecycleSnapshot
+    ) -> String {
+        modelName(id, in: snapshot) ?? id
     }
 
     private static func polishRows(
@@ -697,6 +1058,7 @@ struct ModelsWorkspaceProjection: Equatable {
             managementDisabledReason: row.managementDisabledReason,
             inputDisabledReason: row.inputDisabledReason,
             errorMessage: row.errorMessage,
+            statusExplanation: row.statusExplanation,
             showsInstallByNameForm: row.kind == .utility
         )
     }

@@ -355,6 +355,14 @@ final class SettingsWorkflowTests: XCTestCase {
         let fraction: Double?
     }
 
+    private struct ASRDownloadContractState: Equatable {
+        let savedSelection: String
+        let persistedSelection: String
+        let effectiveSelection: String?
+        let operation: ASRModelLifecycleOperation?
+        let resultingAction: ModelsPrimaryAction?
+    }
+
     private struct ASRDeleteState: Equatable {
         let deleting: String?
         let downloaded: Set<String>
@@ -3115,7 +3123,94 @@ final class SettingsWorkflowTests: XCTestCase {
         workflow.downloadASRModel("whisper-small")
         await waitForASRState(model) { model.asrDownloaded.contains("whisper-small") }
 
-        XCTAssertEqual(model.asrDownloaded, [ASRModelCatalog.defaultID, "whisper-small"])
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: model.asrSnapshot,
+            installedPolishModels: nil,
+            inspectedID: .speechRecognition("whisper-small")
+        )
+        XCTAssertEqual(
+            ASRDownloadContractState(
+                savedSelection: model.asrModel,
+                persistedSelection: config.asrModel,
+                effectiveSelection: model.asrSnapshot?.effectiveSelection,
+                operation: model.asrSnapshot?.operation,
+                resultingAction: projection.inspector?.primaryAction
+            ),
+            ASRDownloadContractState(
+                savedSelection: ASRModelCatalog.defaultID,
+                persistedSelection: ASRModelCatalog.defaultID,
+                effectiveSelection: nil,
+                operation: nil,
+                resultingAction: .selectASR("whisper-small")
+            )
+        )
+    }
+
+    func testDownloadingUnavailableSavedASRModelRestoresItOnlyAfterPreparation() async throws {
+        let config = makeConfig()
+        try config.setASRModel("whisper-small")
+        let model = SettingsModel()
+        let preparation = SuspendedASRPreparation()
+        let effects = makeModelEffects(prepareASR: preparation.run)
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [effects.asrAdapter],
+            persistSelection: { try config.setASRModel($0) }
+        )
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: effects,
+            asrLifecycle: lifecycle
+        )
+        await lifecycle.start()
+        await waitForASRState(model) {
+            model.asrSnapshot?.effectiveSelection == ASRModelCatalog.defaultID
+        }
+
+        workflow.downloadASRModel("whisper-small")
+        await preparation.waitUntilStarted()
+        await waitForASRState(model) { model.asrDownloading == "whisper-small" }
+        let preparing = ASRDownloadContractState(
+            savedSelection: model.asrModel,
+            persistedSelection: config.asrModel,
+            effectiveSelection: model.asrSnapshot?.effectiveSelection,
+            operation: model.asrSnapshot?.operation,
+            resultingAction: nil
+        )
+
+        preparation.finish(nil)
+        await waitForASRState(model) {
+            model.asrSnapshot?.effectiveSelection == "whisper-small"
+                && !model.hasActiveASRManagementOperation
+        }
+        let restored = ASRDownloadContractState(
+            savedSelection: model.asrModel,
+            persistedSelection: config.asrModel,
+            effectiveSelection: model.asrSnapshot?.effectiveSelection,
+            operation: model.asrSnapshot?.operation,
+            resultingAction: nil
+        )
+
+        XCTAssertEqual(
+            [preparing, restored],
+            [
+                ASRDownloadContractState(
+                    savedSelection: "whisper-small",
+                    persistedSelection: "whisper-small",
+                    effectiveSelection: ASRModelCatalog.defaultID,
+                    operation: .downloading(modelID: "whisper-small", fraction: nil),
+                    resultingAction: nil
+                ),
+                ASRDownloadContractState(
+                    savedSelection: "whisper-small",
+                    persistedSelection: "whisper-small",
+                    effectiveSelection: "whisper-small",
+                    operation: nil,
+                    resultingAction: nil
+                ),
+            ]
+        )
     }
 
     func testASRDownloadPublishesProgressWhileRunning() async {

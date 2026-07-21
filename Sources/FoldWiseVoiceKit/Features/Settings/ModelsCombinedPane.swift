@@ -6,10 +6,12 @@ struct ModelsCombinedPane: View {
     @State private var inspectedID: ModelsRowID?
     @State private var pendingDestructiveAction: ModelsDestructiveAction?
     @State private var previousPolishRowIDs: [ModelsRowID] = []
+    @FocusState private var focusedControl: ModelsFocusTarget?
 
     private var projection: ModelsWorkspaceProjection {
         ModelsWorkspaceProjection.make(
             asrSnapshot: model.asrSnapshot,
+            asrFailures: model.asrFailures,
             polishState: model.polishModelsState,
             modes: model.modes,
             inspectedID: model.requestedPolishInspection.map(ModelsRowID.polish) ?? inspectedID,
@@ -32,6 +34,9 @@ struct ModelsCombinedPane: View {
         .onAppear { reconcileInspection(with: presentation) }
         .onChange(of: presentation) { _, updated in
             reconcileInspection(with: updated)
+        }
+        .onChange(of: model.asrSnapshot) { previous, current in
+            applyASRFocusTransition(from: previous, to: current)
         }
         .alert(
             pendingDestructiveAction?.confirmationTitle ?? "Remove model?",
@@ -89,6 +94,20 @@ struct ModelsCombinedPane: View {
         VStack(alignment: .leading, spacing: 7) {
             familyHeading(section)
             columnHeaders
+            if let notice = section.recoveryNotice {
+                Label(notice.message, systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
+                    .font(Theme.ui(10.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: 7))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7)
+                            .strokeBorder(Theme.hairline)
+                    }
+            }
             if let placeholder = section.placeholder {
                 familyPlaceholder(
                     placeholder,
@@ -183,20 +202,31 @@ struct ModelsCombinedPane: View {
         _ row: ModelsRowPresentation,
         isInspected: Bool
     ) -> some View {
-        Button {
-            inspectedID = row.id
-        } label: {
-            if row.kind == .utility {
-                utilityLedgerRow(row, isInspected: isInspected)
-            } else {
-                modelLedgerRow(row, isInspected: isInspected)
+        HStack(spacing: 6) {
+            Button {
+                inspectedID = row.id
+            } label: {
+                if row.kind == .utility {
+                    utilityLedgerRow(row, isInspected: isInspected)
+                } else {
+                    modelLedgerRow(row, isInspected: isInspected)
+                }
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+            .focused($focusedControl, equals: .row(row.id))
+            .help(row.accessibilityLabel)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(row.accessibilityLabel)
+            .accessibilityAddTraits(isInspected ? .isSelected : [])
+            if row.progress?.allowsCancellation == true {
+                Button("Cancel") { model.onCancelASROperation?() }
+                    .controlSize(.small)
+                    .focused($focusedControl, equals: .inlineCancel(row.id))
+                    .help("Cancel \(row.progress?.label.lowercased() ?? "operation")")
+                    .accessibilityLabel("Cancel \(row.progress?.label.lowercased() ?? "operation") for \(row.name)")
             }
         }
-        .buttonStyle(.plain)
-        .help(row.accessibilityLabel)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(row.accessibilityLabel)
-        .accessibilityAddTraits(isInspected ? .isSelected : [])
     }
 
     private func modelLedgerRow(
@@ -337,6 +367,12 @@ struct ModelsCombinedPane: View {
                 Label(presentation.status, systemImage: presentation.primaryAction.statusSymbol)
                     .font(Theme.ui(10, .semibold))
                     .foregroundStyle(Theme.textSecondary)
+                if let explanation = presentation.statusExplanation {
+                    Text(explanation)
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             if let description = presentation.description, !description.isEmpty {
                 Text(description)
@@ -394,19 +430,22 @@ struct ModelsCombinedPane: View {
     private func inspectorFooter(_ presentation: ModelsInspectorPresentation?) -> some View {
         HStack(spacing: 10) {
             if let progress = presentation?.progress {
-                inspectorProgress(progress)
+                inspectorProgress(progress, id: presentation?.id)
             } else if let presentation {
                 primaryAction(
                     presentation.primaryAction,
+                    id: presentation.id,
                     disabledReason: presentation.managementDisabledReason
                 )
             }
             Spacer()
-            if presentation?.progress == nil,
-               let action = presentation?.destructiveAction {
+            if let presentation,
+               presentation.progress == nil,
+               let action = presentation.destructiveAction {
                 destructiveMenu(
                     action,
-                    disabledReason: presentation?.managementDisabledReason
+                    id: presentation.id,
+                    disabledReason: presentation.managementDisabledReason
                 )
             }
         }
@@ -415,7 +454,10 @@ struct ModelsCombinedPane: View {
         .background(Theme.windowBackground)
     }
 
-    private func inspectorProgress(_ progress: ModelsProgressPresentation) -> some View {
+    private func inspectorProgress(
+        _ progress: ModelsProgressPresentation,
+        id: ModelsRowID?
+    ) -> some View {
         HStack(spacing: 10) {
             if let fraction = progress.fraction {
                 ProgressView(value: fraction)
@@ -425,6 +467,11 @@ struct ModelsCombinedPane: View {
                 ProgressView()
                     .controlSize(.small)
                 Text(progress.status)
+            }
+            if progress.allowsCancellation, let id {
+                Button("Cancel") { model.onCancelASROperation?() }
+                    .controlSize(.small)
+                    .focused($focusedControl, equals: .inspectorCancel(id))
             }
         }
         .font(Theme.ui(10.5, .medium))
@@ -436,6 +483,7 @@ struct ModelsCombinedPane: View {
     @ViewBuilder
     private func primaryAction(
         _ action: ModelsPrimaryAction,
+        id: ModelsRowID,
         disabledReason: String?
     ) -> some View {
         switch action {
@@ -443,36 +491,81 @@ struct ModelsCombinedPane: View {
             Label("Selected", systemImage: "checkmark.circle.fill")
                 .font(Theme.ui(10.5, .semibold))
                 .foregroundStyle(Theme.accent)
-        case let .selectASR(id):
-            Button("Select") { model.onSelectASRModel?(id) }
+                .focusable()
+                .focused($focusedControl, equals: .inspectorPrimary(id))
+        case let .selectASR(modelID):
+            asrActionButton(
+                "Select",
+                modelID: modelID,
+                help: "Select this ASR model",
+                disabledReason: disabledReason
+            ) { model.onSelectASRModel?(modelID) }
+        case let .downloadASR(modelID):
+            asrActionButton(
+                "Download",
+                modelID: modelID,
+                help: "Download this ASR model",
+                disabledReason: disabledReason
+            ) { model.onDownloadASRModel?(modelID) }
+        case let .downloadAgainASR(modelID):
+            asrActionButton(
+                "Download again",
+                modelID: modelID,
+                help: "Download this saved ASR model again",
+                disabledReason: disabledReason
+            ) { model.onDownloadASRModel?(modelID) }
+        case .retryASRBootstrap:
+            Button("Retry") { model.onRetryASRBootstrap?() }
                 .buttonStyle(.borderedProminent)
-        case let .downloadASR(id):
-            Button("Download") { model.onDownloadASRModel?(id) }
-                .buttonStyle(.borderedProminent)
+                .focused($focusedControl, equals: .inspectorPrimary(id))
         case .installed:
             Label("Installed", systemImage: "checkmark.circle")
                 .font(Theme.ui(10.5, .semibold))
                 .foregroundStyle(Theme.textSecondary)
+                .focusable()
+                .focused($focusedControl, equals: .inspectorPrimary(id))
         case let .installPolish(name):
             Button("Install") { model.onInstallModel?(name) }
                 .buttonStyle(.borderedProminent)
                 .disabled(disabledReason != nil)
                 .help(disabledReason ?? "Install \(name)")
                 .accessibilityHint(disabledReason ?? "")
+                .focused($focusedControl, equals: .inspectorPrimary(id))
         case .installCustomPolish:
             Button("Install") { model.onInstallCustomModel?() }
                 .buttonStyle(.borderedProminent)
                 .disabled(disabledReason != nil)
                 .help(disabledReason ?? "Install the entered Ollama model")
                 .accessibilityHint(disabledReason ?? "")
+                .focused($focusedControl, equals: .inspectorPrimary(id))
         case .retryPolish:
             Button("Retry") { model.onRefreshModels?() }
                 .buttonStyle(.borderedProminent)
+                .focused($focusedControl, equals: .inspectorPrimary(id))
         }
+    }
+
+    private func asrActionButton(
+        _ title: String,
+        modelID: String,
+        help: String,
+        disabledReason: String?,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.borderedProminent)
+            .disabled(disabledReason != nil)
+            .help(disabledReason ?? help)
+            .accessibilityHint(disabledReason ?? "")
+            .focused(
+                $focusedControl,
+                equals: .inspectorPrimary(.speechRecognition(modelID))
+            )
     }
 
     private func destructiveMenu(
         _ action: ModelsDestructiveAction,
+        id: ModelsRowID,
         disabledReason: String?
     ) -> some View {
         Menu {
@@ -494,6 +587,7 @@ struct ModelsCombinedPane: View {
         .help(disabledReason ?? action.menuTitle)
         .accessibilityLabel(action.accessibilityLabel)
         .accessibilityHint(disabledReason ?? "")
+        .focused($focusedControl, equals: .inspectorDestructive(id))
     }
 
     private func reconcileInspection(with presentation: ModelsWorkspaceProjection) {
@@ -508,6 +602,25 @@ struct ModelsCombinedPane: View {
             .first { $0.id == .polish }?.rows.map(\.id) ?? []
         if previousPolishRowIDs != currentPolishRowIDs {
             previousPolishRowIDs = currentPolishRowIDs
+        }
+    }
+
+    private func applyASRFocusTransition(
+        from previous: ASRModelLifecycleSnapshot?,
+        to current: ASRModelLifecycleSnapshot?
+    ) {
+        guard let previous,
+              let current,
+              let currentInspection = projection.inspector?.id,
+              let transition = ModelsASRFocusTransition.resolve(
+                  from: previous,
+                  to: current,
+                  inspectedID: currentInspection
+              )
+        else { return }
+        inspectedID = transition.inspectedID
+        DispatchQueue.main.async {
+            focusedControl = transition.target
         }
     }
 

@@ -62,6 +62,7 @@ final class SettingsModel: ObservableObject {
     /// below derive from one immutable value so Settings cannot expose mixed
     /// selected/available/operating states while snapshots change.
     @Published private(set) var asrSnapshot: ASRModelLifecycleSnapshot?
+    private(set) var asrFailures = ModelsASRFailures()
     @Published var installed: [OllamaClient.InstalledModel]? // nil = checking, [] = Ollama down
     @Published var pullingModel: String?
     @Published var pullStatus = ""
@@ -100,6 +101,7 @@ final class SettingsModel: ObservableObject {
     @Published var configurationRecoveryMessage: String?
 
     func applyASRLifecycleSnapshot(_ snapshot: ASRModelLifecycleSnapshot) {
+        asrFailures.apply(snapshot)
         asrSnapshot = snapshot
     }
 
