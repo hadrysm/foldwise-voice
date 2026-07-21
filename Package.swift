@@ -23,7 +23,7 @@ let package = Package(
             name: "FoldWiseVoice",
             dependencies: ["FoldWiseVoiceKit"]
         ),
-        // PROTOTYPE ONLY (Wayfinder #226): three throwaway presentation grammars.
+        // PROTOTYPE ONLY (Wayfinder #226): selected comparison-ledger grammar.
         // Run with `swift run ModelsViewPrototype`; delete after the design decision.
         .executableTarget(name: "ModelsViewPrototype"),
         .testTarget(

@@ -1,5 +1,5 @@
-// PROTOTYPE ONLY — three presentation grammars for the selected compact list + inspector.
-// Switch with the bottom arrows; state controls stay outside the proposed product UI.
+// PROTOTYPE ONLY — selected comparison-ledger grammar for the compact list + inspector.
+// State controls stay outside the proposed product UI.
 // Run with `swift run ModelsViewPrototype`; rewrite properly during implementation.
 
 import AppKit
@@ -143,38 +143,17 @@ private enum PressureState: String, CaseIterable, Identifiable {
     }
 }
 
-private enum GrammarVariant: String, CaseIterable, Identifiable {
-    case operational = "A — Operational"
-    case ledger = "B — Comparison ledger"
-    case guided = "C — Guided"
-
-    var id: String {
-        rawValue
-    }
-
-    var snapshotName: String {
-        switch self {
-        case .operational: "grammar-a-operational.png"
-        case .ledger: "grammar-b-comparison-ledger.png"
-        case .guided: "grammar-c-guided.png"
-        }
-    }
-}
-
 private struct PrototypeShell: View {
     @State private var pressure: PressureState = .baseline
-    @State private var grammar: GrammarVariant = .operational
     @State private var selectedID = "parakeet-tdt-v3"
     @State private var didExportSnapshots = false
     private let allowsSnapshotExport: Bool
 
     init(
         allowsSnapshotExport: Bool = true,
-        initialGrammar: GrammarVariant = .operational,
         initialPressure: PressureState = .baseline
     ) {
         self.allowsSnapshotExport = allowsSnapshotExport
-        _grammar = State(initialValue: initialGrammar)
         _pressure = State(initialValue: initialPressure)
     }
 
@@ -186,19 +165,8 @@ private struct PrototypeShell: View {
         }
         .background(PrototypeTheme.windowBackground)
         .foregroundStyle(PrototypeTheme.textPrimary)
-        .overlay(alignment: .bottom) { grammarSwitcher }
         .overlay(alignment: .bottomTrailing) { prototypeStateMenu }
         .onAppear { exportSnapshotsIfRequested() }
-        .focusable()
-        .focusEffectDisabled()
-        .onKeyPress(.leftArrow) {
-            cycleGrammar(by: -1)
-            return .handled
-        }
-        .onKeyPress(.rightArrow) {
-            cycleGrammar(by: 1)
-            return .handled
-        }
     }
 
     private var sidebar: some View {
@@ -263,53 +231,9 @@ private struct PrototypeShell: View {
 
             Divider()
 
-            selectedGrammar
-                .id("\(grammar.rawValue)-\(pressure.rawValue)")
+            SelectedModelsGrammar(pressure: pressure, selectedID: $selectedID)
+                .id(pressure.rawValue)
         }
-    }
-
-    @ViewBuilder
-    private var selectedGrammar: some View {
-        switch grammar {
-        case .operational:
-            OperationalGrammarVariant(pressure: pressure, selectedID: $selectedID)
-        case .ledger:
-            LedgerGrammarVariant(pressure: pressure, selectedID: $selectedID)
-        case .guided:
-            GuidedGrammarVariant(pressure: pressure, selectedID: $selectedID)
-        }
-    }
-
-    private var grammarSwitcher: some View {
-        HStack(spacing: 4) {
-            Button { cycleGrammar(by: -1) } label: {
-                Image(systemName: "chevron.left").frame(width: 28, height: 28)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Previous presentation grammar")
-
-            Text(grammar.rawValue)
-                .font(PrototypeTheme.ui(11, .semibold))
-                .frame(minWidth: 142)
-
-            Button { cycleGrammar(by: 1) } label: {
-                Image(systemName: "chevron.right").frame(width: 28, height: 28)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Next presentation grammar")
-        }
-        .foregroundStyle(PrototypeTheme.windowBackground)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4)
-        .background(PrototypeTheme.textPrimary, in: Capsule())
-        .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
-        .padding(16)
-    }
-
-    private func cycleGrammar(by offset: Int) {
-        let variants = GrammarVariant.allCases
-        guard let index = variants.firstIndex(of: grammar) else { return }
-        grammar = variants[(index + offset + variants.count) % variants.count]
     }
 
     private var prototypeStateMenu: some View {
@@ -350,204 +274,34 @@ private struct PrototypeShell: View {
 
         let output = URL(fileURLWithPath: directory, isDirectory: true)
         try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        for variant in GrammarVariant.allCases {
-            let view = PrototypeShell(allowsSnapshotExport: false, initialGrammar: variant)
-                .frame(width: 1180, height: 800)
-            let hosting = NSHostingView(rootView: view)
-            hosting.frame = NSRect(x: 0, y: 0, width: 1180, height: 800)
-            let window = NSWindow(
-                contentRect: hosting.frame,
-                styleMask: [.borderless],
-                backing: .buffered,
-                defer: false
-            )
-            window.contentView = hosting
-            window.orderFrontRegardless()
-            hosting.layoutSubtreeIfNeeded()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-            if let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
-                hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-                if let png = bitmap.representation(using: .png, properties: [:]) {
-                    try? png.write(to: output.appendingPathComponent(variant.snapshotName))
-                }
+        let view = PrototypeShell(allowsSnapshotExport: false)
+            .frame(width: 1180, height: 800)
+        let hosting = NSHostingView(rootView: view)
+        hosting.frame = NSRect(x: 0, y: 0, width: 1180, height: 800)
+        let window = NSWindow(
+            contentRect: hosting.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = hosting
+        window.orderFrontRegardless()
+        hosting.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        if let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
+            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+            if let png = bitmap.representation(using: .png, properties: [:]) {
+                try? png.write(to: output.appendingPathComponent("selected-comparison-ledger.png"))
             }
-            window.orderOut(nil)
         }
+        window.orderOut(nil)
         NSApp.terminate(nil)
     }
 }
 
-// MARK: - Selected structure: compact list and detail inspector
+// MARK: - Selected grammar: aligned comparison evidence, operations in the inspector
 
-private struct OperationalGrammarVariant: View {
-    let pressure: PressureState
-    @Binding var selectedID: String
-
-    private var selected: PrototypeModel {
-        PrototypeModel.catalog.first { $0.id == selectedID } ?? PrototypeModel.catalog[0]
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            StateNotice(pressure: pressure)
-                .padding(.horizontal, PrototypeTheme.contentPadding)
-                .padding(.vertical, 16)
-            Divider()
-            HSplitView {
-                compactList.frame(minWidth: 310, idealWidth: 370)
-                detail.frame(minWidth: 330, idealWidth: 500)
-            }
-        }
-        .padding(.bottom, 72)
-    }
-
-    private var compactList: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                compactFamily(.speech)
-                compactFamily(.polish)
-            }
-            .padding(18)
-        }
-        .background(PrototypeTheme.sidebarBackground.opacity(0.46))
-    }
-
-    private func compactFamily(_ family: ModelFamily) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            FamilyHeading(family: family, compact: true)
-            ForEach(PrototypeModel.catalog.filter { $0.family == family }) { model in
-                Button { selectedID = model.id } label: {
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 7) {
-                            if family == .speech, model.isInstalled {
-                                Image(systemName: model.isSelected ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(model.isSelected
-                                        ? PrototypeTheme.accent
-                                        : PrototypeTheme.textTertiary)
-                            } else {
-                                Circle()
-                                    .fill(model.isInstalled ? PrototypeTheme.textSecondary : PrototypeTheme.hairline)
-                                    .frame(width: 7, height: 7)
-                                    .padding(.horizontal, 4.5)
-                            }
-                            Text(model.name)
-                                .font(PrototypeTheme.ui(12.5, .semibold))
-                                .lineLimit(1)
-                            Spacer(minLength: 4)
-                            ModelStateLabel(model: model, pressure: pressure, compact: true)
-                        }
-                        HStack(spacing: 10) {
-                            Text(model.fit).lineLimit(1)
-                            Spacer()
-                            Text(model.size)
-                            if model.speed > 0 {
-                                Text("S \(model.speed)")
-                            }
-                            if model.quality > 0 {
-                                Text("Q \(model.quality)")
-                            }
-                        }
-                        .font(PrototypeTheme.ui(9.5))
-                        .foregroundStyle(PrototypeTheme.textSecondary)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 9)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        selectedID == model.id ? PrototypeTheme.activeNavBackground : .clear,
-                        in: RoundedRectangle(cornerRadius: 7)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .strokeBorder(selectedID == model.id ? PrototypeTheme.hairline : .clear)
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private var detail: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                HStack(alignment: .top, spacing: 14) {
-                    Image(systemName: selected.family.symbol)
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(PrototypeTheme.accent)
-                        .frame(width: 34, height: 34)
-                        .background(PrototypeTheme.cardBackground, in: RoundedRectangle(cornerRadius: 8))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(selected.name).font(PrototypeTheme.ui(19, .semibold))
-                        Text(selected.family.rawValue)
-                            .font(PrototypeTheme.ui(10, .bold))
-                            .textCase(.uppercase)
-                            .kerning(0.8)
-                            .foregroundStyle(PrototypeTheme.textTertiary)
-                    }
-                    Spacer()
-                    ModelAction(model: selected, pressure: pressure, prominent: true)
-                }
-
-                Text(selected.blurb)
-                    .font(PrototypeTheme.ui(12))
-                    .foregroundStyle(PrototypeTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 0) {
-                    DetailFact(label: "Footprint", value: selected.size)
-                    DetailFact(label: "Speed", value: selected.speed > 0 ? "\(selected.speed) / 5" : "Not rated")
-                    DetailFact(label: "Quality", value: selected.quality > 0 ? "\(selected.quality) / 5" : "Not rated")
-                }
-                .prototypeCard()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionLabel("Best fit")
-                    Text(selected.fit).font(PrototypeTheme.ui(13, .semibold))
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionLabel(selected.family == .speech ? "How selection works" : "How assignment works")
-                    Text(selected.family.purpose)
-                        .font(PrototypeTheme.ui(11.5))
-                        .foregroundStyle(PrototypeTheme.textSecondary)
-                    if selected.family == .speech {
-                        Text(
-                            "Downloading makes a model available. Selecting it is a separate, "
-                                + "cancelable switch for future Dictation sessions."
-                        )
-                        .font(PrototypeTheme.ui(11.5))
-                        .foregroundStyle(PrototypeTheme.textSecondary)
-                    } else {
-                        Text("Installing changes the local inventory only. It does not change any Mode.")
-                            .font(PrototypeTheme.ui(11.5))
-                            .foregroundStyle(PrototypeTheme.textSecondary)
-                    }
-                }
-
-                if selected.family == .polish {
-                    Button("Install another Ollama model…") {}
-                        .controlSize(.small)
-                }
-
-                DestructiveModelAction(model: selected)
-            }
-            .padding(26)
-            .padding(.bottom, 30)
-        }
-    }
-
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(PrototypeTheme.sectionLabel)
-            .kerning(1.1)
-            .foregroundStyle(PrototypeTheme.textTertiary)
-            .textCase(.uppercase)
-    }
-}
-
-// MARK: - Grammar B: aligned comparison evidence, operations in the inspector
-
-private struct LedgerGrammarVariant: View {
+private struct SelectedModelsGrammar: View {
     let pressure: PressureState
     @Binding var selectedID: String
 
@@ -702,158 +456,6 @@ private struct LedgerGrammarVariant: View {
     }
 }
 
-// MARK: - Grammar C: fit and guidance first, with facts as supporting evidence
-
-private struct GuidedGrammarVariant: View {
-    let pressure: PressureState
-    @Binding var selectedID: String
-
-    private var selected: PrototypeModel {
-        PrototypeModel.catalog.first { $0.id == selectedID } ?? PrototypeModel.catalog[0]
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            StateNotice(pressure: pressure)
-                .padding(.horizontal, PrototypeTheme.contentPadding)
-                .padding(.vertical, 16)
-            Divider()
-            HSplitView {
-                guidedList.frame(minWidth: 390, idealWidth: 450)
-                guidedInspector.frame(minWidth: 310, idealWidth: 450)
-            }
-        }
-        .padding(.bottom, 72)
-    }
-
-    private var guidedList: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 25) {
-                guidedFamily(.speech)
-                guidedFamily(.polish)
-            }
-            .padding(18)
-        }
-        .background(PrototypeTheme.sidebarBackground.opacity(0.46))
-    }
-
-    private func guidedFamily(_ family: ModelFamily) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            FamilyHeading(family: family, compact: true)
-            Text(family.purpose)
-                .font(PrototypeTheme.ui(10.5))
-                .foregroundStyle(PrototypeTheme.textSecondary)
-                .padding(.horizontal, 4)
-
-            ForEach(PrototypeModel.catalog.filter { $0.family == family }) { model in
-                Button { selectedID = model.id } label: {
-                    VStack(alignment: .leading, spacing: 7) {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(model.name)
-                                .font(PrototypeTheme.ui(12.5, .semibold))
-                                .lineLimit(1)
-                            Spacer(minLength: 4)
-                            ModelStateLabel(model: model, pressure: pressure, compact: true)
-                        }
-                        Text(model.fit)
-                            .font(PrototypeTheme.ui(10.5, .semibold))
-                            .foregroundStyle(PrototypeTheme.textSecondary)
-                            .lineLimit(1)
-                        Text(model.blurb)
-                            .font(PrototypeTheme.ui(9.5))
-                            .foregroundStyle(PrototypeTheme.textTertiary)
-                            .lineLimit(2)
-                        HStack(spacing: 12) {
-                            Label(model.size, systemImage: "internaldrive")
-                            if model.speed > 0 {
-                                Text("Speed \(model.speed)/5")
-                                Text("Quality \(model.quality)/5")
-                            } else {
-                                Text("Not rated")
-                            }
-                        }
-                        .font(PrototypeTheme.ui(9, .medium))
-                        .foregroundStyle(PrototypeTheme.textSecondary)
-                    }
-                    .padding(11)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        selectedID == model.id ? PrototypeTheme.activeNavBackground : .clear,
-                        in: RoundedRectangle(cornerRadius: 7)
-                    )
-                    .overlay(alignment: .leading) {
-                        if selectedID == model.id {
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(PrototypeTheme.accent)
-                                .frame(width: 3)
-                                .padding(.vertical, 8)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private var guidedInspector: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                HStack(spacing: 9) {
-                    Image(systemName: selected.family.symbol)
-                        .foregroundStyle(PrototypeTheme.accent)
-                    Text(selected.family.rawValue)
-                        .font(PrototypeTheme.ui(11, .semibold))
-                    Spacer()
-                    ModelStateLabel(model: selected, pressure: pressure)
-                }
-
-                Text(selected.name)
-                    .font(PrototypeTheme.ui(21, .semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-
-                VStack(alignment: .leading, spacing: 9) {
-                    Text("BEST FIT")
-                        .font(PrototypeTheme.sectionLabel)
-                        .kerning(1.1)
-                        .foregroundStyle(PrototypeTheme.textTertiary)
-                    Text(selected.fit)
-                        .font(PrototypeTheme.ui(15, .semibold))
-                    Text(selected.blurb)
-                        .font(PrototypeTheme.ui(12))
-                        .foregroundStyle(PrototypeTheme.textSecondary)
-                }
-
-                HStack(spacing: 0) {
-                    DetailFact(label: "Footprint", value: selected.size)
-                    DetailFact(label: "Speed", value: selected.speed > 0 ? "\(selected.speed) / 5" : "Not rated")
-                    DetailFact(label: "Quality", value: selected.quality > 0 ? "\(selected.quality) / 5" : "Not rated")
-                }
-                .prototypeCard()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(selected.family == .speech ? "WHAT CHANGES" : "WHAT DOESN’T CHANGE")
-                        .font(PrototypeTheme.sectionLabel)
-                        .kerning(1.1)
-                        .foregroundStyle(PrototypeTheme.textTertiary)
-                    Text(selected.family == .speech
-                        ? "Select for future Dictation sessions after the model is available. "
-                            + "Downloading alone never selects it."
-                        : "Install into the shared inventory. Existing Mode assignments stay exactly as they are.")
-                        .font(PrototypeTheme.ui(11.5))
-                        .foregroundStyle(PrototypeTheme.textSecondary)
-                }
-
-                HStack(spacing: 10) {
-                    ModelAction(model: selected, pressure: pressure, prominent: true)
-                    DestructiveModelAction(model: selected, compact: true)
-                }
-            }
-            .padding(26)
-            .padding(.bottom, 30)
-        }
-    }
-}
-
 // MARK: - shared prototype components
 
 private struct FamilyHeading: View {
@@ -987,22 +589,10 @@ private struct RatingMarks: View {
     let value: Int
 
     var body: some View {
-        if value > 0 {
-            HStack(spacing: 2) {
-                ForEach(1 ... 5, id: \.self) { step in
-                    Capsule()
-                        .fill(step <= value ? PrototypeTheme.textSecondary : PrototypeTheme.hairline)
-                        .frame(width: 6, height: 3)
-                }
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(value) out of 5")
-        } else {
-            Text("—")
-                .font(PrototypeTheme.ui(10))
-                .foregroundStyle(PrototypeTheme.textTertiary)
-                .accessibilityLabel("Not rated")
-        }
+        Text(value > 0 ? "\(value)/5" : "—")
+            .font(PrototypeTheme.ui(9.5, .medium))
+            .foregroundStyle(value > 0 ? PrototypeTheme.textSecondary : PrototypeTheme.textTertiary)
+            .accessibilityLabel(value > 0 ? "\(value) out of 5" : "Not rated")
     }
 }
 
@@ -1080,24 +670,6 @@ private struct ModelAction: View {
         } else {
             Button("Install") {}.controlSize(.small)
         }
-    }
-}
-
-private struct DetailFact: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(PrototypeTheme.ui(9.5, .bold))
-                .textCase(.uppercase)
-                .kerning(0.5)
-                .foregroundStyle(PrototypeTheme.textTertiary)
-            Text(value).font(PrototypeTheme.ui(12.5, .semibold))
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
