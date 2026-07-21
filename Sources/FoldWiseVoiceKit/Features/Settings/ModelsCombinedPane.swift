@@ -233,18 +233,7 @@ struct ModelsCombinedPane: View {
             rating(row.quality)
             ledgerState(row)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            isInspected ? Theme.activeNavBackground : Color.clear,
-            in: RoundedRectangle(cornerRadius: 7)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(isInspected ? Theme.hairline : Color.clear)
-        }
-        .contentShape(Rectangle())
+        .modelsLedgerRowChrome(isInspected: isInspected)
     }
 
     private func utilityLedgerRow(
@@ -270,18 +259,7 @@ struct ModelsCombinedPane: View {
                 ledgerState(row)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            isInspected ? Theme.activeNavBackground : Color.clear,
-            in: RoundedRectangle(cornerRadius: 7)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(isInspected ? Theme.hairline : Color.clear)
-        }
-        .contentShape(Rectangle())
+        .modelsLedgerRowChrome(isInspected: isInspected)
     }
 
     @ViewBuilder
@@ -538,6 +516,23 @@ struct ModelsCombinedPane: View {
         case let .deleteASR(id): model.onDeleteASRModel?(id)
         case let .uninstallPolish(name): model.onDeleteModel?(name)
         }
+    }
+}
+
+private extension View {
+    func modelsLedgerRowChrome(isInspected: Bool) -> some View {
+        padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isInspected ? Theme.activeNavBackground : Color.clear,
+                in: RoundedRectangle(cornerRadius: 7)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 7)
+                    .strokeBorder(isInspected ? Theme.hairline : Color.clear)
+            }
+            .contentShape(Rectangle())
     }
 }
 

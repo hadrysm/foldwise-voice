@@ -129,10 +129,6 @@ struct ModelsOperationFailures: Equatable {
     func message(for target: String) -> String? {
         messagesByTarget[target]
     }
-
-    func firstMessage(where targetMatches: (String) -> Bool) -> String? {
-        messagesByTarget.first { targetMatches($0.key) }?.value
-    }
 }
 
 struct ModelsPolishState: Equatable {
@@ -451,9 +447,6 @@ struct ModelsWorkspaceProjection: Equatable {
         }
         let trimmedCustomModel = state.customModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let customFailure = state.pullFailures.message(for: trimmedCustomModel)
-            ?? state.pullFailures.firstMessage {
-                !installedNames.contains($0) && !catalogNames.contains($0)
-            }
         let progress = customTarget.map { target in
             ModelsProgressPresentation(
                 label: "Installing",
