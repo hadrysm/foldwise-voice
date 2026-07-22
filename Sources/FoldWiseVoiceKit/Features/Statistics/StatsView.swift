@@ -252,6 +252,9 @@ private struct MonthlyActivityCalendar: View {
             RoundedRectangle(cornerRadius: Theme.cardRadius)
                 .strokeBorder(Theme.hairline, lineWidth: 1)
         }
+        .transaction { transaction in
+            StatsTransitionPolicy.clearInheritedAnimation(in: &transaction)
+        }
         .onChange(of: month.days) { _, _ in
             repairFocus()
         }
@@ -519,6 +522,10 @@ enum StatsTransitionPolicy: Equatable {
 
     static func resolve(reduceMotion: Bool) -> StatsTransitionPolicy {
         reduceMotion ? .immediate : .crossfade
+    }
+
+    static func clearInheritedAnimation(in transaction: inout Transaction) {
+        transaction.animation = nil
     }
 
     var animation: Animation? {

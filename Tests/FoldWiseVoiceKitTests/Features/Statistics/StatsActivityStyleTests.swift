@@ -56,6 +56,14 @@ final class StatsActivityStyleTests: XCTestCase {
         XCTAssertEqual(StatsTransitionPolicy.resolve(reduceMotion: true), .immediate)
     }
 
+    func testCalendarClearsInheritedAnimation() {
+        var transaction = Transaction(animation: .linear(duration: 1))
+
+        StatsTransitionPolicy.clearInheritedAnimation(in: &transaction)
+
+        XCTAssertNil(transaction.animation)
+    }
+
     private func resolvedLevelColors(appearance name: NSAppearance.Name) throws -> [String] {
         try resolvedColors(
             (0 ... 5).map(StatsActivityStyle.legendFill(level:)),
