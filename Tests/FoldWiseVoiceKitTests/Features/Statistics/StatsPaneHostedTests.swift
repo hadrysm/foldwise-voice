@@ -56,6 +56,28 @@ final class StatsPaneHostedTests: XCTestCase {
         XCTAssertEqual(executionCount, 1)
     }
 
+    func testHostedStatsRefreshesProjectionWhenSavedHistoryChanges() throws {
+        let model = SettingsModel()
+        let (hosting, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+
+        model.historyEntries = [entry(rawText: "saved words", day: 1)]
+        render(hosting)
+
+        XCTAssertEqual(try node(identifier: "stats.calendar", in: window).value, "2 spoken words, 1 active day")
+    }
+
+    func testHostedStatsRefreshesProjectionWhenSavingStateChanges() throws {
+        let model = SettingsModel()
+        let (hosting, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+
+        model.saveHistory = false
+        render(hosting)
+
+        XCTAssertEqual(try noticeIdentifiers(in: window), ["stats.notice.savingOff"])
+    }
+
     func testHostedStatsRefreshesProjectionForDayAndTimeZoneNotifications() {
         let model = SettingsModel()
         let notifications = NotificationCenter()
