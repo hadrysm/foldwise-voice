@@ -74,17 +74,20 @@ struct StatsPane: View {
         case .none:
             EmptyView()
         case let .noHistory(message):
-            StatsNotice(symbol: "sparkles", message: message)
-                .accessibilityIdentifier("stats.notice.noHistory")
+            StatsNotice(
+                symbol: "sparkles",
+                message: message,
+                accessibilityIdentifier: "stats.notice.noHistory"
+            )
         case let .savingOff(message, actionTitle):
             StatsNotice(
                 symbol: "pause.circle",
                 message: message,
-                actionTitle: actionTitle
+                actionTitle: actionTitle,
+                accessibilityIdentifier: "stats.notice.savingOff"
             ) {
                 openHistory()
             }
-            .accessibilityIdentifier("stats.notice.savingOff")
         }
     }
 
@@ -97,6 +100,7 @@ private struct StatsNotice: View {
     let symbol: String
     let message: String
     var actionTitle: String?
+    let accessibilityIdentifier: String
     var action: (() -> Void)?
 
     var body: some View {
@@ -109,6 +113,7 @@ private struct StatsNotice: View {
             Text(message)
                 .font(Theme.ui(11.5, .medium))
                 .foregroundStyle(Theme.textSecondary)
+                .accessibilityIdentifier(accessibilityIdentifier)
             Spacer(minLength: 8)
             if let actionTitle, let action {
                 StatsHistoryButton(title: actionTitle, action: action)

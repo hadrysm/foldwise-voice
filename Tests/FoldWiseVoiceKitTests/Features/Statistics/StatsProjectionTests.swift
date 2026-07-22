@@ -230,6 +230,42 @@ final class StatsProjectionTests: XCTestCase {
         ])
     }
 
+    func testProjectionKeepsFullCalendarForQuietCurrentMonth() throws {
+        XCTAssertEqual(try quietMonthProjection().month.days.count, 31)
+    }
+
+    func testProjectionReportsNoActiveDaysForQuietCurrentMonth() throws {
+        XCTAssertEqual(try quietMonthProjection().month.activeDays, 0)
+    }
+
+    func testProjectionReportsNoWordsForQuietCurrentMonth() throws {
+        XCTAssertEqual(try quietMonthProjection().month.spokenWordTotal, 0)
+    }
+
+    func testProjectionKeepsLifetimeWordsForQuietCurrentMonth() throws {
+        XCTAssertEqual(try quietMonthProjection().lifetime.totalWords, 2)
+    }
+
+    func testProjectionWithRetainedHistoryAndSavingEnabledProvidesNoNotice() throws {
+        XCTAssertEqual(try retainedProjection(savingEnabled: true).notice, .none)
+    }
+
+    func testProjectionWithRetainedHistoryAndSavingOffKeepsLifetimeWords() throws {
+        XCTAssertEqual(try retainedProjection(savingEnabled: false).lifetime.totalWords, 2)
+    }
+
+    func testProjectionWithRetainedHistoryAndSavingOffKeepsCalendarWords() throws {
+        XCTAssertEqual(try retainedProjection(savingEnabled: false).month.spokenWordTotal, 2)
+    }
+
+    func testProjectionWithRetainedHistoryDoesNotRepeatSavingOffCopy() throws {
+        let projection = try retainedProjection(savingEnabled: false)
+        let repeatedCopy = projection.metrics.flatMap { [$0.title, $0.value, $0.detail] }
+            + projection.month.days.flatMap { [$0.detailActivity, $0.detailTiming].compactMap { $0 } }
+
+        XCTAssertFalse(repeatedCopy.contains { $0.contains("Stats won’t include new dictations") })
+    }
+
     func testProjectionSavingOffNoticeReplacesNoHistoryNotice() throws {
         let calendar = try calendar(locale: "en_US", timeZone: "UTC")
 
@@ -689,6 +725,40 @@ final class StatsProjectionTests: XCTestCase {
         let calendar = try calendar(locale: "en_US", timeZone: "UTC")
         return StatsProjection.project(
             .init(entries: [], currentStreak: nil, savingEnabled: true),
+            now: try date(2026, 7, 22, 12, calendar: calendar),
+            calendar: calendar,
+            locale: Locale(identifier: "en_US")
+        )
+    }
+
+    private func quietMonthProjection() throws -> StatsProjection {
+        let calendar = try calendar(locale: "en_US", timeZone: "UTC")
+        return StatsProjection.project(
+            .init(
+                entries: [entry(
+                    rawText: "older words",
+                    createdAt: try date(2026, 6, 30, 8, calendar: calendar)
+                )],
+                currentStreak: nil,
+                savingEnabled: true
+            ),
+            now: try date(2026, 7, 22, 12, calendar: calendar),
+            calendar: calendar,
+            locale: Locale(identifier: "en_US")
+        )
+    }
+
+    private func retainedProjection(savingEnabled: Bool) throws -> StatsProjection {
+        let calendar = try calendar(locale: "en_US", timeZone: "UTC")
+        return StatsProjection.project(
+            .init(
+                entries: [entry(
+                    rawText: "saved words",
+                    createdAt: try date(2026, 7, 1, 8, calendar: calendar)
+                )],
+                currentStreak: 1,
+                savingEnabled: savingEnabled
+            ),
             now: try date(2026, 7, 22, 12, calendar: calendar),
             calendar: calendar,
             locale: Locale(identifier: "en_US")

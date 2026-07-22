@@ -131,6 +131,34 @@ final class StatsPaneHostedTests: XCTestCase {
         XCTAssertEqual(columnCounts, [7, 7])
     }
 
+    func testHostedStatsKeepsCompactMetricRowAcrossEveryDataState() throws {
+        let rowCounts = try dataStateModels().map { model in
+            let (_, window) = hostFullSettings(width: 880, height: 640, model: model)
+            defer { window.orderOut(nil) }
+            let nodes = try statsNodes(in: window)
+            return Set(nodes.compactMap { node -> Int? in
+                guard node.identifier?.hasPrefix("stats.metric.") == true else { return nil }
+                return node.position.map { Int($0.y.rounded()) }
+            }).count
+        }
+
+        XCTAssertEqual(rowCounts, Array(repeating: 1, count: 4))
+    }
+
+    func testHostedStatsKeepsSevenCalendarColumnsAcrossEveryDataState() throws {
+        let columnCounts = try dataStateModels().map { model in
+            let (_, window) = hostFullSettings(width: 880, height: 640, model: model)
+            defer { window.orderOut(nil) }
+            let nodes = try statsNodes(in: window)
+            return Set(nodes.compactMap { node -> Int? in
+                guard node.identifier?.hasPrefix("stats.day.") == true else { return nil }
+                return node.position.map { Int($0.x.rounded()) }
+            }).count
+        }
+
+        XCTAssertEqual(columnCounts, Array(repeating: 7, count: 4))
+    }
+
     func testHostedCalendarAppliesContextOnce() throws {
         let (_, window) = hostInteractiveStats(model: SettingsModel())
         defer { window.orderOut(nil) }
@@ -244,7 +272,7 @@ final class StatsPaneHostedTests: XCTestCase {
         let (_, window) = hostInteractiveStats(model: SettingsModel())
         defer { window.orderOut(nil) }
 
-        XCTAssertNotNil(try statsNodes(in: window).first { $0.identifier == "stats.notice.noHistory" })
+        XCTAssertEqual(try noticeIdentifiers(in: window), ["stats.notice.noHistory"])
     }
 
     func testHostedStatsRendersSavingOffRetainedState() throws {
@@ -254,7 +282,7 @@ final class StatsPaneHostedTests: XCTestCase {
         let (_, window) = hostInteractiveStats(model: model)
         defer { window.orderOut(nil) }
 
-        XCTAssertNotNil(try statsNodes(in: window).first { $0.identifier == "stats.notice.savingOff" })
+        XCTAssertEqual(try noticeIdentifiers(in: window), ["stats.notice.savingOff"])
     }
 
     func testHostedStatsKeepsRetainedCalendarActivityWhenSavingIsOff() throws {
@@ -272,11 +300,8 @@ final class StatsPaneHostedTests: XCTestCase {
         model.saveHistory = false
         let (_, window) = hostInteractiveStats(model: model)
         defer { window.orderOut(nil) }
-        let noticeIdentifiers = try statsNodes(in: window)
-            .compactMap(\.identifier)
-            .filter { $0.hasPrefix("stats.notice.") }
 
-        XCTAssertEqual(Set(noticeIdentifiers), ["stats.notice.savingOff"])
+        XCTAssertEqual(try noticeIdentifiers(in: window), ["stats.notice.savingOff"])
     }
 
     func testHostedStatsKeepsEmptyCalendarWhenSavingIsOff() throws {
@@ -451,14 +476,31 @@ final class StatsPaneHostedTests: XCTestCase {
 
     private func hostFullSettings(
         width: CGFloat,
-        height: CGFloat
+        height: CGFloat,
+        model: SettingsModel? = nil
     ) -> (NSHostingView<SettingsView>, NSWindow) {
-        let model = SettingsModel()
+        let model = model ?? SettingsModel()
         model.pane = .stats
         let hosting = host(SettingsView(model: model), width: width, height: height)
         let window = hostInWindow(hosting)
         render(hosting)
         return (hosting, window)
+    }
+
+    private func dataStateModels() -> [SettingsModel] {
+        let retained = SettingsModel()
+        retained.historyEntries = [entry(rawText: "saved words", day: 1)]
+
+        let empty = SettingsModel()
+
+        let savingOffRetained = SettingsModel()
+        savingOffRetained.historyEntries = [entry(rawText: "saved words", day: 1)]
+        savingOffRetained.saveHistory = false
+
+        let savingOffEmpty = SettingsModel()
+        savingOffEmpty.saveHistory = false
+
+        return [retained, empty, savingOffRetained, savingOffEmpty]
     }
 
     private func entry(rawText: String, day: Int) -> HistoryEntry {
@@ -538,6 +580,12 @@ final class StatsPaneHostedTests: XCTestCase {
 
     private func node(identifier: String, in window: NSWindow) throws -> HostedAXNode {
         try XCTUnwrap(statsNodes(in: window).first { $0.identifier == identifier })
+    }
+
+    private func noticeIdentifiers(in window: NSWindow) throws -> [String] {
+        try statsNodes(in: window)
+            .compactMap(\.identifier)
+            .filter { $0.hasPrefix("stats.notice.") }
     }
 
     private func focusedDayIdentifier(in window: NSWindow) throws -> String? {
