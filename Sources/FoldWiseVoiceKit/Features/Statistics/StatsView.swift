@@ -75,6 +75,7 @@ struct StatsPane: View {
             EmptyView()
         case let .noHistory(message):
             StatsNotice(symbol: "sparkles", message: message)
+                .accessibilityIdentifier("stats.notice.noHistory")
         case let .savingOff(message, actionTitle):
             StatsNotice(
                 symbol: "pause.circle",
@@ -83,6 +84,7 @@ struct StatsPane: View {
             ) {
                 openHistory()
             }
+            .accessibilityIdentifier("stats.notice.savingOff")
         }
     }
 
@@ -103,6 +105,7 @@ private struct StatsNotice: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.accent)
                 .accessibilityHidden(true)
+                .accessibilityIdentifier("stats.decoration.notice")
             Text(message)
                 .font(Theme.ui(11.5, .medium))
                 .foregroundStyle(Theme.textSecondary)
@@ -166,14 +169,14 @@ private struct StatsMetricStrip: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ForEach(Array(metrics.enumerated()), id: \.element.id) { index, metric in
+            ForEach(metrics) { metric in
                 VStack(alignment: .leading, spacing: 8) {
                     Image(systemName: metric.symbol)
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Theme.accent)
                         .accessibilityHidden(true)
                     Text(metric.value)
-                        .font(Theme.ui(index == 3 ? 16.5 : 21, .semibold))
+                        .font(Theme.ui(metric.kind == .timeSaved ? 16.5 : 21, .semibold))
                         .monospacedDigit()
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
@@ -195,6 +198,7 @@ private struct StatsMetricStrip: View {
                         .strokeBorder(Theme.hairline, lineWidth: 1)
                 }
                 .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("stats.metric.\(metric.kind.rawValue)")
             }
         }
     }
@@ -269,6 +273,7 @@ private struct MonthlyActivityCalendar: View {
             }
         }
         .accessibilityHidden(true)
+        .accessibilityIdentifier("stats.duplicate.header")
     }
 
     private var grid: some View {
@@ -279,11 +284,13 @@ private struct MonthlyActivityCalendar: View {
                     .foregroundStyle(Theme.textFaint)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityHidden(true)
+                    .accessibilityIdentifier("stats.weekday.\(weekday)")
             }
-            ForEach(0 ..< month.leadingColumnOffset, id: \.self) { _ in
+            ForEach(0 ..< month.leadingColumnOffset, id: \.self) { index in
                 Color.clear
                     .frame(height: 49)
                     .accessibilityHidden(true)
+                    .accessibilityIdentifier("stats.spacer.leading.\(index)")
             }
             ForEach(month.days) { day in
                 StatsDayCell(
@@ -307,6 +314,7 @@ private struct MonthlyActivityCalendar: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(month.accessibilityLabel)
         .accessibilityValue(month.accessibilityValue)
+        .accessibilityIdentifier("stats.calendar")
     }
 
     private func moveFocus(_ direction: CalendarFocusNavigator.Direction) {
@@ -322,7 +330,9 @@ private struct MonthlyActivityCalendar: View {
         let navigator = CalendarFocusNavigator(eligibleDates: eligibleDates)
         let repaired = navigator.repair(focusedDate ?? rovingDate)
         rovingDate = repaired
-        if focusedDate != nil {
+        guard focusedDate != nil else { return }
+        focusedDate = nil
+        DispatchQueue.main.async {
             focusedDate = repaired
         }
     }
@@ -384,11 +394,15 @@ private struct StatsDayCell: View {
             default: break
             }
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: day.intensity)
+        .animation(
+            StatsTransitionPolicy.resolve(reduceMotion: reduceMotion).animation,
+            value: day.intensity
+        )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(day.accessibilityLabel)
         .accessibilityValue(day.accessibilityValue)
         .accessibilityHidden(day.state == .future)
+        .accessibilityIdentifier("stats.day.\(day.dayNumber)")
     }
 }
 
@@ -427,6 +441,7 @@ private struct StatsDayDetail: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Theme.windowBackground.opacity(0.72), in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityIdentifier("stats.duplicate.detail")
     }
 }
 
@@ -449,6 +464,7 @@ private struct StatsIntensityLegend: View {
                                 .strokeBorder(Theme.hairline, lineWidth: index == 0 ? 1 : 0)
                         }
                         .accessibilityHidden(true)
+                        .accessibilityIdentifier("stats.decoration.legend.\(index)")
                     Text(label)
                         .font(Theme.mono(8.7, .medium))
                         .foregroundStyle(Theme.textTertiary)
@@ -459,7 +475,7 @@ private struct StatsIntensityLegend: View {
     }
 }
 
-private struct StatsActivityStyle {
+struct StatsActivityStyle {
     let background: Color
     let foreground: Color
     let outline: Color
@@ -489,5 +505,21 @@ private struct StatsActivityStyle {
         guard level > 0 else { return Theme.windowBackground.opacity(0.72) }
         let opacities = [0.0, 0.20, 0.36, 0.54, 0.76, 0.96]
         return Theme.accent.opacity(opacities[min(level, opacities.count - 1)])
+    }
+}
+
+enum StatsTransitionPolicy: Equatable {
+    case immediate
+    case crossfade
+
+    static func resolve(reduceMotion: Bool) -> StatsTransitionPolicy {
+        reduceMotion ? .immediate : .crossfade
+    }
+
+    var animation: Animation? {
+        switch self {
+        case .immediate: nil
+        case .crossfade: .easeOut(duration: 0.14)
+        }
     }
 }

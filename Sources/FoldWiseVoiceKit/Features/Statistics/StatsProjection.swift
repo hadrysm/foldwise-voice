@@ -2,13 +2,21 @@ import Foundation
 
 struct StatsProjection: Equatable {
     struct Metric: Equatable, Identifiable {
+        enum Kind: String, Equatable {
+            case wordsDictated
+            case speakingSpeed
+            case currentStreak
+            case timeSaved
+        }
+
+        let kind: Kind
         let title: String
         let value: String
         let detail: String
         let symbol: String
 
-        var id: String {
-            title
+        var id: Kind {
+            kind
         }
     }
 
@@ -209,7 +217,27 @@ struct StatsProjection: Equatable {
     }
 
     private struct Formatter {
+        private enum Language {
+            case english
+            case polish
+            case arabic
+
+            init(locale: Locale) {
+                switch locale.language.languageCode?.identifier {
+                case "pl": self = .polish
+                case "ar": self = .arabic
+                default: self = .english
+                }
+            }
+        }
+
         let locale: Locale
+        private let language: Language
+
+        init(locale: Locale) {
+            self.locale = locale
+            language = Language(locale: locale)
+        }
 
         var legendLabels: [String] {
             [
@@ -223,34 +251,38 @@ struct StatsProjection: Equatable {
         }
 
         var emptyAccessibilityValue: String {
-            switch languageCode {
-            case "pl": "Brak podyktowanych słów. Brak zapisanych sesji dyktowania"
-            case "ar": "لا توجد كلمات منطوقة. لا توجد جلسات إملاء محفوظة"
-            default: "No dictated words. No saved Dictation sessions"
+            switch language {
+            case .polish: "Brak podyktowanych słów. Brak zapisanych sesji dyktowania"
+            case .arabic: "لا توجد كلمات منطوقة. لا توجد جلسات إملاء محفوظة"
+            case .english: "No dictated words. No saved Dictation sessions"
             }
         }
 
         func metrics(lifetime: UsageStats, currentStreak: Int?) -> [Metric] {
             [
                 Metric(
+                    kind: .wordsDictated,
                     title: "Words dictated",
                     value: number(lifetime.totalWords),
                     detail: "from saved history",
                     symbol: "quote.bubble"
                 ),
                 Metric(
+                    kind: .speakingSpeed,
                     title: "Speaking speed",
                     value: speakingSpeed(lifetime.wordsPerMinute),
                     detail: "pauses included",
                     symbol: "waveform"
                 ),
                 Metric(
+                    kind: .currentStreak,
                     title: "Current streak",
                     value: streak(currentStreak),
                     detail: "through today",
                     symbol: "flame"
                 ),
                 Metric(
+                    kind: .timeSaved,
                     title: "Time saved",
                     value: timeSaved(lifetime.timeSavedMinutes),
                     detail: "versus 52 wpm typing",
@@ -275,24 +307,24 @@ struct StatsProjection: Equatable {
 
         func spokenWords(_ count: Int) -> String {
             let value = number(count)
-            switch languageCode {
-            case "pl":
+            switch language {
+            case .polish:
                 return "\(value) \(polishForm(count, noun: .spokenWords))"
-            case "ar":
+            case .arabic:
                 return "\(value) \(arabicForm(count, noun: .spokenWords))"
-            default:
+            case .english:
                 return "\(value) spoken \(count == 1 ? "word" : "words")"
             }
         }
 
         func activeDays(_ count: Int) -> String {
             let value = number(count)
-            switch languageCode {
-            case "pl":
+            switch language {
+            case .polish:
                 return "\(value) \(polishForm(count, noun: .activeDays))"
-            case "ar":
+            case .arabic:
                 return "\(value) \(arabicForm(count, noun: .activeDays))"
-            default:
+            case .english:
                 return "\(value) active \(count == 1 ? "day" : "days")"
             }
         }
@@ -357,51 +389,47 @@ struct StatsProjection: Equatable {
                 ?? "\(number(totalSeconds)) sec"
         }
 
-        private var languageCode: String {
-            locale.language.languageCode?.identifier ?? "en"
-        }
-
         private var noSavedSessions: String {
-            switch languageCode {
-            case "pl": "Brak zapisanych sesji dyktowania"
-            case "ar": "لا توجد جلسات إملاء محفوظة"
-            default: "No saved Dictation sessions"
+            switch language {
+            case .polish: "Brak zapisanych sesji dyktowania"
+            case .arabic: "لا توجد جلسات إملاء محفوظة"
+            case .english: "No saved Dictation sessions"
             }
         }
 
         private var timingUnavailable: String {
-            switch languageCode {
-            case "pl": "Dane o czasie niedostępne"
-            case "ar": "بيانات التوقيت غير متاحة"
-            default: "Timing unavailable"
+            switch language {
+            case .polish: "Dane o czasie niedostępne"
+            case .arabic: "بيانات التوقيت غير متاحة"
+            case .english: "Timing unavailable"
             }
         }
 
         private var partialTimingUnavailable: String {
-            switch languageCode {
-            case "pl": "Dane o czasie niedostępne dla części sesji"
-            case "ar": "بيانات التوقيت غير متاحة لبعض الجلسات"
-            default: "Timing unavailable for some sessions"
+            switch language {
+            case .polish: "Dane o czasie niedostępne dla części sesji"
+            case .arabic: "بيانات التوقيت غير متاحة لبعض الجلسات"
+            case .english: "Timing unavailable for some sessions"
             }
         }
 
         private func activity(spokenWords count: Int, sessionCount: Int) -> String {
-            switch languageCode {
-            case "pl", "ar":
+            switch language {
+            case .polish, .arabic:
                 "\(spokenWords(count)) · \(savedSessions(sessionCount))"
-            default:
+            case .english:
                 "\(spokenWords(count)) across \(savedSessions(sessionCount))"
             }
         }
 
         private func savedSessions(_ count: Int) -> String {
             let value = number(count)
-            switch languageCode {
-            case "pl":
+            switch language {
+            case .polish:
                 return "\(value) \(polishForm(count, noun: .savedSessions))"
-            case "ar":
+            case .arabic:
                 return "\(value) \(arabicForm(count, noun: .savedSessions))"
-            default:
+            case .english:
                 return "\(value) saved \(count == 1 ? "session" : "sessions")"
             }
         }
@@ -456,27 +484,27 @@ struct StatsProjection: Equatable {
         }
 
         private func noSavingTiming(_ duration: String) -> String {
-            switch languageCode {
-            case "pl": "\(duration) dyktowania · brak szacowanego zaoszczędzonego czasu"
-            case "ar": "\(duration) من الإملاء · لا يوجد وقت موفر مقدر"
-            default: "\(duration) dictating · no estimated time saved"
+            switch language {
+            case .polish: "\(duration) dyktowania · brak szacowanego zaoszczędzonego czasu"
+            case .arabic: "\(duration) من الإملاء · لا يوجد وقت موفر مقدر"
+            case .english: "\(duration) dictating · no estimated time saved"
             }
         }
 
         private func savingTiming(_ duration: String, saved: String) -> String {
-            switch languageCode {
-            case "pl": "\(duration) dyktowania · zaoszczędzono około \(saved)"
-            case "ar": "\(duration) من الإملاء · تم توفير نحو \(saved)"
-            default: "\(duration) dictating · about \(saved) saved"
+            switch language {
+            case .polish: "\(duration) dyktowania · zaoszczędzono około \(saved)"
+            case .arabic: "\(duration) من الإملاء · تم توفير نحو \(saved)"
+            case .english: "\(duration) dictating · about \(saved) saved"
             }
         }
 
         private func speakingSpeed(_ wordsPerMinute: Double?) -> String {
             guard let wordsPerMinute, wordsPerMinute >= 0.5 else { return "—" }
-            let unit = switch languageCode {
-            case "pl": "sł./min"
-            case "ar": "كلمة/د"
-            default: "wpm"
+            let unit = switch language {
+            case .polish: "sł./min"
+            case .arabic: "كلمة/د"
+            case .english: "wpm"
             }
             return "\(number(Int(wordsPerMinute.rounded()))) \(unit)"
         }
@@ -484,12 +512,12 @@ struct StatsProjection: Equatable {
         private func streak(_ days: Int?) -> String {
             guard let days else { return "—" }
             let value = number(days)
-            switch languageCode {
-            case "pl":
+            switch language {
+            case .polish:
                 return "\(value) \(polishForm(days, noun: .streakDays))"
-            case "ar":
+            case .arabic:
                 return "\(value) \(arabicForm(days, noun: .streakDays))"
-            default:
+            case .english:
                 return "\(value) \(days == 1 ? "day" : "days")"
             }
         }

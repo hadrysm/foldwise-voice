@@ -2,7 +2,41 @@ import XCTest
 @testable import FoldWiseVoiceKit
 
 final class StatsProjectionTests: XCTestCase {
-    func testProjectionBuildsCurrentMonthAndExcludesFutureActivityFromMonthSummary() throws {
+    func testProjectionExcludesOutsideAndFutureWordsFromMonthSummary() throws {
+        XCTAssertEqual(try currentMonthProjection().month.spokenWordTotal, 3)
+    }
+
+    func testProjectionExcludesOutsideAndFutureSessionsFromActiveDays() throws {
+        XCTAssertEqual(try currentMonthProjection().month.activeDays, 1)
+    }
+
+    func testProjectionKeepsAllSavedHistoryInLifetimeMetrics() throws {
+        XCTAssertEqual(try currentMonthProjection().lifetime.totalWords, 6)
+    }
+
+    func testProjectionUsesLocalizedWeekdayOrder() throws {
+        XCTAssertEqual(
+            try currentMonthProjection().month.weekdays,
+            ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        )
+    }
+
+    func testProjectionClassifiesDatesAfterTodayAsFuture() throws {
+        XCTAssertEqual(
+            try currentMonthProjection().month.days.map(\.state).suffix(9),
+            Array(repeating: .future, count: 9)
+        )
+    }
+
+    func testProjectionUsesCurrentMonthDayCount() throws {
+        XCTAssertEqual(try currentMonthProjection().month.days.count, 31)
+    }
+
+    func testProjectionUsesCurrentMonthLeadingOffset() throws {
+        XCTAssertEqual(try currentMonthProjection().month.leadingColumnOffset, 3)
+    }
+
+    private func currentMonthProjection() throws -> StatsProjection {
         let calendar = try calendar(locale: "en_US", timeZone: "UTC")
         let now = try date(2026, 7, 22, 12, calendar: calendar)
         let entries = [
@@ -11,28 +45,40 @@ final class StatsProjectionTests: XCTestCase {
             entry(rawText: "older", createdAt: try date(2026, 6, 30, 8, calendar: calendar)),
         ]
 
-        let projection = StatsProjection.project(
+        return StatsProjection.project(
             .init(entries: entries, currentStreak: 3, savingEnabled: true),
             now: now,
             calendar: calendar,
             locale: Locale(identifier: "en_US")
         )
-
-        XCTAssertEqual(
-            [
-                projection.month.days.count,
-                projection.month.leadingColumnOffset,
-                projection.month.spokenWordTotal,
-                projection.month.activeDays,
-                projection.lifetime.totalWords,
-            ],
-            [31, 3, 3, 1, 6]
-        )
-        XCTAssertEqual(projection.month.weekdays, ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
-        XCTAssertEqual(projection.month.days.map(\.state).suffix(9), Array(repeating: .future, count: 9))
     }
 
-    func testProjectionKeepsZeroWordSessionActiveAndUsesFixedIntensityBands() throws {
+    func testProjectionKeepsZeroWordSessionSavedSessionCount() throws {
+        XCTAssertEqual(try intensityProjection().month.days[0].savedSessionCount, 1)
+    }
+
+    func testProjectionKeepsZeroWordSessionAtZeroWords() throws {
+        XCTAssertEqual(try intensityProjection().month.days[0].spokenWords, 0)
+    }
+
+    func testProjectionKeepsZeroWordSessionAtNeutralIntensity() throws {
+        XCTAssertEqual(try intensityProjection().month.days[0].intensity, .neutral)
+    }
+
+    func testProjectionCountsZeroWordSessionAsActiveDay() throws {
+        XCTAssertEqual(try intensityProjection().month.activeDays, 10)
+    }
+
+    func testProjectionUsesFixedIntensityBands() throws {
+        let projection = try intensityProjection()
+
+        XCTAssertEqual(
+            projection.month.days.prefix(10).map(\.intensity.rawValue),
+            [0, 1, 1, 2, 2, 3, 3, 4, 4, 5]
+        )
+    }
+
+    private func intensityProjection() throws -> StatsProjection {
         let calendar = try calendar(locale: "en_US", timeZone: "UTC")
         let now = try date(2026, 7, 22, 12, calendar: calendar)
         let wordCounts = [0, 1, 249, 250, 599, 600, 999, 1000, 1599, 1600]
@@ -43,26 +89,47 @@ final class StatsProjectionTests: XCTestCase {
             )
         }
 
-        let projection = StatsProjection.project(
+        return StatsProjection.project(
             .init(entries: entries, currentStreak: nil, savingEnabled: true),
             now: now,
             calendar: calendar,
             locale: Locale(identifier: "en_US")
         )
-
-        XCTAssertEqual(
-            projection.month.days.prefix(wordCounts.count).map {
-                [$0.savedSessionCount, $0.spokenWords, $0.intensity.rawValue]
-            },
-            [
-                [1, 0, 0], [1, 1, 1], [1, 249, 1], [1, 250, 2], [1, 599, 2],
-                [1, 600, 3], [1, 999, 3], [1, 1000, 4], [1, 1599, 4], [1, 1600, 5],
-            ]
-        )
-        XCTAssertEqual(projection.month.activeDays, 10)
     }
 
-    func testProjectionResolvesCompletePartialUnavailableAndNoSavingDetails() throws {
+    func testProjectionResolvesCompleteTimingDetails() throws {
+        XCTAssertEqual(
+            try timingDays()[0].detailTiming,
+            "1 min dictating · about 1 min saved"
+        )
+    }
+
+    func testProjectionResolvesPartialTimingDetails() throws {
+        XCTAssertEqual(
+            try timingDays()[1].detailTiming,
+            "Timing unavailable for some sessions"
+        )
+    }
+
+    func testProjectionResolvesUnavailableTimingDetails() throws {
+        XCTAssertEqual(try timingDays()[2].detailTiming, "Timing unavailable")
+    }
+
+    func testProjectionResolvesNoPositiveSavingDetails() throws {
+        XCTAssertEqual(
+            try timingDays()[3].detailTiming,
+            "1 min dictating · no estimated time saved"
+        )
+    }
+
+    func testProjectionCombinesSameDayActivityDetails() throws {
+        XCTAssertEqual(
+            try timingDays()[1].detailActivity,
+            "2 spoken words across 2 saved sessions"
+        )
+    }
+
+    private func timingDays() throws -> [StatsProjection.Day] {
         let calendar = try calendar(locale: "en_US", timeZone: "UTC")
         let now = try date(2026, 7, 22, 12, calendar: calendar)
         let entries = [
@@ -73,28 +140,23 @@ final class StatsProjectionTests: XCTestCase {
             entry(rawText: words(10), createdAt: try date(2026, 7, 4, 8, calendar: calendar), durationMs: 60000),
         ]
 
-        let days = StatsProjection.project(
+        return StatsProjection.project(
             .init(entries: entries, currentStreak: nil, savingEnabled: true),
             now: now,
             calendar: calendar,
             locale: Locale(identifier: "en_US")
         ).month.days
-
-        XCTAssertEqual(
-            days.prefix(4).map(\.detailTiming),
-            [
-                "1 min dictating · about 1 min saved",
-                "Timing unavailable for some sessions",
-                "Timing unavailable",
-                "1 min dictating · no estimated time saved",
-            ]
-        )
-        XCTAssertEqual(days[1].detailActivity, "2 spoken words across 2 saved sessions")
     }
 
     func testProjectionProvidesMetricOrder() throws {
         XCTAssertEqual(try emptyProjection().metrics.map(\.title), [
             "Words dictated", "Speaking speed", "Current streak", "Time saved",
+        ])
+    }
+
+    func testProjectionProvidesSemanticMetricKinds() throws {
+        XCTAssertEqual(try emptyProjection().metrics.map(\.kind), [
+            .wordsDictated, .speakingSpeed, .currentStreak, .timeSaved,
         ])
     }
 
@@ -109,26 +171,37 @@ final class StatsProjectionTests: XCTestCase {
         )
     }
 
-    func testProjectionProvidesEmptyMonthSummary() throws {
-        let projection = try emptyProjection()
-        XCTAssertEqual(projection.month.title, "July 2026")
-        XCTAssertEqual(projection.month.spokenWordSummary, "0 spoken words")
-        XCTAssertEqual(projection.month.activeDaySummary, "0 active days")
+    func testProjectionProvidesEmptyMonthTitle() throws {
+        XCTAssertEqual(try emptyProjection().month.title, "July 2026")
     }
 
-    func testProjectionProvidesCalendarAccessibilityContext() throws {
-        let projection = try emptyProjection()
+    func testProjectionProvidesEmptyMonthSpokenWordSummary() throws {
+        XCTAssertEqual(try emptyProjection().month.spokenWordSummary, "0 spoken words")
+    }
+
+    func testProjectionProvidesEmptyMonthActiveDaySummary() throws {
+        XCTAssertEqual(try emptyProjection().month.activeDaySummary, "0 active days")
+    }
+
+    func testProjectionProvidesCalendarAccessibilityLabel() throws {
+        XCTAssertEqual(try emptyProjection().month.accessibilityLabel, "July 2026 activity calendar")
+    }
+
+    func testProjectionProvidesCalendarAccessibilityValue() throws {
+        XCTAssertEqual(try emptyProjection().month.accessibilityValue, "0 spoken words, 0 active days")
+    }
+
+    func testProjectionProvidesTodayAccessibilityLabel() throws {
         XCTAssertEqual(
-            [projection.month.accessibilityLabel, projection.month.accessibilityValue],
-            ["July 2026 activity calendar", "0 spoken words, 0 active days"]
+            try emptyProjection().month.days[21].accessibilityLabel,
+            "Wednesday, July 22, 2026, today"
         )
     }
 
-    func testProjectionProvidesTodayAccessibilityCopy() throws {
-        let today = try emptyProjection().month.days[21]
+    func testProjectionProvidesTodayAccessibilityValue() throws {
         XCTAssertEqual(
-            [today.accessibilityLabel, today.accessibilityValue],
-            ["Wednesday, July 22, 2026, today", "No dictated words. No saved Dictation sessions"]
+            try emptyProjection().month.days[21].accessibilityValue,
+            "No dictated words. No saved Dictation sessions"
         )
     }
 
@@ -157,34 +230,48 @@ final class StatsProjectionTests: XCTestCase {
         )
     }
 
-    func testProjectionUsesInjectedLocaleForWeekdayOrderAndFormattedDigits() throws {
-        let polishCalendar = try calendar(locale: "pl_PL", timeZone: "Europe/Warsaw")
-        let arabicCalendar = try calendar(locale: "ar_SA", timeZone: "Asia/Riyadh")
-        let polish = StatsProjection.project(
-            .init(entries: [], currentStreak: nil, savingEnabled: true),
-            now: try date(2026, 7, 22, 12, calendar: polishCalendar),
-            calendar: polishCalendar,
-            locale: Locale(identifier: "pl_PL")
-        )
-        let arabic = StatsProjection.project(
-            .init(entries: [], currentStreak: nil, savingEnabled: true),
-            now: try date(2026, 7, 22, 12, calendar: arabicCalendar),
-            calendar: arabicCalendar,
-            locale: Locale(identifier: "ar_SA")
-        )
+    func testProjectionUsesPolishWeekdayOrder() throws {
+        XCTAssertEqual(try localizedEmptyProjection(locale: "pl_PL").month.weekdays.first, "Pon.")
+    }
 
+    func testProjectionUsesPolishMonthTitle() throws {
+        XCTAssertEqual(try localizedEmptyProjection(locale: "pl_PL").month.title, "lipiec 2026")
+    }
+
+    func testProjectionUsesArabicWeekdayOrder() throws {
+        XCTAssertEqual(try localizedEmptyProjection(locale: "ar_SA").month.weekdays.first, "أحد")
+    }
+
+    func testProjectionUsesArabicDayDigits() throws {
+        XCTAssertEqual(try localizedEmptyProjection(locale: "ar_SA").month.days[21].dayNumber, "٢٢")
+    }
+
+    func testProjectionUsesPolishSpokenWordPlural() throws {
         XCTAssertEqual(
-            [
-                polish.month.weekdays.first,
-                polish.month.title,
-                arabic.month.weekdays.first,
-                arabic.month.days[21].dayNumber,
-            ],
-            ["Pon.", "lipiec 2026", "أحد", "٢٢"]
+            try polishGrammarProjection().month.spokenWordSummary,
+            "5 wypowiedzianych słów"
         )
     }
 
-    func testProjectionUsesPolishPluralCategoriesAndLocalizedDuration() throws {
+    func testProjectionUsesPolishActiveDayPlural() throws {
+        XCTAssertEqual(try polishGrammarProjection().month.activeDaySummary, "2 aktywne dni")
+    }
+
+    func testProjectionUsesPolishSavedSessionPlural() throws {
+        XCTAssertEqual(
+            try polishGrammarProjection().month.days[0].detailActivity,
+            "2 wypowiedziane słowa · 2 zapisane sesje"
+        )
+    }
+
+    func testProjectionUsesPolishLocalizedDuration() throws {
+        XCTAssertEqual(
+            try polishGrammarProjection().month.days[0].detailTiming,
+            "1 godz. dyktowania · brak szacowanego zaoszczędzonego czasu"
+        )
+    }
+
+    private func polishGrammarProjection() throws -> StatsProjection {
         let calendar = try calendar(locale: "pl_PL", timeZone: "Europe/Warsaw")
         let entries = [
             entry(rawText: "jeden", createdAt: try date(2026, 7, 1, 8, calendar: calendar), durationMs: 1_800_000),
@@ -194,23 +281,39 @@ final class StatsProjectionTests: XCTestCase {
             entry(rawText: "pięć", createdAt: try date(2026, 7, 2, 10, calendar: calendar)),
         ]
 
-        let projection = StatsProjection.project(
+        return StatsProjection.project(
             .init(entries: entries, currentStreak: 2, savingEnabled: true),
             now: try date(2026, 7, 22, 12, calendar: calendar),
             calendar: calendar,
             locale: Locale(identifier: "pl_PL")
         )
+    }
 
-        XCTAssertEqual(projection.month.spokenWordSummary, "5 wypowiedzianych słów")
-        XCTAssertEqual(projection.month.activeDaySummary, "2 aktywne dni")
-        XCTAssertEqual(projection.month.days[0].detailActivity, "2 wypowiedziane słowa · 2 zapisane sesje")
+    func testProjectionUsesArabicSpokenWordPlural() throws {
         XCTAssertEqual(
-            projection.month.days[0].detailTiming,
-            "1 godz. dyktowania · brak szacowanego zaoszczędzonego czasu"
+            try arabicGrammarProjection().month.spokenWordSummary,
+            "٣ كلمات منطوقة"
         )
     }
 
-    func testProjectionUsesArabicPluralCategoriesAndLocalizedLegendDigits() throws {
+    func testProjectionUsesArabicActiveDayPlural() throws {
+        XCTAssertEqual(try arabicGrammarProjection().month.activeDaySummary, "١ يوم نشط")
+    }
+
+    func testProjectionUsesArabicSavedSessionPlural() throws {
+        XCTAssertEqual(
+            try arabicGrammarProjection().month.days[0].detailActivity,
+            "٣ كلمات منطوقة · ٣ جلسات إملاء محفوظة"
+        )
+    }
+
+    func testProjectionUsesArabicLegendDigits() throws {
+        XCTAssertEqual(try arabicGrammarProjection().month.legendLabels, [
+            "None", "١–٢٤٩", "٢٥٠–٥٩٩", "٦٠٠–٩٩٩", "١٬٠٠٠–١٬٥٩٩", "١٬٦٠٠+",
+        ])
+    }
+
+    private func arabicGrammarProjection() throws -> StatsProjection {
         let calendar = try calendar(locale: "ar_SA", timeZone: "Asia/Riyadh")
         let createdAt = try date(2026, 7, 1, 8, calendar: calendar)
         let entries = [
@@ -219,19 +322,106 @@ final class StatsProjectionTests: XCTestCase {
             entry(rawText: "ثلاثة", createdAt: createdAt),
         ]
 
-        let projection = StatsProjection.project(
+        return StatsProjection.project(
             .init(entries: entries, currentStreak: 1, savingEnabled: true),
             now: try date(2026, 7, 22, 12, calendar: calendar),
             calendar: calendar,
             locale: Locale(identifier: "ar_SA")
         )
+    }
 
-        XCTAssertEqual(projection.month.spokenWordSummary, "٣ كلمات منطوقة")
-        XCTAssertEqual(projection.month.activeDaySummary, "١ يوم نشط")
-        XCTAssertEqual(projection.month.days[0].detailActivity, "٣ كلمات منطوقة · ٣ جلسات إملاء محفوظة")
-        XCTAssertEqual(projection.month.legendLabels, [
-            "None", "١–٢٤٩", "٢٥٠–٥٩٩", "٦٠٠–٩٩٩", "١٬٠٠٠–١٬٥٩٩", "١٬٦٠٠+",
-        ])
+    func testProjectionUsesEnglishCompactWordTotal() throws {
+        let projection = try localizedProjection(
+            locale: "en_US",
+            timeZone: "UTC",
+            rawText: words(1600)
+        )
+
+        XCTAssertEqual(projection.month.days[0].compactSpokenWords, "1.6K")
+    }
+
+    func testProjectionUsesPolishCompactWordTotal() throws {
+        let projection = try localizedProjection(
+            locale: "pl_PL",
+            timeZone: "Europe/Warsaw",
+            rawText: words(1600)
+        )
+
+        XCTAssertEqual(projection.month.days[0].compactSpokenWords, "1,6 tys.")
+    }
+
+    func testProjectionUsesArabicCompactWordTotal() throws {
+        let projection = try localizedProjection(
+            locale: "ar_SA",
+            timeZone: "Asia/Riyadh",
+            rawText: words(1600)
+        )
+
+        XCTAssertEqual(projection.month.days[0].compactSpokenWords, "١٫٦ ألف")
+    }
+
+    func testProjectionUsesPolishFullDate() throws {
+        let projection = try localizedProjection(
+            locale: "pl_PL",
+            timeZone: "Europe/Warsaw",
+            rawText: "słowo"
+        )
+
+        XCTAssertEqual(projection.month.days[0].fullDate, "środa, 1 lipca 2026")
+    }
+
+    func testProjectionUsesArabicMonthTitle() throws {
+        let projection = try localizedProjection(
+            locale: "ar_SA",
+            timeZone: "Asia/Riyadh",
+            rawText: "كلمة"
+        )
+
+        XCTAssertEqual(projection.month.title, "يوليو، ٢٠٢٦ م")
+    }
+
+    func testProjectionUsesArabicFullDate() throws {
+        let projection = try localizedProjection(
+            locale: "ar_SA",
+            timeZone: "Asia/Riyadh",
+            rawText: "كلمة"
+        )
+
+        XCTAssertEqual(projection.month.days[0].fullDate, "الأربعاء، ١ يوليو، ٢٠٢٦")
+    }
+
+    func testProjectionUsesPolishNumberGrouping() throws {
+        let projection = try localizedProjection(
+            locale: "pl_PL",
+            timeZone: "Europe/Warsaw",
+            rawText: words(16000)
+        )
+
+        XCTAssertEqual(projection.month.spokenWordSummary, "16 000 wypowiedzianych słów")
+    }
+
+    func testProjectionUsesArabicNumberGrouping() throws {
+        let projection = try localizedProjection(
+            locale: "ar_SA",
+            timeZone: "Asia/Riyadh",
+            rawText: words(16000)
+        )
+
+        XCTAssertEqual(projection.month.spokenWordSummary, "١٦٬٠٠٠ كلمة منطوقة")
+    }
+
+    func testProjectionUsesArabicLocalizedDuration() throws {
+        let projection = try localizedProjection(
+            locale: "ar_SA",
+            timeZone: "Asia/Riyadh",
+            rawText: words(10),
+            durationMs: 60000
+        )
+
+        XCTAssertEqual(
+            projection.month.days[0].detailTiming,
+            "١ د من الإملاء · لا يوجد وقت موفر مقدر"
+        )
     }
 
     func testProjectionProducesEveryRealDayAcrossMonthLengthsAndLeapYear() throws {
@@ -263,7 +453,19 @@ final class StatsProjectionTests: XCTestCase {
         XCTAssertEqual(Set(offsets), Set(0 ... 6))
     }
 
-    func testProjectionKeepsMonthAndYearBoundaryActivityInItsLocalMonth() throws {
+    func testProjectionKeepsMonthAndYearBoundaryWordsInCurrentMonthSummary() throws {
+        XCTAssertEqual(try yearBoundaryProjection().month.spokenWordTotal, 2)
+    }
+
+    func testProjectionKeepsMonthAndYearBoundarySessionInActiveDays() throws {
+        XCTAssertEqual(try yearBoundaryProjection().month.activeDays, 1)
+    }
+
+    func testProjectionKeepsMonthAndYearBoundaryActivityInLifetimeMetrics() throws {
+        XCTAssertEqual(try yearBoundaryProjection().lifetime.totalWords, 4)
+    }
+
+    private func yearBoundaryProjection() throws -> StatsProjection {
         let calendar = try calendar(locale: "en_US", timeZone: "UTC")
         let entries = [
             entry(rawText: "november", createdAt: try date(2025, 11, 30, 23, calendar: calendar)),
@@ -271,19 +473,23 @@ final class StatsProjectionTests: XCTestCase {
             entry(rawText: "january", createdAt: try date(2026, 1, 1, 0, calendar: calendar)),
         ]
 
-        let projection = StatsProjection.project(
+        return StatsProjection.project(
             .init(entries: entries, currentStreak: 1, savingEnabled: true),
             now: try date(2025, 12, 31, 23, calendar: calendar),
             calendar: calendar,
             locale: Locale(identifier: "en_US")
         )
-
-        XCTAssertEqual(projection.month.spokenWordTotal, 2)
-        XCTAssertEqual(projection.month.activeDays, 1)
-        XCTAssertEqual(projection.lifetime.totalWords, 4)
     }
 
-    func testProjectionBucketsSessionsAcrossDaylightSavingBoundary() throws {
+    func testProjectionBucketsSessionBeforeDaylightSavingBoundary() throws {
+        XCTAssertEqual(try daylightSavingProjection().month.days[6].savedSessionCount, 1)
+    }
+
+    func testProjectionBucketsSessionsAfterDaylightSavingBoundary() throws {
+        XCTAssertEqual(try daylightSavingProjection().month.days[7].savedSessionCount, 2)
+    }
+
+    private func daylightSavingProjection() throws -> StatsProjection {
         let calendar = try calendar(locale: "en_US", timeZone: "America/Los_Angeles")
         let entries = [
             entry(rawText: "before", createdAt: try date(2026, 3, 7, 23, calendar: calendar)),
@@ -291,15 +497,12 @@ final class StatsProjectionTests: XCTestCase {
             entry(rawText: "later", createdAt: try date(2026, 3, 8, 23, calendar: calendar)),
         ]
 
-        let projection = StatsProjection.project(
+        return StatsProjection.project(
             .init(entries: entries, currentStreak: 2, savingEnabled: true),
             now: try date(2026, 3, 9, 12, calendar: calendar),
             calendar: calendar,
             locale: Locale(identifier: "en_US")
         )
-
-        XCTAssertEqual(projection.month.days[6].savedSessionCount, 1)
-        XCTAssertEqual(projection.month.days[7].savedSessionCount, 2)
     }
 
     func testCacheReusesSemanticInputAndInvalidatesEnvironmentChanges() throws {
@@ -342,6 +545,44 @@ final class StatsProjectionTests: XCTestCase {
             now: try date(2026, 7, 22, 12, calendar: calendar),
             calendar: calendar,
             locale: Locale(identifier: "en_US")
+        )
+    }
+
+    private func localizedProjection(
+        locale identifier: String,
+        timeZone: String,
+        rawText: String,
+        durationMs: Int? = nil
+    ) throws -> StatsProjection {
+        let calendar = try calendar(locale: identifier, timeZone: timeZone)
+        return StatsProjection.project(
+            .init(
+                entries: [entry(
+                    rawText: rawText,
+                    createdAt: try date(2026, 7, 1, 8, calendar: calendar),
+                    durationMs: durationMs
+                )],
+                currentStreak: 1,
+                savingEnabled: true
+            ),
+            now: try date(2026, 7, 22, 12, calendar: calendar),
+            calendar: calendar,
+            locale: Locale(identifier: identifier)
+        )
+    }
+
+    private func localizedEmptyProjection(locale identifier: String) throws -> StatsProjection {
+        let timeZone = switch identifier {
+        case "pl_PL": "Europe/Warsaw"
+        case "ar_SA": "Asia/Riyadh"
+        default: "UTC"
+        }
+        let calendar = try calendar(locale: identifier, timeZone: timeZone)
+        return StatsProjection.project(
+            .init(entries: [], currentStreak: nil, savingEnabled: true),
+            now: try date(2026, 7, 22, 12, calendar: calendar),
+            calendar: calendar,
+            locale: Locale(identifier: identifier)
         )
     }
 
