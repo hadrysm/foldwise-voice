@@ -25,7 +25,7 @@ let package = Package(
         ),
         // PROTOTYPE ONLY (Wayfinder #226): selected comparison-ledger grammar.
         // Run with `swift run ModelsViewPrototype`; delete after the design decision.
-        .executableTarget(name: "ModelsViewPrototype"),
+        // .executableTarget(name: "ModelsViewPrototype"),
         .testTarget(
             name: "FoldWiseVoiceKitTests",
             dependencies: ["FoldWiseVoiceKit"]
