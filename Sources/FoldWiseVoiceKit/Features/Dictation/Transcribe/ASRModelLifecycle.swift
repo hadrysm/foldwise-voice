@@ -12,7 +12,7 @@ struct ASRModelDescriptor: Identifiable, Equatable {
     let isDefault: Bool
     let allowsDeletion: Bool
 
-    fileprivate init(entry: ASRModelCatalog.Entry, isAvailable: Bool) {
+    init(entry: ASRModelCatalog.Entry, isAvailable: Bool) {
         id = entry.id
         name = entry.name
         languages = entry.languages

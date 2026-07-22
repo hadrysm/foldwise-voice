@@ -41,27 +41,52 @@ final class SettingsModelTests: XCTestCase {
         )
     }
 
-    func testASRDeleteConfirmationExplainsSelectedModelCommit() async {
-        let lifecycle = ASRModelLifecycle(storedSelection: "whisper-small", adapters: [])
-        let snapshot = await lifecycle.snapshot()
+    func testUnrelatedASROperationKeepsExistingModelFailure() {
         let model = SettingsModel()
-        model.applyASRLifecycleSnapshot(snapshot)
-
-        let message = model.asrCatalog
-            .first { $0.id == "whisper-small" }
-            .map(model.asrDeleteConfirmation(for:))
-
-        XCTAssertEqual(
-            message,
-            "This removes Whisper small's downloaded weights and frees 483 MB. "
-                + "It's your current speech model, so deletion selects Parakeet instead."
+        let failure = ASRModelLifecycleFailure.downloadFailed(
+            modelID: "whisper-small",
+            reason: "disk full"
         )
+        model.applyASRLifecycleSnapshot(snapshot(failure: failure))
+        model.applyASRLifecycleSnapshot(snapshot(
+            operation: .downloading(modelID: "whisper-large-v3-turbo", fraction: 0.2)
+        ))
+
+        XCTAssertEqual(model.asrFailures.failure(for: "whisper-small"), failure)
+    }
+
+    func testRelevantASROperationClearsExistingModelFailure() {
+        let model = SettingsModel()
+        model.applyASRLifecycleSnapshot(snapshot(failure: .downloadFailed(
+            modelID: "whisper-small",
+            reason: "disk full"
+        )))
+        model.applyASRLifecycleSnapshot(snapshot(
+            operation: .downloading(modelID: "whisper-small", fraction: nil)
+        ))
+
+        XCTAssertNil(model.asrFailures.failure(for: "whisper-small"))
     }
 
     func testPaneIDsMatchEachDestination() {
         XCTAssertEqual(
             SettingsModel.Pane.allCases.map(\.id),
             ["Home", "Modes", "Models", "History", "Stats", "Settings"]
+        )
+    }
+
+    private func snapshot(
+        operation: ASRModelLifecycleOperation? = nil,
+        failure: ASRModelLifecycleFailure? = nil
+    ) -> ASRModelLifecycleSnapshot {
+        ASRModelLifecycleSnapshot(
+            models: ASRModelCatalog.entries.map { ASRModelDescriptor(entry: $0, isAvailable: true) },
+            storedSelection: ASRModelCatalog.defaultID,
+            effectiveSelection: ASRModelCatalog.defaultID,
+            recovery: nil,
+            operation: operation,
+            failure: failure,
+            isDictationBlocked: false
         )
     }
 
@@ -81,6 +106,38 @@ final class SettingsModelTests: XCTestCase {
 
         model.installed = [installed("qwen2.5:3b")]
         XCTAssertFalse(model.ollamaDown)
+    }
+
+    func testPolishModelsStateCapturesOneCoherentLifecycleValue() {
+        let model = SettingsModel()
+        model.installed = [installed("qwen2.5:3b")]
+        model.pullingModel = "gemma3:4b"
+        model.pullStatus = "pulling layers"
+        model.pullFraction = 0.4
+        model.pullFailures = ModelsOperationFailures([
+            "old:model": "Couldn't install old:model: failed",
+        ])
+        model.deleteFailures = ModelsOperationFailures([
+            "stale:model": "Couldn't uninstall stale:model: busy",
+        ])
+        model.customModel = "custom:model"
+
+        XCTAssertEqual(
+            model.polishModelsState,
+            ModelsPolishState(
+                installed: [installed("qwen2.5:3b")],
+                pullingModel: "gemma3:4b",
+                pullStatus: "pulling layers",
+                pullFraction: 0.4,
+                pullFailures: ModelsOperationFailures([
+                    "old:model": "Couldn't install old:model: failed",
+                ]),
+                deleteFailures: ModelsOperationFailures([
+                    "stale:model": "Couldn't uninstall stale:model: busy",
+                ]),
+                customModel: "custom:model"
+            )
+        )
     }
 
     func testSelectedModelIsAllowedWhileAvailabilityIsUnknownOrOllamaIsDown() {

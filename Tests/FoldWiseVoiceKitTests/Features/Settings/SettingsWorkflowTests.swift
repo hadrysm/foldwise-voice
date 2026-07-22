@@ -355,6 +355,14 @@ final class SettingsWorkflowTests: XCTestCase {
         let fraction: Double?
     }
 
+    private struct ASRDownloadContractState: Equatable {
+        let savedSelection: String
+        let persistedSelection: String
+        let effectiveSelection: String?
+        let operation: ASRModelLifecycleOperation?
+        let resultingAction: ModelsPrimaryAction?
+    }
+
     private struct ASRDeleteState: Equatable {
         let deleting: String?
         let downloaded: Set<String>
@@ -2702,7 +2710,7 @@ final class SettingsWorkflowTests: XCTestCase {
     func testInstallingLLMModelRefreshesInventoryWithoutReassigningModes() async {
         let config = makeConfig()
         let model = SettingsModel()
-        model.customModel = "llama3.2:3b"
+        model.customModel = "unfinished/custom:draft"
         let effects = makeModelEffects(
             list: { [.init(name: "llama3.2:3b", sizeBytes: 42)] },
             pull: { _, _ in nil }
@@ -2721,7 +2729,8 @@ final class SettingsWorkflowTests: XCTestCase {
             ),
             LLMInstallCompletion(
                 selectedModel: "qwen2.5:3b", persistedModel: "qwen2.5:3b",
-                pullingModel: nil, customModel: "", installed: ["llama3.2:3b"]
+                pullingModel: nil, customModel: "unfinished/custom:draft",
+                installed: ["llama3.2:3b"]
             )
         )
     }
@@ -2765,7 +2774,8 @@ final class SettingsWorkflowTests: XCTestCase {
             LLMInstallState(
                 selectedModel: model.selectedModel, persistedModel: config.mode.llmModel,
                 pullingModel: model.pullingModel, progressStatus: model.pullStatus,
-                progressFraction: model.pullFraction, error: model.pullError,
+                progressFraction: model.pullFraction,
+                error: model.pullFailures.message(for: "llama3.2:3b") ?? "",
                 customModel: model.customModel, installed: model.installed?.map(\.name)
             ),
             LLMInstallState(
@@ -2774,6 +2784,116 @@ final class SettingsWorkflowTests: XCTestCase {
                 error: "Couldn't install llama3.2:3b: connection refused",
                 customModel: "", installed: nil
             )
+        )
+    }
+
+    func testFailedLLMInstallPublishesFailureBeforeEndingOperation() async {
+        let model = SettingsModel()
+        let workflow = makeWorkflow(
+            config: makeConfig(),
+            model: model,
+            effects: makeModelEffects(pull: { _, _ in "connection refused" })
+        )
+        var failureWhenOperationEnded: String?
+        let operationSubscription = model.$pullingModel.dropFirst().sink { target in
+            if target == nil {
+                failureWhenOperationEnded = model.pullFailures.message(for: "llama3.2:3b")
+            }
+        }
+
+        workflow.installLLMModel("llama3.2:3b")
+        await waitUntil { model.pullingModel == nil }
+
+        XCTAssertEqual(
+            failureWhenOperationEnded,
+            "Couldn't install llama3.2:3b: connection refused"
+        )
+        withExtendedLifetime(operationSubscription) {}
+    }
+
+    func testCustomLLMInstallTrimsOnlyOuterWhitespaceAndPreservesInputAfterFailure() async {
+        let config = makeConfig()
+        let model = SettingsModel()
+        model.customModel = " \n acme/model with space:Q4 \t"
+        var submittedName: String?
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: makeModelEffects(pull: { name, _ in
+                submittedName = name
+                return "connection refused"
+            })
+        )
+
+        workflow.installCustomLLMModel()
+        await waitUntil { model.pullingModel == nil && submittedName != nil }
+
+        XCTAssertEqual(
+            [
+                submittedName,
+                model.customModel,
+                model.pullFailures.message(for: "acme/model with space:Q4"),
+            ],
+            [
+                "acme/model with space:Q4",
+                "acme/model with space:Q4",
+                "Couldn't install acme/model with space:Q4: connection refused",
+            ]
+        )
+    }
+
+    func testRetryingOneInstallClearsOnlyThatModelsFailure() async {
+        let config = makeConfig()
+        let model = SettingsModel()
+        var attempts: [String: Int] = [:]
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: makeModelEffects(
+                list: { [] },
+                pull: { name, _ in
+                    attempts[name, default: 0] += 1
+                    return attempts[name] == 1 ? "connection refused" : nil
+                }
+            )
+        )
+
+        workflow.installLLMModel("model:a")
+        await waitUntil {
+            model.pullingModel == nil && model.pullFailures.message(for: "model:a") != nil
+        }
+        workflow.installLLMModel("model:b")
+        await waitUntil {
+            model.pullingModel == nil && model.pullFailures.message(for: "model:b") != nil
+        }
+        workflow.installLLMModel("model:b")
+        await waitUntil { model.installed != nil }
+
+        XCTAssertEqual(
+            model.pullFailures,
+            ModelsOperationFailures(["model:a": "Couldn't install model:a: connection refused"])
+        )
+    }
+
+    func testSuccessfulCustomLLMInstallRefreshesAndRequestsNewRowInspection() async {
+        let config = makeConfig()
+        let model = SettingsModel()
+        model.customModel = "  acme/custom:Q4  "
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: makeModelEffects(
+                list: { [.init(name: "acme/custom:Q4", sizeBytes: 42)] },
+                pull: { _, _ in nil }
+            )
+        )
+
+        workflow.installCustomLLMModel()
+        await waitUntil { model.installed != nil }
+
+        XCTAssertEqual(
+            [model.customModel, model.installed?.first?.name, model.requestedPolishInspection],
+            ["", "acme/custom:Q4", "acme/custom:Q4"]
         )
     }
 
@@ -2791,7 +2911,6 @@ final class SettingsWorkflowTests: XCTestCase {
                 }
             )
         )
-
         workflow.deleteLLMModel("old:latest")
         await waitUntil { model.installed != nil }
 
@@ -2812,11 +2931,127 @@ final class SettingsWorkflowTests: XCTestCase {
                 deleteLLM: { _ in "busy" }
             )
         )
+        workflow.deleteLLMModel("old:latest")
+        await waitUntil { model.deletingModel == nil }
+
+        XCTAssertEqual(
+            [model.deleteFailures.message(for: "old:latest"), String(listCount)],
+            ["Couldn't uninstall old:latest: busy", "0"]
+        )
+    }
+
+    func testFailedLLMDeletePublishesFailureBeforeEndingOperation() async {
+        let model = SettingsModel()
+        let workflow = makeWorkflow(
+            config: makeConfig(),
+            model: model,
+            effects: makeModelEffects(deleteLLM: { _ in "busy" })
+        )
+        var failureWhenOperationEnded: String?
+        let operationSubscription = model.$deletingModel.dropFirst().sink { target in
+            if target == nil {
+                failureWhenOperationEnded = model.deleteFailures.message(for: "old:latest")
+            }
+        }
 
         workflow.deleteLLMModel("old:latest")
         await waitUntil { model.deletingModel == nil }
 
-        XCTAssertEqual([model.deleteError, String(listCount)], ["Couldn't uninstall old:latest: busy", "0"])
+        XCTAssertEqual(failureWhenOperationEnded, "Couldn't uninstall old:latest: busy")
+        withExtendedLifetime(operationSubscription) {}
+    }
+
+    func testRetryingOneUninstallClearsOnlyThatModelsFailure() async {
+        let config = makeConfig()
+        let model = SettingsModel()
+        var attempts: [String: Int] = [:]
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: makeModelEffects(
+                list: { [] },
+                deleteLLM: { name in
+                    attempts[name, default: 0] += 1
+                    return attempts[name] == 1 ? "busy" : nil
+                }
+            )
+        )
+
+        workflow.deleteLLMModel("model:a")
+        await waitUntil {
+            model.deletingModel == nil && model.deleteFailures.message(for: "model:a") != nil
+        }
+        workflow.deleteLLMModel("model:b")
+        await waitUntil {
+            model.deletingModel == nil && model.deleteFailures.message(for: "model:b") != nil
+        }
+        workflow.deleteLLMModel("model:b")
+        await waitUntil { model.installed != nil }
+
+        XCTAssertEqual(
+            model.deleteFailures,
+            ModelsOperationFailures(["model:a": "Couldn't uninstall model:a: busy"])
+        )
+    }
+
+    func testPolishMutationExclusionRejectsCompetingInstallsAndUninstalls() async {
+        let config = makeConfig()
+        let pullModel = SettingsModel()
+        let pullStarted = expectation(description: "pull started")
+        let finishPull = Latch()
+        var deleteDuringPullCount = 0
+        let pullWorkflow = makeWorkflow(
+            config: config,
+            model: pullModel,
+            effects: makeModelEffects(
+                pull: { _, _ in
+                    pullStarted.fulfill()
+                    await finishPull.wait()
+                    return nil
+                },
+                deleteLLM: { _ in
+                    deleteDuringPullCount += 1
+                    return nil
+                }
+            )
+        )
+
+        pullWorkflow.installLLMModel("gemma3:4b")
+        await fulfillment(of: [pullStarted])
+        pullWorkflow.deleteLLMModel("qwen2.5:3b")
+        await Task.yield()
+
+        let deleteModel = SettingsModel()
+        let deleteStarted = expectation(description: "delete started")
+        let finishDelete = Latch()
+        var installDuringDeleteCount = 0
+        let deleteWorkflow = makeWorkflow(
+            config: config,
+            model: deleteModel,
+            effects: makeModelEffects(
+                pull: { _, _ in
+                    installDuringDeleteCount += 1
+                    return nil
+                },
+                deleteLLM: { _ in
+                    deleteStarted.fulfill()
+                    await finishDelete.wait()
+                    return nil
+                }
+            )
+        )
+
+        deleteWorkflow.deleteLLMModel("qwen2.5:3b")
+        await fulfillment(of: [deleteStarted])
+        deleteWorkflow.installLLMModel("gemma3:4b")
+        await Task.yield()
+
+        XCTAssertEqual(
+            [deleteDuringPullCount, installDuringDeleteCount],
+            [0, 0]
+        )
+        await finishPull.open()
+        await finishDelete.open()
     }
 
     func testSelectingASRModelPersistsThroughLifecycle() async {
@@ -2841,6 +3076,10 @@ final class SettingsWorkflowTests: XCTestCase {
         )
         workflow.populatePreferences()
         await lifecycle.start()
+        await waitForASRState(model) {
+            model.asrSnapshot?.effectiveSelection == ASRModelCatalog.defaultID
+                && model.asrSnapshot?.operation == nil
+        }
 
         workflow.selectASRModel("whisper-small")
         await waitUntil { config.asrModel == "whisper-small" }
@@ -2931,7 +3170,94 @@ final class SettingsWorkflowTests: XCTestCase {
         workflow.downloadASRModel("whisper-small")
         await waitForASRState(model) { model.asrDownloaded.contains("whisper-small") }
 
-        XCTAssertEqual(model.asrDownloaded, [ASRModelCatalog.defaultID, "whisper-small"])
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: model.asrSnapshot,
+            installedPolishModels: nil,
+            inspectedID: .speechRecognition("whisper-small")
+        )
+        XCTAssertEqual(
+            ASRDownloadContractState(
+                savedSelection: model.asrModel,
+                persistedSelection: config.asrModel,
+                effectiveSelection: model.asrSnapshot?.effectiveSelection,
+                operation: model.asrSnapshot?.operation,
+                resultingAction: projection.inspector?.primaryAction
+            ),
+            ASRDownloadContractState(
+                savedSelection: ASRModelCatalog.defaultID,
+                persistedSelection: ASRModelCatalog.defaultID,
+                effectiveSelection: nil,
+                operation: nil,
+                resultingAction: .selectASR("whisper-small")
+            )
+        )
+    }
+
+    func testDownloadingUnavailableSavedASRModelRestoresItOnlyAfterPreparation() async throws {
+        let config = makeConfig()
+        try config.setASRModel("whisper-small")
+        let model = SettingsModel()
+        let preparation = SuspendedASRPreparation()
+        let effects = makeModelEffects(prepareASR: preparation.run)
+        let lifecycle = ASRModelLifecycle(
+            storedSelection: config.asrModel,
+            adapters: [effects.asrAdapter],
+            persistSelection: { try config.setASRModel($0) }
+        )
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            effects: effects,
+            asrLifecycle: lifecycle
+        )
+        await lifecycle.start()
+        await waitForASRState(model) {
+            model.asrSnapshot?.effectiveSelection == ASRModelCatalog.defaultID
+        }
+
+        workflow.downloadASRModel("whisper-small")
+        await preparation.waitUntilStarted()
+        await waitForASRState(model) { model.asrDownloading == "whisper-small" }
+        let preparing = ASRDownloadContractState(
+            savedSelection: model.asrModel,
+            persistedSelection: config.asrModel,
+            effectiveSelection: model.asrSnapshot?.effectiveSelection,
+            operation: model.asrSnapshot?.operation,
+            resultingAction: nil
+        )
+
+        preparation.finish(nil)
+        await waitForASRState(model) {
+            model.asrSnapshot?.effectiveSelection == "whisper-small"
+                && !model.hasActiveASRManagementOperation
+        }
+        let restored = ASRDownloadContractState(
+            savedSelection: model.asrModel,
+            persistedSelection: config.asrModel,
+            effectiveSelection: model.asrSnapshot?.effectiveSelection,
+            operation: model.asrSnapshot?.operation,
+            resultingAction: nil
+        )
+
+        XCTAssertEqual(
+            [preparing, restored],
+            [
+                ASRDownloadContractState(
+                    savedSelection: "whisper-small",
+                    persistedSelection: "whisper-small",
+                    effectiveSelection: ASRModelCatalog.defaultID,
+                    operation: .downloading(modelID: "whisper-small", fraction: nil),
+                    resultingAction: nil
+                ),
+                ASRDownloadContractState(
+                    savedSelection: "whisper-small",
+                    persistedSelection: "whisper-small",
+                    effectiveSelection: "whisper-small",
+                    operation: nil,
+                    resultingAction: nil
+                ),
+            ]
+        )
     }
 
     func testASRDownloadPublishesProgressWhileRunning() async {

@@ -9,16 +9,18 @@ final class FoldWiseVoiceCommandLine {
     }
 
     enum Action: Equatable {
-        case launch(configPath: String?)
+        case launch(configPath: String?, showSettings: Bool)
         case terminate(Termination)
     }
 
+    private let environment: [String: String]
     private let temporaryDirectory: URL
     private let serializeConfig: (Config, URL) throws -> String
     private let removeTemporaryItem: (URL) throws -> Void
     private let reportCleanupFailure: (String) -> Void
 
     init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
         serializeConfig: @escaping (Config, URL) throws -> String = { config, url in
             try config.save(to: url)
@@ -31,6 +33,7 @@ final class FoldWiseVoiceCommandLine {
             Log.config.error("\(message, privacy: .public)")
         }
     ) {
+        self.environment = environment
         self.temporaryDirectory = temporaryDirectory
         self.serializeConfig = serializeConfig
         self.removeTemporaryItem = removeTemporaryItem
@@ -39,8 +42,11 @@ final class FoldWiseVoiceCommandLine {
 
     func evaluate(arguments: [String]) -> Action {
         switch parse(arguments: arguments) {
-        case let .launch(configPath):
-            .launch(configPath: configPath)
+        case let .launch(configPath, showSettings):
+            .launch(
+                configPath: configPath,
+                showSettings: showSettings || environment["FOLDWISE_SHOW_SETTINGS"] == "1"
+            )
         case let .printConfig(configPath):
             printConfig(at: Config.resolvePath(cliPath: configPath))
         case let .failure(message):
@@ -51,6 +57,7 @@ final class FoldWiseVoiceCommandLine {
     private func parse(arguments: [String]) -> ParsedCommand {
         var cliConfig: String?
         var printConfig = false
+        var showSettings = false
         var iterator = arguments.dropFirst().makeIterator()
         while let argument = iterator.next() {
             switch argument {
@@ -58,6 +65,8 @@ final class FoldWiseVoiceCommandLine {
                 cliConfig = iterator.next()
             case "--print-config":
                 printConfig = true
+            case "--show-settings":
+                showSettings = true
             case "--mode":
                 return .failure(
                     "--mode is no longer supported; select Modes by stable ID in config.json."
@@ -67,7 +76,9 @@ final class FoldWiseVoiceCommandLine {
             }
         }
 
-        return printConfig ? .printConfig(configPath: cliConfig) : .launch(configPath: cliConfig)
+        return printConfig
+            ? .printConfig(configPath: cliConfig)
+            : .launch(configPath: cliConfig, showSettings: showSettings)
     }
 
     private func printConfig(at url: URL) -> Action {
@@ -118,7 +129,7 @@ final class FoldWiseVoiceCommandLine {
     }
 
     private enum ParsedCommand {
-        case launch(configPath: String?)
+        case launch(configPath: String?, showSettings: Bool)
         case printConfig(configPath: String?)
         case failure(String)
     }

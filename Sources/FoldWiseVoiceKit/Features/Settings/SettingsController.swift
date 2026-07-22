@@ -112,6 +112,7 @@ final class SettingsController {
         model.onSaveModeEditor = { [weak self] in self?.workflow.saveModeEditor() }
         model.onCancelModeEditor = { [weak self] in self?.workflow.cancelModeEditor() }
         model.onInstallModel = { [weak self] name in self?.workflow.installLLMModel(name) }
+        model.onInstallCustomModel = { [weak self] in self?.workflow.installCustomLLMModel() }
         model.onDeleteModel = { [weak self] name in self?.workflow.deleteLLMModel(name) }
         model.onRefreshModels = { [weak self] in self?.workflow.refreshLLMModels() }
         model.onSelectASRModel = { [weak self] id in self?.workflow.selectASRModel(id) }

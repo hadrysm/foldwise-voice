@@ -501,22 +501,46 @@ final class SettingsWorkflow {
     }
 
     func refreshLLMModels() {
+        refreshLLMModels(preservingInventory: false, inspecting: nil)
+    }
+
+    private func refreshLLMModels(
+        preservingInventory: Bool,
+        inspecting modelName: String?
+    ) {
         let requestID = UUID()
         llmRefreshID = requestID
-        model.installed = nil
+        if !preservingInventory {
+            model.installed = nil
+        }
         Task { @MainActor in
             let installed = await llmModels.list()
             guard llmRefreshID == requestID else { return }
             model.installed = installed
+            if let modelName, installed.contains(where: { $0.name == modelName }) {
+                model.requestedPolishInspection = modelName
+            }
         }
     }
 
     func installLLMModel(_ name: String) {
+        installLLMModel(name, isCustomInstall: false)
+    }
+
+    func installCustomLLMModel() {
+        let name = model.customModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        model.customModel = name
+        installLLMModel(name, isCustomInstall: true)
+    }
+
+    private func installLLMModel(_ rawName: String, isCustomInstall: Bool) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard model.pullingModel == nil, model.deletingModel == nil, !name.isEmpty else { return }
         let operationID = UUID()
         llmMutationID = operationID
         model.pullingModel = name
-        model.pullError = ""
+        model.pullFailures.clear(for: name)
         model.pullStatus = "contacting Ollama…"
         model.pullFraction = nil
         Task { @MainActor in
@@ -527,12 +551,18 @@ final class SettingsWorkflow {
             }
             guard llmMutationID == operationID else { return }
             llmMutationID = nil
-            model.pullingModel = nil
             if let error {
-                model.pullError = "Couldn't install \(name): \(error)"
+                model.pullFailures.record("Couldn't install \(name): \(error)", for: name)
+                model.pullingModel = nil
             } else {
-                model.customModel = ""
-                refreshLLMModels()
+                model.pullingModel = nil
+                if isCustomInstall {
+                    model.customModel = ""
+                }
+                refreshLLMModels(
+                    preservingInventory: true,
+                    inspecting: isCustomInstall ? name : nil
+                )
             }
         }
     }
@@ -542,16 +572,17 @@ final class SettingsWorkflow {
         let operationID = UUID()
         llmMutationID = operationID
         model.deletingModel = name
-        model.deleteError = ""
+        model.deleteFailures.clear(for: name)
         Task { @MainActor in
             let error = await llmModels.delete(name)
             guard llmMutationID == operationID else { return }
             llmMutationID = nil
-            model.deletingModel = nil
             if let error {
-                model.deleteError = "Couldn't uninstall \(name): \(error)"
+                model.deleteFailures.record("Couldn't uninstall \(name): \(error)", for: name)
+                model.deletingModel = nil
             } else {
-                refreshLLMModels()
+                model.deletingModel = nil
+                refreshLLMModels(preservingInventory: true, inspecting: nil)
             }
         }
     }

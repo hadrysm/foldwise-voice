@@ -254,7 +254,7 @@ Clone, resolve dependencies, and run a development build:
 git clone https://github.com/hadrysm/foldwise-voice.git
 cd foldwise-voice
 swift package resolve
-swift run
+swift run FoldWiseVoice --show-settings
 ```
 
 Useful commands:
@@ -262,7 +262,7 @@ Useful commands:
 ```sh
 swift build                         # debug build
 swift run -c release                # optimized run from the repository
-python3 scripts/build_swift_app.py  # build and install FoldWise Voice Native.app
+python3 scripts/build_swift_app.py  # install a dev app that opens Settings
 swift test                          # complete Swift test suite
 ./scripts/coverage.sh               # tests plus the repository coverage policy
 swiftformat --lint .                # verify formatting without rewriting files

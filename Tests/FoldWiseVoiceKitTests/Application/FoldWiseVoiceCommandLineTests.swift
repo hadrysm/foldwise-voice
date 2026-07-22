@@ -28,27 +28,43 @@ final class FoldWiseVoiceCommandLineTests: XCTestCase {
     }
 
     func testUnknownAndPositionalArgumentsRemainIgnored() {
-        let action = FoldWiseVoiceCommandLine().evaluate(arguments: [
+        let action = FoldWiseVoiceCommandLine(environment: [:]).evaluate(arguments: [
             "FoldWiseVoice", "--unknown", "positional",
         ])
 
-        XCTAssertEqual(action, .launch(configPath: nil))
+        XCTAssertEqual(action, .launch(configPath: nil, showSettings: false))
+    }
+
+    func testShowSettingsOptionRequestsVisibleWorkspace() {
+        let action = FoldWiseVoiceCommandLine(environment: [:]).evaluate(arguments: [
+            "FoldWiseVoice", "--show-settings",
+        ])
+
+        XCTAssertEqual(action, .launch(configPath: nil, showSettings: true))
+    }
+
+    func testShowSettingsEnvironmentRequestsVisibleWorkspace() {
+        let action = FoldWiseVoiceCommandLine(environment: [
+            "FOLDWISE_SHOW_SETTINGS": "1",
+        ]).evaluate(arguments: ["FoldWiseVoice"])
+
+        XCTAssertEqual(action, .launch(configPath: nil, showSettings: true))
     }
 
     func testMissingConfigValueRemainsAnEmptyOverride() {
-        let action = FoldWiseVoiceCommandLine().evaluate(arguments: [
+        let action = FoldWiseVoiceCommandLine(environment: [:]).evaluate(arguments: [
             "FoldWiseVoice", "--config",
         ])
 
-        XCTAssertEqual(action, .launch(configPath: nil))
+        XCTAssertEqual(action, .launch(configPath: nil, showSettings: false))
     }
 
     func testConfigValueMayBeginWithOptionPrefix() {
-        let action = FoldWiseVoiceCommandLine().evaluate(arguments: [
+        let action = FoldWiseVoiceCommandLine(environment: [:]).evaluate(arguments: [
             "FoldWiseVoice", "--config", "--mode",
         ])
 
-        XCTAssertEqual(action, .launch(configPath: "--mode"))
+        XCTAssertEqual(action, .launch(configPath: "--mode", showSettings: false))
     }
 
     func testPrintConfigRejectsRecoveryWithoutPrintingFallbackDefaults() throws {
