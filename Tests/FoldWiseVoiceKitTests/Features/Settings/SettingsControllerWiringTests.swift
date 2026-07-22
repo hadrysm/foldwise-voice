@@ -37,7 +37,10 @@ private extension SettingsController {
         statsStore: StatsStore,
         inputDevices: (any AudioInputStateProviding)? = nil,
         hotkeys: HotkeyBindingCoordinator? = nil,
-        captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
+        captureGate: ShortcutCaptureGate = ShortcutCaptureGate(),
+        now: @escaping () -> Date = Date.init,
+        calendar: Calendar = .autoupdatingCurrent,
+        notificationCenter: NotificationCenter = .default
     ) {
         self.init(
             config: config,
@@ -49,7 +52,10 @@ private extension SettingsController {
             asrLifecycle: ASRModelLifecycle(
                 storedSelection: config.asrModel,
                 adapters: []
-            )
+            ),
+            now: now,
+            calendar: calendar,
+            notificationCenter: notificationCenter
         )
     }
 }
@@ -103,6 +109,33 @@ final class SettingsControllerWiringTests: XCTestCase {
         controller.model.onClearHistory?()
 
         XCTAssertEqual(stats.resetCount, 1)
+    }
+
+    func testCalendarDayAndTimeZoneNotificationsRefreshControllerOwnedStreak() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let notifications = NotificationCenter()
+        let activeDay = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 20, hour: 12
+        )))
+        var currentNow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: activeDay))
+        let stats = WiringStatsStore()
+        stats.advance(on: activeDay, calendar: calendar)
+        let controller = SettingsController(
+            config: makeConfig(),
+            historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("boundary-history.jsonl")),
+            statsStore: stats,
+            now: { currentNow },
+            calendar: calendar,
+            notificationCenter: notifications
+        )
+
+        notifications.post(name: .NSCalendarDayChanged, object: nil)
+        let afterDayChange = controller.model.currentStreak
+        currentNow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: currentNow))
+        notifications.post(name: .NSSystemTimeZoneDidChange, object: nil)
+
+        XCTAssertEqual([afterDayChange, controller.model.currentStreak], [1, nil])
     }
 
     func testPreferenceCallbackReachesWorkflow() {

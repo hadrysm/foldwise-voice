@@ -14,15 +14,19 @@ final class SettingsController {
     private let hotkeys: HotkeyBindingCoordinator?
     private let captureGate: ShortcutCaptureGate
     private let asrLifecycle: ASRModelLifecycle
+    private let now: () -> Date
+    private let calendar: Calendar
+    private let notificationCenter: NotificationCenter
     let model = SettingsModel()
     private lazy var workflow = SettingsWorkflow(
         config: config,
         model: model,
         historyStore: historyStore,
-        now: Date.init,
+        now: now,
         scheduleStatusClear: { [weak self] clear in self?.scheduleStatusClear(clear) },
         copy: Self.copyToPasteboard,
         statsStore: statsStore,
+        calendar: calendar,
         reportUpdate: { [weak self] version in self?.onUpdateAvailable?(version) },
         updateHotkeys: { [weak self] bindings in
             if let hotkeys = self?.hotkeys {
@@ -39,6 +43,7 @@ final class SettingsController {
     private var statusClearTask: Task<Void, Never>?
     private var closeObserver: NSObjectProtocol?
     private var resignObserver: NSObjectProtocol?
+    private var boundaryObservers: [NSObjectProtocol] = []
 
     /// Wired by AppDelegate so a manual check here also lights up the
     /// menu-bar "Update Available" item.
@@ -49,7 +54,10 @@ final class SettingsController {
         inputDevices: (any AudioInputStateProviding)? = nil,
         hotkeys: HotkeyBindingCoordinator? = nil,
         captureGate: ShortcutCaptureGate = ShortcutCaptureGate(),
-        asrLifecycle: ASRModelLifecycle
+        asrLifecycle: ASRModelLifecycle,
+        now: @escaping () -> Date = Date.init,
+        calendar: Calendar = .autoupdatingCurrent,
+        notificationCenter: NotificationCenter = .default
     ) {
         self.config = config
         self.historyStore = historyStore
@@ -58,6 +66,9 @@ final class SettingsController {
         self.hotkeys = hotkeys
         self.captureGate = captureGate
         self.asrLifecycle = asrLifecycle
+        self.now = now
+        self.calendar = calendar
+        self.notificationCenter = notificationCenter
         if let inputDevices {
             model.inputState = inputDevices.inputState
             inputDevices.onInputStateChange = { [weak self] state in
@@ -65,6 +76,7 @@ final class SettingsController {
             }
         }
         wire()
+        observeCalendarBoundaries()
         workflow.observeHistoryAppends()
     }
 
@@ -74,6 +86,9 @@ final class SettingsController {
         }
         if let resignObserver {
             NotificationCenter.default.removeObserver(resignObserver)
+        }
+        for observer in boundaryObservers {
+            notificationCenter.removeObserver(observer)
         }
     }
 
@@ -127,6 +142,20 @@ final class SettingsController {
         model.onClearHistory = { [weak self] in self?.workflow.clearHistory() }
         model.onResetConfiguration = { [weak self] in self?.resetConfiguration() }
         model.onQuitRecovery = { NSApp.terminate(nil) }
+    }
+
+    private func observeCalendarBoundaries() {
+        for name in [Notification.Name.NSCalendarDayChanged, .NSSystemTimeZoneDidChange] {
+            boundaryObservers.append(notificationCenter.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.workflow.refreshStreak()
+                }
+            })
+        }
     }
 
     private func build() {
