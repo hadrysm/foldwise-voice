@@ -531,6 +531,134 @@ final class StatsProjectionTests: XCTestCase {
         XCTAssertEqual(executionCount, 5)
     }
 
+    func testCacheReusesProjectionWhenHistoryPresentationMetadataChanges() throws {
+        var executionCount = 0
+        let utc = try calendar(locale: "en_US", timeZone: "UTC")
+        let createdAt = try date(2026, 7, 1, 8, calendar: utc)
+        let original = entry(rawText: "spoken words", createdAt: createdAt, durationMs: 1000)
+        var updated = original
+        updated.text = "Rewritten display text"
+        updated.isPolished = true
+        updated.modeName = "Email"
+        updated.wordCount = 42
+        updated.sourceApp = "Notes"
+        updated.flagged = true
+        updated.flagReason = "Review"
+        let cache = StatsProjectionCache(now: { createdAt }, project: { input, now, calendar, locale in
+            executionCount += 1
+            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
+        })
+
+        _ = cache.resolve(
+            .init(entries: [original], currentStreak: 1, savingEnabled: true),
+            calendar: utc,
+            locale: Locale(identifier: "en_US")
+        )
+        _ = cache.resolve(
+            .init(entries: [updated], currentStreak: 1, savingEnabled: true),
+            calendar: utc,
+            locale: Locale(identifier: "en_US")
+        )
+
+        XCTAssertEqual(executionCount, 1)
+    }
+
+    func testCacheInvalidatesProjectionWhenRawTranscriptChanges() throws {
+        let utc = try calendar(locale: "en_US", timeZone: "UTC")
+        let createdAt = try date(2026, 7, 1, 8, calendar: utc)
+        let original = entry(rawText: "original", createdAt: createdAt, durationMs: 1000)
+        let updated = entry(rawText: "updated", createdAt: createdAt, durationMs: 1000)
+
+        XCTAssertEqual(
+            cacheExecutionCount(first: [original], second: [updated], now: createdAt, calendar: utc),
+            2
+        )
+    }
+
+    func testCacheInvalidatesProjectionWhenCreationTimeChanges() throws {
+        let utc = try calendar(locale: "en_US", timeZone: "UTC")
+        let createdAt = try date(2026, 7, 1, 8, calendar: utc)
+        let updatedAt = try date(2026, 7, 2, 8, calendar: utc)
+        let original = entry(rawText: "words", createdAt: createdAt, durationMs: 1000)
+        let updated = entry(rawText: "words", createdAt: updatedAt, durationMs: 1000)
+
+        XCTAssertEqual(
+            cacheExecutionCount(first: [original], second: [updated], now: createdAt, calendar: utc),
+            2
+        )
+    }
+
+    func testCacheInvalidatesProjectionWhenDurationChanges() throws {
+        let utc = try calendar(locale: "en_US", timeZone: "UTC")
+        let createdAt = try date(2026, 7, 1, 8, calendar: utc)
+        let original = entry(rawText: "words", createdAt: createdAt, durationMs: 1000)
+        let updated = entry(rawText: "words", createdAt: createdAt, durationMs: 2000)
+
+        XCTAssertEqual(
+            cacheExecutionCount(first: [original], second: [updated], now: createdAt, calendar: utc),
+            2
+        )
+    }
+
+    func testCacheInvalidatesProjectionWhenMatchingSessionMultiplicityChanges() throws {
+        let utc = try calendar(locale: "en_US", timeZone: "UTC")
+        let createdAt = try date(2026, 7, 1, 8, calendar: utc)
+        let first = entry(rawText: "words", createdAt: createdAt, durationMs: 1000)
+        let second = entry(rawText: "words", createdAt: createdAt, durationMs: 1000)
+
+        XCTAssertEqual(
+            cacheExecutionCount(first: [first], second: [first, second], now: createdAt, calendar: utc),
+            2
+        )
+    }
+
+    func testCacheInvalidatesProjectionWhenCurrentStreakChanges() throws {
+        let utc = try calendar(locale: "en_US", timeZone: "UTC")
+        let createdAt = try date(2026, 7, 1, 8, calendar: utc)
+        let saved = entry(rawText: "words", createdAt: createdAt, durationMs: 1000)
+
+        XCTAssertEqual(
+            cacheExecutionCount(
+                first: [saved],
+                second: [saved],
+                firstStreak: 1,
+                secondStreak: 2,
+                now: createdAt,
+                calendar: utc
+            ),
+            2
+        )
+    }
+
+    private func cacheExecutionCount(
+        first: [HistoryEntry],
+        second: [HistoryEntry],
+        firstStreak: Int? = 1,
+        secondStreak: Int? = 1,
+        now: Date,
+        calendar: Calendar
+    ) -> Int {
+        var executionCount = 0
+        let cache = StatsProjectionCache(now: { now }, project: { input, now, calendar, locale in
+            executionCount += 1
+            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
+        })
+        let locale = Locale(identifier: "en_US")
+
+        _ = cache.resolve(
+            .init(entries: first, currentStreak: firstStreak, savingEnabled: true),
+            calendar: calendar,
+            locale: locale
+        )
+        _ = cache.resolve(
+            .init(entries: second, currentStreak: secondStreak, savingEnabled: true),
+            calendar: calendar,
+            locale: locale
+        )
+
+        return executionCount
+    }
+
     private func calendar(locale: String, timeZone: String) throws -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: locale)

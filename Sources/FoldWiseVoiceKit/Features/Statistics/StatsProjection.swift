@@ -541,8 +541,22 @@ struct StatsProjection: Equatable {
 final class StatsProjectionCache {
     typealias Project = (StatsProjection.Input, Date, Calendar, Locale) -> StatsProjection
 
+    private struct EntryKey: Hashable {
+        let createdAt: Date
+        let rawText: String
+        let durationMs: Int?
+
+        init(_ entry: HistoryEntry) {
+            createdAt = entry.createdAt
+            rawText = entry.rawText
+            durationMs = entry.durationMs
+        }
+    }
+
     private struct Key: Equatable {
-        let input: StatsProjection.Input
+        let entries: [EntryKey: Int]
+        let currentStreak: Int?
+        let savingEnabled: Bool
         let day: Date
         let calendarIdentifier: String
         let timeZoneIdentifier: String
@@ -570,7 +584,11 @@ final class StatsProjectionCache {
     ) -> StatsProjection {
         let currentNow = now()
         let key = Key(
-            input: input,
+            entries: input.entries.reduce(into: [:]) { counts, entry in
+                counts[EntryKey(entry), default: 0] += 1
+            },
+            currentStreak: input.currentStreak,
+            savingEnabled: input.savingEnabled,
             day: calendar.startOfDay(for: currentNow),
             calendarIdentifier: String(describing: calendar.identifier),
             timeZoneIdentifier: calendar.timeZone.identifier,
