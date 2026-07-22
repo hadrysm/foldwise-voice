@@ -247,7 +247,7 @@ struct ModelsCombinedPane: View {
                     if row.kind == .utility {
                         utilityLedgerRow(row)
                     } else {
-                        modelLedgerRow(row)
+                        modelLedgerRow(row, isHighlighted: isInspected)
                     }
                     if !showsInlineCancel {
                         ledgerState(row)
@@ -274,7 +274,10 @@ struct ModelsCombinedPane: View {
         .id(row.id)
     }
 
-    private func modelLedgerRow(_ row: ModelsRowPresentation) -> some View {
+    private func modelLedgerRow(
+        _ row: ModelsRowPresentation,
+        isHighlighted: Bool
+    ) -> some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
@@ -301,8 +304,8 @@ struct ModelsCombinedPane: View {
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
                 .frame(width: 42, alignment: .trailing)
-            rating(row.speed)
-            rating(row.quality)
+            rating(row.speed, isHighlighted: isHighlighted)
+            rating(row.quality, isHighlighted: isHighlighted)
         }
         .contentShape(Rectangle())
     }
@@ -383,16 +386,31 @@ struct ModelsCombinedPane: View {
         }
     }
 
-    private func rating(_ rating: ModelsRating) -> some View {
-        Text(rating.displayText)
-            .font(Theme.ui(9.5, .medium))
-            .foregroundStyle(
-                rating == .notRated
-                    ? AnyShapeStyle(Theme.textTertiary)
-                    : AnyShapeStyle(Theme.textSecondary)
-            )
-            .frame(width: 42, alignment: .center)
-            .accessibilityLabel(rating.accessibilityText)
+    private func rating(
+        _ rating: ModelsRating,
+        isHighlighted: Bool
+    ) -> some View {
+        Group {
+            switch rating {
+            case let .rated(value):
+                let activeColor = isHighlighted ? Theme.accent : Theme.textSecondary
+                HStack(spacing: 2) {
+                    ForEach(1 ... 5, id: \.self) { mark in
+                        Capsule()
+                            .fill(mark <= value ? activeColor : Theme.hairline)
+                            .frame(width: 5, height: 10)
+                    }
+                }
+            case .notRated:
+                Text("—")
+                    .font(Theme.ui(9.5, .medium))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .frame(width: 42, height: 14, alignment: .center)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(rating.accessibilityText)
+        .help(rating.accessibilityText)
     }
 
     private func inspector(_ presentation: ModelsInspectorPresentation?) -> some View {
