@@ -454,6 +454,18 @@ final class StatsPaneHostedTests: XCTestCase {
         XCTAssertEqual(model.pane, .history)
     }
 
+    func testHostedHistoryButtonRefreshesAccessibilityLabelWhenTitleChanges() throws {
+        let hosting = host(StatsHistoryButton(title: "Open History", action: {}))
+        let initialButton = try XCTUnwrap(Self.button(named: "Open History", in: hosting))
+        XCTAssertEqual(initialButton.accessibilityLabel(), "Open History")
+
+        hosting.rootView = StatsHistoryButton(title: "View History", action: {})
+        render(hosting)
+
+        let updatedButton = try XCTUnwrap(Self.button(named: "View History", in: hosting))
+        XCTAssertEqual(updatedButton.accessibilityLabel(), "View History")
+    }
+
     private static func button(named title: String, in view: NSView?) -> NSButton? {
         guard let view else { return nil }
         if let button = view as? NSButton, button.title == title {

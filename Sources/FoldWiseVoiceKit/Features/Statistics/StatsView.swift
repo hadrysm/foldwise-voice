@@ -129,7 +129,7 @@ private struct StatsNotice: View {
     }
 }
 
-private struct StatsHistoryButton: NSViewRepresentable {
+struct StatsHistoryButton: NSViewRepresentable {
     let title: String
     let action: () -> Void
 
@@ -153,6 +153,7 @@ private struct StatsHistoryButton: NSViewRepresentable {
     func updateNSView(_ button: NSButton, context: Context) {
         button.title = title
         button.contentTintColor = NSColor(Theme.accent)
+        button.setAccessibilityLabel(title)
         context.coordinator.action = action
     }
 
