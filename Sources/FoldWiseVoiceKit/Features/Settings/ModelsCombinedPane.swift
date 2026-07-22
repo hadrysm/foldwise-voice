@@ -94,6 +94,7 @@ struct ModelsCombinedPane: View {
             }
             .background(Theme.sidebarBackground.opacity(0.46))
             .focusable(!presentation.ledgerRowIDs.isEmpty)
+            .focusEffectDisabled()
             .focused(
                 $focusedControl,
                 equals: presentation.inspector.map { .ledgerInspection($0.id) } ?? .ledger
@@ -389,16 +390,12 @@ struct ModelsCombinedPane: View {
     }
 
     private func inspector(_ presentation: ModelsInspectorPresentation?) -> some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                if let presentation {
-                    inspectorBody(presentation)
-                } else {
-                    neutralInspector
-                }
+        ScrollView {
+            if let presentation {
+                inspectorBody(presentation)
+            } else {
+                neutralInspector
             }
-            Divider()
-            inspectorFooter(presentation)
         }
         .background(Theme.windowBackground)
     }
@@ -451,6 +448,7 @@ struct ModelsCombinedPane: View {
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            inspectorManagement(presentation)
             VStack(alignment: .leading, spacing: 8) {
                 Text(presentation.semanticLabel.uppercased())
                     .font(Theme.sectionLabel)
@@ -481,11 +479,11 @@ struct ModelsCombinedPane: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func inspectorFooter(_ presentation: ModelsInspectorPresentation?) -> some View {
+    private func inspectorManagement(_ presentation: ModelsInspectorPresentation) -> some View {
         HStack(spacing: 10) {
-            if let progress = presentation?.progress {
-                inspectorProgress(progress, id: presentation?.id)
-            } else if let presentation {
+            if let progress = presentation.progress {
+                inspectorProgress(progress, id: presentation.id)
+            } else {
                 primaryAction(
                     presentation.primaryAction,
                     id: presentation.id,
@@ -493,8 +491,7 @@ struct ModelsCombinedPane: View {
                 )
             }
             Spacer()
-            if let presentation,
-               presentation.progress == nil,
+            if presentation.progress == nil,
                let action = presentation.destructiveAction {
                 destructiveMenu(
                     action,
@@ -503,9 +500,7 @@ struct ModelsCombinedPane: View {
                 )
             }
         }
-        .padding(.horizontal, 26)
-        .frame(minHeight: 58)
-        .background(Theme.windowBackground)
+        .frame(maxWidth: .infinity)
     }
 
     private func inspectorProgress(
@@ -788,11 +783,12 @@ private extension ModelsFocusTarget {
     }
 }
 
-private extension View {
-    func modelsLedgerRowChrome(
-        isInspected: Bool,
-        isKeyboardFocused: Bool
-    ) -> some View {
+private struct ModelsLedgerRowChrome: ViewModifier {
+    let isInspected: Bool
+    let isKeyboardFocused: Bool
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
         let borderColor: Color = if isKeyboardFocused {
             Theme.accent
         } else if isInspected {
@@ -801,13 +797,13 @@ private extension View {
             .clear
         }
 
-        return padding(.horizontal, 10)
+        content
+            .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                isInspected ? Theme.activeNavBackground : Color.clear,
-                in: RoundedRectangle(cornerRadius: 7)
-            )
+            .background(ModelsLedgerRowBackground(
+                isHighlighted: isInspected || isHovered
+            ))
             .overlay {
                 RoundedRectangle(cornerRadius: 7)
                     .strokeBorder(
@@ -816,6 +812,28 @@ private extension View {
                     )
             }
             .contentShape(Rectangle())
+            .onHover { isHovered = $0 }
+    }
+}
+
+struct ModelsLedgerRowBackground: View {
+    let isHighlighted: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 7)
+            .fill(isHighlighted ? Theme.activeNavBackground : Color.clear)
+    }
+}
+
+private extension View {
+    func modelsLedgerRowChrome(
+        isInspected: Bool,
+        isKeyboardFocused: Bool
+    ) -> some View {
+        modifier(ModelsLedgerRowChrome(
+            isInspected: isInspected,
+            isKeyboardFocused: isKeyboardFocused
+        ))
     }
 }
 
