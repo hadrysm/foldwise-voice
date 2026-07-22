@@ -304,8 +304,10 @@ struct ModelsCombinedPane: View {
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
                 .frame(width: 42, alignment: .trailing)
-            rating(row.speed, isHighlighted: isHighlighted)
-            rating(row.quality, isHighlighted: isHighlighted)
+            ModelsRatingMeter(rating: row.speed, isHighlighted: isHighlighted)
+                .frame(width: 42, height: 14)
+            ModelsRatingMeter(rating: row.quality, isHighlighted: isHighlighted)
+                .frame(width: 42, height: 14)
         }
         .contentShape(Rectangle())
     }
@@ -384,33 +386,6 @@ struct ModelsCombinedPane: View {
                 .frame(width: 64, alignment: .trailing)
                 .accessibilityHidden(true)
         }
-    }
-
-    private func rating(
-        _ rating: ModelsRating,
-        isHighlighted: Bool
-    ) -> some View {
-        Group {
-            switch rating {
-            case let .rated(value):
-                let activeColor = isHighlighted ? Theme.accent : Theme.textSecondary
-                HStack(spacing: 2) {
-                    ForEach(1 ... 5, id: \.self) { mark in
-                        Capsule()
-                            .fill(mark <= value ? activeColor : Theme.hairline)
-                            .frame(width: 5, height: 10)
-                    }
-                }
-            case .notRated:
-                Text("—")
-                    .font(Theme.ui(9.5, .medium))
-                    .foregroundStyle(Theme.textTertiary)
-            }
-        }
-        .frame(width: 42, height: 14, alignment: .center)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(rating.accessibilityText)
-        .help(rating.accessibilityText)
     }
 
     private func inspector(_ presentation: ModelsInspectorPresentation?) -> some View {
