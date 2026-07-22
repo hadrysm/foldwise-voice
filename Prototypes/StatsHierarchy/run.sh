@@ -10,5 +10,4 @@ xcrun swiftc -parse-as-library \
   "$repo_root/Prototypes/StatsHierarchy/StatsHierarchyPrototype.swift" \
   -o "$prototype_bin"
 
-exec "$prototype_bin"
-
+exec "$prototype_bin" "$@"

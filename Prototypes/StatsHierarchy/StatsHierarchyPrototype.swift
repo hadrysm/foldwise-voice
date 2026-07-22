@@ -1,18 +1,19 @@
-// THROWAWAY PROTOTYPE — visual decision aid for Wayfinder ticket
-// "Prototype the monthly Stats hierarchy in the FoldWise theme".
+// THROWAWAY PROTOTYPE — interaction decision aid for Wayfinder ticket
+// "Prototype resolved calendar states and interactions".
 //
-// Three native variants of the existing Stats pane, switchable from the
-// bottom review bar. The production hierarchy is fixed: four headline metrics
-// above one full-width Monthly activity calendar. The prototype varies only
-// the visual structure used to express that hierarchy.
+// One approved native Stats layout with four representative data states,
+// switchable from the bottom review bar. This is intentionally not production
+// code: it makes the resolved intensity, detail, compact, accessibility, and
+// motion decisions concrete enough to review together.
 
 import AppKit
 import SwiftUI
 
-private enum PrototypeVariant: String, CaseIterable, Identifiable {
-    case ledger = "A"
-    case rhythm = "B"
-    case tiles = "C"
+private enum PrototypeScenario: String, CaseIterable, Identifiable {
+    case activity
+    case noHistory = "no-history"
+    case savingOff = "saving-off"
+    case savingOffEmpty = "saving-off-empty"
 
     var id: String {
         rawValue
@@ -20,10 +21,19 @@ private enum PrototypeVariant: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .ledger: "Quiet ledger"
-        case .rhythm: "Week rhythm"
-        case .tiles: "Activity tiles"
+        case .activity: "Retained activity"
+        case .noHistory: "No history"
+        case .savingOff: "Saving off"
+        case .savingOffEmpty: "Saving off · empty"
         }
+    }
+
+    var hasRetainedHistory: Bool {
+        self == .activity || self == .savingOff
+    }
+
+    var isSavingOff: Bool {
+        self == .savingOff || self == .savingOffEmpty
     }
 }
 
@@ -37,6 +47,15 @@ private enum PrototypeAppearance: String, CaseIterable, Identifiable {
 
     var scheme: ColorScheme {
         self == .light ? .light : .dark
+    }
+}
+
+private enum PrototypeMotion: String, CaseIterable, Identifiable {
+    case normal = "Motion"
+    case reduced = "Reduced"
+
+    var id: String {
+        rawValue
     }
 }
 
@@ -69,15 +88,34 @@ private struct Metric: Identifiable {
     }
 }
 
+private enum TimingCoverage {
+    case complete(dictatingMinutes: Int, savedMinutes: Int)
+    case partial
+    case unavailable
+}
+
 private struct ActivityDay: Identifiable {
     let day: Int
     let words: Int
+    let sessions: Int
+    let timing: TimingCoverage
 
     var id: Int {
         day
     }
 
-    /// Illustrative only. The production thresholds are a later decision.
+    var isToday: Bool {
+        day == prototypeTodayDay
+    }
+
+    var isFuture: Bool {
+        day > prototypeTodayDay
+    }
+
+    var hasActivity: Bool {
+        words > 0
+    }
+
     var level: Int {
         switch words {
         case 0: 0
@@ -88,37 +126,107 @@ private struct ActivityDay: Identifiable {
         default: 5
         }
     }
+
+    var date: Date {
+        prototypeCalendar.date(
+            byAdding: .day,
+            value: day - 1,
+            to: prototypeMonthStart
+        ) ?? prototypeMonthStart
+    }
+
+    var fullDate: String {
+        date.formatted(.dateTime.weekday(.wide).month(.wide).day())
+    }
+
+    var activityLine: String {
+        let sessionText = sessions == 1 ? "1 session" : "\(sessions.formatted()) sessions"
+        return "\(words.formatted()) spoken words across \(sessionText)"
+    }
+
+    var timingLine: String {
+        switch timing {
+        case let .complete(dictatingMinutes, savedMinutes):
+            "\(minuteText(dictatingMinutes)) dictating · about \(minuteText(savedMinutes)) saved"
+        case .partial:
+            "Timing unavailable for some sessions"
+        case .unavailable:
+            "Timing unavailable"
+        }
+    }
+
+    var accessibilityLabel: String {
+        isToday ? "\(fullDate), today" : fullDate
+    }
+
+    var accessibilityValue: String {
+        if !hasActivity {
+            return "No dictated words. No saved Dictation sessions"
+        }
+        return "\(activityLine). \(timingLine)"
+    }
 }
 
-private let metrics = [
-    Metric(
-        title: "Words dictated", value: "18,642", detail: "from saved history",
-        symbol: "quote.bubble"
-    ),
-    Metric(
-        title: "Speaking speed", value: "137 wpm", detail: "pauses included",
-        symbol: "waveform"
-    ),
-    Metric(
-        title: "Current streak", value: "6 days", detail: "best: 14 days",
-        symbol: "flame"
-    ),
-    Metric(
-        title: "Time saved", value: "~1 hr 22 min", detail: "versus 40 wpm typing",
-        symbol: "clock.arrow.circlepath"
-    ),
-]
+private let prototypeCalendar: Calendar = {
+    var calendar = Calendar.autoupdatingCurrent
+    calendar.timeZone = .autoupdatingCurrent
+    return calendar
+}()
 
-private let activityWords = [
+private let prototypeMonthStart: Date = prototypeCalendar
+    .date(from: DateComponents(year: 2026, month: 7, day: 1)) ?? Date()
+
+private let prototypeTodayDay = 22
+
+private let sampleActivityWords = [
     0, 540, 1210, 320, 0, 0, 840,
     1560, 980, 0, 440, 1910, 710, 0,
     210, 680, 1310, 1720, 0, 360, 790,
-    1100, 1450, 620, 0, 940, 1830, 520,
-    760, 1280, 430,
+    1100, 0, 0, 0, 0, 0, 0,
+    0, 0, 0,
 ]
 
-private let activityDays = activityWords.enumerated().map {
-    ActivityDay(day: $0.offset + 1, words: $0.element)
+private func makeActivityDays(hasRetainedHistory: Bool) -> [ActivityDay] {
+    sampleActivityWords.enumerated().map { index, sampleWords in
+        let day = index + 1
+        let words = hasRetainedHistory && day <= prototypeTodayDay ? sampleWords : 0
+        let sessions = words == 0 ? 0 : max(1, min(6, words / 360))
+        let timing: TimingCoverage = switch day {
+        case 9: .partial
+        case 12: .unavailable
+        default: .complete(
+                dictatingMinutes: max(1, words / 135),
+                savedMinutes: max(1, words / 82)
+            )
+        }
+        return ActivityDay(day: day, words: words, sessions: sessions, timing: timing)
+    }
+}
+
+private func metrics(for scenario: PrototypeScenario) -> [Metric] {
+    let hasHistory = scenario.hasRetainedHistory
+    return [
+        Metric(
+            title: "Words dictated", value: hasHistory ? "14,680" : "0",
+            detail: "from saved history", symbol: "quote.bubble"
+        ),
+        Metric(
+            title: "Speaking speed", value: hasHistory ? "137 wpm" : "—",
+            detail: "pauses included", symbol: "waveform"
+        ),
+        Metric(
+            title: "Current streak", value: hasHistory ? "3 days" : "—",
+            detail: "through today", symbol: "flame"
+        ),
+        Metric(
+            title: "Time saved", value: hasHistory ? "~1 hr 04 min" : "—",
+            detail: "versus 40 wpm typing", symbol: "clock.arrow.circlepath"
+        ),
+    ]
+}
+
+private func minuteText(_ minutes: Int) -> String {
+    minutes == 1 ? "1 min" : "\(minutes.formatted()) min"
 }
 
 @main
@@ -146,42 +254,54 @@ private enum StatsHierarchyPrototypeApp {
             at: output,
             withIntermediateDirectories: true
         )
+        if let staleFiles = try? FileManager.default.contentsOfDirectory(
+            at: output,
+            includingPropertiesForKeys: nil
+        ) {
+            for file in staleFiles where file.pathExtension == "png" {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
 
         for appearance in PrototypeAppearance.allCases {
-            for variant in PrototypeVariant.allCases {
-                let root = PrototypeRoot(
-                    initialVariant: variant,
-                    initialAppearance: appearance,
-                    initialPreset: .compact
-                )
-                .frame(width: 880, height: 640)
-                let hosting = NSHostingView(rootView: root)
-                hosting.frame = NSRect(origin: .zero, size: WindowPreset.compact.size)
-                hosting.appearance = NSAppearance(
-                    named: appearance == .light ? .aqua : .darkAqua
-                )
-                let window = NSWindow(
-                    contentRect: hosting.frame,
-                    styleMask: [.borderless],
-                    backing: .buffered,
-                    defer: false
-                )
-                window.contentView = hosting
-                window.appearance = hosting.appearance
-                window.orderFrontRegardless()
-                RunLoop.main.run(until: Date().addingTimeInterval(0.08))
-                hosting.layoutSubtreeIfNeeded()
-                window.displayIfNeeded()
-                guard
-                    let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)
-                else { continue }
-                hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-                guard let png = bitmap.representation(using: .png, properties: [:]) else {
-                    continue
+            for preset in [WindowPreset.compact, .wide] {
+                for scenario in PrototypeScenario.allCases {
+                    let root = PrototypeRoot(
+                        initialScenario: scenario,
+                        initialAppearance: appearance,
+                        initialPreset: preset,
+                        initialMotion: .normal,
+                        initialDetailDay: scenario.hasRetainedHistory ? 8 : 9
+                    )
+                    .frame(width: preset.size.width, height: preset.size.height)
+                    let hosting = NSHostingView(rootView: root)
+                    hosting.frame = NSRect(origin: .zero, size: preset.size)
+                    hosting.appearance = NSAppearance(
+                        named: appearance == .light ? .aqua : .darkAqua
+                    )
+                    let window = NSWindow(
+                        contentRect: hosting.frame,
+                        styleMask: [.borderless],
+                        backing: .buffered,
+                        defer: false
+                    )
+                    window.contentView = hosting
+                    window.appearance = hosting.appearance
+                    window.orderFrontRegardless()
+                    RunLoop.main.run(until: Date().addingTimeInterval(0.08))
+                    hosting.layoutSubtreeIfNeeded()
+                    window.displayIfNeeded()
+                    guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)
+                    else { continue }
+                    hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+                    guard let png = bitmap.representation(using: .png, properties: [:]) else {
+                        continue
+                    }
+                    let presetName = preset == .compact ? "compact" : "wide"
+                    let name = "\(scenario.rawValue)-\(presetName)-\(appearance.rawValue.lowercased()).png"
+                    try? png.write(to: output.appendingPathComponent(name))
+                    window.orderOut(nil)
                 }
-                let name = "\(variant.rawValue.lowercased())-\(appearance.rawValue.lowercased()).png"
-                try? png.write(to: output.appendingPathComponent(name))
-                window.orderOut(nil)
             }
         }
     }
@@ -192,10 +312,9 @@ private final class PrototypeAppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let content = PrototypeRoot()
-        let hosting = NSHostingController(rootView: content)
+        let hosting = NSHostingController(rootView: PrototypeRoot())
         let window = NSWindow(contentViewController: hosting)
-        window.title = "FoldWise Stats hierarchy prototype"
+        window.title = "FoldWise Stats states prototype"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
@@ -214,18 +333,24 @@ private final class PrototypeAppDelegate: NSObject, NSApplicationDelegate {
 }
 
 private struct PrototypeRoot: View {
-    @State private var variant = PrototypeVariant.ledger
-    @State private var appearance = PrototypeAppearance.light
-    @State private var preset = WindowPreset.standard
+    @State private var scenario: PrototypeScenario
+    @State private var appearance: PrototypeAppearance
+    @State private var preset: WindowPreset
+    @State private var motion: PrototypeMotion
+    private let initialDetailDay: Int?
 
     init(
-        initialVariant: PrototypeVariant = .ledger,
+        initialScenario: PrototypeScenario = .activity,
         initialAppearance: PrototypeAppearance = .light,
-        initialPreset: WindowPreset = .standard
+        initialPreset: WindowPreset = .standard,
+        initialMotion: PrototypeMotion = .normal,
+        initialDetailDay: Int? = nil
     ) {
-        _variant = State(initialValue: initialVariant)
+        _scenario = State(initialValue: initialScenario)
         _appearance = State(initialValue: initialAppearance)
         _preset = State(initialValue: initialPreset)
+        _motion = State(initialValue: initialMotion)
+        self.initialDetailDay = initialDetailDay
     }
 
     var body: some View {
@@ -234,17 +359,22 @@ private struct PrototypeRoot: View {
                 AppTitlebar()
                 Rectangle().fill(Theme.hairline).frame(height: 1)
                 HStack(spacing: 0) {
-                    Sidebar(compact: geometry.size.width < 940)
+                    Sidebar(compact: geometry.size.width < Theme.homeCompactBreakpoint)
                     Rectangle().fill(Theme.hairline).frame(width: 1)
-                    StatsCanvas(variant: variant)
+                    StatsCanvas(
+                        scenario: scenario,
+                        reduceMotion: motion == .reduced,
+                        initialDetailDay: initialDetailDay
+                    )
                 }
             }
             .background(Theme.windowBackground)
             .overlay(alignment: .bottom) {
                 ReviewBar(
-                    variant: $variant,
+                    scenario: $scenario,
                     appearance: $appearance,
-                    preset: $preset
+                    preset: $preset,
+                    motion: $motion
                 )
                 .padding(.bottom, 12)
             }
@@ -302,9 +432,7 @@ private struct Sidebar: View {
                     if !compact {
                         Text(item.0)
                             .font(active ? Theme.navActive : Theme.nav)
-                            .foregroundStyle(
-                                active ? Theme.textPrimary : Theme.textSecondary
-                            )
+                            .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
                         Spacer()
                     }
                 }
@@ -338,7 +466,11 @@ private struct Sidebar: View {
 }
 
 private struct StatsCanvas: View {
-    let variant: PrototypeVariant
+    let scenario: PrototypeScenario
+    let reduceMotion: Bool
+    let initialDetailDay: Int?
+
+    @State private var showHistoryPrototypeAlert = false
 
     var body: some View {
         ScrollView {
@@ -353,70 +485,78 @@ private struct StatsCanvas: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
 
-                metricStrip
-                calendarCard
+                if scenario.isSavingOff {
+                    InlineNotice(
+                        symbol: "pause.circle",
+                        message: "Saving is off — Stats won’t include new dictations. Turn it on in History.",
+                        actionTitle: "Open History"
+                    ) {
+                        showHistoryPrototypeAlert = true
+                    }
+                } else if !scenario.hasRetainedHistory {
+                    InlineNotice(
+                        symbol: "sparkles",
+                        message: "No stats yet — your activity will appear after your first saved dictation."
+                    )
+                }
 
-                Text("Sample activity levels are illustrative for hierarchy review only.")
-                    .font(Theme.ui(10.5))
-                    .foregroundStyle(Theme.textFaint)
+                MetricStrip(metrics: metrics(for: scenario))
+                CalendarCard(
+                    days: makeActivityDays(hasRetainedHistory: scenario.hasRetainedHistory),
+                    reduceMotion: reduceMotion,
+                    initialDetailDay: initialDetailDay
+                )
             }
             .padding(.horizontal, Theme.contentPadding)
             .padding(.top, Theme.contentPadding)
-            .padding(.bottom, 86)
+            .padding(.bottom, 92)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    @ViewBuilder
-    private var metricStrip: some View {
-        switch variant {
-        case .ledger:
-            LedgerMetrics()
-        case .rhythm:
-            RhythmMetrics()
-        case .tiles:
-            TileMetrics()
-        }
-    }
-
-    @ViewBuilder
-    private var calendarCard: some View {
-        switch variant {
-        case .ledger:
-            CalendarContainer(titleStyle: .quiet) { LedgerCalendar() }
-        case .rhythm:
-            CalendarContainer(titleStyle: .accent) { RhythmCalendar() }
-        case .tiles:
-            CalendarContainer(titleStyle: .measured) { TileCalendar() }
+        .alert("Prototype navigation", isPresented: $showHistoryPrototypeAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("In production, this action opens History.")
         }
     }
 }
 
-private struct LedgerMetrics: View {
+private struct InlineNotice: View {
+    let symbol: String
+    let message: String
+    var actionTitle: String?
+    var action: (() -> Void)?
+
+    init(
+        symbol: String,
+        message: String,
+        actionTitle: String? = nil,
+        action: (() -> Void)? = nil
+    ) {
+        self.symbol = symbol
+        self.message = message
+        self.actionTitle = actionTitle
+        self.action = action
+    }
+
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(metrics.enumerated()), id: \.element.id) { index, metric in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(metric.title.uppercased())
-                        .font(Theme.ui(10, .bold))
-                        .tracking(0.7)
-                        .foregroundStyle(Theme.textTertiary)
-                    Text(metric.value)
-                        .font(Theme.ui(index == 3 ? 19 : 23, .semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.textPrimary)
-                    Text(metric.detail)
-                        .font(Theme.ui(10.5))
-                        .foregroundStyle(Theme.textFaint)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(15)
-                if index < metrics.count - 1 {
-                    Rectangle().fill(Theme.hairline).frame(width: 1)
-                }
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+                .accessibilityHidden(true)
+            Text(message)
+                .font(Theme.ui(11.5, .medium))
+                .foregroundStyle(Theme.textSecondary)
+            Spacer(minLength: 8)
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.borderless)
+                    .font(Theme.ui(11.5, .semibold))
+                    .foregroundStyle(Theme.accent)
             }
         }
+        .padding(.horizontal, 13)
+        .frame(minHeight: 42)
         .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
         .overlay {
             RoundedRectangle(cornerRadius: Theme.cardRadius)
@@ -425,49 +565,36 @@ private struct LedgerMetrics: View {
     }
 }
 
-private struct RhythmMetrics: View {
-    var body: some View {
-        HStack(alignment: .top, spacing: 24) {
-            ForEach(Array(metrics.enumerated()), id: \.element.id) { index, metric in
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 6) {
-                        Image(systemName: metric.symbol)
-                            .foregroundStyle(Theme.accent)
-                        Text(metric.title)
-                            .font(Theme.ui(11, .semibold))
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                    Text(metric.value)
-                        .font(Theme.ui(index == 3 ? 19 : 24, .semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.textPrimary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .padding(.vertical, 13)
-        .overlay(alignment: .top) { Rectangle().fill(Theme.hairline).frame(height: 1) }
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
-    }
-}
+private struct MetricStrip: View {
+    let metrics: [Metric]
 
-private struct TileMetrics: View {
     var body: some View {
         HStack(spacing: 10) {
             ForEach(Array(metrics.enumerated()), id: \.element.id) { index, metric in
-                VStack(alignment: .leading, spacing: 10) {
-                    Image(systemName: metric.symbol)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: metric.symbol)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                            .accessibilityHidden(true)
+                        Spacer()
+                    }
                     Text(metric.value)
-                        .font(Theme.ui(index == 3 ? 17 : 22, .semibold))
+                        .font(Theme.ui(index == 3 ? 16.5 : 21, .semibold))
                         .monospacedDigit()
                         .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                     Text(metric.title)
                         .font(Theme.ui(10.5, .medium))
                         .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                    Text(metric.detail)
+                        .font(Theme.ui(9.5))
+                        .foregroundStyle(Theme.textFaint)
+                        .lineLimit(1)
                 }
-                .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 91, alignment: .leading)
                 .padding(13)
                 .background(
                     Theme.cardBackground,
@@ -477,250 +604,344 @@ private struct TileMetrics: View {
                     RoundedRectangle(cornerRadius: Theme.cardRadius)
                         .strokeBorder(Theme.hairline, lineWidth: 1)
                 }
+                .accessibilityElement(children: .combine)
             }
         }
     }
 }
 
-private enum CalendarTitleStyle {
-    case quiet
-    case accent
-    case measured
-}
+private struct CalendarCard: View {
+    let days: [ActivityDay]
+    let reduceMotion: Bool
 
-private struct CalendarContainer<Content: View>: View {
-    let titleStyle: CalendarTitleStyle
-    @ViewBuilder let content: () -> Content
+    @State private var hoveredDay: Int?
+    @State private var rovingDay = prototypeTodayDay
+    @FocusState private var focusedDay: Int?
+
+    init(days: [ActivityDay], reduceMotion: Bool, initialDetailDay: Int? = nil) {
+        self.days = days
+        self.reduceMotion = reduceMotion
+        _hoveredDay = State(initialValue: initialDetailDay)
+    }
+
+    private var activeDays: Int {
+        days.filter(\.hasActivity).count
+    }
+
+    private var totalWords: Int {
+        days.reduce(0) { $0 + $1.words }
+    }
+
+    private var detailDay: ActivityDay? {
+        let dayNumber = focusedDay ?? hoveredDay
+        return days.first { $0.day == dayNumber && !$0.isFuture }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("This month")
                         .font(Theme.ui(16, .semibold))
                         .foregroundStyle(Theme.textPrimary)
-                    Text("July 2026")
+                    Text(prototypeMonthStart.formatted(.dateTime.month(.wide).year()))
                         .font(Theme.ui(11.5))
                         .foregroundStyle(Theme.textTertiary)
                 }
                 Spacer()
-                monthSummary
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("\(totalWords.formatted()) words")
+                        .font(Theme.ui(13, .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("\(activeDays.formatted()) active days")
+                        .font(Theme.ui(10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                }
             }
-            content()
+            .accessibilityHidden(true)
+
+            calendarGrid
+
+            DayDetailShelf(day: detailDay, reduceMotion: reduceMotion)
+                .accessibilityHidden(true)
+
+            IntensityLegend()
         }
         .padding(18)
-        .background(
-            titleStyle == .accent ? Theme.sidebarBackground.opacity(0.72) : Theme.cardBackground,
-            in: RoundedRectangle(cornerRadius: Theme.cardRadius)
-        )
+        .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
         .overlay {
             RoundedRectangle(cornerRadius: Theme.cardRadius)
                 .strokeBorder(Theme.hairline, lineWidth: 1)
         }
-    }
-
-    @ViewBuilder
-    private var monthSummary: some View {
-        switch titleStyle {
-        case .quiet:
-            HStack(spacing: 16) {
-                summary(label: "Active days", value: "25")
-                summary(label: "Words", value: "18,642")
-            }
-        case .accent:
-            HStack(spacing: 8) {
-                Text("25 active days")
-                Text("·").foregroundStyle(Theme.textFaint)
-                Text("18,642 words")
-            }
-            .font(Theme.ui(11.5, .semibold))
-            .foregroundStyle(Theme.accent)
-        case .measured:
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("18,642 words")
-                    .font(Theme.ui(13, .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("25 active days")
-                    .font(Theme.ui(10.5))
-                    .foregroundStyle(Theme.textTertiary)
-            }
+        .onChange(of: days.map(\.words)) { _, _ in
+            hoveredDay = nil
+            focusedDay = nil
+            rovingDay = prototypeTodayDay
         }
     }
 
-    private func summary(label: String, value: String) -> some View {
-        VStack(alignment: .trailing, spacing: 2) {
-            Text(value)
-                .font(Theme.ui(13, .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            Text(label)
-                .font(Theme.ui(10))
-                .foregroundStyle(Theme.textTertiary)
+    private var calendarGrid: some View {
+        LazyVGrid(columns: calendarColumns, spacing: 8) {
+            weekdayHeader
+            ForEach((0 ..< leadingSpacerCount).map { "leading-\($0)" }, id: \.self) { _ in
+                Color.clear
+                    .frame(height: 49)
+                    .accessibilityHidden(true)
+            }
+            ForEach(days) { day in
+                CalendarDayCell(
+                    day: day,
+                    canFocus: !day.isFuture && day.day == rovingDay,
+                    isFocused: focusedDay == day.day,
+                    reduceMotion: reduceMotion,
+                    onHover: { hovering in
+                        guard !day.isFuture else { return }
+                        hoveredDay = hovering ? day.day : (hoveredDay == day.day ? nil : hoveredDay)
+                    },
+                    onMove: moveFocus
+                )
+                .focused($focusedDay, equals: day.day)
+            }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(
+            "\(prototypeMonthStart.formatted(.dateTime.month(.wide).year())) activity calendar"
+        )
+        .accessibilityValue("\(totalWords.formatted()) words, \(activeDays.formatted()) active days")
+    }
+
+    private func moveFocus(_ offset: Int) {
+        let next = max(1, min(prototypeTodayDay, rovingDay + offset))
+        guard next != rovingDay else { return }
+        rovingDay = next
+        focusedDay = next
     }
 }
 
-private let weekdayLabels = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 private let calendarColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 7)
 
-private struct LedgerCalendar: View {
-    var body: some View {
-        LazyVGrid(columns: calendarColumns, spacing: 8) {
-            weekdayHeader
-            ForEach(0 ..< 2, id: \.self) { _ in Color.clear.frame(height: 50) }
-            ForEach(activityDays) { day in
-                Button {} label: {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(day.day.formatted())
-                            .font(Theme.mono(10.5, .semibold))
-                            .foregroundStyle(Theme.textSecondary)
-                        Capsule()
-                            .fill(activityColor(day.level))
-                            .frame(height: 8)
-                    }
-                    .padding(8)
-                    .frame(maxWidth: .infinity, minHeight: 50, alignment: .topLeading)
-                    .background(
-                        day.level == 0 ? Theme.windowBackground.opacity(0.5) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 6)
-                    )
-                }
-                .buttonStyle(.plain)
-                .help(day.words == 0 ? "No activity" : "\(day.words.formatted()) words")
-            }
-        }
-    }
-}
+private let leadingSpacerCount: Int = {
+    let weekday = prototypeCalendar.component(.weekday, from: prototypeMonthStart)
+    return (weekday - prototypeCalendar.firstWeekday + 7) % 7
+}()
 
-private struct RhythmCalendar: View {
-    private let weeks: [[ActivityDay?]] = {
-        var cells: [ActivityDay?] = [nil, nil] + activityDays.map(Optional.some)
-        while !cells.count.isMultiple(of: 7) {
-            cells.append(nil)
-        }
-        return stride(from: 0, to: cells.count, by: 7).map {
-            Array(cells[$0 ..< min($0 + 7, cells.count)])
-        }
-    }()
-
-    var body: some View {
-        VStack(spacing: 7) {
-            HStack(spacing: 8) {
-                Color.clear.frame(width: 22)
-                weekdayHeader
-            }
-            ForEach(Array(weeks.enumerated()), id: \.offset) { weekIndex, week in
-                HStack(spacing: 8) {
-                    Text("W\(weekIndex + 1)")
-                        .font(Theme.mono(9, .semibold))
-                        .foregroundStyle(Theme.textFaint)
-                        .frame(width: 22, alignment: .leading)
-                    ForEach(0 ..< week.count, id: \.self) { index in
-                        if let day = week[index] {
-                            Button {} label: {
-                                HStack(spacing: 7) {
-                                    Text(day.day.formatted())
-                                        .font(Theme.mono(10, .semibold))
-                                        .foregroundStyle(Theme.textSecondary)
-                                    Capsule()
-                                        .fill(activityColor(day.level))
-                                        .frame(maxWidth: .infinity, maxHeight: 7)
-                                }
-                                .padding(.horizontal, 8)
-                                .frame(maxWidth: .infinity, minHeight: 34)
-                            }
-                            .buttonStyle(.plain)
-                            .background(
-                                Theme.windowBackground.opacity(0.56),
-                                in: RoundedRectangle(cornerRadius: 6)
-                            )
-                            .help(day.words == 0 ? "No activity" : "\(day.words.formatted()) words")
-                        } else {
-                            Color.clear.frame(maxWidth: .infinity, minHeight: 34)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct TileCalendar: View {
-    var body: some View {
-        LazyVGrid(columns: calendarColumns, spacing: 8) {
-            weekdayHeader
-            ForEach(0 ..< 2, id: \.self) { _ in Color.clear.frame(height: 48) }
-            ForEach(activityDays) { day in
-                Button {} label: {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(day.day.formatted())
-                            .font(Theme.mono(10, .semibold))
-                        Spacer(minLength: 1)
-                        if day.words > 0 {
-                            Text(compactWords(day.words))
-                                .font(Theme.mono(9, .medium))
-                                .monospacedDigit()
-                        } else {
-                            Text("—").font(Theme.mono(9))
-                        }
-                    }
-                    .foregroundStyle(day.level >= 4 ? Color.white : Theme.textSecondary)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .topLeading)
-                    .background(
-                        day.level == 0 ? Theme.windowBackground.opacity(0.55) : activityColor(day.level),
-                        in: RoundedRectangle(cornerRadius: 6)
-                    )
-                }
-                .buttonStyle(.plain)
-                .help(day.words == 0 ? "No activity" : "\(day.words.formatted()) words")
-            }
-        }
-    }
-
-    private func compactWords(_ words: Int) -> String {
-        words >= 1000
-            ? String(format: "%.1fk", Double(words) / 1000)
-            : words.formatted()
-    }
-}
+private let localizedWeekdays: [String] = {
+    let symbols = prototypeCalendar.shortStandaloneWeekdaySymbols
+    let start = max(0, prototypeCalendar.firstWeekday - 1)
+    let ordered = Array(symbols[start...] + symbols[..<start])
+    return ordered.map { $0.capitalized(with: .autoupdatingCurrent) }
+}()
 
 private var weekdayHeader: some View {
-    ForEach(weekdayLabels, id: \.self) { weekday in
+    ForEach(localizedWeekdays, id: \.self) { weekday in
         Text(weekday)
-            .font(Theme.ui(9, .bold))
-            .tracking(0.65)
+            .font(Theme.ui(9.5, .semibold))
             .foregroundStyle(Theme.textFaint)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct CalendarDayCell: View {
+    let day: ActivityDay
+    let canFocus: Bool
+    let isFocused: Bool
+    let reduceMotion: Bool
+    let onHover: (Bool) -> Void
+    let onMove: (Int) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(day.day.formatted())
+                .font(Theme.mono(10, .semibold))
+            Spacer(minLength: 1)
+            if day.hasActivity {
+                Text(day.words.formatted(.number.notation(.compactName)))
+                    .font(Theme.mono(9, .medium))
+                    .monospacedDigit()
+            } else if !day.isFuture {
+                Text("—")
+                    .font(Theme.mono(9))
+            }
+        }
+        .foregroundStyle(foregroundColor)
+        .padding(8)
+        .frame(maxWidth: .infinity, minHeight: 49, alignment: .topLeading)
+        .background(backgroundColor, in: RoundedRectangle(cornerRadius: 6))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(outlineColor, lineWidth: isFocused ? 2.5 : 1)
+        }
+        .shadow(
+            color: isFocused ? Theme.accent.opacity(0.24) : .clear,
+            radius: isFocused ? 3 : 0
+        )
+        .contentShape(Rectangle())
+        .focusable(canFocus)
+        .focusEffectDisabled()
+        .onHover(perform: onHover)
+        .onMoveCommand { direction in
+            guard isFocused else { return }
+            switch direction {
+            case .left: onMove(-1)
+            case .right: onMove(1)
+            case .up: onMove(-7)
+            case .down: onMove(7)
+            default: break
+            }
+        }
+        .animation(
+            reduceMotion ? nil : .easeOut(duration: 0.14),
+            value: isFocused
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(day.accessibilityLabel)
+        .accessibilityValue(day.accessibilityValue)
+        .accessibilityHidden(day.isFuture)
+    }
+
+    private var foregroundColor: Color {
+        if day.isFuture {
+            return Theme.textFaint.opacity(0.42)
+        }
+        return day.level >= 4 ? .white : Theme.textSecondary
+    }
+
+    private var backgroundColor: Color {
+        if day.isFuture {
+            return Theme.windowBackground.opacity(0.28)
+        }
+        if day.level == 0 {
+            return Theme.windowBackground.opacity(0.72)
+        }
+        return activityColor(day.level)
+    }
+
+    private var outlineColor: Color {
+        if isFocused {
+            return Theme.accent
+        }
+        if day.isToday {
+            return Theme.textTertiary.opacity(0.72)
+        }
+        return .clear
+    }
+}
+
+private struct DayDetailShelf: View {
+    let day: ActivityDay?
+    let reduceMotion: Bool
+
+    var body: some View {
+        Group {
+            if let day {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(day.fullDate)
+                        .font(Theme.ui(11.5, .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    if day.hasActivity {
+                        Text(day.activityLine)
+                            .font(Theme.ui(10.5))
+                            .foregroundStyle(Theme.textSecondary)
+                        Text(day.timingLine)
+                            .font(Theme.ui(10.5))
+                            .foregroundStyle(Theme.textTertiary)
+                    } else {
+                        Text("No saved Dictation sessions")
+                            .font(Theme.ui(10.5))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "cursorarrow.motionlines")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.textFaint)
+                    Text("Hover a past day, or Tab into the calendar and use the arrow keys.")
+                        .font(Theme.ui(10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+            }
+        }
+        .id(day?.day ?? 0)
+        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            Theme.windowBackground.opacity(0.72),
+            in: RoundedRectangle(cornerRadius: 6)
+        )
+        .animation(
+            reduceMotion ? nil : .easeOut(duration: 0.14),
+            value: day?.day
+        )
+    }
+}
+
+private struct IntensityLegend: View {
+    private let items: [(String, Int)] = [
+        ("None", 0),
+        ("1–249", 1),
+        ("250–599", 2),
+        ("600–999", 3),
+        ("1,000–1,599", 4),
+        ("1,600+", 5),
+    ]
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("Daily spoken words")
+                .font(Theme.ui(10, .semibold))
+                .foregroundStyle(Theme.textSecondary)
+            Spacer(minLength: 6)
+            ForEach(items, id: \.0) { item in
+                HStack(spacing: 5) {
+                    RoundedRectangle(cornerRadius: 2.5)
+                        .fill(item.1 == 0 ? Theme.windowBackground : activityColor(item.1))
+                        .frame(width: 13, height: 13)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 2.5)
+                                .strokeBorder(Theme.hairline, lineWidth: item.1 == 0 ? 1 : 0)
+                        }
+                        .accessibilityHidden(true)
+                    Text(item.0)
+                        .font(Theme.mono(8.7, .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                }
+            }
+        }
     }
 }
 
 private func activityColor(_ level: Int) -> Color {
     guard level > 0 else { return Theme.hairline }
-    return Theme.accent.opacity([0, 0.20, 0.36, 0.55, 0.76, 0.96][level])
+    return Theme.accent.opacity([0, 0.20, 0.36, 0.54, 0.76, 0.96][level])
 }
 
 private struct ReviewBar: View {
-    @Binding var variant: PrototypeVariant
+    @Binding var scenario: PrototypeScenario
     @Binding var appearance: PrototypeAppearance
     @Binding var preset: WindowPreset
+    @Binding var motion: PrototypeMotion
 
     var body: some View {
         HStack(spacing: 10) {
             Button { cycle(-1) } label: {
                 Image(systemName: "chevron.left")
             }
-            .keyboardShortcut(.leftArrow, modifiers: [])
-            .help("Previous treatment")
+            .keyboardShortcut(.leftArrow, modifiers: [.command])
+            .help("Previous state (Command–Left Arrow)")
 
-            Text("\(variant.rawValue) — \(variant.title)")
+            Text(scenario.title)
                 .font(Theme.ui(11.5, .semibold))
-                .frame(minWidth: 118)
+                .frame(minWidth: 126)
 
             Button { cycle(1) } label: {
                 Image(systemName: "chevron.right")
             }
-            .keyboardShortcut(.rightArrow, modifiers: [])
-            .help("Next treatment")
+            .keyboardShortcut(.rightArrow, modifiers: [.command])
+            .help("Next state (Command–Right Arrow)")
 
             Divider().frame(height: 18)
 
@@ -741,22 +962,29 @@ private struct ReviewBar: View {
             .labelsHidden()
             .frame(width: 118)
             .onChange(of: preset) { _, next in resize(to: next) }
+
+            Picker("Motion", selection: $motion) {
+                ForEach(PrototypeMotion.allCases) { item in
+                    Text(item.rawValue).tag(item)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 128)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(Theme.tooltipText)
+        .foregroundStyle(Color.white)
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .background(
-            Theme.tooltipBackground,
-            in: RoundedRectangle(cornerRadius: 11)
-        )
+        .background(Color.black.opacity(0.88), in: RoundedRectangle(cornerRadius: 11))
         .shadow(color: .black.opacity(0.22), radius: 14, y: 5)
+        .environment(\.colorScheme, .dark)
     }
 
     private func cycle(_ offset: Int) {
-        let variants = PrototypeVariant.allCases
-        guard let index = variants.firstIndex(of: variant) else { return }
-        variant = variants[(index + offset + variants.count) % variants.count]
+        let scenarios = PrototypeScenario.allCases
+        guard let index = scenarios.firstIndex(of: scenario) else { return }
+        scenario = scenarios[(index + offset + scenarios.count) % scenarios.count]
     }
 
     private func resize(to preset: WindowPreset) {
@@ -767,6 +995,10 @@ private struct ReviewBar: View {
             x: oldFrame.midX - nextFrame.width / 2,
             y: oldFrame.midY - nextFrame.height / 2
         )
-        window.setFrame(NSRect(origin: origin, size: nextFrame.size), display: true, animate: true)
+        window.setFrame(
+            NSRect(origin: origin, size: nextFrame.size),
+            display: true,
+            animate: motion == .normal
+        )
     }
 }
