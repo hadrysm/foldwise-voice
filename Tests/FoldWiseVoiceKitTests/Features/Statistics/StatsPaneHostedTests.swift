@@ -1,0 +1,718 @@
+import AppKit
+import SwiftUI
+import XCTest
+@testable import FoldWiseVoiceKit
+
+@MainActor
+final class StatsPaneHostedTests: XCTestCase {
+    private struct KeyInput {
+        let code: UInt16
+        let characters: String
+    }
+
+    private struct HostedAXNode {
+        let identifier: String?
+        let label: String?
+        let value: String?
+        let position: CGPoint?
+    }
+
+    func testHostedStatsExposesFourSemanticMetricTiles() throws {
+        let (hosting, window) = hostFullSettings(width: 880, height: 640)
+        defer { window.orderOut(nil) }
+
+        let identifiers = try statsNodes(in: window)
+            .compactMap(\.identifier)
+            .filter { $0.hasPrefix("stats.metric.") }
+            .sorted()
+        _ = hosting
+
+        XCTAssertEqual(identifiers, [
+            "stats.metric.currentStreak",
+            "stats.metric.speakingSpeed",
+            "stats.metric.timeSaved",
+            "stats.metric.wordsDictated",
+        ])
+    }
+
+    func testHostedStatsReusesProjectionForUnrelatedSettingsPublication() {
+        let model = SettingsModel()
+        var executionCount = 0
+        let calendar = utcCalendar()
+        let cache = StatsProjectionCache(project: { input, now, calendar, locale in
+            executionCount += 1
+            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
+        })
+        let hosting = host(StatsPane(
+            model: model,
+            projectionCache: cache,
+            calendar: { calendar },
+            locale: Locale(identifier: "en_US")
+        ))
+
+        model.customModel = "unrelated publication"
+        render(hosting)
+
+        XCTAssertEqual(executionCount, 1)
+    }
+
+    func testHostedStatsRefreshesProjectionWhenSavedHistoryChanges() throws {
+        let model = SettingsModel()
+        let (hosting, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+
+        model.historyEntries = [entry(rawText: "saved words", day: 1)]
+        render(hosting)
+
+        XCTAssertEqual(try node(identifier: "stats.calendar", in: window).value, "2 spoken words, 1 active day")
+    }
+
+    func testHostedStatsRefreshesProjectionWhenSavingStateChanges() throws {
+        let model = SettingsModel()
+        let (hosting, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+
+        model.saveHistory = false
+        render(hosting)
+
+        XCTAssertEqual(try noticeIdentifiers(in: window), ["stats.notice.savingOff"])
+    }
+
+    func testHostedStatsRefreshesProjectionForDayAndTimeZoneNotifications() {
+        let model = SettingsModel()
+        let notifications = NotificationCenter()
+        var currentNow = Date(timeIntervalSince1970: 1_783_512_000)
+        var currentCalendar = utcCalendar()
+        var executionCount = 0
+        let cache = StatsProjectionCache(now: { currentNow }, project: { input, now, calendar, locale in
+            executionCount += 1
+            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
+        })
+        let hosting = host(StatsPane(
+            model: model,
+            projectionCache: cache,
+            calendar: { currentCalendar },
+            locale: Locale(identifier: "en_US"),
+            notificationCenter: notifications
+        ))
+
+        currentNow = currentNow.addingTimeInterval(86400)
+        notifications.post(name: .NSCalendarDayChanged, object: nil)
+        currentCalendar.timeZone = TimeZone(identifier: "Europe/Warsaw") ?? currentCalendar.timeZone
+        notifications.post(name: .NSSystemTimeZoneDidChange, object: nil)
+        render(hosting)
+
+        XCTAssertEqual(executionCount, 3)
+    }
+
+    func testHostedStatsRefreshesProjectionForLocaleEnvironmentChanges() {
+        let model = SettingsModel()
+        let calendar = utcCalendar()
+        var projectedLocales: [String] = []
+        let cache = StatsProjectionCache(project: { input, now, calendar, locale in
+            projectedLocales.append(locale.identifier)
+            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
+        })
+        let pane = StatsPane(
+            model: model,
+            projectionCache: cache,
+            calendar: { calendar }
+        )
+        let hosting = host(pane.environment(\.locale, Locale(identifier: "en_US")))
+        render(hosting)
+
+        hosting.rootView = pane.environment(\.locale, Locale(identifier: "pl_PL"))
+        render(hosting)
+
+        XCTAssertEqual(projectedLocales, ["en_US", "pl_PL"])
+    }
+
+    func testHostedMetricTilesRemainOneRowAtRequiredWindowSizes() throws {
+        let rows = try [(880.0, 640.0), (980.0, 720.0)].map { width, height in
+            let (_, window) = hostFullSettings(width: width, height: height)
+            defer { window.orderOut(nil) }
+            let metrics = try statsNodes(in: window).filter {
+                $0.identifier?.hasPrefix("stats.metric.") == true
+            }
+            return Set(metrics.compactMap { $0.position.map { Int($0.y.rounded()) } }).count
+        }
+
+        XCTAssertEqual(rows, [1, 1])
+    }
+
+    func testHostedCalendarRemainsSevenColumnsAtRequiredWindowSizes() throws {
+        let columnCounts = try [(880.0, 640.0), (980.0, 720.0)].map { width, height in
+            let (_, window) = hostFullSettings(width: width, height: height)
+            defer { window.orderOut(nil) }
+            let days = try statsNodes(in: window).filter {
+                $0.identifier?.hasPrefix("stats.day.") == true
+            }
+            return Set(days.compactMap { $0.position.map { Int($0.x.rounded()) } }).count
+        }
+
+        XCTAssertEqual(columnCounts, [7, 7])
+    }
+
+    func testHostedStatsKeepsCompactMetricRowAcrossEveryDataState() throws {
+        let rowCounts = try dataStateModels().map { model in
+            let (_, window) = hostFullSettings(width: 880, height: 640, model: model)
+            defer { window.orderOut(nil) }
+            let nodes = try statsNodes(in: window)
+            return Set(nodes.compactMap { node -> Int? in
+                guard node.identifier?.hasPrefix("stats.metric.") == true else { return nil }
+                return node.position.map { Int($0.y.rounded()) }
+            }).count
+        }
+
+        XCTAssertEqual(rowCounts, Array(repeating: 1, count: 4))
+    }
+
+    func testHostedStatsKeepsSevenCalendarColumnsAcrossEveryDataState() throws {
+        let columnCounts = try dataStateModels().map { model in
+            let (_, window) = hostFullSettings(width: 880, height: 640, model: model)
+            defer { window.orderOut(nil) }
+            let nodes = try statsNodes(in: window)
+            return Set(nodes.compactMap { node -> Int? in
+                guard node.identifier?.hasPrefix("stats.day.") == true else { return nil }
+                return node.position.map { Int($0.x.rounded()) }
+            }).count
+        }
+
+        XCTAssertEqual(columnCounts, Array(repeating: 7, count: 4))
+    }
+
+    func testHostedCalendarAppliesContextOnce() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+        let labels = try statsNodes(in: window).compactMap(\.label)
+
+        XCTAssertEqual(labels.filter { $0 == "July 2026 activity calendar" }.count, 1)
+    }
+
+    func testHostedCalendarAppliesSummaryOnce() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+        let values = try statsNodes(in: window).compactMap(\.value)
+
+        XCTAssertEqual(values.filter { $0 == "0 spoken words, 0 active days" }.count, 1)
+    }
+
+    func testHostedCalendarAppliesContextLabel() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(try node(identifier: "stats.calendar", in: window).label, "July 2026 activity calendar")
+    }
+
+    func testHostedCalendarAppliesSummaryValue() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(try node(identifier: "stats.calendar", in: window).value, "0 spoken words, 0 active days")
+    }
+
+    func testHostedCalendarAppliesActiveElapsedDayLabel() throws {
+        let model = SettingsModel()
+        model.historyEntries = [entry(rawText: "two words", day: 1)]
+        let (_, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(try node(identifier: "stats.day.1", in: window).label, "Wednesday, July 1, 2026")
+    }
+
+    func testHostedCalendarAppliesActiveElapsedDayValue() throws {
+        let model = SettingsModel()
+        model.historyEntries = [entry(rawText: "two words", day: 1)]
+        let (_, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(
+            try node(identifier: "stats.day.1", in: window).value,
+            "2 spoken words across 1 saved session. Timing unavailable"
+        )
+    }
+
+    func testHostedCalendarAppliesEmptyElapsedDayLabel() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(try node(identifier: "stats.day.2", in: window).label, "Thursday, July 2, 2026")
+    }
+
+    func testHostedCalendarAppliesEmptyElapsedDayValue() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(
+            try node(identifier: "stats.day.2", in: window).value,
+            "No dictated words. No saved Dictation sessions"
+        )
+    }
+
+    func testHostedCalendarExcludesFutureDaysFromAccessibilityTree() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+        let dayNumbers = try statsNodes(in: window)
+            .compactMap(\.identifier)
+            .filter { $0.hasPrefix("stats.day.") }
+            .compactMap { Int($0.replacingOccurrences(of: "stats.day.", with: "")) }
+            .sorted()
+
+        XCTAssertEqual(dayNumbers, Array(1 ... 22))
+    }
+
+    func testHostedCalendarExcludesHiddenRegionsFromAccessibilityTree() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+        let hiddenPrefixes = ["stats.weekday.", "stats.spacer.", "stats.decoration.", "stats.duplicate."]
+        let exposedHiddenRegions = try statsNodes(in: window)
+            .compactMap(\.identifier)
+            .filter { identifier in hiddenPrefixes.contains { identifier.hasPrefix($0) } }
+
+        XCTAssertTrue(exposedHiddenRegions.isEmpty)
+    }
+
+    func testHostedStatsRendersRetainedActivityState() throws {
+        let model = SettingsModel()
+        model.historyEntries = [entry(rawText: "saved words", day: 1)]
+        let (_, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+
+        XCTAssertNil(try statsNodes(in: window).first { $0.identifier?.hasPrefix("stats.notice.") == true })
+    }
+
+    func testHostedStatsRendersRetainedActivityInCalendar() throws {
+        let model = SettingsModel()
+        model.historyEntries = [entry(rawText: "saved words", day: 1)]
+        let (_, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(try node(identifier: "stats.calendar", in: window).value, "2 spoken words, 1 active day")
+    }
+
+    func testHostedStatsRendersEmptyHistoryState() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(try noticeIdentifiers(in: window), ["stats.notice.noHistory"])
+    }
+
+    func testHostedStatsRendersSavingOffRetainedState() throws {
+        let model = SettingsModel()
+        model.historyEntries = [entry(rawText: "saved words", day: 1)]
+        model.saveHistory = false
+        let (_, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(try noticeIdentifiers(in: window), ["stats.notice.savingOff"])
+    }
+
+    func testHostedStatsKeepsRetainedCalendarActivityWhenSavingIsOff() throws {
+        let model = SettingsModel()
+        model.historyEntries = [entry(rawText: "saved words", day: 1)]
+        model.saveHistory = false
+        let (_, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(try node(identifier: "stats.calendar", in: window).value, "2 spoken words, 1 active day")
+    }
+
+    func testHostedStatsRendersSavingOffEmptyState() throws {
+        let model = SettingsModel()
+        model.saveHistory = false
+        let (_, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(try noticeIdentifiers(in: window), ["stats.notice.savingOff"])
+    }
+
+    func testHostedStatsKeepsEmptyCalendarWhenSavingIsOff() throws {
+        let model = SettingsModel()
+        model.saveHistory = false
+        let (_, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(try node(identifier: "stats.calendar", in: window).value, "0 spoken words, 0 active days")
+    }
+
+    func testHostedCalendarEntersOnTodayAsTheOnlyFocusedDay() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+
+        sendKeys([tab], to: window)
+
+        XCTAssertEqual(try focusedDayIdentifier(in: window), "stats.day.22")
+    }
+
+    func testHostedCalendarUsesTodayAsItsOnlyDayTabStop() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+        var focusedDays = Set<String>()
+
+        for _ in 0 ..< 3 {
+            sendKeys([tab], to: window)
+            if let identifier = try focusedDayIdentifier(in: window) {
+                focusedDays.insert(identifier)
+            }
+        }
+
+        XCTAssertEqual(focusedDays, ["stats.day.22"])
+    }
+
+    func testHostedCalendarRoutesNativeArrowKeysThroughRenderedDays() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+        var focusedDays: [String] = []
+
+        for key in [tab, left, up, right, down] {
+            sendKeys([key], to: window)
+            focusedDays.append(try XCTUnwrap(focusedDayIdentifier(in: window)))
+        }
+
+        XCTAssertEqual(focusedDays, [
+            "stats.day.22", "stats.day.21", "stats.day.14", "stats.day.15", "stats.day.22",
+        ])
+    }
+
+    func testHostedCalendarStopsNativeArrowKeysAtToday() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+
+        sendKeys([tab, right, down], to: window)
+
+        XCTAssertEqual(try focusedDayIdentifier(in: window), "stats.day.22")
+    }
+
+    func testHostedCalendarStopsNativeArrowKeysAtFirstDay() throws {
+        let (_, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+
+        for key in [tab, up, up, up, left, up] {
+            sendKeys([key], to: window)
+        }
+
+        XCTAssertEqual(try focusedDayIdentifier(in: window), "stats.day.1")
+    }
+
+    func testHostedCalendarKeepsReturnInert() throws {
+        let model = SettingsModel()
+        model.pane = .stats
+        let (_, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+        sendKeys([tab, returnKey], to: window)
+
+        XCTAssertEqual(try focusedDayIdentifier(in: window), "stats.day.22")
+    }
+
+    func testHostedCalendarKeepsSpaceInert() throws {
+        let model = SettingsModel()
+        model.pane = .stats
+        let (_, window) = hostInteractiveStats(model: model)
+        defer { window.orderOut(nil) }
+        sendKeys([tab, space], to: window)
+
+        XCTAssertEqual(try focusedDayIdentifier(in: window), "stats.day.22")
+    }
+
+    func testHostedCalendarRepairsInvalidFocusToTodayAfterMonthChange() throws {
+        let model = SettingsModel()
+        let notifications = NotificationCenter()
+        let calendar = utcCalendar()
+        var currentNow = calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 22, hour: 12
+        )) ?? .distantPast
+        let pane = StatsPane(
+            model: model,
+            projectionCache: StatsProjectionCache(now: { currentNow }),
+            calendar: { calendar },
+            locale: Locale(identifier: "en_US"),
+            notificationCenter: notifications
+        )
+        let hosting = host(pane)
+        let window = hostInWindow(hosting)
+        defer { window.orderOut(nil) }
+        sendKeys([tab], to: window)
+
+        currentNow = calendar.date(from: DateComponents(
+            year: 2026, month: 8, day: 1, hour: 12
+        )) ?? .distantPast
+        notifications.post(name: .NSCalendarDayChanged, object: nil)
+        render(hosting)
+
+        XCTAssertEqual(try focusedDayIdentifier(in: window), "stats.day.1")
+    }
+
+    func testSavingOffActionOpensHistory() throws {
+        let model = SettingsModel()
+        model.saveHistory = false
+        model.pane = .stats
+        let hosting = host(StatsPane(model: model))
+
+        let button = try XCTUnwrap(Self.button(named: "Open History", in: hosting))
+        button.performClick(nil)
+
+        XCTAssertEqual(model.pane, .history)
+    }
+
+    func testHostedHistoryButtonRefreshesAccessibilityLabelWhenTitleChanges() throws {
+        let hosting = host(StatsHistoryButton(title: "Open History", action: {}))
+        let initialButton = try XCTUnwrap(Self.button(named: "Open History", in: hosting))
+        XCTAssertEqual(initialButton.accessibilityLabel(), "Open History")
+
+        hosting.rootView = StatsHistoryButton(title: "View History", action: {})
+        render(hosting)
+
+        let updatedButton = try XCTUnwrap(Self.button(named: "View History", in: hosting))
+        XCTAssertEqual(updatedButton.accessibilityLabel(), "View History")
+    }
+
+    private static func button(named title: String, in view: NSView?) -> NSButton? {
+        guard let view else { return nil }
+        if let button = view as? NSButton, button.title == title {
+            return button
+        }
+        return view.subviews.lazy.compactMap { button(named: title, in: $0) }.first
+    }
+
+    private func host<Content: View>(
+        _ content: Content,
+        width: CGFloat = 755,
+        height: CGFloat = 900
+    ) -> NSHostingView<Content> {
+        let hosting = NSHostingView(rootView: content)
+        hosting.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        hosting.layoutSubtreeIfNeeded()
+        return hosting
+    }
+
+    private func fixedStatsPane(model: SettingsModel) -> StatsPane {
+        let calendar = utcCalendar()
+        return StatsPane(
+            model: model,
+            projectionCache: StatsProjectionCache(now: {
+                calendar.date(from: DateComponents(
+                    year: 2026, month: 7, day: 22, hour: 12
+                )) ?? .distantPast
+            }),
+            calendar: { calendar },
+            locale: Locale(identifier: "en_US")
+        )
+    }
+
+    private func hostInteractiveStats(
+        model: SettingsModel
+    ) -> (NSHostingView<StatsPane>, NSWindow) {
+        let hosting = host(fixedStatsPane(model: model))
+        let window = hostInWindow(hosting)
+        render(hosting)
+        return (hosting, window)
+    }
+
+    private func hostFullSettings(
+        width: CGFloat,
+        height: CGFloat,
+        model: SettingsModel? = nil
+    ) -> (NSHostingView<SettingsView>, NSWindow) {
+        let model = model ?? SettingsModel()
+        model.pane = .stats
+        let hosting = host(SettingsView(model: model), width: width, height: height)
+        let window = hostInWindow(hosting)
+        render(hosting)
+        return (hosting, window)
+    }
+
+    private func dataStateModels() -> [SettingsModel] {
+        let retained = SettingsModel()
+        retained.historyEntries = [entry(rawText: "saved words", day: 1)]
+
+        let empty = SettingsModel()
+
+        let savingOffRetained = SettingsModel()
+        savingOffRetained.historyEntries = [entry(rawText: "saved words", day: 1)]
+        savingOffRetained.saveHistory = false
+
+        let savingOffEmpty = SettingsModel()
+        savingOffEmpty.saveHistory = false
+
+        return [retained, empty, savingOffRetained, savingOffEmpty]
+    }
+
+    private func entry(rawText: String, day: Int) -> HistoryEntry {
+        let createdAt = utcCalendar().date(from: DateComponents(
+            year: 2026, month: 7, day: day, hour: 8
+        )) ?? .distantPast
+        return HistoryEntry(
+            id: UUID(),
+            createdAt: createdAt,
+            text: rawText,
+            rawText: rawText,
+            isPolished: false,
+            modeName: "Clean",
+            wordCount: nil,
+            sourceApp: nil,
+            durationMs: nil,
+            flagged: false,
+            flagReason: nil
+        )
+    }
+
+    private func hostInWindow(_ hosting: NSView) -> NSWindow {
+        let window = NSWindow(
+            contentRect: hosting.frame,
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Stats hosted test \(UUID().uuidString)"
+        window.contentView = hosting
+        NSApp.finishLaunching()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        _ = window.makeFirstResponder(hosting)
+        hosting.layoutSubtreeIfNeeded()
+        return window
+    }
+
+    private func render(_ hosting: NSView) {
+        let rendered = expectation(description: "Stats rendered")
+        DispatchQueue.main.async { rendered.fulfill() }
+        wait(for: [rendered], timeout: 1)
+        hosting.layoutSubtreeIfNeeded()
+    }
+
+    private func sendKeys(_ keys: [KeyInput], to window: NSWindow) {
+        DispatchQueue.main.async {
+            for key in keys {
+                guard let event = NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber,
+                    context: nil,
+                    characters: key.characters,
+                    charactersIgnoringModifiers: key.characters,
+                    isARepeat: false,
+                    keyCode: key.code
+                ) else { continue }
+                NSApp.sendEvent(event)
+            }
+            NSApp.abortModal()
+        }
+        NSApp.runModal(for: window)
+        window.contentView?.layoutSubtreeIfNeeded()
+    }
+
+    private func statsNodes(in window: NSWindow) throws -> [HostedAXNode] {
+        let application = AXUIElementCreateApplication(getpid())
+        let windows = axElements(attribute: kAXWindowsAttribute, from: application)
+        let hostedWindow = try XCTUnwrap(windows.first {
+            axString(attribute: kAXTitleAttribute, from: $0) == window.title
+        })
+        return axTree(root: hostedWindow)
+    }
+
+    private func node(identifier: String, in window: NSWindow) throws -> HostedAXNode {
+        try XCTUnwrap(statsNodes(in: window).first { $0.identifier == identifier })
+    }
+
+    private func noticeIdentifiers(in window: NSWindow) throws -> [String] {
+        try statsNodes(in: window)
+            .compactMap(\.identifier)
+            .filter { $0.hasPrefix("stats.notice.") }
+    }
+
+    private func focusedDayIdentifier(in window: NSWindow) throws -> String? {
+        _ = try statsNodes(in: window)
+        let application = AXUIElementCreateApplication(getpid())
+        var current = axElement(attribute: kAXFocusedUIElementAttribute, from: application)
+        while let element = current {
+            if let identifier = axString(attribute: kAXIdentifierAttribute, from: element),
+               identifier.hasPrefix("stats.day.") {
+                return identifier
+            }
+            current = axElement(attribute: kAXParentAttribute, from: element)
+        }
+        return nil
+    }
+
+    private func axTree(root: AXUIElement) -> [HostedAXNode] {
+        let node = HostedAXNode(
+            identifier: axString(attribute: kAXIdentifierAttribute, from: root),
+            label: axString(attribute: kAXDescriptionAttribute, from: root)
+                ?? axString(attribute: kAXTitleAttribute, from: root),
+            value: axString(attribute: kAXValueDescriptionAttribute, from: root),
+            position: axPoint(attribute: kAXPositionAttribute, from: root)
+        )
+        return [node] + axElements(attribute: kAXChildrenAttribute, from: root).flatMap(axTree)
+    }
+
+    private func axElements(attribute: String, from element: AXUIElement) -> [AXUIElement] {
+        axAttribute(attribute: attribute, from: element) as? [AXUIElement] ?? []
+    }
+
+    private func axElement(attribute: String, from element: AXUIElement) -> AXUIElement? {
+        guard let value = axAttribute(attribute: attribute, from: element),
+              CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        // The Core Foundation type-ID check makes this conversion an API invariant.
+        return unsafeBitCast(value, to: AXUIElement.self)
+    }
+
+    private func axString(attribute: String, from element: AXUIElement) -> String? {
+        axAttribute(attribute: attribute, from: element) as? String
+    }
+
+    private func axPoint(attribute: String, from element: AXUIElement) -> CGPoint? {
+        guard let value = axAttribute(attribute: attribute, from: element),
+              CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        // The Core Foundation type-ID check makes this conversion an API invariant.
+        let axValue = unsafeBitCast(value, to: AXValue.self)
+        guard
+            AXValueGetType(axValue) == .cgPoint else { return nil }
+        var point = CGPoint.zero
+        return AXValueGetValue(axValue, .cgPoint, &point) ? point : nil
+    }
+
+    private func axAttribute(attribute: String, from element: AXUIElement) -> CFTypeRef? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
+            return nil
+        }
+        return value
+    }
+
+    private var tab: KeyInput {
+        KeyInput(code: 48, characters: "\t")
+    }
+
+    private var returnKey: KeyInput {
+        KeyInput(code: 36, characters: "\r")
+    }
+
+    private var space: KeyInput {
+        KeyInput(code: 49, characters: " ")
+    }
+
+    private var left: KeyInput {
+        KeyInput(code: 123, characters: "\u{F702}")
+    }
+
+    private var right: KeyInput {
+        KeyInput(code: 124, characters: "\u{F703}")
+    }
+
+    private var down: KeyInput {
+        KeyInput(code: 125, characters: "\u{F701}")
+    }
+
+    private var up: KeyInput {
+        KeyInput(code: 126, characters: "\u{F700}")
+    }
+
+    private func utcCalendar() -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US")
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        return calendar
+    }
+}

@@ -496,7 +496,7 @@ final class SettingsWorkflow {
         model.historyEntries.insert(entry, at: 0)
     }
 
-    private func refreshStreak() {
+    func refreshStreak() {
         model.currentStreak = StreakRules.display(statsStore.load(), now: now(), calendar: calendar)
     }
 

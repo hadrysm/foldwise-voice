@@ -1,162 +1,538 @@
-// The Stats pane content (PRD #97): an at-a-glance, honestly-labeled reflection
-// on your dictation, computed as a pure projection over the history the app
-// already keeps — no new data is stored. This spine slice renders the first
-// stat, total words dictated, in the app's native card system and owns the
-// pane's empty and frozen states; the later slices add speaking speed, active
-// days, current streak, and the time-saved estimate to the same card.
-//
-// The numbers are a lens over the loaded history: they reflect it as of window
-// open, update live when a dictation is appended while the window is open (the
-// Settings model prepends it), and shrink honestly when saving is off or old
-// dictations are pruned. The pane is a thin render over `UsageStatsAggregator`,
-// which carries the tested logic; the view itself is not unit-tested (PRD #78).
-
+import AppKit
+import Combine
 import SwiftUI
 
 struct StatsPane: View {
     @ObservedObject var model: SettingsModel
+    @Environment(\.locale) private var environmentLocale
+    @State private var projection: StatsProjection?
+    @State private var projectionCache: StatsProjectionCache
 
-    /// The projection, memoized. `StatsPane` observes `SettingsModel`, which has
-    /// dozens of `@Published` fields; recomputing the aggregate inline in `body`
-    /// re-ran a whole-history word-split on every unrelated publish (update-check,
-    /// model list, status clear) while the pane was open. Caching it here and
-    /// recomputing only when `historyEntries` actually changes keeps the scan off
-    /// the render path for publishes that don't affect the stats.
-    @State private var stats = UsageStats.empty
+    private let calendar: () -> Calendar
+    private let locale: Locale?
+    private let notificationCenter: NotificationCenter
+
+    init(
+        model: SettingsModel,
+        projectionCache: StatsProjectionCache = StatsProjectionCache(),
+        calendar: @escaping () -> Calendar = { .autoupdatingCurrent },
+        locale: Locale? = nil,
+        notificationCenter: NotificationCenter = .default
+    ) {
+        self.model = model
+        _projectionCache = State(initialValue: projectionCache)
+        self.calendar = calendar
+        self.locale = locale
+        self.notificationCenter = notificationCenter
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("A look at how you dictate, drawn from the history you already keep.")
+                .font(Theme.ui(12))
+                .foregroundStyle(Theme.textSecondary)
+
+            if let projection {
+                notice(projection.notice)
+                StatsMetricStrip(metrics: projection.metrics)
+                MonthlyActivityCalendar(month: projection.month)
+            }
+        }
+        .onChange(of: input, initial: true) { _, input in
+            refresh(input)
+        }
+        .onChange(of: environmentLocale) { _, _ in
+            refresh(input)
+        }
+        .onReceive(notificationCenter.publisher(for: .NSCalendarDayChanged)) { _ in
+            refresh(input)
+        }
+        .onReceive(notificationCenter.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
+            refresh(input)
+        }
+    }
+
+    private var input: StatsProjection.Input {
+        StatsProjection.Input(
+            entries: model.historyEntries,
+            currentStreak: model.currentStreak,
+            savingEnabled: model.saveHistory
+        )
+    }
+
+    private func refresh(_ input: StatsProjection.Input) {
+        projection = projectionCache.resolve(
+            input,
+            calendar: calendar(),
+            locale: locale ?? environmentLocale
+        )
+    }
+
+    @ViewBuilder
+    private func notice(_ notice: StatsProjection.Notice) -> some View {
+        switch notice {
+        case .none:
+            EmptyView()
+        case let .noHistory(message):
+            StatsNotice(
+                symbol: "sparkles",
+                message: message,
+                accessibilityIdentifier: "stats.notice.noHistory"
+            )
+        case let .savingOff(message, actionTitle):
+            StatsNotice(
+                symbol: "pause.circle",
+                message: message,
+                actionTitle: actionTitle,
+                accessibilityIdentifier: "stats.notice.savingOff"
+            ) {
+                openHistory()
+            }
+        }
+    }
+
+    private func openHistory() {
+        model.pane = .history
+    }
+}
+
+private struct StatsNotice: View {
+    let symbol: String
+    let message: String
+    var actionTitle: String?
+    let accessibilityIdentifier: String
+    var action: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+                .accessibilityHidden(true)
+                .accessibilityIdentifier("stats.decoration.notice")
+            Text(message)
+                .font(Theme.ui(11.5, .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .accessibilityIdentifier(accessibilityIdentifier)
+            Spacer(minLength: 8)
+            if let actionTitle, let action {
+                StatsHistoryButton(title: actionTitle, action: action)
+            }
+        }
+        .padding(.horizontal, 13)
+        .frame(minHeight: 42)
+        .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.cardRadius)
+                .strokeBorder(Theme.hairline, lineWidth: 1)
+        }
+    }
+}
+
+struct StatsHistoryButton: NSViewRepresentable {
+    let title: String
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(
+            title: title,
+            target: context.coordinator,
+            action: #selector(Coordinator.performAction)
+        )
+        button.isBordered = false
+        button.font = .systemFont(ofSize: 11.5, weight: .semibold)
+        button.contentTintColor = NSColor(Theme.accent)
+        button.setAccessibilityLabel(title)
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        button.title = title
+        button.contentTintColor = NSColor(Theme.accent)
+        button.setAccessibilityLabel(title)
+        context.coordinator.action = action
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func performAction() {
+            action()
+        }
+    }
+}
+
+private struct StatsMetricStrip: View {
+    let metrics: [StatsProjection.Metric]
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(metrics) { metric in
+                VStack(alignment: .leading, spacing: 8) {
+                    Image(systemName: metric.symbol)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                        .accessibilityHidden(true)
+                    Text(metric.value)
+                        .font(Theme.ui(metric.kind == .timeSaved ? 16.5 : 21, .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    Text(metric.title)
+                        .font(Theme.ui(10.5, .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                    Text(metric.detail)
+                        .font(Theme.ui(9.5))
+                        .foregroundStyle(Theme.textFaint)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, minHeight: 91, alignment: .leading)
+                .padding(13)
+                .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
+                .overlay {
+                    RoundedRectangle(cornerRadius: Theme.cardRadius)
+                        .strokeBorder(Theme.hairline, lineWidth: 1)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("stats.metric.\(metric.kind.rawValue)")
+            }
+        }
+    }
+}
+
+private struct MonthlyActivityCalendar: View {
+    let month: StatsProjection.Month
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hoveredDate: Date?
+    @State private var rovingDate: Date?
+    @FocusState private var focusedDate: Date?
+
+    init(month: StatsProjection.Month) {
+        self.month = month
+        _rovingDate = State(initialValue: month.days.last { $0.state != .future }?.date)
+    }
+
+    private var columns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 8), count: 7)
+    }
+
+    private var eligibleDates: [Date] {
+        month.days.filter { $0.state != .future }.map(\.date)
+    }
+
+    private var detailDay: StatsProjection.Day? {
+        let date = CalendarFocusNavigator.detailDate(
+            hovered: hoveredDate,
+            focused: focusedDate
+        )
+        return month.days.first { $0.date == date && $0.state != .future }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(
-                "A look at how you dictate, drawn from the history you already keep. "
-                    + "Nothing new is stored — turn history off or prune it and these shrink."
-            )
-            .font(Theme.ui(12))
-            .foregroundStyle(Theme.textSecondary)
-
-            if model.historyEntries.isEmpty && model.currentStreak == nil {
-                emptyState
-            } else {
-                populated
-            }
+            header
+            grid
+            StatsDayDetail(day: detailDay)
+                .accessibilityHidden(true)
+            StatsIntensityLegend(labels: month.legendLabels)
         }
-        // `initial: true` seeds the cache on first appearance; every genuine
-        // history change (append/prepend/delete/clear all reassign the `@Published`
-        // array) fires this and re-runs the scan, so live updates are preserved
-        // while unrelated model publishes no longer re-aggregate.
-        .onChange(of: model.historyEntries, initial: true) { _, entries in
-            stats = UsageStatsAggregator.aggregate(entries)
+        .padding(18)
+        .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.cardRadius)
+                .strokeBorder(Theme.hairline, lineWidth: 1)
+        }
+        .transaction { transaction in
+            StatsTransitionPolicy.clearInheritedAnimation(in: &transaction)
+        }
+        .onChange(of: month.days) { _, _ in
+            repairFocus()
         }
     }
 
-    /// The stats card plus, when saving is off, a note that the numbers are no
-    /// longer moving — so frozen figures are never mistaken for live ones.
-    private var populated: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Card {
-                CardRow(
-                    title: "Words dictated",
-                    subtitle: "The words you actually spoke, across your saved history."
-                ) {
-                    statValue(stats.totalWords.formatted())
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("This month")
+                    .font(Theme.ui(16, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(month.title)
+                    .font(Theme.ui(11.5))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(month.spokenWordSummary)
+                    .font(Theme.ui(13, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(month.activeDaySummary)
+                    .font(Theme.ui(10.5))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .accessibilityHidden(true)
+        .accessibilityIdentifier("stats.duplicate.header")
+    }
+
+    private var grid: some View {
+        LazyVGrid(columns: columns, spacing: 8) {
+            ForEach(month.weekdays, id: \.self) { weekday in
+                Text(weekday)
+                    .font(Theme.ui(9.5, .semibold))
+                    .foregroundStyle(Theme.textFaint)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityHidden(true)
+                    .accessibilityIdentifier("stats.weekday.\(weekday)")
+            }
+            ForEach(0 ..< month.leadingColumnOffset, id: \.self) { index in
+                Color.clear
+                    .frame(height: 49)
+                    .accessibilityHidden(true)
+                    .accessibilityIdentifier("stats.spacer.leading.\(index)")
+            }
+            ForEach(month.days) { day in
+                StatsDayCell(
+                    day: day,
+                    canFocus: day.date == rovingDate && day.state != .future,
+                    isFocused: day.date == focusedDate,
+                    reduceMotion: reduceMotion
+                ) { hovering in
+                    guard day.state != .future else { return }
+                    if hovering {
+                        hoveredDate = day.date
+                    } else if hoveredDate == day.date {
+                        hoveredDate = nil
+                    }
+                } onMove: { direction in
+                    moveFocus(direction)
                 }
-                Divider().padding(.leading, 14)
-                CardRow(
-                    title: "Speaking speed",
-                    subtitle: "Your words per minute over the time you held the key to talk — pauses and all."
-                ) {
-                    statValue(speakingSpeed(stats.wordsPerMinute))
-                }
-                Divider().padding(.leading, 14)
-                CardRow(
-                    title: "Active days",
-                    subtitle: "Distinct days you've dictated on."
-                ) {
-                    statValue(stats.activeDays.formatted())
-                }
-                Divider().padding(.leading, 14)
-                CardRow(
-                    title: "Current streak",
-                    subtitle: "Consecutive days you've dictated. Survives history pruning; "
-                        + "resets only if you clear your history."
-                ) {
-                    statValue(streak(model.currentStreak))
-                }
-                Divider().padding(.leading, 14)
-                CardRow(
-                    title: "Time saved",
-                    subtitle: "A conservative estimate versus typing at "
-                        + "\(Int(UsageStatsAggregator.typingBaselineWordsPerMinute)) wpm — not a measured figure."
-                ) {
-                    statValue(timeSaved(stats.timeSavedMinutes))
+                .focused($focusedDate, equals: day.date)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(month.accessibilityLabel)
+        .accessibilityValue(month.accessibilityValue)
+        .accessibilityIdentifier("stats.calendar")
+    }
+
+    private func moveFocus(_ direction: CalendarFocusNavigator.Direction) {
+        guard let focusedDate else { return }
+        let navigator = CalendarFocusNavigator(eligibleDates: eligibleDates)
+        guard let next = navigator.move(from: focusedDate, direction: direction) else { return }
+        rovingDate = next
+        self.focusedDate = next
+    }
+
+    private func repairFocus() {
+        hoveredDate = nil
+        let navigator = CalendarFocusNavigator(eligibleDates: eligibleDates)
+        let repaired = navigator.repair(focusedDate ?? rovingDate)
+        rovingDate = repaired
+        guard focusedDate != nil else { return }
+        focusedDate = nil
+        DispatchQueue.main.async {
+            focusedDate = repaired
+        }
+    }
+}
+
+private struct StatsDayCell: View {
+    let day: StatsProjection.Day
+    let canFocus: Bool
+    let isFocused: Bool
+    let reduceMotion: Bool
+    let onHover: (Bool) -> Void
+    let onMove: (CalendarFocusNavigator.Direction) -> Void
+
+    private var style: StatsActivityStyle {
+        StatsActivityStyle(day: day, focused: isFocused)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(day.dayNumber)
+                .font(Theme.mono(10, .semibold))
+            Spacer(minLength: 1)
+            if let compactWords = day.compactSpokenWords {
+                Text(compactWords)
+                    .font(Theme.mono(9, .medium))
+                    .monospacedDigit()
+            } else if day.state != .future {
+                Text("—")
+                    .font(Theme.mono(9))
+            }
+        }
+        .foregroundStyle(style.foreground)
+        .padding(8)
+        .frame(maxWidth: .infinity, minHeight: 49, alignment: .topLeading)
+        .background(style.background, in: RoundedRectangle(cornerRadius: 6))
+        .overlay {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(style.outline, lineWidth: isFocused ? 3 : 1)
+                if isFocused {
+                    RoundedRectangle(cornerRadius: 6)
+                        .inset(by: 2)
+                        .strokeBorder(Theme.accent, lineWidth: 1)
                 }
             }
-            if !model.saveHistory {
-                Label(
-                    "Saving is off — these numbers have stopped updating.",
-                    systemImage: "pause.circle"
-                )
-                .font(Theme.ui(11))
+        }
+        .shadow(color: style.shadow, radius: 3)
+        .contentShape(Rectangle())
+        .focusable(canFocus)
+        .focusEffectDisabled()
+        .onHover(perform: onHover)
+        .onMoveCommand { direction in
+            guard isFocused else { return }
+            switch direction {
+            case .left: onMove(.left)
+            case .right: onMove(.right)
+            case .up: onMove(.up)
+            case .down: onMove(.down)
+            default: break
+            }
+        }
+        .animation(
+            StatsTransitionPolicy.resolve(reduceMotion: reduceMotion).animation,
+            value: day.intensity
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(day.accessibilityLabel)
+        .accessibilityValue(day.accessibilityValue)
+        .accessibilityHidden(day.state == .future)
+        .accessibilityIdentifier("stats.day.\(day.dayNumber)")
+    }
+}
+
+private struct StatsDayDetail: View {
+    let day: StatsProjection.Day?
+
+    var body: some View {
+        Group {
+            if let day {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(day.fullDate)
+                        .font(Theme.ui(11.5, .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(day.detailActivity)
+                        .font(Theme.ui(10.5))
+                        .foregroundStyle(Theme.textSecondary)
+                    if let timing = day.detailTiming {
+                        Text(timing)
+                            .font(Theme.ui(10.5))
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "cursorarrow.motionlines")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.textFaint)
+                        .accessibilityHidden(true)
+                    Text("Hover a past day, or Tab into the calendar and use the arrow keys.")
+                        .font(Theme.ui(10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Theme.windowBackground.opacity(0.72), in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityIdentifier("stats.duplicate.detail")
+    }
+}
+
+private struct StatsIntensityLegend: View {
+    let labels: [String]
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("Daily spoken words")
+                .font(Theme.ui(10, .semibold))
                 .foregroundStyle(Theme.textSecondary)
+            Spacer(minLength: 6)
+            ForEach(Array(labels.enumerated()), id: \.offset) { index, label in
+                HStack(spacing: 5) {
+                    RoundedRectangle(cornerRadius: 2.5)
+                        .fill(StatsActivityStyle.legendFill(level: index))
+                        .frame(width: 13, height: 13)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 2.5)
+                                .strokeBorder(Theme.hairline, lineWidth: index == 0 ? 1 : 0)
+                        }
+                        .accessibilityHidden(true)
+                        .accessibilityIdentifier("stats.decoration.legend.\(index)")
+                    Text(label)
+                        .font(Theme.mono(8.7, .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                }
             }
         }
     }
+}
 
-    /// One stat's trailing figure, styled uniformly across the card.
-    private func statValue(_ text: String) -> some View {
-        Text(text)
-            .font(Theme.ui(15, .semibold))
-            .monospacedDigit()
+struct StatsActivityStyle {
+    let background: Color
+    let foreground: Color
+    let outline: Color
+    let shadow: Color
+
+    init(day: StatsProjection.Day, focused: Bool) {
+        if day.state == .future {
+            background = Theme.windowBackground.opacity(0.28)
+            foreground = Theme.textFaint.opacity(0.42)
+        } else {
+            background = Self.legendFill(level: day.intensity.rawValue)
+            foreground = day.intensity == .veryHigh ? .black : Theme.textPrimary
+        }
+        if focused {
+            outline = Theme.textPrimary
+            shadow = Theme.textPrimary.opacity(0.22)
+        } else if day.state == .today {
+            outline = Theme.textTertiary.opacity(0.72)
+            shadow = .clear
+        } else {
+            outline = .clear
+            shadow = .clear
+        }
     }
 
-    /// Words-per-minute for display: rounded to a whole number with a unit, or
-    /// "—" when no dictation carried a duration to divide by — or when the rate is
-    /// below ~0.5 wpm and would round to a misleading "0 wpm", mirroring the
-    /// honesty guard on `timeSaved`.
-    private func speakingSpeed(_ wordsPerMinute: Double?) -> String {
-        guard let wordsPerMinute, wordsPerMinute >= 0.5 else { return "—" }
-        return "\(Int(wordsPerMinute.rounded())) wpm"
+    static func legendFill(level: Int) -> Color {
+        guard level > 0 else { return Theme.windowBackground.opacity(0.72) }
+        let opacities = [0.0, 0.20, 0.36, 0.54, 0.76, 0.96]
+        return Theme.accent.opacity(opacities[min(level, opacities.count - 1)])
+    }
+}
+
+enum StatsTransitionPolicy: Equatable {
+    case immediate
+    case crossfade
+
+    static func resolve(reduceMotion: Bool) -> StatsTransitionPolicy {
+        reduceMotion ? .immediate : .crossfade
     }
 
-    /// The current streak for display: "N days" while the run is alive, or "No
-    /// active streak" when it has lapsed or never started — the pane never shows a
-    /// bare "0 days".
-    private func streak(_ days: Int?) -> String {
-        guard let days else { return "No active streak" }
-        return days == 1 ? "1 day" : "\(days) days"
+    static func clearInheritedAnimation(in transaction: inout Transaction) {
+        transaction.animation = nil
     }
 
-    /// Time saved for display: a rounded whole-minute estimate ("~X min"), or "—"
-    /// when there's nothing to claim — no timed dictation, dictation the baseline
-    /// would have out-typed, or a saving that would round to zero minutes, so it
-    /// never shows "~0 min".
-    private func timeSaved(_ minutes: Double?) -> String {
-        guard let minutes, minutes >= 0.5 else { return "—" }
-        return "~\(Int(minutes.rounded())) min"
-    }
-
-    /// No kept dictations to project over *and* no live streak to keep showing —
-    /// so there is genuinely nothing to reflect. Adapts to *why*: when saving is
-    /// off it points at the switch that turns it back on; otherwise it invites the
-    /// user to dictate.
-    private var emptyState: some View {
-        Card {
-            if model.saveHistory {
-                CardRow(
-                    title: "No stats yet",
-                    subtitle: "Your usage will appear here after you dictate."
-                ) {
-                    EmptyView()
-                }
-            } else {
-                CardRow(
-                    title: "Saving is off",
-                    subtitle: "Stats are drawn from your saved dictations, and saving history "
-                        + "is turned off. Turn it on in History to start building your usage."
-                ) {
-                    Button("History…") { model.pane = .history }
-                        .controlSize(.small)
-                }
-            }
+    var animation: Animation? {
+        switch self {
+        case .immediate: nil
+        case .crossfade: .easeOut(duration: 0.14)
         }
     }
 }

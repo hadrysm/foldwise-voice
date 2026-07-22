@@ -43,9 +43,49 @@ struct UsageStats: Equatable {
 }
 
 /// Computes `UsageStats` from the history entries already loaded into the
-/// Settings model. Pure and order-independent, so its rules are unit-tested
-/// apart from the (untested) SwiftUI pane — modeled on `HistoryProjection`.
+/// Settings model. Pure and order-independent, so its calculation rules are
+/// unit-tested independently of rendering — modeled on `HistoryProjection`.
 enum UsageStatsAggregator {
+    struct Session: Equatable {
+        let localDay: Date
+        let spokenWords: Int
+        let usableDurationMs: Int?
+    }
+
+    struct Accumulator {
+        private var totalWords = 0
+        private var timedWords = 0
+        private var timedMs = 0
+        private var activeDays: Set<Date> = []
+
+        mutating func add(_ session: Session) {
+            totalWords += session.spokenWords
+            if let durationMs = session.usableDurationMs {
+                timedWords += session.spokenWords
+                timedMs += durationMs
+            }
+            activeDays.insert(session.localDay)
+        }
+
+        func stats(
+            typingWordsPerMinute: Double = UsageStatsAggregator.typingBaselineWordsPerMinute
+        ) -> UsageStats {
+            let wordsPerMinute = timedMs > 0
+                ? Double(timedWords) / (Double(timedMs) / 60000)
+                : nil
+            return UsageStats(
+                totalWords: totalWords,
+                wordsPerMinute: wordsPerMinute,
+                activeDays: activeDays.count,
+                timeSavedMinutes: UsageStatsAggregator.timeSaved(
+                    timedWords: timedWords,
+                    timedMs: timedMs,
+                    typingWordsPerMinute: typingWordsPerMinute
+                )
+            )
+        }
+    }
+
     /// The typing speed the time-saved estimate is measured against — Wispr's
     /// in-app "average keyboard typist" figure. Chosen over its 40-wpm marketing
     /// number because a *higher* baseline shrinks the claim, biasing the estimate
@@ -57,60 +97,41 @@ enum UsageStatsAggregator {
         calendar: Calendar = .current,
         typingWordsPerMinute: Double = UsageStatsAggregator.typingBaselineWordsPerMinute
     ) -> UsageStats {
-        // One pass over the history, splitting each `rawText` exactly once. Every
-        // accumulator is order-independent, so the single loop is identical to the
-        // separate reductions it replaces — it just stops re-splitting timed
-        // entries a second time. WPM is an aggregate (Σ words ÷ Σ minutes) over
-        // only the entries that carry a positive hold-to-talk duration, not a mean
-        // of per-entry rates (which a few very short dictations would skew); a
-        // positively-timed entry contributes its already-counted words to
-        // `timedWords` and its ms to `timedMs`. Active days are de-duped by
-        // `startOfDay` through the injected calendar so time zone and DST day
-        // arithmetic are correct.
-        var totalWords = 0
-        var timedWords = 0
-        var timedMs = 0
-        var activeDaySet: Set<Date> = []
-        for entry in entries {
-            let words = wordCount(entry.rawText)
-            totalWords += words
-            let durationMs = entry.durationMs ?? 0
-            if durationMs > 0 {
-                timedWords += words
-                timedMs += durationMs
-            }
-            activeDaySet.insert(calendar.startOfDay(for: entry.createdAt))
-        }
-
-        // `nil` when nothing is timed, so the pane shows "—" rather than dividing
-        // by zero or claiming "0 wpm".
-        let wordsPerMinute = timedMs > 0 ? Double(timedWords) / (Double(timedMs) / 60000) : nil
-        let activeDays = activeDaySet.count
-
-        // Time saved vs typing, over the same timed entries as WPM: the minutes
-        // those spoken words would have taken at the typing baseline, minus the
-        // real (pause-inclusive) dictation minutes. Clamped so a baseline that
-        // would out-type the dictation collapses to `nil` rather than a negative
-        // claim, and `nil` when nothing is timed — the estimate can only
-        // under-promise.
-        let timeSavedMinutes = timeSaved(
-            timedWords: timedWords,
-            timedMs: timedMs,
+        aggregate(
+            normalize(entries, calendar: calendar),
             typingWordsPerMinute: typingWordsPerMinute
         )
+    }
 
-        return UsageStats(
-            totalWords: totalWords,
-            wordsPerMinute: wordsPerMinute,
-            activeDays: activeDays,
-            timeSavedMinutes: timeSavedMinutes
-        )
+    static func normalize(_ entries: [HistoryEntry], calendar: Calendar) -> [Session] {
+        entries.map { entry in
+            let durationMs = entry.durationMs ?? 0
+            return Session(
+                localDay: calendar.startOfDay(for: entry.createdAt),
+                spokenWords: wordCount(entry.rawText),
+                usableDurationMs: durationMs > 0 ? durationMs : nil
+            )
+        }
+    }
+
+    static func aggregate(
+        _ sessions: [Session],
+        typingWordsPerMinute: Double = UsageStatsAggregator.typingBaselineWordsPerMinute
+    ) -> UsageStats {
+        // One pass over sessions whose local day was resolved during
+        // normalization. WPM is an aggregate (Σ words ÷ Σ minutes) over
+        // positive hold-to-talk durations.
+        var accumulator = Accumulator()
+        for session in sessions {
+            accumulator.add(session)
+        }
+        return accumulator.stats(typingWordsPerMinute: typingWordsPerMinute)
     }
 
     /// The clamped time-saved estimate in minutes, or `nil` when there is nothing
     /// honest to show — no timed dictation, or a baseline fast enough to have
     /// out-typed it.
-    private static func timeSaved(timedWords: Int, timedMs: Int, typingWordsPerMinute: Double) -> Double? {
+    static func timeSaved(timedWords: Int, timedMs: Int, typingWordsPerMinute: Double) -> Double? {
         guard timedMs > 0 else { return nil }
         let typingMinutes = Double(timedWords) / typingWordsPerMinute
         let dictationMinutes = Double(timedMs) / 60000

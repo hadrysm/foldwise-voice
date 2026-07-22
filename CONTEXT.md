@@ -42,6 +42,12 @@ Text is usable with built-in runtime defaults until an explicit reset backs up
 and replaces the file.
 _Avoid_: safe mode, fallback configuration
 
+**Monthly activity calendar** — The Stats view of the current calendar month,
+where each day reflects the total spoken words in saved Dictation sessions for
+that day. Day details may also describe session count, speaking time, and the
+time-saved estimate, but the spoken-word total is the activity measure.
+_Avoid_: contribution graph, yearly heatmap
+
 ## Dictation pipeline
 
 **Dictation session** — One press-to-insert cycle: from holding the hotkey
