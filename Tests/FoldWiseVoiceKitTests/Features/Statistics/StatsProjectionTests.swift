@@ -21,6 +21,25 @@ final class StatsProjectionTests: XCTestCase {
         )
     }
 
+    func testProjectionUsesInjectedLocaleForLeadingOffset() throws {
+        XCTAssertEqual(try mismatchedLocaleProjection().month.leadingColumnOffset, 2)
+    }
+
+    func testProjectionUsesInjectedLocaleForWeekdayOrder() throws {
+        XCTAssertEqual(try mismatchedLocaleProjection().month.weekdays.first, "Pon.")
+    }
+
+    private func mismatchedLocaleProjection() throws -> StatsProjection {
+        let calendar = try calendar(locale: "en_US", timeZone: "UTC")
+
+        return StatsProjection.project(
+            .init(entries: [], currentStreak: nil, savingEnabled: true),
+            now: try date(2026, 7, 22, 12, calendar: calendar),
+            calendar: calendar,
+            locale: Locale(identifier: "pl_PL")
+        )
+    }
+
     func testProjectionClassifiesDatesAfterTodayAsFuture() throws {
         XCTAssertEqual(
             try currentMonthProjection().month.days.map(\.state).suffix(9),

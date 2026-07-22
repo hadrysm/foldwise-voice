@@ -108,11 +108,13 @@ struct StatsProjection: Equatable {
         calendar: Calendar = .current,
         locale: Locale = .current
     ) -> StatsProjection {
-        let today = calendar.startOfDay(for: now)
-        let monthStart = calendar.dateInterval(of: .month, for: today)?.start ?? today
-        let dayRange = calendar.range(of: .day, in: .month, for: monthStart) ?? 1 ..< 1
-        let monthEnd = calendar.date(byAdding: .month, value: 1, to: monthStart) ?? monthStart
-        let sessions = UsageStatsAggregator.normalize(input.entries, calendar: calendar)
+        var projectionCalendar = calendar
+        projectionCalendar.locale = locale
+        let today = projectionCalendar.startOfDay(for: now)
+        let monthStart = projectionCalendar.dateInterval(of: .month, for: today)?.start ?? today
+        let dayRange = projectionCalendar.range(of: .day, in: .month, for: monthStart) ?? 1 ..< 1
+        let monthEnd = projectionCalendar.date(byAdding: .month, value: 1, to: monthStart) ?? monthStart
+        let sessions = UsageStatsAggregator.normalize(input.entries, calendar: projectionCalendar)
         let formatter = Formatter(locale: locale)
         var lifetimeAccumulator = UsageStatsAggregator.Accumulator()
         var buckets: [Date: [UsageStatsAggregator.Session]] = [:]
@@ -127,7 +129,7 @@ struct StatsProjection: Equatable {
         }
 
         let days = dayRange.compactMap { dayNumber -> Day? in
-            guard let date = calendar.date(byAdding: .day, value: dayNumber - 1, to: monthStart) else {
+            guard let date = projectionCalendar.date(byAdding: .day, value: dayNumber - 1, to: monthStart) else {
                 return nil
             }
             let state: Day.State = if date < today {
@@ -140,7 +142,7 @@ struct StatsProjection: Equatable {
             let daySessions = buckets[date] ?? []
             let words = daySessions.reduce(0) { $0 + $1.spokenWords }
             let details = formatter.details(for: daySessions, spokenWords: words)
-            let fullDate = formatter.fullDate(date, calendar: calendar)
+            let fullDate = formatter.fullDate(date, calendar: projectionCalendar)
             let accessibilityLabel = state == .today ? "\(fullDate), today" : fullDate
             let accessibilityValue = daySessions.isEmpty
                 ? formatter.emptyAccessibilityValue
@@ -161,7 +163,7 @@ struct StatsProjection: Equatable {
             )
         }
 
-        let title = formatter.monthTitle(monthStart, calendar: calendar)
+        let title = formatter.monthTitle(monthStart, calendar: projectionCalendar)
         let lifetime = lifetimeAccumulator.stats()
         let spokenWordSummary = formatter.spokenWords(spokenWordTotal)
         let activeDaySummary = formatter.activeDays(buckets.count)
@@ -174,8 +176,8 @@ struct StatsProjection: Equatable {
             notice: notice(input),
             month: Month(
                 title: title,
-                weekdays: weekdays(calendar: calendar, locale: locale),
-                leadingColumnOffset: leadingOffset(monthStart: monthStart, calendar: calendar),
+                weekdays: weekdays(calendar: projectionCalendar, locale: locale),
+                leadingColumnOffset: leadingOffset(monthStart: monthStart, calendar: projectionCalendar),
                 spokenWordTotal: spokenWordTotal,
                 activeDays: buckets.count,
                 spokenWordSummary: spokenWordSummary,
@@ -202,10 +204,8 @@ struct StatsProjection: Equatable {
     }
 
     private static func weekdays(calendar: Calendar, locale: Locale) -> [String] {
-        var localizedCalendar = calendar
-        localizedCalendar.locale = locale
-        let symbols = localizedCalendar.shortStandaloneWeekdaySymbols
-        let start = max(0, localizedCalendar.firstWeekday - 1)
+        let symbols = calendar.shortStandaloneWeekdaySymbols
+        let start = max(0, calendar.firstWeekday - 1)
         return Array(symbols[start...] + symbols[..<start]).map {
             $0.capitalized(with: locale)
         }
