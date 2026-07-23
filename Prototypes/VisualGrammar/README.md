@@ -42,5 +42,28 @@ every Badge state.
 
 ## Verdict
 
-Pending human review. Record the chosen calibration and the reasons it won here
-before the prototype is deleted or absorbed into the final visual specification.
+Approved: **A — Ember Edge**, with **Standard** contrast as the baseline and
+**Cues+** as the permanent non-color state language.
+
+Ember Edge won because it translates the approved screenshot most directly:
+near-black layered Dark surfaces, warm off-white Light surfaces, restrained
+orange ingress marks, and typography-led hierarchy. Standard keeps the baseline
+fine and quiet; the separate Contrast+ adaptation remains available when macOS
+Increase Contrast is enabled. Cues+ is not optional decoration: selections,
+success, warning, and error states pair color with persistent shape, icon, text,
+weight, or underline cues.
+
+The approved grammar uses:
+
+- SF Pro for interface language and SF Mono only for time, shortcuts, and model
+  data, on a four-point spacing grid.
+- Eight-point surface radii, six-point control radii, one-point baseline borders,
+  and two-point increased-contrast borders.
+- A two-point orange focus ring separated from the control by a two-point canvas
+  gap.
+- A 160 ms ease-out for hover and state changes; immediate transitions under
+  Reduce Motion.
+- Orange for selection ingress, active icons, focus, and primary actions—not as
+  a general surface wash or substitute for semantic status colors.
+- The same orange family on the Badge without glow or geometry changes; Badge
+  errors retain their dedicated icon, text, and border treatment.

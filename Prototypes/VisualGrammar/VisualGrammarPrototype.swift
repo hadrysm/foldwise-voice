@@ -382,7 +382,7 @@ private struct PrototypeRoot: View {
         initialVariant: GrammarVariant = .ember,
         initialAppearance: PrototypeAppearance = .dark,
         initialContrast: ContrastPreview = .standard,
-        initialCues: CuePreview = .standard,
+        initialCues: CuePreview = .emphasized,
         initialMotion: MotionPreview = .standard
     ) {
         _variant = State(initialValue: initialVariant)
