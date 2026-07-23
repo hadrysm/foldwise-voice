@@ -96,32 +96,30 @@ struct HistoryPane: View {
             }
             .accessibilityIdentifier("history.preference.saving")
 
-            if model.saveHistory {
-                preferenceCell(
-                    symbolName: "calendar",
-                    title: "Keep dictations",
-                    detail: "Automatically removes older saved text"
-                ) {
-                    Picker(
-                        "",
-                        selection: Binding(
-                            get: { model.retention },
-                            set: { newValue in
-                                model.retention = newValue
-                                model.onCommit?()
-                            }
-                        )
-                    ) {
-                        ForEach(RetentionWindow.allCases) { window in
-                            Text(window.label).tag(window)
+            preferenceCell(
+                symbolName: "calendar",
+                title: "Keep dictations",
+                detail: "Automatically removes older saved text"
+            ) {
+                Picker(
+                    "",
+                    selection: Binding(
+                        get: { model.retention },
+                        set: { newValue in
+                            model.retention = newValue
+                            model.onCommit?()
                         }
+                    )
+                ) {
+                    ForEach(RetentionWindow.allCases) { window in
+                        Text(window.label).tag(window)
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .fixedSize()
                 }
-                .accessibilityIdentifier("history.preference.retention")
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
             }
+            .accessibilityIdentifier("history.preference.retention")
         }
     }
 

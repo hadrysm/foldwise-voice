@@ -42,6 +42,24 @@ final class HistoryPaneHostedTests: XCTestCase {
         XCTAssertEqual(savingFrame.midY, retentionFrame.midY, accuracy: 1)
     }
 
+    func testHostedHistoryKeepsBothPreferenceCellsWhenSavingIsOff() throws {
+        let model = SettingsModel()
+        model.saveHistory = false
+        let window = host(model)
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(
+            try identifiers(in: window).intersection([
+                "history.preference.saving",
+                "history.preference.retention",
+            ]),
+            [
+                "history.preference.saving",
+                "history.preference.retention",
+            ]
+        )
+    }
+
     func testHostedHistoryMakesSavingOffWithRetainedDataExplicit() throws {
         let model = SettingsModel()
         model.saveHistory = false
