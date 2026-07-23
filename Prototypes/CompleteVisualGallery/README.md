@@ -30,6 +30,11 @@ Dark; wide and compact layouts; baseline, hover, focus, empty, progress, and
 error states; Standard and Contrast+; and Motion and Reduced Motion.
 Command–Left Arrow and Command–Right Arrow cycle surfaces.
 
+The Recording Badge preserves the production mic-reactive ribbon contract:
+amplitude sweeps the smoothed `0.10…0.45` range at 30 Hz in Motion previews,
+while Working keeps calm ribbons at a fixed `0.18`. Reduced Motion freezes the
+decorative timeline without removing the persistent state cues.
+
 Render the curated integration matrix to
 `.context/complete-visual-gallery-shots` with:
 

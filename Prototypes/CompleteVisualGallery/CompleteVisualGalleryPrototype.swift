@@ -1576,7 +1576,8 @@ private struct BadgeGallery: View {
             VStack(alignment: .leading, spacing: 22) {
                 PageHeader(
                     title: "Badge",
-                    subtitle: "One quiet capsule; orange signals work, green confirms Done, and red owns Error.",
+                    subtitle: "Mic-reactive ribbons carry Recording; orange signals work, "
+                        + "green confirms Done, and red owns Error.",
                     palette: palette
                 )
                 LazyVGrid(
@@ -1613,7 +1614,7 @@ private struct BadgeGallery: View {
                     BadgeLegend(
                         color: palette.orange,
                         title: "Active / Working",
-                        detail: "signal, progress, focus",
+                        detail: "mic amplitude, progress, focus",
                         palette: palette
                     )
                     BadgeLegend(color: palette.success, title: "Done", detail: "checkmark + inserted", palette: palette)
@@ -1655,9 +1656,9 @@ private struct BadgePreview: View {
     var width: CGFloat {
         switch scene {
         case .idle: 88
-        case .hover, .recording: 132
-        case .working, .done, .modeCycle: 176
-        case .error: 208
+        case .hover: 132
+        case .modeCycle: 176
+        case .recording, .working, .done, .error: 208
         }
     }
 
@@ -1670,12 +1671,16 @@ private struct BadgePreview: View {
                 Image(systemName: "mic.fill").foregroundStyle(palette.orange)
                 Image(systemName: "gearshape").foregroundStyle(palette.secondary)
             case .recording:
-                Circle().fill(palette.orange).frame(width: 7, height: 7)
-                Text("Listening").foregroundStyle(palette.primary)
+                BadgeRibbon(live: true, motion: motion, palette: palette)
+                    .frame(width: 138, height: 20)
+                Text("0:14")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(palette.primary)
             case .working:
+                BadgeRibbon(live: false, motion: motion, palette: palette)
+                    .frame(width: 142, height: 20)
                 Image(systemName: motion == .reduced ? "ellipsis" : "arrow.triangle.2.circlepath")
                     .foregroundStyle(palette.orange)
-                Text("Polishing").foregroundStyle(palette.primary)
             case .done:
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(palette.success)
                 Text("Inserted").foregroundStyle(palette.primary)
@@ -1701,6 +1706,98 @@ private struct BadgePreview: View {
         }
         .shadow(color: .black.opacity(0.25), radius: 10, y: 6)
         .accessibilityLabel(scene.rawValue)
+    }
+}
+
+private struct BadgeRibbon: View {
+    let live: Bool
+    let motion: GalleryMotion
+    let palette: Palette
+
+    var body: some View {
+        TimelineView(
+            .animation(
+                minimumInterval: 1.0 / 30.0,
+                paused: motion == .reduced
+            )
+        ) { context in
+            let time = motion == .reduced
+                ? 730.0
+                : context.date.timeIntervalSinceReferenceDate
+            Canvas { graphics, size in
+                drawBaseline(&graphics, size: size)
+                drawStrands(&graphics, size: size, time: time)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func drawBaseline(
+        _ graphics: inout GraphicsContext,
+        size: CGSize
+    ) {
+        var line = Path()
+        line.move(to: CGPoint(x: 0, y: size.height / 2))
+        line.addLine(to: CGPoint(x: size.width, y: size.height / 2))
+        graphics.stroke(
+            line,
+            with: .linearGradient(
+                Gradient(colors: [
+                    .clear, palette.orange.opacity(0.5), .clear,
+                ]),
+                startPoint: .zero,
+                endPoint: CGPoint(x: size.width, y: 0)
+            ),
+            lineWidth: 1
+        )
+    }
+
+    private func drawStrands(
+        _ graphics: inout GraphicsContext,
+        size: CGSize,
+        time: Double
+    ) {
+        let amplitude = live ? liveAmplitude(at: time) : 0.18
+        let colors = [
+            palette.orange,
+            palette.orange.opacity(0.86),
+            palette.warning,
+            palette.orange.opacity(0.58),
+        ]
+        let speed = live ? 4.8 : 2.1
+        for strand in 0 ..< colors.count {
+            let index = Double(strand)
+            let phase = index * 1.7
+            let frequency = 0.050 + index * 0.012
+            var path = Path()
+            var x = 0.0
+            while x <= size.width {
+                let unit = x / size.width
+                let envelopeUnit = min(1, max(0, (unit - 0.09) / 0.82))
+                let envelope = pow(sin(.pi * envelopeUnit), 2)
+                let y = size.height / 2
+                    + sin(x * frequency + time * speed * (1 + index * 0.13) + phase)
+                    * size.height * amplitude * envelope
+                if x == 0 {
+                    path.move(to: CGPoint(x: x, y: y))
+                } else {
+                    path.addLine(to: CGPoint(x: x, y: y))
+                }
+                x += 2
+            }
+            graphics.stroke(
+                path,
+                with: .color(colors[strand].opacity(0.78)),
+                lineWidth: strand == 0 ? 1.6 : 1
+            )
+        }
+    }
+
+    private func liveAmplitude(at time: Double) -> Double {
+        let syllable = pow(max(0, sin(time * 5.2)), 1.6)
+        let phrase = 0.62 + 0.38 * max(0, sin(time * 1.15 + 0.8))
+        return 0.10 + 0.35 * syllable * phrase
     }
 }
 
