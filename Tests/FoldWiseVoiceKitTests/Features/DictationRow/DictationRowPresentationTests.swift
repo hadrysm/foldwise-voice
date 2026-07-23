@@ -101,6 +101,31 @@ final class DictationRowPresentationTests: XCTestCase {
         )
     }
 
+    func testPresentationProvidesDistinctRawAndPolishedSymbols() {
+        let raw = presentation(modeName: "Voice to Text", modeID: nil)
+        let polished = DictationRowPresentation(
+            entry: HistoryEntry(
+                id: UUID(),
+                createdAt: Date(timeIntervalSince1970: 1_783_499_700),
+                text: "Polished words",
+                rawText: "raw words",
+                isPolished: true,
+                modeName: "Clean",
+                wordCount: 2,
+                sourceApp: nil,
+                durationMs: nil,
+                flagged: false,
+                flagReason: nil
+            ),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(
+            [raw.polishStatusSymbolName, polished.polishStatusSymbolName],
+            ["waveform", "wand.and.stars"]
+        )
+    }
+
     func testResolvedModeIDUsesCurrentName() {
         let modeID = ModeID.random()
         let presentation = presentation(

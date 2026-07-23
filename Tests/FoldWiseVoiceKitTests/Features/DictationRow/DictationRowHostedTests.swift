@@ -28,6 +28,17 @@ final class DictationRowHostedTests: XCTestCase {
         XCTAssertEqual([home.fittingSize.height, history.fittingSize.height], [44, 44])
     }
 
+    func testHostedRowRendersCanonicalAccentIngress() throws {
+        XCTAssertGreaterThan(try renderedAccentPixelCount(focused: false), 80)
+    }
+
+    func testHostedFocusedRowRendersSeparatedCanonicalAccentRing() throws {
+        let resting = try renderedAccentPixelCount(focused: false)
+        let focused = try renderedAccentPixelCount(focused: true)
+
+        XCTAssertGreaterThan(focused, resting + 200)
+    }
+
     func testHostedHistoryIgnoresUnrelatedModelPublicationForProjection() {
         let model = SettingsModel()
         model.historyEntries = [entry()]
@@ -160,6 +171,43 @@ final class DictationRowHostedTests: XCTestCase {
         hosting.frame = NSRect(x: 0, y: 0, width: 700, height: 44)
         hosting.layoutSubtreeIfNeeded()
         return hosting
+    }
+
+    private func renderedAccentPixelCount(focused: Bool) throws -> Int {
+        let interaction = DictationRowInteractionState(hasMore: false)
+        if focused {
+            interaction.setFocused(.row)
+        }
+        let controller = NSHostingController(rootView: DictationRowContent(
+            presentation: DictationRowPresentation(entry: entry(), calendar: utcCalendar()),
+            moreCapabilities: nil,
+            onCommand: { _ in },
+            interactionState: interaction,
+            copyFeedback: DictationRowCopyFeedback()
+        )
+        .frame(width: 700, height: 44)
+        .environment(\.colorScheme, .light))
+        controller.view.frame = NSRect(x: 0, y: 0, width: 700, height: 44)
+        controller.view.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(
+            controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds)
+        )
+        controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
+
+        var count = 0
+        for y in 0 ..< bitmap.pixelsHigh {
+            for x in 0 ..< bitmap.pixelsWide {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
+                    continue
+                }
+                if (0.65 ... 0.85).contains(color.redComponent),
+                   (0.15 ... 0.35).contains(color.greenComponent),
+                   color.blueComponent < 0.15 {
+                    count += 1
+                }
+            }
+        }
+        return count
     }
 
     private func hostInKeyWindow(_ hosting: NSHostingView<some View>) -> NSWindow {

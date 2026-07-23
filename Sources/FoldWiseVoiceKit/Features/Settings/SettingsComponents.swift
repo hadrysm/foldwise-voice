@@ -42,10 +42,11 @@ struct CardRow<Trailing: View>: View {
     }
 }
 
-/// The design's keycap chip: mono label on a raised key with a heavier
-/// bottom edge.
+/// The design's keycap chip: a mono label on an opaque raised surface.
 struct Keycap: View {
     let text: String
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
     var body: some View {
         Text(text)
             .font(Theme.mono(11.5, .semibold))
@@ -56,9 +57,17 @@ struct Keycap: View {
             .background(Theme.keycapBackground, in: RoundedRectangle(cornerRadius: Theme.keycapRadius))
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.keycapRadius)
-                    .strokeBorder(Theme.keycapBorder, lineWidth: 1)
+                    .strokeBorder(
+                        Theme.essentialBorderColor(increaseContrast: usesStrongBoundary),
+                        lineWidth: Theme.essentialBorderWidth(
+                            increaseContrast: usesStrongBoundary
+                        )
+                    )
             )
-            .shadow(color: Theme.keycapBorder, radius: 0, y: 1.5)
+    }
+
+    private var usesStrongBoundary: Bool {
+        colorSchemeContrast == .increased
     }
 }
 

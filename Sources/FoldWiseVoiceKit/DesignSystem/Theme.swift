@@ -111,6 +111,7 @@ enum Theme {
     static let noticeIngressWidth: CGFloat = 3
     static let focusRingWidth: CGFloat = 2
     static let focusGap: CGFloat = 2
+    static let insetFocusCanvasStrokeWidth = focusRingWidth + focusGap
     static let contentPaddingWide: CGFloat = 28
     static let contentPaddingCompact: CGFloat = 20
 
@@ -422,28 +423,65 @@ private struct EmberButtonBody: View {
 }
 
 private struct EmberFocusRing: ViewModifier {
+    enum Placement {
+        case outside
+        case inset
+    }
+
     let isFocused: Bool
+    let cornerRadius: CGFloat
+    let placement: Placement
 
     func body(content: Content) -> some View {
         content
             .overlay {
                 if isFocused {
-                    RoundedRectangle(cornerRadius: Theme.controlRadius + Theme.focusGap)
-                        .stroke(Theme.canvas, lineWidth: Theme.focusGap)
-                        .padding(-Theme.focusGap)
-                    RoundedRectangle(
-                        cornerRadius: Theme.controlRadius + Theme.focusGap + Theme.focusRingWidth
-                    )
-                    .stroke(Theme.accent, lineWidth: Theme.focusRingWidth)
-                    .padding(-(Theme.focusGap + Theme.focusRingWidth))
+                    focusRing
                 }
             }
+    }
+
+    @ViewBuilder
+    private var focusRing: some View {
+        switch placement {
+        case .outside:
+            RoundedRectangle(cornerRadius: cornerRadius + Theme.focusGap)
+                .stroke(Theme.canvas, lineWidth: Theme.focusGap)
+                .padding(-Theme.focusGap)
+            RoundedRectangle(
+                cornerRadius: cornerRadius + Theme.focusGap + Theme.focusRingWidth
+            )
+            .stroke(Theme.accent, lineWidth: Theme.focusRingWidth)
+            .padding(-(Theme.focusGap + Theme.focusRingWidth))
+        case .inset:
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .strokeBorder(Theme.canvas, lineWidth: Theme.insetFocusCanvasStrokeWidth)
+                .padding(Theme.focusGap)
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .strokeBorder(Theme.accent, lineWidth: Theme.focusRingWidth)
+                .padding(Theme.focusGap)
+        }
     }
 }
 
 extension View {
     func emberFocusRing(_ isFocused: Bool) -> some View {
-        modifier(EmberFocusRing(isFocused: isFocused))
+        modifier(EmberFocusRing(
+            isFocused: isFocused,
+            cornerRadius: Theme.controlRadius,
+            placement: .outside
+        ))
+    }
+
+    func emberInsetFocusRing(
+        _ isFocused: Bool,
+        cornerRadius: CGFloat = Theme.controlRadius
+    ) -> some View {
+        modifier(EmberFocusRing(
+            isFocused: isFocused,
+            cornerRadius: cornerRadius,
+            placement: .inset
+        ))
     }
 }
 

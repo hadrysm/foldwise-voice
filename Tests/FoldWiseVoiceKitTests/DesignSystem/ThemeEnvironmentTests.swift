@@ -78,4 +78,8 @@ final class ThemeEnvironmentTests: XCTestCase {
         XCTAssertEqual(ThemeEnvironmentPolicy.ordinaryMotionDuration(reduceMotion: false), 0.16)
         XCTAssertNil(ThemeEnvironmentPolicy.ordinaryMotionDuration(reduceMotion: true))
     }
+
+    func testInsetFocusRingKeepsTwoPointCanvasGap() {
+        XCTAssertEqual(Theme.insetFocusCanvasStrokeWidth, 4)
+    }
 }

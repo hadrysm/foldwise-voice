@@ -16,6 +16,7 @@ struct DictationRowPresentation: Equatable {
     let modeIcon: String
     let isDeletedMode: Bool
     let polishStatus: PolishStatus
+    let polishStatusSymbolName: String
     let isFlagged: Bool
     let accessibilityDescription: String
 
@@ -39,6 +40,10 @@ struct DictationRowPresentation: Equatable {
         modeIcon = attribution.icon
         isDeletedMode = attribution.isDeleted
         polishStatus = status
+        polishStatusSymbolName = switch status {
+        case .polished: "wand.and.stars"
+        case .raw: "waveform"
+        }
         isFlagged = entry.flagged
         var accessibilityParts = [
             time,
