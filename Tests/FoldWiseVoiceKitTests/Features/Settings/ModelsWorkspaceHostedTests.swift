@@ -241,12 +241,9 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
 
         let resting = try renderedCenterColor(isHighlighted: false)
         let highlighted = try renderedCenterColor(isHighlighted: true)
-        let colorDistance = abs(resting.redComponent - highlighted.redComponent)
-            + abs(resting.greenComponent - highlighted.greenComponent)
-            + abs(resting.blueComponent - highlighted.blueComponent)
 
         XCTAssertGreaterThan(
-            colorDistance,
+            colorDistance(resting, highlighted),
             0.05,
             "hovering a model row should visibly change its background"
         )
