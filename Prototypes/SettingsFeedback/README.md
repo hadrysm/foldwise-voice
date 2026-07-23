@@ -60,5 +60,24 @@ Render review snapshots to `.context/settings-feedback-shots` with:
 
 ## Verdict
 
-Pending live review. Record the approved composition and any borrowed elements
-here before this prototype is retired or absorbed into the complete gallery.
+Approved: **A — Signal Ledger**.
+
+Settings remains one dense, vertically scrolling scan path. Each subsystem keeps
+an uppercase icon-led section label and one restrained surface containing its
+native controls, rows, and directly owned lifecycle feedback. Shortcut capture
+and validation stay with the shortcut ledger; input fallback, restoration,
+deferral, and unavailability stay with the input-device roster; sound and update
+controls remain compact rows; and Appearance remains a three-choice card set
+that changes from horizontal to vertical at the existing 650-point content
+boundary.
+
+Configuration recovery and global success/error feedback keep the approved
+Continuous Frame placement above and below the destination. Recovery makes the
+pane visibly read-only. Success is transient in production, while validation
+and persistence errors remain until superseded. Every state keeps the approved
+Cues+ icon, text, and shape language; orange remains limited to selection,
+capture, focus, and primary actions.
+
+Variants B and C remain in this throwaway artifact only as review context. The
+complete prototype gallery and production specification should carry forward
+Variant A.
