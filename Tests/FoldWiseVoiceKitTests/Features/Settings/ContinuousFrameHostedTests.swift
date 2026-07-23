@@ -74,6 +74,19 @@ final class ContinuousFrameHostedTests: XCTestCase {
         )
     }
 
+    func testHostedVoiceToTextSelectionExplainsNextDictation() throws {
+        let model = SettingsModel()
+        model.pane = .modes
+        let window = host(model)
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(
+            try node("modes.inspector.voice-to-text-detail", in: window).value,
+            "Voice to Text is selected for the next Dictation session. "
+                + "Select a Mode to review or edit its Polish instructions."
+        )
+    }
+
     func testHostedVersionFooterRemainsInExpandedAndRailNavigation() throws {
         let expandedModel = SettingsModel()
         let expandedWindow = host(expandedModel)

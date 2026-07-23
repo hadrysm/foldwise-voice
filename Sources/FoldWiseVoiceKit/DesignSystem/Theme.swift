@@ -386,6 +386,7 @@ private struct EmberButtonBody: View {
     let kind: EmberButtonKind
     @State private var isHovering = false
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.isEnabled) private var isEnabled
     @Environment(\.isFocused) private var isFocused
 
     var body: some View {
@@ -407,6 +408,7 @@ private struct EmberButtonBody: View {
                 }
             }
             .onHover { isHovering = $0 }
+            .opacity(isEnabled ? 1 : 0.46)
             .focusEffectDisabled()
             .emberFocusRing(isFocused)
     }

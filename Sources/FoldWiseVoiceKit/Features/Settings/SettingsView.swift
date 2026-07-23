@@ -741,9 +741,13 @@ struct SettingsView: View {
                         Text("Choose a Mode")
                             .font(Theme.ui(13, .semibold))
                             .foregroundStyle(Theme.textPrimary)
-                        Text("Select a Mode to review or edit its Polish instructions.")
-                            .font(Theme.ui(11))
-                            .foregroundStyle(Theme.textSecondary)
+                        Text(
+                            "Voice to Text is selected for the next Dictation session. "
+                                + "Select a Mode to review or edit its Polish instructions."
+                        )
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                        .accessibilityIdentifier("modes.inspector.voice-to-text-detail")
                     }
                     .padding(16)
                     .frame(maxWidth: .infinity, minHeight: 370, alignment: .topLeading)

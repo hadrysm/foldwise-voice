@@ -265,6 +265,7 @@ struct ModeEditorSheet: View {
                 spacing: 8
             ) {
                 ForEach(ModeIconCatalog.choices) { choice in
+                    let isSelected = selected == choice.symbolName
                     Button {
                         setDraft(\.icon, to: choice.symbolName)
                         iconPickerPresented = false
@@ -278,19 +279,17 @@ struct ModeEditorSheet: View {
                                 .lineLimit(1)
                         }
                         .foregroundStyle(
-                            selected == choice.symbolName ? Theme.accent : Theme.textPrimary
+                            isSelected ? Theme.accent : Theme.textPrimary
                         )
                         .frame(maxWidth: .infinity, minHeight: 58)
                         .background(
-                            selected == choice.symbolName
-                                ? Theme.raised
-                                : Theme.surface,
+                            isSelected ? Theme.raised : Theme.surface,
                             in: RoundedRectangle(cornerRadius: Theme.surfaceRadius)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: Theme.surfaceRadius)
                                 .strokeBorder(
-                                    selected == choice.symbolName
+                                    isSelected
                                         ? Theme.accent
                                         : Theme.essentialBorderColor(
                                             increaseContrast: usesStrongBoundary
@@ -301,7 +300,7 @@ struct ModeEditorSheet: View {
                                 )
                         )
                         .overlay(alignment: .topTrailing) {
-                            if selected == choice.symbolName {
+                            if isSelected {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: 10, weight: .bold))
                                     .foregroundStyle(Theme.accent)
@@ -314,7 +313,7 @@ struct ModeEditorSheet: View {
                         cornerRadius: Theme.surfaceRadius
                     ))
                     .accessibilityLabel(choice.label)
-                    .accessibilityValue(selected == choice.symbolName ? "Selected" : "Not selected")
+                    .accessibilityValue(isSelected ? "Selected" : "Not selected")
                 }
             }
             .padding(12)
