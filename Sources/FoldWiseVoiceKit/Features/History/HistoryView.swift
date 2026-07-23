@@ -1,13 +1,6 @@
-// The History pane content (PRD #78): a "Save dictation history" master switch
-// and a separate retention (auto-delete) control above a date-grouped list of
-// past dictations — TODAY / YESTERDAY / date headers, newest first — each row
-// showing a timestamp and the inserted text, with an empty state when there is
-// none. A search box filters live across the polished and raw text and a
-// "Flagged only" toggle narrows to bookmarked rows. Hovering a row reveals Copy
-// and Flag; a per-row overflow menu offers Copy raw (when the row is polished),
-// Re-run Polish under a chosen Mode, and Delete; a Clear all history control
-// (behind a confirmation) empties the store. Turning saving off offers to
-// delete what is already saved.
+// History's Instrument Panel composition. The pane keeps persistence,
+// filtering, grouping, row commands, and confirmations with their existing
+// owners while presenting the shared Dictation rows through Ember Edge chrome.
 
 import Combine
 import SwiftUI
@@ -20,6 +13,8 @@ struct HistoryPane: View {
     @State private var flaggedOnly = false
     @State private var projection = HistoryProjection.empty
     @State private var projectionCache: HistoryProjectionCache
+    @FocusState private var searchFocused: Bool
+    @FocusState private var clearSearchFocused: Bool
     private let notificationCenter: NotificationCenter
 
     init(
@@ -33,10 +28,14 @@ struct HistoryPane: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            saveHistoryCard
-            if model.saveHistory {
-                retentionCard
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Saved locally on this Mac. Audio is never retained.")
+                .font(Theme.body)
+                .foregroundStyle(Theme.textSecondary)
+                .accessibilityIdentifier("history.assurance")
+            preferences
+            if !model.saveHistory, !model.historyEntries.isEmpty {
+                savingOffNotice
             }
             if model.historyEntries.isEmpty {
                 emptyState
@@ -70,15 +69,14 @@ struct HistoryPane: View {
         }
     }
 
-    /// The master on/off switch, shown above the list in both the empty and
-    /// populated states so history can be turned off before it fills. Turning
-    /// it off offers to also delete what is already saved (PRD #78).
-    private var saveHistoryCard: some View {
-        Card {
-            CardRow(
+    private var preferences: some View {
+        HStack(alignment: .top, spacing: 10) {
+            preferenceCell(
+                symbolName: "externaldrive",
                 title: "Save dictation history",
-                subtitle: "Keep a text-only, on-device record of your dictations. "
-                    + "Turn this off and nothing is written to disk."
+                detail: model.saveHistory
+                    ? "On · text only, on this Mac"
+                    : "Off · new Dictation sessions are not saved"
             ) {
                 Toggle(
                     "",
@@ -96,51 +94,88 @@ struct HistoryPane: View {
                 .toggleStyle(.switch)
                 .labelsHidden()
             }
+            .accessibilityIdentifier("history.preference.saving")
+
+            if model.saveHistory {
+                preferenceCell(
+                    symbolName: "calendar",
+                    title: "Keep dictations",
+                    detail: "Automatically removes older saved text"
+                ) {
+                    Picker(
+                        "",
+                        selection: Binding(
+                            get: { model.retention },
+                            set: { newValue in
+                                model.retention = newValue
+                                model.onCommit?()
+                            }
+                        )
+                    ) {
+                        ForEach(RetentionWindow.allCases) { window in
+                            Text(window.label).tag(window)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                .accessibilityIdentifier("history.preference.retention")
+            }
         }
     }
 
-    /// Auto-delete window, kept a separate card from the on/off switch so
-    /// "Forever" and "Off" never read as the same thing (PRD #78). Shown only
-    /// while saving is on, since retention governs what gets saved.
-    private var retentionCard: some View {
-        Card {
-            CardRow(
-                title: "Keep history for",
-                subtitle: "Automatically delete dictations older than this. "
-                    + "\u{201C}Forever\u{201D} keeps everything — it does not turn saving off."
-            ) {
-                Picker(
-                    "",
-                    selection: Binding(
-                        get: { model.retention },
-                        set: { newValue in
-                            model.retention = newValue
-                            model.onCommit?()
-                        }
-                    )
-                ) {
-                    ForEach(RetentionWindow.allCases) { window in
-                        Text(window.label).tag(window)
-                    }
+    private func preferenceCell(
+        symbolName: String,
+        title: String,
+        detail: String,
+        @ViewBuilder control: () -> some View
+    ) -> some View {
+        EmberSurface {
+            HStack(spacing: 10) {
+                Image(systemName: symbolName)
+                    .font(Theme.ui(13, .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 18)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(Theme.ui(12, .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(detail)
+                        .font(Theme.ui(10.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(2)
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .fixedSize()
+                Spacer(minLength: 8)
+                control()
             }
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 64)
         }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .contain)
     }
 
     private var emptyState: some View {
-        Card {
-            CardRow(
-                title: "No dictations yet",
-                subtitle: "Your dictations will appear here after you speak. History is "
-                    + "text-only and stays on this Mac — no audio is ever saved. Use the "
-                    + "switch above to turn saving off."
-            ) {
-                EmptyView()
-            }
-        }
+        EmberEmptyState(
+            symbolName: "clock",
+            title: "No saved Dictation sessions.",
+            detail: model.saveHistory
+                ? "Your saved text will appear here after you speak."
+                : "Turn on History when you want new Dictation sessions saved."
+        )
+        .accessibilityIdentifier("history.empty.first-run")
+    }
+
+    private var savingOffNotice: some View {
+        EmberStatusNotice(
+            kind: .warning,
+            title: "History saving is off",
+            detail: "Existing saved Dictation sessions remain available until you delete them."
+        )
+        .frame(minHeight: 48)
+        .accessibilityIdentifier("history.saving-off")
     }
 
     private var populated: some View {
@@ -158,11 +193,12 @@ struct HistoryPane: View {
                 )
             }
             HStack {
-                Spacer()
                 Button("Clear all history…", role: .destructive) {
                     confirmingClearAll = true
                 }
-                .controlSize(.small)
+                .buttonStyle(EmberButtonStyle(kind: .destructive))
+                .accessibilityIdentifier("history.clear-all")
+                Spacer()
             }
         }
     }
@@ -187,53 +223,78 @@ struct HistoryPane: View {
     /// toggle. Both narrow the loaded list through `HistoryProjection`;
     /// neither touches the store.
     private var searchControls: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(Theme.ui(12))
-                    .foregroundStyle(Theme.textSecondary)
-                TextField("Search dictations", text: $search)
-                    .textFieldStyle(.plain)
-                if !search.isEmpty {
-                    Button {
-                        search = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(Theme.textTertiary)
+        EmberSurface {
+            HStack(spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(Theme.ui(12))
+                        .foregroundStyle(Theme.textSecondary)
+                        .accessibilityHidden(true)
+                    TextField("Search dictations", text: $search)
+                        .textFieldStyle(.plain)
+                        .font(Theme.ui(11.5))
+                        .focused($searchFocused)
+                        .accessibilityLabel("Search Dictations")
+                        .accessibilityIdentifier("history.search")
+                    if !search.isEmpty {
+                        Button {
+                            search = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(Theme.textTertiary)
+                                .frame(width: 22, height: 22)
+                        }
+                        .buttonStyle(.plain)
+                        .focusEffectDisabled()
+                        .focused($clearSearchFocused)
+                        .emberFocusRing(clearSearchFocused)
+                        .help("Clear search")
                     }
-                    .buttonStyle(.plain)
-                    .help("Clear search")
                 }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .background(
+                    Theme.raised,
+                    in: RoundedRectangle(cornerRadius: Theme.controlRadius)
+                )
+                .emberFocusRing(searchFocused)
 
-            Toggle(isOn: $flaggedOnly) {
-                Label("Flagged only", systemImage: "flag.fill")
-                    .font(Theme.ui(12, .medium))
+                Toggle(isOn: $flaggedOnly) {
+                    Label(
+                        "Flagged only",
+                        systemImage: flaggedOnly ? "flag.fill" : "flag"
+                    )
+                    .font(Theme.ui(11.5, .medium))
+                }
+                .toggleStyle(.button)
+                .controlSize(.small)
+                .help("Show only Dictation sessions you have flagged")
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("history.flagged-only")
             }
-            .toggleStyle(.button)
-            .controlSize(.small)
-            .help("Show only dictations you have flagged")
+            .padding(.horizontal, 8)
+            .frame(height: 42)
+            .accessibilityElement(children: .contain)
         }
+        .accessibilityIdentifier("history.utility")
     }
 
     /// Shown when the store has entries but the search / Flagged-only filter
     /// leaves none — distinct from the first-run empty state.
     private var noMatchesState: some View {
         let flaggedButEmpty = flaggedOnly && search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return Card {
-            CardRow(
-                title: flaggedButEmpty ? "No flagged dictations" : "No matches",
-                subtitle: flaggedButEmpty
-                    ? "Flag a dictation to bookmark it for your own review."
-                    : "No dictation matches your search. Try different words, or clear "
-                        + "the filters above."
-            ) {
-                EmptyView()
-            }
-        }
+        return EmberEmptyState(
+            symbolName: flaggedButEmpty ? "flag" : "magnifyingglass",
+            title: flaggedButEmpty ? "No flagged Dictation sessions." : "No matches.",
+            detail: flaggedButEmpty
+                ? "Flag a Dictation session to keep it in this focused view."
+                : "Try different words or clear the filters above."
+        )
+        .accessibilityIdentifier(
+            flaggedButEmpty
+                ? "history.empty.no-flagged"
+                : "history.empty.no-results"
+        )
     }
 }
 
@@ -245,15 +306,12 @@ private struct HistoryCollection: View {
     let onCommand: (HistoryEntry, DictationRowCommand) -> Void
 
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: 16) {
+        LazyVStack(alignment: .leading, spacing: 14) {
             ForEach(projection.sections, id: \.header) { section in
-                sectionHeader(section.header)
-                Card {
+                EmberSectionLabel(section.header, symbolName: "calendar")
+                EmberSurface {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
-                            if index > 0 {
-                                Divider().padding(.leading, 14)
-                            }
                             DictationRow(
                                 presentation: row.presentation,
                                 moreCapabilities: DictationRowMoreCapabilities(
@@ -264,10 +322,16 @@ private struct HistoryCollection: View {
                                     onCommand(row.entry, command)
                                 }
                             )
+                            if index < section.rows.count - 1 {
+                                EmberHairline(axis: .horizontal)
+                            }
                         }
                     }
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.surfaceRadius))
                 }
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("history.collection")
     }
 }
