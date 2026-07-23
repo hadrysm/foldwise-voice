@@ -81,6 +81,7 @@ final class Pipeline {
     /// Owned here rather than read back through the record seam, so the
     /// start/stop guards are self-contained and fakes needn't track it.
     private var recording = false
+    private var recordingStartID: UUID?
     private var recordingContext: RecordingContext?
     private var lastJob: Task<Void, Never>?
     private var jobActive = false
@@ -157,8 +158,10 @@ final class Pipeline {
     // MARK: - called from the hotkey listener (must be fast)
 
     func startRecording() {
-        withStateLock {
-            guard !isShutDown, !recording, !sessionProvider.isDictationBlocked else { return }
+        let start: (id: UUID, modeName: String)? = withStateLock {
+            guard !isShutDown, !recording, !sessionProvider.isDictationBlocked else {
+                return nil
+            }
             let asrSession: any ASRSessionHandle
             do {
                 asrSession = try sessionProvider.captureSession()
@@ -166,23 +169,42 @@ final class Pipeline {
                 Log.pipeline.error(
                     "ASR session capture skipped: \(error.localizedDescription, privacy: .public)"
                 )
-                return
+                return nil
             }
             if config.pauseAudio {
                 ducker.duck()
             }
             recording = true
             let mode = config.mode
-            do {
-                try recorder.start()
-                recordingContext = RecordingContext(mode: mode, asrSession: asrSession)
-                emit(.listening(mode: mode.name))
-            } catch {
+            let id = UUID()
+            recordingStartID = id
+            recordingContext = RecordingContext(mode: mode, asrSession: asrSession)
+            return (id, mode.name)
+        }
+        guard let start else { return }
+
+        do {
+            try recorder.start()
+        } catch {
+            withStateLock {
+                guard recordingStartID == start.id else { return }
                 recording = false
-                asrSession.release()
+                recordingStartID = nil
+                releaseRecordingContext()
                 ducker.restore()
                 emit(.error(error.localizedDescription))
             }
+            return
+        }
+
+        let shouldStop = withStateLock {
+            guard !isShutDown, recording, recordingStartID == start.id else { return true }
+            recordingStartID = nil
+            emit(.listening(mode: start.modeName))
+            return false
+        }
+        if shouldStop {
+            _ = recorder.stop()
         }
     }
 
@@ -190,6 +212,12 @@ final class Pipeline {
         withStateLock {
             guard !isShutDown, recording else { return }
             recording = false
+            if recordingStartID != nil {
+                recordingStartID = nil
+                releaseRecordingContext()
+                ducker.restore()
+                return
+            }
             let samples = recorder.stop()
             ducker.restore()
             guard let context = recordingContext else { return }
@@ -224,13 +252,11 @@ final class Pipeline {
     }
 
     func toggleRecording() {
-        withStateLock {
-            guard !isShutDown else { return }
-            if recording {
-                stopRecording()
-            } else {
-                startRecording()
-            }
+        let shouldStop = withStateLock { !isShutDown && recording }
+        if shouldStop {
+            stopRecording()
+        } else {
+            startRecording()
         }
     }
 
@@ -242,15 +268,19 @@ final class Pipeline {
     }
 
     func shutdown() {
-        withStateLock {
-            guard !isShutDown else { return }
+        let shouldClose: Bool = withStateLock {
+            guard !isShutDown else { return false }
             isShutDown = true
             recording = false
+            recordingStartID = nil
             releaseRecordingContext()
             lastJob?.cancel()
             ducker.restore()
-            recorder.close()
             deliver(.idle)
+            return true
+        }
+        if shouldClose {
+            recorder.close()
         }
     }
 
@@ -258,6 +288,7 @@ final class Pipeline {
         withStateLock {
             guard !isShutDown, recording else { return }
             recording = false
+            recordingStartID = nil
             releaseRecordingContext()
             ducker.restore()
             emit(.error(error.localizedDescription))

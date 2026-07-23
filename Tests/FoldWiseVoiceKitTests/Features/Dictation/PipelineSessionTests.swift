@@ -19,7 +19,50 @@ private struct QueuedASRSessionState: Equatable {
     let releaseCount: Int
 }
 
+private final class BlockingStartRecorder: AudioRecording {
+    var onFailure: ((AudioCaptureError) -> Void)?
+    let startupEntered = DispatchSemaphore(value: 0)
+    let releaseStartup = DispatchSemaphore(value: 0)
+
+    func start() throws {
+        startupEntered.signal()
+        releaseStartup.wait()
+    }
+
+    func stop() -> [Float] {
+        []
+    }
+
+    func close() {}
+}
+
 final class PipelineSessionTests: XCTestCase {
+    func testShutdownReturnsWhileCaptureStartupIsBlocked() {
+        let recorder = BlockingStartRecorder()
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: recorder,
+            sessionProvider: FakeTranscriberSessionProvider(FakeTranscriber()),
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+        let shutdownReturned = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global().async {
+            pipeline.startRecording()
+        }
+        XCTAssertEqual(recorder.startupEntered.wait(timeout: .now() + 0.2), .success)
+        DispatchQueue.global().async {
+            pipeline.shutdown()
+            shutdownReturned.signal()
+        }
+
+        let result = shutdownReturned.wait(timeout: .now() + 0.2)
+        recorder.releaseStartup.signal()
+
+        XCTAssertEqual(result, .success)
+    }
+
     func testSessionHandleReleasesAfterTranscriptionBeforePolishAndInsert() async {
         let events = SessionHandleEventProbe()
         let handle = FakeASRSessionHandle(
