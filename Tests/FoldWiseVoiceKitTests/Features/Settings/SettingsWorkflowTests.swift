@@ -1918,6 +1918,28 @@ final class SettingsWorkflowTests: XCTestCase {
         )
     }
 
+    func testSuccessfulSectionCommitKeepsOwnerUntilStatusClears() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        var scheduledClear: (@MainActor () -> Void)?
+        let workflow = SettingsWorkflow(
+            config: config,
+            model: model,
+            historyStore: JSONLHistoryStore(url: dir.appendingPathComponent("history.jsonl")),
+            now: Date.init,
+            scheduleStatusClear: { scheduledClear = $0 },
+            copy: { _ in }
+        )
+        workflow.populatePreferences()
+        model.appearance = .light
+
+        workflow.commit(owner: .appearance)
+        let ownerBeforeClear = model.statusOwner
+        scheduledClear?()
+
+        XCTAssertEqual([ownerBeforeClear, model.statusOwner], [.appearance, .global])
+    }
+
     func testFinishRecordingCommitsCapturedPushToTalkKey() {
         let config = makeConfig()
         let model = SettingsModel()
@@ -1995,6 +2017,18 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(model.cycleKey, "")
         XCTAssertTrue(model.status.contains("Push to Talk"))
         XCTAssertTrue(model.statusIsError)
+    }
+
+    func testShortcutFailureFeedbackNamesShortcutLedgerAsOwner() {
+        let config = makeConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+        workflow.populatePreferences()
+        model.cycleKey = "F5"
+
+        workflow.commit(owner: .shortcuts)
+
+        XCTAssertEqual(model.statusOwner, .shortcuts)
     }
 
     func testInvalidCapturedKeyRestoresCommittedShortcutDisplays() throws {
@@ -2183,6 +2217,16 @@ final class SettingsWorkflowTests: XCTestCase {
 
         XCTAssertTrue(model.status.hasPrefix("⚠️ save failed:"))
         XCTAssertTrue(model.statusIsError)
+    }
+
+    func testFailedInputDeviceSelectionNamesInputRosterAsFeedbackOwner() {
+        let config = makeFailingConfig()
+        let model = SettingsModel()
+        let workflow = makeWorkflow(config: config, model: model)
+
+        workflow.selectInputDevice("usb-1")
+
+        XCTAssertEqual(model.statusOwner, .input)
     }
 
     func testConfigurationRecoveryDoesNotOpenModeEditor() throws {

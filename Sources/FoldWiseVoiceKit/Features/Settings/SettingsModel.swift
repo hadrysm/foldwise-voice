@@ -3,6 +3,23 @@
 
 import SwiftUI
 
+enum SettingsFeedbackOwner: Equatable {
+    case global
+    case shortcuts
+    case input
+    case sound
+    case appearance
+}
+
+enum SettingsAppearanceLayout: Equatable {
+    case horizontal
+    case vertical
+
+    static func forContentWidth(_ width: Double) -> SettingsAppearanceLayout {
+        width >= 650 ? .horizontal : .vertical
+    }
+}
+
 @MainActor
 final class SettingsModel: ObservableObject {
     /// The six destinations of the redesigned sidebar (PRD #103). The old
@@ -103,6 +120,7 @@ final class SettingsModel: ObservableObject {
     @Published var axTrusted = false
     @Published var status = ""
     @Published var statusIsError = false
+    @Published var statusOwner = SettingsFeedbackOwner.global
     @Published var recordingField: RecordingField?
     @Published var shortcutListenerHealth: ShortcutListenerHealth = .global
     @Published var configurationRecoveryMessage: String?
@@ -260,7 +278,7 @@ final class SettingsModel: ObservableObject {
     @Published var currentStreak: Int?
 
     // wired by SettingsController
-    var onCommit: (() -> Void)?
+    var onCommit: ((SettingsFeedbackOwner) -> Void)?
     var onSelectInputDevice: ((String?) -> Void)?
     var onRecord: ((RecordingField) -> Void)?
     var onOpenShortcutPermissions: (() -> Void)?

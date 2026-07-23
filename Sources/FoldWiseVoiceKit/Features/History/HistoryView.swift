@@ -84,7 +84,7 @@ struct HistoryPane: View {
                         get: { model.saveHistory },
                         set: { isOn in
                             model.saveHistory = isOn
-                            model.onCommit?()
+                            model.onCommit?(.global)
                             if !isOn, !model.historyEntries.isEmpty {
                                 confirmingDeleteOnOff = true
                             }
@@ -107,7 +107,7 @@ struct HistoryPane: View {
                         get: { model.retention },
                         set: { newValue in
                             model.retention = newValue
-                            model.onCommit?()
+                            model.onCommit?(.global)
                         }
                     )
                 ) {

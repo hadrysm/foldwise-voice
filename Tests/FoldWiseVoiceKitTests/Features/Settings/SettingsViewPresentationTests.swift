@@ -39,4 +39,14 @@ final class SettingsViewPresentationTests: XCTestCase {
             ]
         )
     }
+
+    func testAppearanceLayoutChangesAtApprovedContentWidth() {
+        XCTAssertEqual(
+            [
+                SettingsAppearanceLayout.forContentWidth(649.999),
+                SettingsAppearanceLayout.forContentWidth(650),
+            ],
+            [.vertical, .horizontal]
+        )
+    }
 }

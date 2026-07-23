@@ -128,9 +128,61 @@ final class ContinuousFrameHostedTests: XCTestCase {
         )
     }
 
-    private func host(_ model: SettingsModel) -> NSWindow {
+    func testHostedAppearanceChoicesCrossTheExactContentWidthBoundary() throws {
+        let horizontalModel = SettingsModel()
+        horizontalModel.pane = .settings
+        horizontalModel.sidebar.toggle(width: 913)
+        let horizontalWindow = host(horizontalModel, width: 913)
+        defer { horizontalWindow.orderOut(nil) }
+
+        let verticalModel = SettingsModel()
+        verticalModel.pane = .settings
+        verticalModel.sidebar.toggle(width: 912)
+        let verticalWindow = host(verticalModel, width: 912)
+        defer { verticalWindow.orderOut(nil) }
+
+        let horizontalFrames = try appearanceFrames(in: horizontalWindow)
+        let verticalFrames = try appearanceFrames(in: verticalWindow)
+
+        XCTAssertEqual(Set(horizontalFrames.map(\.midY)).count, 1)
+        XCTAssertEqual(Set(verticalFrames.map(\.midX)).count, 1)
+    }
+
+    func testHostedSectionFeedbackStaysAttachedToOwningLedger() throws {
+        let cases: [(SettingsFeedbackOwner, String)] = [
+            (.shortcuts, "settings.shortcuts.feedback"),
+            (.input, "settings.input.feedback"),
+            (.sound, "settings.sound.feedback"),
+            (.appearance, "settings.appearance.feedback"),
+        ]
+        var windows: [NSWindow] = []
+        defer { windows.forEach { $0.orderOut(nil) } }
+
+        for (owner, identifier) in cases {
+            let model = SettingsModel()
+            model.pane = .settings
+            model.status = "The setting could not be saved."
+            model.statusIsError = true
+            model.statusOwner = owner
+            let window = host(model)
+            windows.append(window)
+
+            XCTAssertEqual(try node(identifier, in: window).identifier, identifier)
+            XCTAssertNil(
+                try nodes(in: window).first { $0.identifier == "continuous-frame.status" }
+            )
+        }
+    }
+
+    private func appearanceFrames(in window: NSWindow) throws -> [CGRect] {
+        try ["system", "light", "dark"].map {
+            try XCTUnwrap(node("settings.appearance.\($0)", in: window).frame)
+        }
+    }
+
+    private func host(_ model: SettingsModel, width: CGFloat = 980) -> NSWindow {
         let hosting = NSHostingView(rootView: SettingsView(model: model))
-        hosting.frame = NSRect(x: 0, y: 0, width: 980, height: 720)
+        hosting.frame = NSRect(x: 0, y: 0, width: width, height: 720)
         let window = NSWindow(
             contentRect: hosting.frame,
             styleMask: [.titled],
@@ -147,7 +199,11 @@ final class ContinuousFrameHostedTests: XCTestCase {
     }
 
     private func node(_ identifier: String, in window: NSWindow) throws -> HostedNode {
-        try XCTUnwrap(nodes(in: window).first { $0.identifier == identifier })
+        let allNodes = try nodes(in: window)
+        return try XCTUnwrap(
+            allNodes.first { $0.identifier == identifier },
+            "Available identifiers: \(allNodes.compactMap(\.identifier))"
+        )
     }
 
     private func nodes(in window: NSWindow) throws -> [HostedNode] {

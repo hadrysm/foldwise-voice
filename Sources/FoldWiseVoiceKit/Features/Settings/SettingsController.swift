@@ -106,7 +106,7 @@ final class SettingsController {
     }
 
     private func wire() {
-        model.onCommit = { [weak self] in self?.workflow.commit() }
+        model.onCommit = { [weak self] owner in self?.workflow.commit(owner: owner) }
         model.onSelectInputDevice = { [weak self] uid in
             self?.workflow.selectInputDevice(uid)
         }
@@ -216,9 +216,11 @@ final class SettingsController {
             populate()
             model.status = "Reset complete. Backup: \(backup.lastPathComponent)"
             model.statusIsError = false
+            model.statusOwner = .global
         } catch {
             model.status = "Reset failed: \(error.localizedDescription)"
             model.statusIsError = true
+            model.statusOwner = .global
         }
     }
 

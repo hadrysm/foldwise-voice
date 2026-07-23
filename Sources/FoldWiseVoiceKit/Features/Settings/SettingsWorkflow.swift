@@ -121,6 +121,7 @@ final class SettingsWorkflow {
         model.retention = config.historyRetention
         model.sidebar = SidebarPresentation(prefersCollapsed: config.sidebarCollapsed)
         model.status = ""
+        model.statusOwner = .global
         reconcileASRAvailability()
     }
 
@@ -226,7 +227,7 @@ final class SettingsWorkflow {
         case .cycle:
             model.cycleKey = key
         }
-        commit(changedShortcut: field)
+        commit(owner: .shortcuts, changedShortcut: field)
         model.recordingField = nil
         captureGate.isCapturing = false
     }
@@ -424,9 +425,13 @@ final class SettingsWorkflow {
     func selectInputDevice(_ uid: String?) {
         do {
             try config.setInputDevice(uid)
-            setStatus("Saved ✓", isError: false, clearAfter: true)
+            setStatus("Saved ✓", isError: false, owner: .input, clearAfter: true)
         } catch {
-            setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
+            setStatus(
+                "⚠️ save failed: \(error.localizedDescription)",
+                isError: true,
+                owner: .input
+            )
         }
     }
 
@@ -613,7 +618,10 @@ final class SettingsWorkflow {
         return Task { await asrLifecycle.delete(id) }
     }
 
-    func commit(changedShortcut: SettingsModel.RecordingField? = nil) {
+    func commit(
+        owner: SettingsFeedbackOwner = .global,
+        changedShortcut: SettingsModel.RecordingField? = nil
+    ) {
         let ptt = model.pttKey.trimmingCharacters(in: .whitespaces)
         let toggle = model.toggleKey.trimmingCharacters(in: .whitespaces)
         let cycle = model.cycleKey.trimmingCharacters(in: .whitespaces)
@@ -627,7 +635,7 @@ final class SettingsWorkflow {
             }
         } catch {
             populateShortcutBindings()
-            setStatus("⚠️ \(error.localizedDescription)", isError: true)
+            setStatus("⚠️ \(error.localizedDescription)", isError: true, owner: owner)
             return
         }
 
@@ -656,14 +664,18 @@ final class SettingsWorkflow {
                 }
             } catch {
                 populateShortcutBindings()
-                setStatus("⚠️ \(error.localizedDescription)", isError: true)
+                setStatus("⚠️ \(error.localizedDescription)", isError: true, owner: owner)
                 return
             }
             do {
                 try updateHotkeys(bindings)
             } catch {
                 populateShortcutBindings()
-                setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
+                setStatus(
+                    "⚠️ save failed: \(error.localizedDescription)",
+                    isError: true,
+                    owner: owner
+                )
                 return
             }
         }
@@ -684,7 +696,11 @@ final class SettingsWorkflow {
                 try config.apply(preferences)
             } catch {
                 populatePreferences()
-                setStatus("⚠️ save failed: \(error.localizedDescription)", isError: true)
+                setStatus(
+                    "⚠️ save failed: \(error.localizedDescription)",
+                    isError: true,
+                    owner: owner
+                )
                 return
             }
         }
@@ -695,7 +711,7 @@ final class SettingsWorkflow {
             historyStore.sweep(retention: config.historyRetention, now: now())
             model.historyEntries = historyStore.load()
         }
-        setStatus("Saved ✓", isError: false, clearAfter: true)
+        setStatus("Saved ✓", isError: false, owner: owner, clearAfter: true)
     }
 
     private func populateShortcutBindings() {
@@ -704,15 +720,22 @@ final class SettingsWorkflow {
         model.cycleKey = config.modeCycleHotkey ?? ""
     }
 
-    private func setStatus(_ text: String, isError: Bool, clearAfter: Bool = false) {
+    private func setStatus(
+        _ text: String,
+        isError: Bool,
+        owner: SettingsFeedbackOwner = .global,
+        clearAfter: Bool = false
+    ) {
         model.status = text
         model.statusIsError = isError
+        model.statusOwner = owner
         guard clearAfter else {
             scheduleStatusClear(nil)
             return
         }
         scheduleStatusClear { [weak self] in
             self?.model.status = ""
+            self?.model.statusOwner = .global
         }
     }
 }
