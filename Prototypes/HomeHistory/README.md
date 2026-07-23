@@ -55,5 +55,32 @@ Render review snapshots to `.context/home-history-shots` with:
 
 ## Verdict
 
-Pending human review. Record the chosen structure and any borrowed elements
-here before deleting or absorbing the prototype.
+Approved: **A — Instrument Panel**.
+
+Home keeps its direct operating sequence: page title and live Push to Talk
+instruction, four lifetime metrics, the attached system-readiness band, then
+the newest grouped Dictation rows. Metrics remain one four-tile strip at or
+above 940 points and become a two-by-two composition below it. Readiness uses
+the Ember Edge ingress mark and semantic icon/text cues; it does not turn the
+whole surface orange. “Stats” and “All history” remain in-place destination
+links.
+
+History leads with its title and local/text-only assurance, followed by two
+equal setting cells that keep saving and retention visibly independent. Search
+and Flagged-only share one control strip above date-grouped ledgers. “Clear all
+history” remains a distinct destructive action rather than a row-level command.
+Empty, no-result, saving-off, and confirmation states keep their existing
+meanings and copy.
+
+The shared Dictation row uses the approved dense ledger treatment: a 44-point
+line with monospaced 24-hour time, a restrained orange ingress rule, single-line
+text, then Mode/deleted/flag identity. Hover or keyboard focus swaps that
+identity for Copy and Flag on Home, plus More on History. Focus, copied,
+flagged, deleted-Mode, Raw/Polished, and destructive states retain permanent
+non-color cues and accessible descriptions.
+
+This is a visual composition decision only. It does not change metrics,
+sorting, grouping, persistence, filtering, retention, row commands, breakpoint
+policy, or accessibility behavior. Variants B and C remain in this throwaway
+artifact only as review context; the complete gallery and implementation
+specification should carry forward Variant A.
