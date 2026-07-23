@@ -10,6 +10,10 @@ enum ThemeBoundaryStrength: Equatable {
         case .strong: 2
         }
     }
+
+    var layoutWidth: CGFloat {
+        1
+    }
 }
 
 enum ThemeEnvironmentPolicy {

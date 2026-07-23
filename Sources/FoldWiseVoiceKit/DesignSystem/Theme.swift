@@ -228,6 +228,10 @@ struct EmberHairline: View {
                 width: axis == .vertical ? lineWidth : nil,
                 height: axis == .horizontal ? lineWidth : nil
             )
+            .frame(
+                width: axis == .vertical ? layoutWidth : nil,
+                height: axis == .horizontal ? layoutWidth : nil
+            )
             .accessibilityHidden(true)
     }
 
@@ -237,6 +241,10 @@ struct EmberHairline: View {
 
     private var lineWidth: CGFloat {
         Theme.essentialBorderWidth(increaseContrast: usesStrongBoundary)
+    }
+
+    private var layoutWidth: CGFloat {
+        ThemeEnvironmentPolicy.boundary(increaseContrast: usesStrongBoundary).layoutWidth
     }
 }
 
@@ -268,7 +276,7 @@ struct EmberStatusNotice: View {
     let kind: EmberStatusKind
     let title: String
     var detail: String?
-    var ingressWidth = Theme.selectionIngressWidth
+    var ingressWidth = Theme.noticeIngressWidth
     var actionTitle: String?
     var action: (() -> Void)?
 

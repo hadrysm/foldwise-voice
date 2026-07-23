@@ -2,6 +2,12 @@ import XCTest
 @testable import FoldWiseVoiceKit
 
 final class EmberChromeTests: XCTestCase {
+    func testSemanticNoticeUsesCanonicalIngressByDefault() {
+        let notice = EmberStatusNotice(kind: .success, title: "Saved")
+
+        XCTAssertEqual(notice.ingressWidth, Theme.noticeIngressWidth)
+    }
+
     func testSemanticNoticesPairColorWithPermanentIconAndTextCues() {
         XCTAssertEqual(
             EmberStatusKind.allCases.map {

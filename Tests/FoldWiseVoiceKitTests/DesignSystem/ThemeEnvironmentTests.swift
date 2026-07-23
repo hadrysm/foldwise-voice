@@ -58,10 +58,12 @@ final class ThemeEnvironmentTests: XCTestCase {
             [
                 ThemeEnvironmentPolicy.boundary(increaseContrast: false).width,
                 ThemeEnvironmentPolicy.boundary(increaseContrast: true).width,
+                ThemeEnvironmentPolicy.boundary(increaseContrast: false).layoutWidth,
+                ThemeEnvironmentPolicy.boundary(increaseContrast: true).layoutWidth,
                 Theme.surfaceRadius,
                 Theme.surfaceRadius,
             ],
-            [1, 2, 8, 8]
+            [1, 2, 1, 1, 8, 8]
         )
         XCTAssertEqual(
             [
