@@ -6,20 +6,7 @@ import XCTest
 @MainActor
 final class ModelsWorkspaceHostedTests: XCTestCase {
     func testNativeSplitProtectsBothPaneMinimumsAtCompactWidth() {
-        let controller = ModelsNativeSplitController.make(
-            leading: Color.clear,
-            trailing: Color.clear
-        )
-        controller.view.frame = NSRect(x: 0, y: 0, width: 617, height: 500)
-        controller.view.layoutSubtreeIfNeeded()
-        controller.splitView.setPosition(
-            ModelsSplitGeometry.initialLedgerWidth(
-                totalWidth: controller.splitView.bounds.width,
-                dividerWidth: controller.splitView.dividerThickness
-            ),
-            ofDividerAt: 0
-        )
-        controller.view.layoutSubtreeIfNeeded()
+        let controller = compactSplitController()
 
         XCTAssertEqual(
             [
@@ -29,6 +16,77 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
                     >= ModelsSplitGeometry.inspectorMinimum,
             ],
             [true, true]
+        )
+    }
+
+    func testNativeSplitKeepsApprovedCompactGeometry() {
+        let controller = compactSplitController()
+
+        XCTAssertEqual(
+            [
+                controller.splitView.arrangedSubviews[0].frame.width,
+                controller.splitView.dividerThickness,
+                controller.splitView.arrangedSubviews[1].frame.width,
+            ],
+            [340, 1, 276]
+        )
+    }
+
+    func testTraceRowRendersTheCanonicalIngress() throws {
+        let row = try renderedColorCounts(
+            ModelsTraceRowChrome(
+                isInspected: true,
+                isHighlighted: true,
+                isKeyboardFocused: false,
+                increaseContrast: false
+            ),
+            size: NSSize(width: 180, height: 46)
+        )
+
+        XCTAssertGreaterThan(row.accent, 100)
+    }
+
+    func testTraceInspectorHeaderRendersTheCanonicalIngress() throws {
+        let inspector = try renderedColorCounts(
+            ModelsTraceInspectorHeader(isInspected: true) {
+                Color.clear.frame(height: 70)
+            },
+            size: NSSize(width: 180, height: 70)
+        )
+
+        XCTAssertGreaterThan(inspector.accent, 160)
+    }
+
+    func testTraceRowStrengthensItsBoundaryForIncreaseContrast() throws {
+        let standard = try renderedColorCounts(
+            ModelsTraceRowChrome(
+                isInspected: false,
+                isHighlighted: false,
+                isKeyboardFocused: false,
+                increaseContrast: false
+            ),
+            size: NSSize(width: 180, height: 46)
+        )
+        let increased = try renderedColorCounts(
+            ModelsTraceRowChrome(
+                isInspected: false,
+                isHighlighted: false,
+                isKeyboardFocused: false,
+                increaseContrast: true
+            ),
+            size: NSSize(width: 180, height: 46)
+        )
+
+        XCTAssertGreaterThan(increased.strongBoundary, standard.strongBoundary + 300)
+    }
+
+    func testInspectionAccessibilityValueKeepsInspectionDistinctFromSavedSelection() {
+        XCTAssertEqual(
+            ModelsRowAccessibility.value(
+                isInspected: true,
+                progressValue: "43 percent"
+            ),
+            "Inspected, 43 percent"
         )
     }
 
@@ -160,11 +218,12 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
     func testHighlightedLedgerRowChangesItsBackground() throws {
         func renderedCenterColor(isHighlighted: Bool) throws -> NSColor {
             let controller = NSHostingController(
-                rootView: ZStack {
-                    Theme.windowBackground
-                    Theme.sidebarBackground.opacity(0.46)
-                    ModelsLedgerRowBackground(isHighlighted: isHighlighted)
-                }
+                rootView: ModelsTraceRowChrome(
+                    isInspected: false,
+                    isHighlighted: isHighlighted,
+                    isKeyboardFocused: false,
+                    increaseContrast: false
+                )
                 .frame(width: 80, height: 40)
             )
             controller.view.appearance = NSAppearance(named: .darkAqua)
@@ -191,5 +250,91 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
             0.05,
             "hovering a model row should visibly change its background"
         )
+    }
+
+    private struct RenderedColorCounts {
+        let accent: Int
+        let strongBoundary: Int
+    }
+
+    private func compactSplitController() -> NSSplitViewController {
+        let controller = ModelsNativeSplitController.make(
+            leading: Color.clear,
+            trailing: Color.clear
+        )
+        controller.view.frame = NSRect(x: 0, y: 0, width: 617, height: 500)
+        controller.view.layoutSubtreeIfNeeded()
+        controller.splitView.setPosition(
+            ModelsSplitGeometry.initialLedgerWidth(
+                totalWidth: controller.splitView.bounds.width,
+                dividerWidth: controller.splitView.dividerThickness
+            ),
+            ofDividerAt: 0
+        )
+        controller.view.layoutSubtreeIfNeeded()
+        return controller
+    }
+
+    private func renderedColorCounts(
+        _ view: some View,
+        size: NSSize
+    ) throws -> RenderedColorCounts {
+        let controller = NSHostingController(
+            rootView: view
+                .environment(\.colorScheme, .light)
+                .frame(width: size.width, height: size.height)
+        )
+        controller.view.appearance = NSAppearance(named: .aqua)
+        controller.view.frame = NSRect(origin: .zero, size: size)
+        controller.view.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(
+            controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds)
+        )
+        controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
+        let accentColor = try renderedTokenColor(Theme.accent)
+        let strongBoundaryColor = try renderedTokenColor(Theme.borderStrong)
+        var accentCount = 0
+        var strongBoundaryCount = 0
+        for y in 0 ..< bitmap.pixelsHigh {
+            for x in 0 ..< bitmap.pixelsWide {
+                guard let pixel = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
+                else { continue }
+                if colorDistance(pixel, accentColor) < 0.08 {
+                    accentCount += 1
+                }
+                if colorDistance(pixel, strongBoundaryColor) < 0.08 {
+                    strongBoundaryCount += 1
+                }
+            }
+        }
+        return RenderedColorCounts(
+            accent: accentCount,
+            strongBoundary: strongBoundaryCount
+        )
+    }
+
+    private func renderedTokenColor(_ color: Color) throws -> NSColor {
+        let controller = NSHostingController(
+            rootView: color
+                .environment(\.colorScheme, .light)
+                .frame(width: 2, height: 2)
+        )
+        controller.view.appearance = NSAppearance(named: .aqua)
+        controller.view.frame = NSRect(x: 0, y: 0, width: 2, height: 2)
+        controller.view.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(
+            controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds)
+        )
+        controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
+        return try XCTUnwrap(
+            bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?
+                .usingColorSpace(.sRGB)
+        )
+    }
+
+    private func colorDistance(_ lhs: NSColor, _ rhs: NSColor) -> CGFloat {
+        abs(lhs.redComponent - rhs.redComponent)
+            + abs(lhs.greenComponent - rhs.greenComponent)
+            + abs(lhs.blueComponent - rhs.blueComponent)
     }
 }

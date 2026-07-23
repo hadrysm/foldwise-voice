@@ -2,7 +2,7 @@ import Foundation
 
 enum ModelsSplitGeometry {
     static let ledgerMinimum: CGFloat = 340
-    static let inspectorMinimum: CGFloat = 270
+    static let inspectorMinimum: CGFloat = 276
 
     static func initialLedgerWidth(totalWidth: CGFloat, dividerWidth: CGFloat) -> CGFloat {
         let availableWidth = totalWidth - dividerWidth
