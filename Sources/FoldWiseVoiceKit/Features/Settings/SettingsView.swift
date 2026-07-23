@@ -574,59 +574,80 @@ struct SettingsView: View {
     private var modesPane: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline, spacing: 16) {
-                Text("Your Dictation selection decides how speech is processed after transcription.")
-                    .font(Theme.ui(12))
+                Text("Choose how the next Dictation session should shape your words.")
+                    .font(Theme.body)
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
                 Button("Add Mode", systemImage: "plus") { model.onAddMode?() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(EmberButtonStyle(kind: .primary))
                     .accessibilityHint("Opens a new unsaved Mode draft")
             }
-            sectionHeader("System")
-            Card {
-                modeSelectionButton(model.modeSelection.systemItem)
-            }
-            HStack(alignment: .top, spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader("Your Modes")
-                    if model.modeSelection.editableItems.isEmpty {
-                        Card {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Build your first Polish workflow")
-                                    .font(Theme.ui(13, .semibold))
-                                Text("Add a Mode with its own model and writing instructions.")
-                                    .font(Theme.ui(11))
-                                    .foregroundStyle(Theme.textSecondary)
-                                Button("Add Mode") { model.onAddMode?() }
-                                    .padding(.top, 4)
-                            }
-                            .padding(14)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    } else {
-                        Card {
-                            ForEach(
-                                Array(model.modeSelection.editableItems.enumerated()),
-                                id: \.element.id
-                            ) { index, item in
-                                if index > 0 {
-                                    Divider().padding(.leading, 14)
-                                }
-                                modeLibraryRow(item, index: index)
-                            }
-                        }
-                    }
-                }
-                .frame(maxWidth: 310)
+            HStack(alignment: .top, spacing: 14) {
+                modeLibrary
+                    .frame(width: 310)
                 modeDetail
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
     }
 
+    private var modeLibrary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            EmberSectionLabel("Dictation selection")
+            EmberSurface {
+                CommandLedgerSelectionRow(
+                    item: model.modeSelection.systemItem
+                ) {
+                    model.onSelectMode?(model.modeSelection.systemItem.id)
+                }
+            }
+            EmberSectionLabel("Your Modes · Cycle order")
+                .padding(.top, 4)
+            if model.modeSelection.editableItems.isEmpty {
+                EmberSurface {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .accessibilityHidden(true)
+                        Text("No Modes yet")
+                            .font(Theme.ui(13, .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("Voice to Text remains ready. Add a Mode when you want Polish.")
+                            .font(Theme.ui(11))
+                            .foregroundStyle(Theme.textSecondary)
+                        Button("Add Mode") { model.onAddMode?() }
+                            .buttonStyle(EmberButtonStyle(kind: .quiet))
+                            .padding(.top, 4)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .accessibilityElement(children: .contain)
+            } else {
+                EmberSurface {
+                    VStack(spacing: 0) {
+                        ForEach(
+                            Array(model.modeSelection.editableItems.enumerated()),
+                            id: \.element.id
+                        ) { index, item in
+                            if index > 0 {
+                                EmberHairline(axis: .horizontal)
+                                    .padding(.leading, 14)
+                            }
+                            CommandLedgerSelectionRow(item: item) {
+                                model.onSelectMode?(item.id)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private var modeDetail: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Mode details")
+            EmberSectionLabel("Mode details")
             if let mode = model.selectedEditableMode,
                let item = model.selectedEditableModeItem,
                let id = mode.id,
@@ -636,51 +657,63 @@ struct SettingsView: View {
                     index: modeIndex,
                     modeCount: model.modes.count
                 )
-                Card {
+                EmberSurface {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack(spacing: 10) {
                             Image(systemName: item.icon)
-                                .font(.system(size: 20, weight: .medium))
+                                .font(.system(size: 24, weight: .medium))
                                 .foregroundStyle(Theme.accent)
-                                .frame(width: 28)
+                                .frame(width: 32)
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(mode.name)
-                                    .font(Theme.ui(16, .semibold))
+                                    .font(Theme.ui(20, .semibold))
+                                    .foregroundStyle(Theme.textPrimary)
+                                    .lineLimit(2)
                                 Text(mode.transformation == .inPlace ? "Keep wording" : "Reshape")
-                                    .font(Theme.ui(11))
+                                    .font(Theme.body)
                                     .foregroundStyle(Theme.textSecondary)
                             }
                             Spacer()
                             HStack(spacing: 8) {
                                 Button("Edit") { model.onEditMode?(id) }
+                                    .buttonStyle(EmberButtonStyle(kind: .quiet))
                                     .accessibilityLabel("Edit \(mode.name)")
                                 Button("Duplicate") { model.onDuplicateMode?(id) }
+                                    .buttonStyle(EmberButtonStyle(kind: .quiet))
                                     .accessibilityLabel(actions.duplicateLabel)
                             }
                         }
-                        Divider()
-                        modeDetailField("AI model", mode.llmModel ?? "Unavailable")
+                        EmberHairline(axis: .horizontal)
+                        modeDetailField(
+                            "AI model",
+                            mode.llmModel ?? "Unavailable",
+                            monospaced: true
+                        )
                         modeDetailField("Polish instructions", mode.systemPrompt ?? "")
                         modeDetailField(
                             "Preserved vocabulary",
-                            mode.vocab.isEmpty ? "None" : mode.vocab.joined(separator: ", ")
+                            mode.vocab.isEmpty ? "None" : mode.vocab.joined(separator: " · "),
+                            monospaced: true
                         )
                         if let installed = model.installed,
                            !installed.contains(where: { $0.name == mode.llmModel }) {
                             unavailableModelNotice(mode.llmModel ?? "This model")
                         }
-                        Divider()
+                        Spacer(minLength: 12)
+                        EmberHairline(axis: .horizontal)
                         HStack(spacing: 8) {
                             Button("Move up", systemImage: "arrow.up") {
                                 model.onMoveMode?(id, .up)
                             }
+                            .buttonStyle(EmberButtonStyle(kind: .quiet))
                             .disabled(!actions.canMoveUp)
                             .accessibilityLabel(actions.moveUpLabel)
                             .keyboardShortcut(.upArrow, modifiers: [.command, .option])
                             Button("Move down", systemImage: "arrow.down") {
                                 model.onMoveMode?(id, .down)
                             }
+                            .buttonStyle(EmberButtonStyle(kind: .quiet))
                             .disabled(!actions.canMoveDown)
                             .accessibilityLabel(actions.moveDownLabel)
                             .keyboardShortcut(.downArrow, modifiers: [.command, .option])
@@ -688,38 +721,50 @@ struct SettingsView: View {
                             Button("Delete", role: .destructive) {
                                 model.onRequestModeDeletion?(id)
                             }
+                            .buttonStyle(EmberButtonStyle(kind: .destructive))
                             .accessibilityLabel(actions.deleteLabel)
                             .accessibilityHint(actions.deleteHint)
                         }
                     }
                     .padding(16)
+                    .frame(maxWidth: .infinity, minHeight: 370, alignment: .topLeading)
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Details for \(mode.name)")
             } else {
-                Card {
-                    VStack(alignment: .leading, spacing: 5) {
+                EmberSurface {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 22, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .accessibilityHidden(true)
                         Text("Choose a Mode")
                             .font(Theme.ui(13, .semibold))
+                            .foregroundStyle(Theme.textPrimary)
                         Text("Select a Mode to review or edit its Polish instructions.")
                             .font(Theme.ui(11))
                             .foregroundStyle(Theme.textSecondary)
                     }
                     .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, minHeight: 370, alignment: .topLeading)
                 }
             }
         }
     }
 
-    private func modeDetailField(_ label: String, _ value: String) -> some View {
+    private func modeDetailField(
+        _ label: String,
+        _ value: String,
+        monospaced: Bool = false
+    ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(Theme.ui(10, .bold))
+                .font(Theme.sectionLabel)
+                .tracking(Theme.sectionTracking)
                 .foregroundStyle(Theme.textTertiary)
                 .textCase(.uppercase)
             Text(value)
-                .font(Theme.ui(12))
+                .font(monospaced ? Theme.data : Theme.body)
                 .foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
         }
@@ -727,90 +772,18 @@ struct SettingsView: View {
     }
 
     private func unavailableModelNotice(_ name: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(name) isn't installed. Polish will use the raw transcript.")
-                    .font(Theme.ui(11))
-                Button("Open Models") { model.pane = .models }
-                    .buttonStyle(.link)
-            }
+        EmberStatusNotice(
+            kind: .warning,
+            title: "\(name) is unavailable",
+            detail: "Dictation falls back to raw text.",
+            actionTitle: "Open Models"
+        ) {
+            model.pane = .models
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(
-            "Unavailable model \(name). Polish will use the raw transcript. Open Models to install it."
+        .padding(.vertical, 8)
+        .accessibilityHint(
+            "Open Models to install \(name)."
         )
-    }
-
-    private func modeSelectionButton(_ item: ModeSelectionItem) -> some View {
-        Button {
-            model.onSelectMode?(item.id)
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: item.icon)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(item.isSelected ? Theme.accent : Theme.textSecondary)
-                    .frame(width: 20)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.name)
-                        .font(Theme.ui(13, .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                    Text(item.summary)
-                        .font(Theme.ui(11))
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                Spacer(minLength: 16)
-                Image(systemName: item.isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(item.isSelected ? Theme.accent : Theme.textTertiary)
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(item.accessibilityLabel)
-        .accessibilityValue(item.accessibilityValue)
-        .accessibilityHint(item.accessibilityHint)
-    }
-
-    @ViewBuilder
-    private func modeLibraryRow(_ item: ModeSelectionItem, index: Int) -> some View {
-        if case let .mode(id) = item.id {
-            let actions = ModeLibraryActionPresentation(
-                modeName: item.name,
-                index: index,
-                modeCount: model.modeSelection.editableItems.count
-            )
-            HStack(spacing: 2) {
-                modeSelectionButton(item)
-                Button {
-                    model.onMoveMode?(id, .up)
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .frame(width: 22, height: 28)
-                }
-                .buttonStyle(.plain)
-                .disabled(!actions.canMoveUp)
-                .help(actions.moveUpLabel)
-                .accessibilityLabel(actions.moveUpLabel)
-                Button {
-                    model.onMoveMode?(id, .down)
-                } label: {
-                    Image(systemName: "arrow.down")
-                        .frame(width: 22, height: 28)
-                }
-                .buttonStyle(.plain)
-                .disabled(!actions.canMoveDown)
-                .help(actions.moveDownLabel)
-                .accessibilityLabel(actions.moveDownLabel)
-            }
-            .padding(.trailing, 10)
-        }
     }
 
     // MARK: - settings (keyboard shortcuts + input + sound + appearance + updates)
@@ -1194,6 +1167,78 @@ struct SettingsView: View {
             return "Not assigned"
         }
         return "Assigned to \(keycapLabel(key))"
+    }
+}
+
+struct CommandLedgerSelectionRow: View {
+    let item: ModeSelectionItem
+    let onSelect: () -> Void
+
+    @State private var isHovering = false
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 0) {
+                EmberIngress(color: item.isSelected ? Theme.accent : .clear)
+                HStack(spacing: 10) {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 15, weight: item.isSelected ? .semibold : .medium))
+                        .foregroundStyle(
+                            item.isSelected ? Theme.accent : Theme.textTertiary
+                        )
+                        .frame(width: 20)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name)
+                            .font(Theme.ui(12, item.isSelected ? .semibold : .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                        Text(item.summary)
+                            .font(Theme.compactData)
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 12)
+                    Image(systemName: item.isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(
+                            item.isSelected ? Theme.accent : Theme.textTertiary
+                        )
+                        .accessibilityHidden(true)
+                }
+                .padding(.horizontal, 12)
+            }
+            .frame(maxWidth: .infinity, minHeight: 52, maxHeight: 52)
+            .background(rowBackground)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(EmberPlainButtonStyle(cornerRadius: Theme.surfaceRadius))
+        .onHover { isHovering = $0 }
+        .animation(
+            Theme.ordinaryAnimation(reduceMotion: accessibilityReduceMotion),
+            value: isHovering
+        )
+        .accessibilityLabel(item.accessibilityLabel)
+        .accessibilityValue(item.accessibilityValue)
+        .accessibilityHint(item.accessibilityHint)
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+
+    private var rowBackground: Color {
+        if item.isSelected {
+            return Theme.raised
+        }
+        return isHovering ? Theme.hover : Theme.surface
+    }
+
+    private var accessibilityIdentifier: String {
+        switch item.id {
+        case .voiceToText:
+            "modes.selection.voice-to-text"
+        case let .mode(id):
+            "modes.selection.\(id)"
+        }
     }
 }
 

@@ -6,6 +6,64 @@ import XCTest
 
 @MainActor
 final class ModeEditorHostedTests: XCTestCase {
+    private struct RenderedSelectionCues {
+        let leadingAccent: Int
+        let iconAccent: Int
+        let titlePrimary: Int
+        let checkmarkAccent: Int
+        let totalAccent: Int
+        let totalPixels: Int
+    }
+
+    func testHostedSelectedCommandLedgerRowRendersPermanentCuesWithoutAccentWash() throws {
+        let selected = try renderedSelectionCues(isSelected: true)
+        let unselected = try renderedSelectionCues(isSelected: false)
+
+        XCTAssertEqual(
+            [
+                selected.leadingAccent > 70,
+                selected.iconAccent > unselected.iconAccent + 10,
+                selected.titlePrimary > unselected.titlePrimary,
+                selected.checkmarkAccent > unselected.checkmarkAccent + 20,
+                selected.totalAccent < selected.totalPixels / 8,
+            ],
+            [true, true, true, true, true],
+            "Selected: \(selected), unselected: \(unselected)"
+        )
+    }
+
+    private func renderedSelectionCues(isSelected: Bool) throws -> RenderedSelectionCues {
+        let item = ModeSelectionItem(
+            id: .voiceToText,
+            name: "Voice to Text",
+            icon: "waveform",
+            summary: "Raw transcription — no Polish",
+            isSelected: isSelected,
+            isProtected: true
+        )
+        let controller = NSHostingController(rootView: CommandLedgerSelectionRow(
+            item: item,
+            onSelect: {}
+        )
+        .frame(width: 320)
+        .environment(\.colorScheme, .light))
+        controller.view.frame = NSRect(x: 0, y: 0, width: 320, height: 52)
+        controller.view.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(
+            controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds)
+        )
+        controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
+
+        return RenderedSelectionCues(
+            leadingAccent: pixelCount(in: 0 ..< 4, bitmap: bitmap, matching: isAccent),
+            iconAccent: pixelCount(in: 8 ..< 44, bitmap: bitmap, matching: isAccent),
+            titlePrimary: pixelCount(in: 44 ..< 250, bitmap: bitmap, matching: isPrimary),
+            checkmarkAccent: pixelCount(in: 280 ..< 320, bitmap: bitmap, matching: isAccent),
+            totalAccent: pixelCount(in: 0 ..< 320, bitmap: bitmap, matching: isAccent),
+            totalPixels: bitmap.pixelsWide * bitmap.pixelsHigh
+        )
+    }
+
     func testHostedEditorKeepsTitleAndFooterInsideVisibleBounds() {
         let model = modeEditorModel()
         let (hosting, window) = hostModeEditor(model)
@@ -270,6 +328,37 @@ final class ModeEditorHostedTests: XCTestCase {
         return (request.results ?? [])
             .compactMap { $0.topCandidates(1).first?.string }
             .joined(separator: "\n")
+    }
+
+    private func pixelCount(
+        in pointRange: Range<CGFloat>,
+        bitmap: NSBitmapImageRep,
+        matching predicate: (NSColor) -> Bool
+    ) -> Int {
+        let scale = CGFloat(bitmap.pixelsWide) / 320
+        let pixelRange = Int(pointRange.lowerBound * scale) ..< Int(pointRange.upperBound * scale)
+        return pixelRange.reduce(into: 0) { count, x in
+            for y in 0 ..< bitmap.pixelsHigh {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
+                    continue
+                }
+                if predicate(color) {
+                    count += 1
+                }
+            }
+        }
+    }
+
+    private func isAccent(_ color: NSColor) -> Bool {
+        (0.65 ... 0.85).contains(color.redComponent)
+            && (0.15 ... 0.35).contains(color.greenComponent)
+            && color.blueComponent < 0.15
+    }
+
+    private func isPrimary(_ color: NSColor) -> Bool {
+        color.redComponent < 0.2
+            && color.greenComponent < 0.2
+            && color.blueComponent < 0.2
     }
 
     private func click(at point: NSPoint, in window: NSWindow) {

@@ -369,6 +369,18 @@ struct EmberButtonStyle: ButtonStyle {
     }
 }
 
+struct EmberPlainButtonStyle: ButtonStyle {
+    var cornerRadius = Theme.controlRadius
+    @Environment(\.isFocused) private var isFocused
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.82 : 1)
+            .focusEffectDisabled()
+            .emberInsetFocusRing(isFocused, cornerRadius: cornerRadius)
+    }
+}
+
 private struct EmberButtonBody: View {
     let configuration: ButtonStyle.Configuration
     let kind: EmberButtonKind
@@ -466,7 +478,36 @@ private struct EmberFocusRing: ViewModifier {
     }
 }
 
+private struct EmberControlSurface: ViewModifier {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                Theme.raised,
+                in: RoundedRectangle(cornerRadius: Theme.controlRadius)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: Theme.controlRadius)
+                    .strokeBorder(
+                        Theme.essentialBorderColor(increaseContrast: usesStrongBoundary),
+                        lineWidth: Theme.essentialBorderWidth(
+                            increaseContrast: usesStrongBoundary
+                        )
+                    )
+            }
+    }
+
+    private var usesStrongBoundary: Bool {
+        colorSchemeContrast == .increased
+    }
+}
+
 extension View {
+    func emberControlSurface() -> some View {
+        modifier(EmberControlSurface())
+    }
+
     func emberFocusRing(_ isFocused: Bool) -> some View {
         modifier(EmberFocusRing(
             isFocused: isFocused,
