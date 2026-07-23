@@ -2,40 +2,53 @@ import AppKit
 import Combine
 import SwiftUI
 
+struct StatsEnvironmentAdaptations: Equatable {
+    let reduceMotion: Bool
+    let increaseContrast: Bool
+}
+
 struct StatsPane: View {
     @ObservedObject var model: SettingsModel
     @Environment(\.locale) private var environmentLocale
+    @Environment(\.accessibilityReduceMotion) private var environmentReduceMotion
+    @Environment(\.colorSchemeContrast) private var environmentContrast
     @State private var projection: StatsProjection?
     @State private var projectionCache: StatsProjectionCache
 
     private let calendar: () -> Calendar
     private let locale: Locale?
     private let notificationCenter: NotificationCenter
+    private let environmentOverride: StatsEnvironmentAdaptations?
 
     init(
         model: SettingsModel,
         projectionCache: StatsProjectionCache = StatsProjectionCache(),
         calendar: @escaping () -> Calendar = { .autoupdatingCurrent },
         locale: Locale? = nil,
-        notificationCenter: NotificationCenter = .default
+        notificationCenter: NotificationCenter = .default,
+        environmentOverride: StatsEnvironmentAdaptations? = nil
     ) {
         self.model = model
         _projectionCache = State(initialValue: projectionCache)
         self.calendar = calendar
         self.locale = locale
         self.notificationCenter = notificationCenter
+        self.environmentOverride = environmentOverride
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("A look at how you dictate, drawn from the history you already keep.")
-                .font(Theme.ui(12))
+        VStack(alignment: .leading, spacing: 14) {
+            Text("A look at how you dictate, drawn from the History you already keep.")
+                .font(Theme.body)
                 .foregroundStyle(Theme.textSecondary)
 
             if let projection {
                 notice(projection.notice)
                 StatsMetricStrip(metrics: projection.metrics)
-                MonthlyActivityCalendar(month: projection.month)
+                MonthlyActivityCalendar(
+                    month: projection.month,
+                    environment: resolvedEnvironment
+                )
             }
         }
         .onChange(of: input, initial: true) { _, input in
@@ -60,6 +73,13 @@ struct StatsPane: View {
         )
     }
 
+    private var resolvedEnvironment: StatsEnvironmentAdaptations {
+        environmentOverride ?? StatsEnvironmentAdaptations(
+            reduceMotion: environmentReduceMotion,
+            increaseContrast: environmentContrast == .increased
+        )
+    }
+
     private func refresh(_ input: StatsProjection.Input) {
         projection = projectionCache.resolve(
             input,
@@ -77,12 +97,14 @@ struct StatsPane: View {
             StatsNotice(
                 symbol: "sparkles",
                 message: message,
+                color: Theme.accent,
                 accessibilityIdentifier: "stats.notice.noHistory"
             )
         case let .savingOff(message, actionTitle):
             StatsNotice(
                 symbol: "pause.circle",
                 message: message,
+                color: Theme.warning,
                 actionTitle: actionTitle,
                 accessibilityIdentifier: "stats.notice.savingOff"
             ) {
@@ -99,32 +121,31 @@ struct StatsPane: View {
 private struct StatsNotice: View {
     let symbol: String
     let message: String
+    let color: Color
     var actionTitle: String?
     let accessibilityIdentifier: String
     var action: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.accent)
-                .accessibilityHidden(true)
-                .accessibilityIdentifier("stats.decoration.notice")
-            Text(message)
-                .font(Theme.ui(11.5, .medium))
-                .foregroundStyle(Theme.textSecondary)
-                .accessibilityIdentifier(accessibilityIdentifier)
-            Spacer(minLength: 8)
-            if let actionTitle, let action {
-                StatsHistoryButton(title: actionTitle, action: action)
+        EmberSurface(level: .raised) {
+            HStack(spacing: 10) {
+                EmberIngress(color: color)
+                Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(color)
+                    .accessibilityHidden(true)
+                    .accessibilityIdentifier("stats.decoration.notice")
+                Text(message)
+                    .font(Theme.ui(11.5, .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .accessibilityIdentifier(accessibilityIdentifier)
+                Spacer(minLength: 8)
+                if let actionTitle, let action {
+                    StatsHistoryButton(title: actionTitle, action: action)
+                }
             }
-        }
-        .padding(.horizontal, 13)
-        .frame(minHeight: 42)
-        .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: Theme.cardRadius)
-                .strokeBorder(Theme.hairline, lineWidth: 1)
+            .padding(.trailing, 13)
+            .frame(minHeight: 42)
         }
     }
 }
@@ -144,6 +165,7 @@ struct StatsHistoryButton: NSViewRepresentable {
             action: #selector(Coordinator.performAction)
         )
         button.isBordered = false
+        button.focusRingType = .default
         button.font = .systemFont(ofSize: 11.5, weight: .semibold)
         button.contentTintColor = NSColor(Theme.accent)
         button.setAccessibilityLabel(title)
@@ -174,35 +196,31 @@ private struct StatsMetricStrip: View {
     let metrics: [StatsProjection.Metric]
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             ForEach(metrics) { metric in
-                VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
                     Image(systemName: metric.symbol)
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Theme.accent)
                         .accessibilityHidden(true)
-                    Text(metric.value)
-                        .font(Theme.ui(metric.kind == .timeSaved ? 16.5 : 21, .semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                    Text(metric.title)
-                        .font(Theme.ui(10.5, .medium))
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
-                    Text(metric.detail)
-                        .font(Theme.ui(9.5))
-                        .foregroundStyle(Theme.textFaint)
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(metric.title)
+                            .font(Theme.ui(9.5, .semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                        Text(metric.value)
+                            .font(Theme.mono(12.5, .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                        Text(metric.detail)
+                            .font(Theme.ui(9))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
+                    }
                 }
-                .frame(maxWidth: .infinity, minHeight: 91, alignment: .leading)
-                .padding(13)
-                .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Theme.cardRadius)
-                        .strokeBorder(Theme.hairline, lineWidth: 1)
-                }
+                .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("stats.metric.\(metric.kind.rawValue)")
             }
@@ -212,19 +230,23 @@ private struct StatsMetricStrip: View {
 
 private struct MonthlyActivityCalendar: View {
     let month: StatsProjection.Month
+    let environment: StatsEnvironmentAdaptations
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hoveredDate: Date?
     @State private var rovingDate: Date?
     @FocusState private var focusedDate: Date?
 
-    init(month: StatsProjection.Month) {
+    init(
+        month: StatsProjection.Month,
+        environment: StatsEnvironmentAdaptations
+    ) {
         self.month = month
+        self.environment = environment
         _rovingDate = State(initialValue: month.days.last { $0.state != .future }?.date)
     }
 
     private var columns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: 8), count: 7)
+        Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
     }
 
     private var eligibleDates: [Date] {
@@ -240,18 +262,29 @@ private struct MonthlyActivityCalendar: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            header
-            grid
-            StatsDayDetail(day: detailDay)
-                .accessibilityHidden(true)
-            StatsIntensityLegend(labels: month.legendLabels)
-        }
-        .padding(18)
-        .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: Theme.cardRadius)
-                .strokeBorder(Theme.hairline, lineWidth: 1)
+        EmberSurface {
+            HStack(spacing: 0) {
+                EmberIngress(color: Theme.accent)
+                VStack(alignment: .leading, spacing: 12) {
+                    header
+                    grid
+                    StatsDayDetail(day: detailDay, environment: environment)
+                        .id(detailDay?.date)
+                        .transition(.opacity)
+                        .animation(
+                            StatsTransitionPolicy.resolve(
+                                reduceMotion: environment.reduceMotion
+                            ).animation,
+                            value: detailDay?.date
+                        )
+                        .accessibilityHidden(true)
+                    StatsIntensityLegend(
+                        labels: month.legendLabels,
+                        environment: environment
+                    )
+                }
+                .padding(14)
+            }
         }
         .transaction { transaction in
             StatsTransitionPolicy.clearInheritedAnimation(in: &transaction)
@@ -265,19 +298,19 @@ private struct MonthlyActivityCalendar: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("This month")
-                    .font(Theme.ui(16, .semibold))
+                    .font(Theme.ui(17, .semibold))
                     .foregroundStyle(Theme.textPrimary)
                 Text(month.title)
-                    .font(Theme.ui(11.5))
-                    .foregroundStyle(Theme.textTertiary)
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.textSecondary)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 Text(month.spokenWordSummary)
-                    .font(Theme.ui(13, .semibold))
-                    .foregroundStyle(Theme.textPrimary)
+                    .font(Theme.mono(11, .semibold))
+                    .foregroundStyle(Theme.textSecondary)
                 Text(month.activeDaySummary)
-                    .font(Theme.ui(10.5))
+                    .font(Theme.mono(9.5, .medium))
                     .foregroundStyle(Theme.textTertiary)
             }
         }
@@ -286,18 +319,18 @@ private struct MonthlyActivityCalendar: View {
     }
 
     private var grid: some View {
-        LazyVGrid(columns: columns, spacing: 8) {
+        LazyVGrid(columns: columns, spacing: 6) {
             ForEach(month.weekdays, id: \.self) { weekday in
                 Text(weekday)
-                    .font(Theme.ui(9.5, .semibold))
-                    .foregroundStyle(Theme.textFaint)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .font(Theme.mono(9, .bold))
+                    .foregroundStyle(Theme.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .center)
                     .accessibilityHidden(true)
                     .accessibilityIdentifier("stats.weekday.\(weekday)")
             }
             ForEach(0 ..< month.leadingColumnOffset, id: \.self) { index in
                 Color.clear
-                    .frame(height: 49)
+                    .frame(height: 44)
                     .accessibilityHidden(true)
                     .accessibilityIdentifier("stats.spacer.leading.\(index)")
             }
@@ -306,7 +339,8 @@ private struct MonthlyActivityCalendar: View {
                     day: day,
                     canFocus: day.date == rovingDate && day.state != .future,
                     isFocused: day.date == focusedDate,
-                    reduceMotion: reduceMotion
+                    isHovered: day.date == hoveredDate,
+                    environment: environment
                 ) { hovering in
                     guard day.state != .future else { return }
                     if hovering {
@@ -351,44 +385,53 @@ private struct StatsDayCell: View {
     let day: StatsProjection.Day
     let canFocus: Bool
     let isFocused: Bool
-    let reduceMotion: Bool
+    let isHovered: Bool
+    let environment: StatsEnvironmentAdaptations
     let onHover: (Bool) -> Void
     let onMove: (CalendarFocusNavigator.Direction) -> Void
 
     private var style: StatsActivityStyle {
-        StatsActivityStyle(day: day, focused: isFocused)
+        StatsActivityStyle(
+            day: day,
+            focused: isFocused,
+            hovered: isHovered,
+            increaseContrast: environment.increaseContrast
+        )
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(day.dayNumber)
-                .font(Theme.mono(10, .semibold))
+            HStack {
+                Text(day.dayNumber)
+                    .font(Theme.mono(10, .semibold))
+                Spacer(minLength: 2)
+                if day.state == .today {
+                    Circle()
+                        .fill(Theme.accent)
+                        .frame(width: 4, height: 4)
+                        .accessibilityHidden(true)
+                }
+            }
             Spacer(minLength: 1)
-            if let compactWords = day.compactSpokenWords {
-                Text(compactWords)
-                    .font(Theme.mono(9, .medium))
-                    .monospacedDigit()
-            } else if day.state != .future {
+            if day.state == .future || day.intensity == .neutral {
                 Text("—")
                     .font(Theme.mono(9))
+            } else {
+                StatsWaveformCue(
+                    intensity: day.intensity,
+                    increaseContrast: environment.increaseContrast
+                )
             }
         }
         .foregroundStyle(style.foreground)
-        .padding(8)
-        .frame(maxWidth: .infinity, minHeight: 49, alignment: .topLeading)
+        .padding(7)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
         .background(style.background, in: RoundedRectangle(cornerRadius: 6))
         .overlay {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(style.outline, lineWidth: isFocused ? 3 : 1)
-                if isFocused {
-                    RoundedRectangle(cornerRadius: 6)
-                        .inset(by: 2)
-                        .strokeBorder(Theme.accent, lineWidth: 1)
-                }
-            }
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(style.outline, lineWidth: style.boundaryWidth)
         }
-        .shadow(color: style.shadow, radius: 3)
+        .emberInsetFocusRing(isFocused)
         .contentShape(Rectangle())
         .focusable(canFocus)
         .focusEffectDisabled()
@@ -404,8 +447,12 @@ private struct StatsDayCell: View {
             }
         }
         .animation(
-            StatsTransitionPolicy.resolve(reduceMotion: reduceMotion).animation,
+            StatsTransitionPolicy.resolve(reduceMotion: environment.reduceMotion).animation,
             value: day.intensity
+        )
+        .animation(
+            StatsTransitionPolicy.resolve(reduceMotion: environment.reduceMotion).animation,
+            value: isHovered
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(day.accessibilityLabel)
@@ -417,10 +464,21 @@ private struct StatsDayCell: View {
 
 private struct StatsDayDetail: View {
     let day: StatsProjection.Day?
+    let environment: StatsEnvironmentAdaptations
 
     var body: some View {
-        Group {
+        HStack(spacing: 10) {
             if let day {
+                if day.intensity == .neutral {
+                    Text("—")
+                        .font(Theme.mono(9))
+                        .foregroundStyle(Theme.textTertiary)
+                } else {
+                    StatsWaveformCue(
+                        intensity: day.intensity,
+                        increaseContrast: environment.increaseContrast
+                    )
+                }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(day.fullDate)
                         .font(Theme.ui(11.5, .semibold))
@@ -435,27 +493,26 @@ private struct StatsDayDetail: View {
                     }
                 }
             } else {
-                HStack(spacing: 8) {
-                    Image(systemName: "cursorarrow.motionlines")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.textFaint)
-                        .accessibilityHidden(true)
-                    Text("Hover a past day, or Tab into the calendar and use the arrow keys.")
-                        .font(Theme.ui(10.5))
-                        .foregroundStyle(Theme.textTertiary)
-                }
+                Image(systemName: "cursorarrow.motionlines")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textTertiary)
+                    .accessibilityHidden(true)
+                Text("Hover a past day, or Tab into the calendar and use the arrow keys.")
+                    .font(Theme.ui(10.5))
+                    .foregroundStyle(Theme.textTertiary)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Theme.windowBackground.opacity(0.72), in: RoundedRectangle(cornerRadius: 6))
+        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 6))
         .accessibilityIdentifier("stats.duplicate.detail")
     }
 }
 
 private struct StatsIntensityLegend: View {
     let labels: [String]
+    let environment: StatsEnvironmentAdaptations
 
     var body: some View {
         HStack(spacing: 12) {
@@ -463,57 +520,97 @@ private struct StatsIntensityLegend: View {
                 .font(Theme.ui(10, .semibold))
                 .foregroundStyle(Theme.textSecondary)
             Spacer(minLength: 6)
-            ForEach(Array(labels.enumerated()), id: \.offset) { index, label in
+            ForEach(
+                Array(zip(StatsProjection.Day.Intensity.allCases, labels)),
+                id: \.0.rawValue
+            ) { intensity, label in
                 HStack(spacing: 5) {
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(StatsActivityStyle.legendFill(level: index))
-                        .frame(width: 13, height: 13)
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 2.5)
-                                .strokeBorder(Theme.hairline, lineWidth: index == 0 ? 1 : 0)
-                        }
-                        .accessibilityHidden(true)
-                        .accessibilityIdentifier("stats.decoration.legend.\(index)")
+                    if intensity == .neutral {
+                        Text("—")
+                            .font(Theme.mono(9))
+                            .foregroundStyle(Theme.textTertiary)
+                    } else {
+                        StatsWaveformCue(
+                            intensity: intensity,
+                            increaseContrast: environment.increaseContrast
+                        )
+                    }
                     Text(label)
                         .font(Theme.mono(8.7, .medium))
                         .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
+                .accessibilityHidden(true)
+                .accessibilityIdentifier("stats.decoration.legend.\(intensity.rawValue)")
             }
         }
     }
 }
 
+private struct StatsWaveformCue: View {
+    let intensity: StatsProjection.Day.Intensity
+    let increaseContrast: Bool
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach(
+                Array(zip(
+                    StatsActivityStyle.waveformBarHeights.indices,
+                    StatsActivityStyle.waveformFillPattern(intensity)
+                )),
+                id: \.0
+            ) { index, isFilled in
+                Group {
+                    if isFilled {
+                        Capsule()
+                            .fill(Theme.accent)
+                    } else {
+                        Capsule()
+                            .strokeBorder(
+                                Theme.essentialBorderColor(increaseContrast: increaseContrast),
+                                lineWidth: Theme.essentialBorderWidth(
+                                    increaseContrast: increaseContrast
+                                )
+                            )
+                    }
+                }
+                .frame(width: 3, height: StatsActivityStyle.waveformBarHeights[index])
+            }
+        }
+        .frame(height: 16)
+        .accessibilityHidden(true)
+    }
+}
+
 struct StatsActivityStyle {
+    static let waveformBarHeights: [CGFloat] = [6, 10, 15, 11, 8]
+
     let background: Color
     let foreground: Color
     let outline: Color
-    let shadow: Color
+    let boundaryWidth: CGFloat
 
-    init(day: StatsProjection.Day, focused: Bool) {
-        if day.state == .future {
-            background = Theme.windowBackground.opacity(0.28)
-            foreground = Theme.textFaint.opacity(0.42)
-        } else {
-            background = Self.legendFill(level: day.intensity.rawValue)
-            foreground = day.intensity == .veryHigh ? .black : Theme.textPrimary
-        }
-        if focused {
-            outline = Theme.textPrimary
-            shadow = Theme.textPrimary.opacity(0.22)
-        } else if day.state == .today {
-            outline = Theme.textTertiary.opacity(0.72)
-            shadow = .clear
-        } else {
-            outline = .clear
-            shadow = .clear
-        }
+    init(
+        day: StatsProjection.Day,
+        focused: Bool,
+        hovered: Bool,
+        increaseContrast: Bool
+    ) {
+        background = hovered && !focused && day.state != .future
+            ? Theme.hover
+            : Theme.raised
+        foreground = day.state == .future ? Theme.textTertiary : Theme.textSecondary
+        outline = increaseContrast || day.state == .today
+            ? Theme.borderStrong
+            : Theme.border
+        boundaryWidth = Theme.essentialBorderWidth(increaseContrast: increaseContrast)
     }
 
-    static func legendFill(level: Int) -> Color {
-        guard level > 0 else { return Theme.windowBackground.opacity(0.72) }
-        let opacities = [0.0, 0.20, 0.36, 0.54, 0.76, 0.96]
-        return Theme.accent.opacity(opacities[min(level, opacities.count - 1)])
+    static func waveformFillPattern(
+        _ intensity: StatsProjection.Day.Intensity
+    ) -> [Bool] {
+        waveformBarHeights.indices.map { $0 < intensity.rawValue }
     }
 }
 
@@ -532,7 +629,7 @@ enum StatsTransitionPolicy: Equatable {
     var animation: Animation? {
         switch self {
         case .immediate: nil
-        case .crossfade: .easeOut(duration: 0.14)
+        case .crossfade: .easeOut(duration: 0.16)
         }
     }
 }

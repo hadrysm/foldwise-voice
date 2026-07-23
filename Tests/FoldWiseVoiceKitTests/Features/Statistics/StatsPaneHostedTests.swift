@@ -181,6 +181,51 @@ final class StatsPaneHostedTests: XCTestCase {
         XCTAssertEqual(columnCounts, Array(repeating: 7, count: 4))
     }
 
+    func testHostedIncreaseContrastRendersStrongerCalendarBoundaries() throws {
+        let standard = host(fixedStatsPane(
+            model: SettingsModel(),
+            environment: StatsEnvironmentAdaptations(
+                reduceMotion: false,
+                increaseContrast: false
+            )
+        ).environment(\.colorScheme, .light))
+        let increased = host(fixedStatsPane(
+            model: SettingsModel(),
+            environment: StatsEnvironmentAdaptations(
+                reduceMotion: false,
+                increaseContrast: true
+            )
+        ).environment(\.colorScheme, .light))
+        render(standard)
+        render(increased)
+
+        XCTAssertGreaterThan(
+            try renderedTokenCount(Theme.borderStrong, in: increased),
+            try renderedTokenCount(Theme.borderStrong, in: standard)
+        )
+    }
+
+    func testHostedReduceMotionCommitsActivityCueOnTheNextRender() throws {
+        let model = SettingsModel()
+        let hosting = host(fixedStatsPane(
+            model: model,
+            environment: StatsEnvironmentAdaptations(
+                reduceMotion: true,
+                increaseContrast: false
+            )
+        ).environment(\.colorScheme, .light))
+        render(hosting)
+        let initialAccentCount = try renderedTokenCount(Theme.accent, in: hosting)
+
+        model.historyEntries = [entry(rawText: "two words", day: 1)]
+        render(hosting)
+
+        XCTAssertGreaterThan(
+            try renderedTokenCount(Theme.accent, in: hosting),
+            initialAccentCount
+        )
+    }
+
     func testHostedCalendarAppliesContextOnce() throws {
         let (_, window) = hostInteractiveStats(model: SettingsModel())
         defer { window.orderOut(nil) }
@@ -485,7 +530,10 @@ final class StatsPaneHostedTests: XCTestCase {
         return hosting
     }
 
-    private func fixedStatsPane(model: SettingsModel) -> StatsPane {
+    private func fixedStatsPane(
+        model: SettingsModel,
+        environment: StatsEnvironmentAdaptations? = nil
+    ) -> StatsPane {
         let calendar = utcCalendar()
         return StatsPane(
             model: model,
@@ -495,7 +543,8 @@ final class StatsPaneHostedTests: XCTestCase {
                 )) ?? .distantPast
             }),
             calendar: { calendar },
-            locale: Locale(identifier: "en_US")
+            locale: Locale(identifier: "en_US"),
+            environmentOverride: environment
         )
     }
 
@@ -578,6 +627,50 @@ final class StatsPaneHostedTests: XCTestCase {
         DispatchQueue.main.async { rendered.fulfill() }
         wait(for: [rendered], timeout: 1)
         hosting.layoutSubtreeIfNeeded()
+    }
+
+    private func renderedTokenCount(
+        _ token: Color,
+        in hosting: NSView
+    ) throws -> Int {
+        hosting.needsDisplay = true
+        hosting.displayIfNeeded()
+        let bitmap = try XCTUnwrap(
+            hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)
+        )
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let target = try renderedTokenColor(token)
+        var count = 0
+        for y in stride(from: 0, to: bitmap.pixelsHigh, by: 2) {
+            for x in stride(from: 0, to: bitmap.pixelsWide, by: 2) {
+                guard let pixel = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
+                else { continue }
+                let distance = abs(pixel.redComponent - target.redComponent)
+                    + abs(pixel.greenComponent - target.greenComponent)
+                    + abs(pixel.blueComponent - target.blueComponent)
+                if distance < 0.05 {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+
+    private func renderedTokenColor(_ color: Color) throws -> NSColor {
+        let hosting = host(
+            color
+                .environment(\.colorScheme, .light),
+            width: 2,
+            height: 2
+        )
+        let bitmap = try XCTUnwrap(
+            hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)
+        )
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        return try XCTUnwrap(
+            bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?
+                .usingColorSpace(.sRGB)
+        )
     }
 
     private func sendKeys(_ keys: [KeyInput], to window: NSWindow) {
