@@ -69,6 +69,7 @@ struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var presentationResetGeneration = 0
+    @FocusState private var focusedNavigationPane: SettingsModel.Pane?
 
     var body: some View {
         GeometryReader { geo in
@@ -83,14 +84,14 @@ struct SettingsView: View {
                         ? geo.safeAreaInsets.top
                         : Theme.titlebarHeight
                 )
-                hairline(.horizontal)
+                EmberHairline(axis: .horizontal)
                 HStack(spacing: 0) {
                     sidebar
-                    hairline(.vertical)
+                    EmberHairline(axis: .vertical)
                     content
                 }
             }
-            .background(Theme.windowBackground)
+            .background(Theme.canvas)
             // Draw the custom titlebar in the real titlebar strip, sharing
             // its row with the traffic lights, instead of below the hosting
             // view's safe-area inset.
@@ -155,15 +156,6 @@ struct SettingsView: View {
         model.sidebar.mode(forWidth: model.windowWidth)
     }
 
-    private func hairline(_ axis: Axis) -> some View {
-        Rectangle()
-            .fill(Theme.hairline)
-            .frame(
-                width: axis == .vertical ? 1 : nil,
-                height: axis == .horizontal ? 1 : nil
-            )
-    }
-
     // MARK: - titlebar
 
     private func titlebar(height: CGFloat) -> some View {
@@ -179,13 +171,24 @@ struct SettingsView: View {
             .keyboardShortcut("\\", modifiers: .command)
             .help("Toggle sidebar (⌘\\)")
             .disabled(model.configurationReadOnly)
-            Text("FoldWise Voice")
-                .font(Theme.ui(12.5, .semibold))
-                .foregroundStyle(Theme.textTertiary)
+            Image(systemName: "waveform")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+                .padding(.leading, 10)
+                .accessibilityHidden(true)
+            HStack(spacing: 0) {
+                Text("FoldWise")
+                    .foregroundStyle(Theme.accent)
+                Text(" Voice")
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            .font(Theme.ui(12.5, .semibold))
             Spacer()
         }
         .frame(height: height)
-        .background(Theme.sidebarBackground)
+        .background(Theme.navigation)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("continuous-frame.titlebar")
     }
 
     /// The standard macOS "toggle sidebar" glyph: a rounded rect with an
@@ -223,9 +226,11 @@ struct SettingsView: View {
             width: sidebarMode == .expanded ? Theme.sidebarWidth : Theme.railWidth,
             alignment: .topLeading
         )
-        .background(Theme.sidebarBackground)
+        .background(Theme.navigation)
         .clipped()
         .id(presentationResetGeneration)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("continuous-frame.navigation")
     }
 
     private var expandedSidebar: some View {
@@ -235,7 +240,6 @@ struct SettingsView: View {
             }
             Spacer()
             footer
-                .offset(x: sidebarMode == .expanded ? 0 : -Theme.sidebarLabelOffset)
         }
         .padding(.horizontal, Theme.sidebarHorizontalInset)
         .padding(.vertical, Theme.sidebarVerticalInset)
@@ -243,10 +247,11 @@ struct SettingsView: View {
 
     private func navRow(_ pane: SettingsModel.Pane) -> some View {
         let active = model.pane == pane
+        let disabled = !model.isPaneAvailable(pane)
         return Button {
             model.pane = pane
         } label: {
-            HStack(spacing: 10) {
+            EmberSelectionLabel(isSelected: active) {
                 Image(systemName: pane.icon)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(active ? Theme.accent : Theme.textTertiary)
@@ -254,19 +259,22 @@ struct SettingsView: View {
                 Text(pane.rawValue)
                     .font(active ? Theme.navActive : Theme.nav)
                     .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
-                    .offset(x: sidebarMode == .expanded ? 0 : -Theme.sidebarLabelOffset)
-                Spacer()
             }
-            .padding(.horizontal, 9)
+            .padding(.trailing, 9)
             .frame(height: Theme.sidebarRowHeight)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(
-            active ? Theme.activeNavBackground : Color.clear,
-            in: RoundedRectangle(cornerRadius: Theme.navRadius)
+        .focusEffectDisabled()
+        .focused($focusedNavigationPane, equals: pane)
+        .emberFocusRing(focusedNavigationPane == pane)
+        .disabled(disabled)
+        .opacity(disabled ? 0.46 : 1)
+        .accessibilityLabel(pane.rawValue)
+        .accessibilityValue(active ? "Selected" : "Not selected")
+        .accessibilityIdentifier(
+            "continuous-frame.navigation.\(pane.rawValue.lowercased())"
         )
-        .shadow(color: active ? Theme.activeNavShadow : .clear, radius: 3, y: 1)
     }
 
     private var railSidebar: some View {
@@ -275,6 +283,7 @@ struct SettingsView: View {
                 railTile(pane)
             }
             Spacer()
+            footer
         }
         .padding(.horizontal, Theme.sidebarHorizontalInset)
         .padding(.vertical, Theme.sidebarVerticalInset)
@@ -282,23 +291,39 @@ struct SettingsView: View {
 
     private func railTile(_ pane: SettingsModel.Pane) -> some View {
         let active = model.pane == pane
+        let disabled = !model.isPaneAvailable(pane)
         return Button {
             model.pane = pane
         } label: {
-            Image(systemName: pane.icon)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(active ? Theme.accent : Theme.textTertiary)
-                .frame(width: Theme.sidebarRowHeight, height: Theme.sidebarRowHeight)
-                .background(
-                    active ? Theme.activeNavBackground : Color.clear,
-                    in: RoundedRectangle(cornerRadius: Theme.railTileRadius)
-                )
-                .contentShape(Rectangle())
+            HStack(spacing: 0) {
+                EmberIngress(color: active ? Theme.accent : .clear)
+                    .frame(height: 22)
+                Image(systemName: pane.icon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(active ? Theme.accent : Theme.textTertiary)
+                    .frame(
+                        width: Theme.sidebarRowHeight - Theme.selectionIngressWidth,
+                        height: Theme.sidebarRowHeight
+                    )
+            }
+            .background(
+                active ? Theme.raised : .clear,
+                in: RoundedRectangle(cornerRadius: Theme.controlRadius)
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .shadow(color: active ? Theme.activeNavShadow : .clear, radius: 3, y: 1)
+        .focusEffectDisabled()
+        .focused($focusedNavigationPane, equals: pane)
+        .emberFocusRing(focusedNavigationPane == pane)
         .anchorPreference(key: RailTileBoundsKey.self, value: .bounds) { [pane: $0] }
         .accessibilityLabel(pane.rawValue)
+        .accessibilityValue(active ? "Selected" : "Not selected")
+        .accessibilityIdentifier(
+            "continuous-frame.navigation.\(pane.rawValue.lowercased())"
+        )
+        .disabled(disabled)
+        .opacity(disabled ? 0.46 : 1)
         .onHover { hovering in
             if hovering {
                 model.hoveredRailPane = pane
@@ -325,7 +350,6 @@ struct SettingsView: View {
                         Theme.tooltipBackground,
                         in: RoundedRectangle(cornerRadius: Theme.tooltipRadius)
                     )
-                    .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
                     .fixedSize()
                     .offset(x: rect.maxX + 10, y: rect.midY - 12)
                     .transition(.opacity.combined(with: .offset(x: -4)))
@@ -333,7 +357,7 @@ struct SettingsView: View {
             }
         }
         .animation(
-            accessibilityReduceMotion ? nil : .easeOut(duration: 0.15),
+            Theme.ordinaryAnimation(reduceMotion: accessibilityReduceMotion),
             value: model.hoveredRailPane
         )
         .id(presentationResetGeneration)
@@ -347,7 +371,7 @@ struct SettingsView: View {
         if accessibilityReduceMotion {
             model.sidebar.toggle(width: model.windowWidth)
         } else {
-            withAnimation(Theme.sidebarAnimation) {
+            withAnimation(Theme.ordinaryAnimation(reduceMotion: false)) {
                 model.sidebar.toggle(width: model.windowWidth)
             }
         }
@@ -384,21 +408,53 @@ struct SettingsView: View {
     /// Version footer pinned to the sidebar's bottom, with the update state
     /// folded into one faint line and an accent link when a release is out.
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if case let .available(version, downloadURL) = model.updateState {
-                Button("Get v\(version)") {
-                    NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
+        Group {
+            if sidebarMode == .expanded {
+                VStack(alignment: .leading, spacing: 3) {
+                    if case let .available(version, downloadURL) = model.updateState {
+                        Button("Get v\(version)") {
+                            NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
+                        }
+                        .buttonStyle(.plain)
+                        .font(Theme.ui(11, .semibold))
+                        .foregroundStyle(Theme.accent)
+                    }
+                    Text(footerText)
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.textTertiary)
                 }
-                .buttonStyle(.plain)
-                .font(Theme.ui(11, .semibold))
-                .foregroundStyle(Theme.accent)
+                .padding(.horizontal, 11)
+                .padding(.bottom, 8)
+            } else {
+                Image(systemName: footerSymbol)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(footerColor)
+                    .frame(width: Theme.sidebarRowHeight, height: 30)
+                    .background(
+                        Theme.raised,
+                        in: RoundedRectangle(cornerRadius: Theme.controlRadius)
+                    )
+                    .help(footerText)
+                    .accessibilityLabel(footerText)
+                    .padding(.bottom, 8)
             }
-            Text(footerText)
-                .font(Theme.ui(11))
-                .foregroundStyle(Theme.textFaint)
         }
-        .padding(.horizontal, 11)
-        .padding(.bottom, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("continuous-frame.footer")
+    }
+
+    private var footerSymbol: String {
+        if case .available = model.updateState {
+            return "arrow.down.circle.fill"
+        }
+        return "checkmark.circle.fill"
+    }
+
+    private var footerColor: Color {
+        if case .available = model.updateState {
+            return Theme.accent
+        }
+        return Theme.success
     }
 
     private var footerText: String {
@@ -416,63 +472,84 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             if let message = model.configurationRecoveryMessage {
                 recoveryBanner(message)
-                hairline(.horizontal)
+                EmberHairline(axis: .horizontal)
             }
-            Group {
-                switch model.pane {
-                case .home:
-                    HomeView(model: model)
-                case .modes:
-                    paneScroll("Modes") { modesPane }
-                case .models:
-                    ModelsCombinedPane(model: model)
-                case .history:
-                    paneScroll("History") { HistoryPane(model: model) }
-                case .stats:
-                    paneScroll("Stats") { StatsPane(model: model) }
-                case .settings:
-                    paneScroll("Settings") { settingsPane }
-                }
+            ZStack {
+                destination
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .disabled(configurationPaneIsReadOnly)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("continuous-frame.destination")
+            .accessibilityValue(
+                configurationPaneIsReadOnly ? "Read-only" : "Available"
+            )
             if !model.status.isEmpty {
-                hairline(.horizontal)
-                Text(model.status)
-                    .font(Theme.ui(12))
-                    .foregroundStyle(model.statusIsError ? AnyShapeStyle(.red) : AnyShapeStyle(Theme.textSecondary))
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
+                EmberHairline(axis: .horizontal)
+                EmberStatusNotice(
+                    kind: model.statusIsError ? .error : .success,
+                    title: model.status,
+                    ingressWidth: Theme.noticeIngressWidth
+                )
+                .frame(minHeight: 38)
+                .accessibilityIdentifier("continuous-frame.status")
             }
+        }
+        .background(Theme.canvas)
+    }
+
+    @ViewBuilder
+    private var destination: some View {
+        switch model.pane {
+        case .home:
+            HomeView(model: model)
+        case .modes:
+            paneScroll("Modes") { modesPane }
+        case .models:
+            ModelsCombinedPane(model: model)
+        case .history:
+            paneScroll("History") { HistoryPane(model: model) }
+        case .stats:
+            paneScroll("Stats") { StatsPane(model: model) }
+        case .settings:
+            paneScroll("Settings") { settingsPane }
         }
     }
 
     private var configurationPaneIsReadOnly: Bool {
-        guard model.configurationReadOnly else { return false }
-        return [.modes, .models, .history, .settings].contains(model.pane)
+        !model.isPaneAvailable(model.pane)
     }
 
     private func recoveryBanner(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: 10) {
+            EmberIngress(color: Theme.warning, width: Theme.noticeIngressWidth)
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(Theme.warning)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text("Configuration recovery")
-                    .font(Theme.ui(13, .semibold))
-                Text(message)
-                    .font(Theme.ui(11))
-                    .foregroundStyle(Theme.textSecondary)
-                Text("Voice to Text remains available. Configuration changes are disabled.")
-                    .font(Theme.ui(11))
-                    .foregroundStyle(Theme.textSecondary)
+                    .font(Theme.ui(12, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(
+                    "\(message) Voice to Text remains available. "
+                        + "Configuration changes are disabled."
+                )
+                .font(Theme.ui(10.5))
+                .foregroundStyle(Theme.textSecondary)
             }
             Spacer()
             Button("Quit") { model.onQuitRecovery?() }
+                .buttonStyle(EmberButtonStyle(kind: .quiet))
+                .accessibilityIdentifier("continuous-frame.recovery.quit")
             Button("Reset Configuration") { model.onResetConfiguration?() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(EmberButtonStyle(kind: .primary))
+                .accessibilityIdentifier("continuous-frame.recovery.reset")
         }
-        .padding(14)
+        .padding(.trailing, 14)
+        .padding(.vertical, 11)
+        .background(Theme.raised)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("continuous-frame.recovery")
     }
 
     private func paneScroll(_ title: String, @ViewBuilder body: () -> some View) -> some View {
@@ -480,7 +557,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text(title)
                     .font(Theme.pageTitle)
-                    .kerning(-0.56)
+                    .tracking(Theme.displayTracking)
                     .foregroundStyle(Theme.textPrimary)
                     .padding(.bottom, 4)
                 body()

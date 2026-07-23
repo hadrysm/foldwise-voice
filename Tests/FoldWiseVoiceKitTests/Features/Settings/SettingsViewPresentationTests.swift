@@ -1,7 +1,19 @@
 import XCTest
 @testable import FoldWiseVoiceKit
 
+@MainActor
 final class SettingsViewPresentationTests: XCTestCase {
+    func testConfigurationRecoveryPermissionMatrixKeepsOnlySafeDestinationsAvailable() {
+        let model = SettingsModel()
+        XCTAssertTrue(SettingsModel.Pane.allCases.allSatisfy(model.isPaneAvailable))
+
+        model.configurationRecoveryMessage = "Configuration could not be loaded."
+        XCTAssertEqual(
+            SettingsModel.Pane.allCases.map(model.isPaneAvailable),
+            [true, false, false, false, true, false]
+        )
+    }
+
     func testAppearancePresentationMatchesApprovedTiles() {
         XCTAssertEqual(
             AppearanceTilePresentation.all,

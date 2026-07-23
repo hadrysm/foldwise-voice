@@ -8,8 +8,8 @@ final class StatsActivityStyleTests: XCTestCase {
         XCTAssertEqual(
             try resolvedLevelColors(appearance: .aqua),
             [
-                "FCFBF8@0.72", "C24A22@0.20", "C24A22@0.36",
-                "C24A22@0.54", "C24A22@0.76", "C24A22@0.96",
+                "F7F3EC@0.72", "BF4008@0.20", "BF4008@0.36",
+                "BF4008@0.54", "BF4008@0.76", "BF4008@0.96",
             ]
         )
     }
@@ -18,8 +18,8 @@ final class StatsActivityStyleTests: XCTestCase {
         XCTAssertEqual(
             try resolvedLevelColors(appearance: .darkAqua),
             [
-                "161411@0.72", "E06A3E@0.20", "E06A3E@0.36",
-                "E06A3E@0.54", "E06A3E@0.76", "E06A3E@0.96",
+                "07090B@0.72", "FF6A1A@0.20", "FF6A1A@0.36",
+                "FF6A1A@0.54", "FF6A1A@0.76", "FF6A1A@0.96",
             ]
         )
     }
@@ -28,9 +28,9 @@ final class StatsActivityStyleTests: XCTestCase {
         XCTAssertEqual(
             try resolvedDayStateColors(appearance: .aqua),
             [
-                "FCFBF8@0.28", "B0A995@0.42",
-                "FCFBF8@0.72", "1B1813@1.00", "8F887A@0.72",
-                "C24A22@0.54", "1B1813@1.00", "1B1813@1.00", "1B1813@0.22",
+                "F7F3EC@0.28", "766E65@0.42",
+                "F7F3EC@0.72", "1A1714@1.00", "766E65@0.72",
+                "BF4008@0.54", "1A1714@1.00", "1A1714@1.00", "1A1714@0.22",
                 "000000@1.00",
             ]
         )
@@ -40,9 +40,9 @@ final class StatsActivityStyleTests: XCTestCase {
         XCTAssertEqual(
             try resolvedDayStateColors(appearance: .darkAqua),
             [
-                "161411@0.28", "6B655A@0.42",
-                "161411@0.72", "F2EFE8@1.00", "87816F@0.72",
-                "E06A3E@0.54", "F2EFE8@1.00", "F2EFE8@1.00", "F2EFE8@0.22",
+                "07090B@0.28", "747C85@0.42",
+                "07090B@0.72", "F4F5F6@1.00", "747C85@0.72",
+                "FF6A1A@0.54", "F4F5F6@1.00", "F4F5F6@1.00", "F4F5F6@0.22",
                 "000000@1.00",
             ]
         )

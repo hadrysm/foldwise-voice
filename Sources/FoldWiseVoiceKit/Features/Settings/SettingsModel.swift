@@ -29,6 +29,13 @@ final class SettingsModel: ObservableObject {
             case .settings: "slider.horizontal.3"
             }
         }
+
+        var isAvailableInConfigurationRecovery: Bool {
+            switch self {
+            case .home, .stats: true
+            case .modes, .models, .history, .settings: false
+            }
+        }
     }
 
     enum RecordingField {
@@ -99,6 +106,10 @@ final class SettingsModel: ObservableObject {
     @Published var recordingField: RecordingField?
     @Published var shortcutListenerHealth: ShortcutListenerHealth = .global
     @Published var configurationRecoveryMessage: String?
+
+    func isPaneAvailable(_ pane: Pane) -> Bool {
+        configurationRecoveryMessage == nil || pane.isAvailableInConfigurationRecovery
+    }
 
     func applyASRLifecycleSnapshot(_ snapshot: ASRModelLifecycleSnapshot) {
         asrFailures.apply(snapshot)
