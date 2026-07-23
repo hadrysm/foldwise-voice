@@ -301,14 +301,19 @@ private final class PrototypeAppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let hosting = NSHostingController(rootView: PrototypeRoot())
+        let size = CGSize(width: 1220, height: 840)
+        let hosting = NSHostingController(
+            rootView: PrototypeRoot()
+                .frame(width: size.width, height: size.height)
+        )
         let window = NSWindow(contentViewController: hosting)
         window.title = "FoldWise Modes prototype"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
-        window.setContentSize(CGSize(width: 1220, height: 840))
-        window.contentMinSize = CGSize(width: 1080, height: 760)
+        window.setContentSize(size)
+        window.contentMinSize = size
+        window.contentMaxSize = size
         window.center()
         window.makeKeyAndOrderFront(nil)
         self.window = window
