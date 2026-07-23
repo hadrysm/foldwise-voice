@@ -38,4 +38,27 @@ Render the review matrix to `.context/stats-visual-grammar-shots` with:
 
 ## Verdict
 
-Pending live review.
+Approved: **C — Dictation Pulse**.
+
+Dictation Pulse won because it makes the Monthly activity calendar the clear
+primary surface while keeping all four lifetime metrics visible in one compact
+row. Its five fixed waveform bars give spoken-word intensity a FoldWise-specific
+non-color cue: levels one through five fill the corresponding number of bars,
+while neutral elapsed days retain the em dash. Exact spoken-word values remain
+available in day detail and accessibility output, so the waveform does not
+replace or redefine the activity measure.
+
+The approved treatment retains the Ember Edge palette and component grammar:
+
+- Metrics use their existing order, values, symbols, and accessibility grouping
+  in a compressed, typography-led strip.
+- The calendar uses one opaque surface with a restrained orange ingress edge;
+  orange signals activity and focus without becoming a general surface wash.
+- Hover uses the raised surface, keyboard focus uses the separated orange ring,
+  today keeps its dot and outline, and future days remain visually quiet and
+  excluded from focus and accessibility.
+- Empty and saving-off notices retain their precedence, copy, icon/shape cues,
+  and Open History behavior.
+- The 880×640 compact view keeps one metric row and seven calendar columns.
+- Contrast+ strengthens essential borders to two points. Reduced Motion makes
+  detail and state changes immediate.
