@@ -1,6 +1,11 @@
 import XCTest
 @testable import FoldWiseVoiceKit
 
+private struct ClosedDuringStartState: Equatable {
+    let isRecording: Bool
+    let sessionCloseCount: Int?
+}
+
 final class AudioRecorderDevicePolicyTests: XCTestCase {
     private let builtIn = AudioInputDevice(uid: "built-in", name: "MacBook Microphone")
     private let usb = AudioInputDevice(uid: "usb-1", name: "Studio Mic")
@@ -295,6 +300,40 @@ final class AudioRecorderDevicePolicyTests: XCTestCase {
         XCTAssertEqual(hardware.stopObservingCount, 1)
     }
 
+    func testCloseDuringCaptureStartupClosesTheSessionThatEventuallyStarts() {
+        let hardware = FakeAudioHardware(devices: [builtIn], defaultUID: builtIn.uid)
+        let recorder = AudioRecorder(preferredInputUID: nil, hardware: hardware)
+        let startupEntered = DispatchSemaphore(value: 0)
+        let releaseStartup = DispatchSemaphore(value: 0)
+        let startReturned = DispatchSemaphore(value: 0)
+        hardware.onStartCapture = {
+            startupEntered.signal()
+            releaseStartup.wait()
+        }
+
+        DispatchQueue.global().async {
+            do {
+                try recorder.start()
+            } catch {
+                XCTFail("Capture startup unexpectedly failed: \(error)")
+            }
+            startReturned.signal()
+        }
+        XCTAssertEqual(startupEntered.wait(timeout: .now() + 0.2), .success)
+
+        recorder.close()
+        releaseStartup.signal()
+        XCTAssertEqual(startReturned.wait(timeout: .now() + 0.2), .success)
+
+        XCTAssertEqual(
+            ClosedDuringStartState(
+                isRecording: recorder.isRecording,
+                sessionCloseCount: hardware.lastSession?.closeCount
+            ),
+            ClosedDuringStartState(isRecording: false, sessionCloseCount: 1)
+        )
+    }
+
     func testQueuedHardwareChangeAfterCloseDoesNotRestartObservation() {
         let hardware = FakeAudioHardware(devices: [builtIn], defaultUID: builtIn.uid)
         let recorder = AudioRecorder(preferredInputUID: nil, hardware: hardware)
@@ -556,6 +595,7 @@ private final class FakeAudioHardware: AudioHardware {
     var failureDuringStart: AudioCaptureError?
     var snapshotError: AudioCaptureError?
     var observeError: AudioCaptureError?
+    var onStartCapture: (() -> Void)?
     var onSessionStop: (() -> Void)?
     private(set) var startedUIDs: [String] = []
     private(set) var stopObservingCount = 0
@@ -594,6 +634,7 @@ private final class FakeAudioHardware: AudioHardware {
         if let startError {
             throw startError
         }
+        onStartCapture?()
         startedUIDs.append(deviceUID)
         let session = FakeAudioCaptureSession(onFailure: onFailure, onStop: onSessionStop)
         lastSession = session

@@ -171,11 +171,17 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
             throw AudioCaptureError.engineStartFailed(message: error.localizedDescription)
         }
 
-        let outcome: (state: AudioInputState?, failure: AudioCaptureError?) = lock.withLock {
+        let outcome: (
+            state: AudioInputState?, failure: AudioCaptureError?, closed: Bool
+        ) = lock.withLock {
             isStarting = false
+            if isClosed {
+                startingFailure = nil
+                return (nil, nil, true)
+            }
             if let failure = startingFailure {
                 startingFailure = nil
-                return (nil, failure)
+                return (nil, failure, false)
             }
             capture = session
             effective = target
@@ -186,10 +192,15 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
                 effective: effective,
                 snapshot: snapshot
             ))
-            return (makeState(), nil)
+            return (makeState(), nil, false)
+        }
+        if outcome.closed || outcome.failure != nil {
+            session.close()
+        }
+        if outcome.closed {
+            return
         }
         if let failure = outcome.failure {
-            session.close()
             throw failure
         }
         if let state = outcome.state {

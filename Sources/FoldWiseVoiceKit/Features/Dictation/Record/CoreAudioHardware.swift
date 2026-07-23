@@ -7,6 +7,7 @@ import os
 final class CoreAudioHardware: AudioHardware {
     private let queue = DispatchQueue(label: "com.foldwise.audio-hardware")
     private let listenerLock = NSRecursiveLock()
+    private let engine = AVAudioEngine()
     private var listeners: [(AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
 
     func snapshot() throws -> AudioHardwareSnapshot {
@@ -62,6 +63,7 @@ final class CoreAudioHardware: AudioHardware {
             throw AudioCaptureError.unreadableDevice
         }
         return try AVAudioCaptureSession(
+            engine: engine,
             deviceID: record.id,
             device: record.device,
             configurationFailure: { [weak self] in
@@ -166,7 +168,7 @@ final class CoreAudioHardware: AudioHardware {
 private final class AVAudioCaptureSession: AudioCaptureSession {
     static let sampleRate = 16000.0
 
-    private let engine = AVAudioEngine()
+    private let engine: AVAudioEngine
     private let recovery = AudioCaptureRecoveryCoordinator()
     private let lock = NSLock()
     private var converter: AVAudioConverter
@@ -184,6 +186,7 @@ private final class AVAudioCaptureSession: AudioCaptureSession {
     }
 
     init(
+        engine: AVAudioEngine,
         deviceID: AudioDeviceID,
         device: AudioInputDevice,
         configurationFailure: @escaping () -> AudioCaptureError,
@@ -213,6 +216,7 @@ private final class AVAudioCaptureSession: AudioCaptureSession {
         guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
             throw AudioCaptureError.converterFailed(device: device.name)
         }
+        self.engine = engine
         self.converter = converter
         self.outputFormat = outputFormat
         self.configurationFailure = configurationFailure

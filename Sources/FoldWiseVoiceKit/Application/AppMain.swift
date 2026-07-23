@@ -72,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settings: SettingsController!
     private var menuBar: MenuBarController!
     private var hotkeys: HotkeyBindingCoordinator!
+    private var dictationCommands: DictationCommandQueue!
     private var modeCycleCommand: ModeCycleCommand!
     private var updateChecker: UpdateChecker!
     private let asrBadgePresentation = ASRBadgePresentation()
@@ -137,12 +138,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             config: config, recorder: recorder, sessionProvider: asrLifecycle,
             record: { historyStore.append($0) }
         )
+        dictationCommands = DictationCommandQueue(
+            start: { [weak self] in self?.pipeline.startRecording() },
+            stop: { [weak self] in self?.pipeline.stopRecording() },
+            toggle: { [weak self] in self?.pipeline.toggleRecording() }
+        )
         badge = BadgeController(config: config) { [weak self] in
             self?.settings.show()
         }
         badge.recorder = recorder
-        badge.onStop = { [weak self] in self?.pipeline.stopRecording() }
-        badge.onRecord = { [weak self] in self?.pipeline.toggleRecording() }
+        badge.onStop = { [weak self] in self?.dictationCommands.stop() }
+        badge.onRecord = { [weak self] in self?.dictationCommands.toggle() }
         modeCycleCommand = ModeCycleCommand(
             config: config,
             onCommitted: { [weak self] transition in
@@ -161,9 +167,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 isSuspended: { [weak self] in
                     self?.shortcutCaptureGate.isCapturing ?? false
                 },
-                onPress: { [weak self] in self?.pipeline.startRecording() },
-                onRelease: { [weak self] in self?.pipeline.stopRecording() },
-                onToggle: { [weak self] in self?.pipeline.toggleRecording() },
+                onPress: { [weak self] in self?.dictationCommands.start() },
+                onRelease: { [weak self] in self?.dictationCommands.stop() },
+                onToggle: { [weak self] in self?.dictationCommands.toggle() },
                 onCycle: { [weak self] in self?.modeCycleCommand.perform() },
                 onHealthChange: { [weak self] health in
                     self?.settings?.model.shortcutListenerHealth = health
