@@ -59,4 +59,22 @@ Render the curated review snapshots to `.context/modes-library-shots` with:
 
 ## Verdict
 
-Pending human review.
+Approved: **A — Command Ledger**.
+
+The persistent ordered library makes Dictation selection and Mode-cycle order
+easy to scan while a stable inspector gives long Polish instructions,
+vocabulary, unavailable-model guidance, and library actions enough room. Voice
+to Text remains visually separate as the permanent system selection.
+
+The selected row uses the approved Ember Edge ingress mark, active icon, weight,
+and checkmark rather than an orange surface wash. The inspector, destructive
+confirmation, and fixed editor sheet carry the same dense, layered grammar
+through normal, empty, unavailable, validation, and persistence-retry states.
+
+This is a composition decision only. Existing selection timing, ordering,
+candidate transactions, validation, History attribution, raw-transcript
+fallback, keyboard behavior, and accessibility semantics remain unchanged.
+
+Variants B and C remain in this throwaway artifact only as review context. The
+complete prototype gallery and production specification should carry forward
+Variant A.
