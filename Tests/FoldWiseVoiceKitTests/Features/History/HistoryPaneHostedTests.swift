@@ -70,10 +70,11 @@ final class HistoryPaneHostedTests: XCTestCase {
         defer { window.orderOut(nil) }
 
         let flaggedOnly = try node("history.flagged-only", in: window)
-        XCTAssertEqual(AXUIElementPerformAction(
+        try requireSuccess(
+            "Press Flagged only",
             flaggedOnly.element,
             kAXPressAction as CFString
-        ), .success)
+        )
 
         try waitForIdentifier("history.empty.no-flagged", in: window)
     }
@@ -85,21 +86,17 @@ final class HistoryPaneHostedTests: XCTestCase {
         defer { window.orderOut(nil) }
 
         let search = try node("history.search", in: window)
-        XCTAssertEqual(
-            AXUIElementSetAttributeValue(
-                search.element,
-                kAXFocusedAttribute as CFString,
-                kCFBooleanTrue
-            ),
-            .success
+        try requireSuccess(
+            "Focus History search",
+            search.element,
+            kAXFocusedAttribute as CFString,
+            value: kCFBooleanTrue
         )
-        XCTAssertEqual(
-            AXUIElementSetAttributeValue(
-                search.element,
-                kAXValueAttribute as CFString,
-                "not present" as CFString
-            ),
-            .success
+        try requireSuccess(
+            "Enter History search",
+            search.element,
+            kAXValueAttribute as CFString,
+            value: "not present" as CFString
         )
         _ = AXUIElementPerformAction(search.element, kAXConfirmAction as CFString)
 
@@ -150,6 +147,29 @@ final class HistoryPaneHostedTests: XCTestCase {
             )
         } while Date() < deadline
         XCTFail("Timed out waiting for \(identifier)")
+    }
+
+    private func requireSuccess(
+        _ operation: String,
+        _ element: AXUIElement,
+        _ action: CFString
+    ) throws {
+        let result = AXUIElementPerformAction(element, action)
+        guard result == .success else {
+            throw HostedAccessibilityError(operation: operation, result: result)
+        }
+    }
+
+    private func requireSuccess(
+        _ operation: String,
+        _ element: AXUIElement,
+        _ attribute: CFString,
+        value: CFTypeRef
+    ) throws {
+        let result = AXUIElementSetAttributeValue(element, attribute, value)
+        guard result == .success else {
+            throw HostedAccessibilityError(operation: operation, result: result)
+        }
     }
 
     private func identifiers(in window: NSWindow) throws -> Set<String> {
@@ -233,5 +253,14 @@ final class HistoryPaneHostedTests: XCTestCase {
             flagged: false,
             flagReason: nil
         )
+    }
+}
+
+private struct HostedAccessibilityError: Error, CustomStringConvertible {
+    let operation: String
+    let result: AXError
+
+    var description: String {
+        "\(operation) failed with AX error \(result.rawValue)"
     }
 }

@@ -283,18 +283,27 @@ struct HistoryPane: View {
     /// leaves none — distinct from the first-run empty state.
     private var noMatchesState: some View {
         let flaggedButEmpty = flaggedOnly && search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let presentation = if flaggedButEmpty {
+            (
+                symbolName: "flag",
+                title: "No flagged Dictation sessions.",
+                detail: "Flag a Dictation session to keep it in this focused view.",
+                accessibilityIdentifier: "history.empty.no-flagged"
+            )
+        } else {
+            (
+                symbolName: "magnifyingglass",
+                title: "No matches.",
+                detail: "Try different words or clear the filters above.",
+                accessibilityIdentifier: "history.empty.no-results"
+            )
+        }
         return EmberEmptyState(
-            symbolName: flaggedButEmpty ? "flag" : "magnifyingglass",
-            title: flaggedButEmpty ? "No flagged Dictation sessions." : "No matches.",
-            detail: flaggedButEmpty
-                ? "Flag a Dictation session to keep it in this focused view."
-                : "Try different words or clear the filters above."
+            symbolName: presentation.symbolName,
+            title: presentation.title,
+            detail: presentation.detail
         )
-        .accessibilityIdentifier(
-            flaggedButEmpty
-                ? "history.empty.no-flagged"
-                : "history.empty.no-results"
-        )
+        .accessibilityIdentifier(presentation.accessibilityIdentifier)
     }
 }
 
