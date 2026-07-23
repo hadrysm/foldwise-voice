@@ -46,4 +46,36 @@ They preserve the existing domain distinctions:
 
 ## Verdict
 
-Pending human review.
+Approved: **A — Trace Ledger**.
+
+Trace Ledger won because it preserves the Models workspace's strongest existing
+idea—the aligned comparison scan—while translating it directly into Ember Edge.
+The inspected row's restrained orange ingress mark continues at the inspector
+edge, making inspection legible without confusing it with the saved ASR model
+selection. Fine borders, near-black or warm off-white opaque layers, compact
+rows, SF Mono model data, and a quiet inspector keep the dense catalog readable.
+
+The approved state grammar is:
+
+- saved ASR model selection uses a checkmark, explicit Selected text, and the
+  orange row trace;
+- availability remains a separate State-column fact;
+- a saved-but-unavailable selection and its Effective ASR model fallback remain
+  simultaneously visible through a family notice, two-line row states, and
+  complete inspector explanation;
+- download and repair actions use orange, while success, warning, and error keep
+  their dedicated semantic colors plus persistent icon and text cues;
+- progress stays attached to its model, with cancellation shown only where the
+  lifecycle permits it;
+- destructive consequences use a focused confirmation naming removed storage,
+  affected Modes, and raw-text fallback;
+- keyboard focus uses the approved separated two-point ring, and Contrast+
+  strengthens borders without changing hierarchy; and
+- at the exact 617 pt Models width, the ledger and inspector stay side by side
+  at their 340 pt and 276 pt resolved widths with compact labels that retain
+  their complete meaning.
+
+Family Bays and Inspector Forward remain in the gallery as throwaway review
+context. They were not selected: Family Bays adds too much container hierarchy,
+while Inspector Forward weakens the comparison ledger by giving detail more
+space than the routine scan requires.
