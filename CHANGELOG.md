@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.16.0](https://github.com/hadrysm/foldwise-voice/compare/v0.15.0...v0.16.0) (2026-07-23)
+
+
+### Features
+
+* modernize the Models workspace ([#233](https://github.com/hadrysm/foldwise-voice/issues/233)) ([8271819](https://github.com/hadrysm/foldwise-voice/commit/82718193bc1f2cee72dc08a35f4bbd00fcb4432a))
+* redesign Stats with a monthly activity calendar ([#247](https://github.com/hadrysm/foldwise-voice/issues/247)) ([8f02369](https://github.com/hadrysm/foldwise-voice/commit/8f0236986eed2174dcf9c04a599cee77cb376fbc))
+
+
+### Bug Fixes
+
+* prevent CoreAudio capture startup loop ([#271](https://github.com/hadrysm/foldwise-voice/issues/271)) ([b6f2db9](https://github.com/hadrysm/foldwise-voice/commit/b6f2db95a70bca197f832554be3d25a0b0668275))
+
+
+### Documentation
+
+* rewrite README with settings guide ([#190](https://github.com/hadrysm/foldwise-voice/issues/190)) ([f416a6e](https://github.com/hadrysm/foldwise-voice/commit/f416a6ed05fbcebadb30a955f4e6d9a10d3dd21e))
+
+
+### Maintenance
+
+* **ci:** add PR size labeling workflow ([#188](https://github.com/hadrysm/foldwise-voice/issues/188)) ([7ec0dd1](https://github.com/hadrysm/foldwise-voice/commit/7ec0dd13a81dc55263149321f8a289161646d19e))
+
 ## [0.15.0](https://github.com/hadrysm/foldwise-voice/compare/v0.14.0...v0.15.0) (2026-07-19)
 
 
