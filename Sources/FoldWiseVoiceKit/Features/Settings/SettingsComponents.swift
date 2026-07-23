@@ -42,7 +42,6 @@ struct CardRow<Trailing: View>: View {
     }
 }
 
-/// The design's keycap chip: a mono label on an opaque raised surface.
 struct Keycap: View {
     let text: String
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast

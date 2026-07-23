@@ -14,7 +14,7 @@ struct HomeView: View {
         let unit: String?
 
         var id: String {
-            label
+            identifier
         }
     }
 
@@ -68,6 +68,10 @@ struct HomeView: View {
         HomeProjection.Input(entries: model.historyEntries, modes: model.modes)
     }
 
+    private var overviewLayout: HomeOverviewLayout {
+        HomeOverviewLayout.forWindowWidth(model.windowWidth)
+    }
+
     private func refreshProjection(_ input: HomeProjection.Input) {
         projection = project(input, now(), calendar, locale)
     }
@@ -75,8 +79,7 @@ struct HomeView: View {
     // MARK: - main column
 
     private var main: some View {
-        let layout = HomeOverviewLayout.forWindowWidth(model.windowWidth)
-        return ScrollView {
+        ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Ready when you are.")
                     .font(Theme.display)
@@ -102,8 +105,8 @@ struct HomeView: View {
                     .buttonStyle(EmberButtonStyle(kind: .quiet))
                 }
             }
-            .padding(.horizontal, layout.contentPadding)
-            .padding(.top, layout.contentPadding)
+            .padding(.horizontal, overviewLayout.contentPadding)
+            .padding(.top, overviewLayout.contentPadding)
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -126,7 +129,7 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(projection.sections.enumerated()), id: \.element.header) { i, section in
                 if i > 0 {
-                    sectionLabel(section.header)
+                    EmberSectionLabel(section.header)
                         .padding(.top, 14)
                         .padding(.bottom, 6)
                 }
@@ -151,10 +154,6 @@ struct HomeView: View {
         }
     }
 
-    private func sectionLabel(_ text: String) -> some View {
-        EmberSectionLabel(text)
-    }
-
     private var recentHeader: some View {
         HStack {
             EmberSectionLabel(
@@ -172,12 +171,11 @@ struct HomeView: View {
 
     @ViewBuilder
     private var usageOverview: some View {
-        let layout = HomeOverviewLayout.forWindowWidth(model.windowWidth)
         let metrics = overviewMetrics
         LazyVGrid(
             columns: Array(
                 repeating: GridItem(.flexible(), spacing: 8),
-                count: layout.metricColumnCount
+                count: overviewLayout.metricColumnCount
             ),
             spacing: 8
         ) {

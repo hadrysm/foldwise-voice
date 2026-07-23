@@ -11,6 +11,11 @@ final class DictationRowHostedTests: XCTestCase {
         let modifiers: NSEvent.ModifierFlags
     }
 
+    private struct RenderedColorCounts {
+        let accent: Int
+        let canvas: Int
+    }
+
     func testHostedHomeAndHistoryRowsKeepTheSameFortyFourPointGeometry() {
         let presentation = DictationRowPresentation(
             entry: entry(),
@@ -29,14 +34,21 @@ final class DictationRowHostedTests: XCTestCase {
     }
 
     func testHostedRowRendersCanonicalAccentIngress() throws {
-        XCTAssertGreaterThan(try renderedAccentPixelCount(focused: false), 80)
+        XCTAssertGreaterThan(try renderedColorCounts(focused: false).accent, 80)
     }
 
-    func testHostedFocusedRowRendersSeparatedCanonicalAccentRing() throws {
-        let resting = try renderedAccentPixelCount(focused: false)
-        let focused = try renderedAccentPixelCount(focused: true)
+    func testHostedFocusedRowRendersCanonicalAccentRing() throws {
+        let resting = try renderedColorCounts(focused: false)
+        let focused = try renderedColorCounts(focused: true)
 
-        XCTAssertGreaterThan(focused, resting + 200)
+        XCTAssertGreaterThan(focused.accent, resting.accent + 200)
+    }
+
+    func testHostedFocusedRowSeparatesRingWithCanvasGap() throws {
+        let resting = try renderedColorCounts(focused: false)
+        let focused = try renderedColorCounts(focused: true)
+
+        XCTAssertGreaterThan(focused.canvas, resting.canvas + 200)
     }
 
     func testHostedHistoryIgnoresUnrelatedModelPublicationForProjection() {
@@ -173,7 +185,7 @@ final class DictationRowHostedTests: XCTestCase {
         return hosting
     }
 
-    private func renderedAccentPixelCount(focused: Bool) throws -> Int {
+    private func renderedColorCounts(focused: Bool) throws -> RenderedColorCounts {
         let interaction = DictationRowInteractionState(hasMore: false)
         if focused {
             interaction.setFocused(.row)
@@ -194,7 +206,8 @@ final class DictationRowHostedTests: XCTestCase {
         )
         controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
 
-        var count = 0
+        var accentCount = 0
+        var canvasCount = 0
         for y in 0 ..< bitmap.pixelsHigh {
             for x in 0 ..< bitmap.pixelsWide {
                 guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
@@ -203,11 +216,16 @@ final class DictationRowHostedTests: XCTestCase {
                 if (0.65 ... 0.85).contains(color.redComponent),
                    (0.15 ... 0.35).contains(color.greenComponent),
                    color.blueComponent < 0.15 {
-                    count += 1
+                    accentCount += 1
+                }
+                if abs(color.redComponent - 247 / 255) < 0.015,
+                   abs(color.greenComponent - 243 / 255) < 0.015,
+                   abs(color.blueComponent - 236 / 255) < 0.015 {
+                    canvasCount += 1
                 }
             }
         }
-        return count
+        return RenderedColorCounts(accent: accentCount, canvas: canvasCount)
     }
 
     private func hostInKeyWindow(_ hosting: NSHostingView<some View>) -> NSWindow {

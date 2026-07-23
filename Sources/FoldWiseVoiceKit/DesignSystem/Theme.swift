@@ -111,7 +111,6 @@ enum Theme {
     static let noticeIngressWidth: CGFloat = 3
     static let focusRingWidth: CGFloat = 2
     static let focusGap: CGFloat = 2
-    static let insetFocusCanvasStrokeWidth = focusRingWidth + focusGap
     static let contentPaddingWide: CGFloat = 28
     static let contentPaddingCompact: CGFloat = 20
 
@@ -455,7 +454,10 @@ private struct EmberFocusRing: ViewModifier {
             .padding(-(Theme.focusGap + Theme.focusRingWidth))
         case .inset:
             RoundedRectangle(cornerRadius: cornerRadius)
-                .strokeBorder(Theme.canvas, lineWidth: Theme.insetFocusCanvasStrokeWidth)
+                .strokeBorder(
+                    Theme.canvas,
+                    lineWidth: Theme.focusRingWidth + Theme.focusGap
+                )
                 .padding(Theme.focusGap)
             RoundedRectangle(cornerRadius: cornerRadius)
                 .strokeBorder(Theme.accent, lineWidth: Theme.focusRingWidth)
