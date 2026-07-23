@@ -60,4 +60,21 @@ lets the shared system—not labels—carry the identity.
 
 ## Verdict
 
-Pending live review.
+Approved: the assembled FoldWise visual system is coherent across every curated
+main-window and Badge review state.
+
+Continuous Frame, Ember Edge, Instrument Panel, Command Ledger, Trace Ledger,
+Dictation Pulse, Signal Ledger, and Ember Trace read as one identity in Light
+and Dark, wide and compact layouts, hover and keyboard focus, empty, progress,
+error, Contrast+, and Reduced Motion states.
+
+Live review exposed one integration correction: the first assembled Badge
+preview reduced Recording to a static dot. The approved gallery restores the
+existing dynamic-amplitude contract—mic-reactive ribbons sweep the smoothed
+`0.10…0.45` range at 30 Hz while Recording, and Working keeps calm ribbons at
+the fixed `0.18` amplitude. Recording, Working, Done, and Error retain their
+production 208-point width.
+
+No exceptional component or token migration remains unresolved. Production
+implementation can proceed from the resulting visual specification and slice
+plan without reopening these visual decisions.
