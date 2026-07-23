@@ -45,4 +45,23 @@ Render the six Light/Dark treatment snapshots into
 
 ## Verdict
 
-Pending live review.
+Approved: **A — Ember Trace**, with **Standard** contrast as the baseline and
+the existing Contrast+ and Reduced Motion adaptations retained.
+
+Ember Trace won because it extends the approved Ember Edge grammar most
+directly without making the small floating surface ornamental. The opaque
+graphite/ivory pill and neutral resting border keep Idle quiet; orange identifies
+the static glyph, primary Hover action, Mode-cycle identity, Recording ribbons,
+active border, Working spinner, and progress treatment. Done remains semantic
+green through its border, filled checkmark, and text. Every Error remains
+semantic red through its border, warning icon, and recovery/failure text.
+
+The approved treatment preserves the 38-point capsule silhouette, exact
+88/132/176/208-point widths, state content, control order, ribbon and spinner
+roles, dwell timing, and Mode-cycle motion. It adds no standing notch or warm
+surface wash. Standard uses a one-point border; Contrast+ uses a two-point
+border. Reduced Motion freezes decorative timelines while leaving every
+persistent shape, icon, text, and border cue intact.
+
+Foreground text, orange, success green, and error red all exceed 5:1 against
+their Light and Dark pill surfaces in the prototype palette.
