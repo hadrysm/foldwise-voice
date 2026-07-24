@@ -16,9 +16,9 @@
 The candidate was built with `python3 scripts/build_swift_app.py --dmg` and
 launched from `dist/dmg/FoldWise Voice.app`. Test configurations lived under
 the gitignored `.context/issue-264-manual` directory so no user configuration
-was changed. The approved references were rendered with
-`./Prototypes/ModesLibrary/run.sh --render` and compared against the
-`a-command-ledger-*` gallery images.
+was changed. The approved references were rendered from the
+[immutable Modes gallery](https://github.com/hadrysm/foldwise-voice/tree/db81ee0477b6cd3483e946074d603042b03136f6/Prototypes/ModesLibrary)
+and compared against its `a-command-ledger-*` images.
 
 ## Evidence
 

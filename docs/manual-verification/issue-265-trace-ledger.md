@@ -17,9 +17,9 @@ The candidate was built with `python3 scripts/build_swift_app.py --dmg` and
 launched from an isolated copy of `dist/dmg/FoldWise Voice.app`. Test
 configurations and captures lived under the gitignored
 `.context/issue-265-manual` directory, so no user configuration was changed.
-The approved references were rendered with
-`./Prototypes/ModelsVisualGrammar/run.sh --render` and compared against the
-`a-trace-*` gallery images.
+The approved references were rendered from the
+[immutable Models gallery](https://github.com/hadrysm/foldwise-voice/tree/db81ee0477b6cd3483e946074d603042b03136f6/Prototypes/ModelsVisualGrammar)
+and compared against its `a-trace-*` images.
 
 The full state matrix was first exercised at `2faf075`. Review then found that
 commit `86b7ef1` had removed the inspected row's half of the linked ingress.

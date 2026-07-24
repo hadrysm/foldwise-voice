@@ -19,9 +19,9 @@ Application Support directory, a separately identified permission candidate,
 and captures lived under the gitignored `.context/issue-267-manual` directory.
 No installed-app configuration or TCC grant was changed.
 
-The approved references were rendered by the existing
-`Prototypes/SettingsFeedback` gallery and compared with its `a-ledger-*`
-images. A separately identified manual-matrix bundle exercised controlled
+The approved references were rendered from the
+[immutable Settings gallery](https://github.com/hadrysm/foldwise-voice/tree/db81ee0477b6cd3483e946074d603042b03136f6/Prototypes/SettingsFeedback)
+and compared with its `a-ledger-*` images. A separately identified manual-matrix bundle exercised controlled
 restored, deferred, and unavailable `AudioInputState` values through the
 production app and `SettingsView`; its launch-only state injector was removed
 before commit. The final source changes after the visual build add only

@@ -23,8 +23,9 @@ Badge level-meter path. Configurations and captures lived under the gitignored
 changed.
 
 The production captures were compared with the approved Badge views in the
-complete visual gallery, including the Dark Standard/Motion working reference
-and the Light Contrast+/Reduced error reference.
+[immutable complete visual gallery](https://github.com/hadrysm/foldwise-voice/tree/db81ee0477b6cd3483e946074d603042b03136f6/Prototypes/CompleteVisualGallery),
+including the Dark Standard/Motion working reference and the Light
+Contrast+/Reduced error reference.
 
 ## Evidence
 

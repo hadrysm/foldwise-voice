@@ -5,8 +5,8 @@ Implementation specification and slice plan for
 
 ## Status and authority
 
-This document is the production handoff from the approved native SwiftUI gallery
-in [`Prototypes/CompleteVisualGallery`](../../Prototypes/CompleteVisualGallery/README.md).
+This document is the production handoff from the
+[approved native SwiftUI gallery](https://github.com/hadrysm/foldwise-voice/blob/db81ee0477b6cd3483e946074d603042b03136f6/Prototypes/CompleteVisualGallery/README.md).
 It turns the gallery's visual decisions into production contracts; it does not
 make the throwaway prototype a runtime dependency.
 
@@ -16,7 +16,9 @@ When sources disagree, use this order:
    and the
    [complete surface and state matrix](complete-surface-and-state-matrix.md).
 2. Tokens, compositions, and visual state language in this specification.
-3. The approved complete gallery at commit `db81ee0` as the visual oracle.
+3. The
+   [approved complete gallery at commit `db81ee0`](https://github.com/hadrysm/foldwise-voice/tree/db81ee0477b6cd3483e946074d603042b03136f6/Prototypes/CompleteVisualGallery)
+   as the visual oracle.
 4. Individual prototype galleries as supporting review history only.
 5. The original attached image as visual direction, not a pixel template.
 

@@ -20,9 +20,9 @@ streak state, and captures lived under the gitignored
 candidate's Application Support directory, so the installed app's History and
 configuration were not changed.
 
-The approved references were rendered with
-`./Prototypes/StatsVisualGrammar/run.sh --render` and compared against the
-`c-pulse-*` gallery images. Computer Use captured each real app window and its
+The approved references were rendered from the
+[immutable Stats gallery](https://github.com/hadrysm/foldwise-voice/tree/db81ee0477b6cd3483e946074d603042b03136f6/Prototypes/StatsVisualGrammar)
+and compared against its `c-pulse-*` images. Computer Use captured each real app window and its
 contemporaneous accessibility tree. The installed FoldWise Voice app was
 stopped only for the single-instance candidate runs and relaunched afterward.
 
