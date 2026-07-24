@@ -350,13 +350,11 @@ struct EmberButtonStyle: ButtonStyle {
 
 struct EmberPlainButtonStyle: ButtonStyle {
     var cornerRadius = Theme.controlRadius
-    @Environment(\.isFocused) private var isFocused
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .opacity(configuration.isPressed ? 0.82 : 1)
             .focusEffectDisabled()
-            .emberInsetFocusRing(isFocused, cornerRadius: cornerRadius)
     }
 }
 

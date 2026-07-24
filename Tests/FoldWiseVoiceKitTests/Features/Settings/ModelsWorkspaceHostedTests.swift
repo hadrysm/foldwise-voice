@@ -32,7 +32,7 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
         )
     }
 
-    func testTraceRowRendersTheCanonicalIngress() throws {
+    func testInspectedTraceRowDoesNotDrawASecondLeadingAccentStripe() throws {
         let row = try renderedColorCounts(
             ModelsTraceRowChrome(
                 isInspected: true,
@@ -43,7 +43,35 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
             size: NSSize(width: 180, height: 46)
         )
 
-        XCTAssertGreaterThan(row.accent, 100)
+        XCTAssertLessThan(
+            row.leadingAccent,
+            10,
+            "the selected-row chrome should not add a separate orange ingress stripe"
+        )
+    }
+
+    func testTraceRowRendersFocusOnlyWhenItsCallSiteRequestsIt() throws {
+        let resting = try renderedColorCounts(
+            ModelsTraceRowChrome(
+                isInspected: false,
+                isHighlighted: false,
+                isKeyboardFocused: false,
+                increaseContrast: false
+            ),
+            size: NSSize(width: 180, height: 46)
+        )
+        let focused = try renderedColorCounts(
+            ModelsTraceRowChrome(
+                isInspected: false,
+                isHighlighted: false,
+                isKeyboardFocused: true,
+                increaseContrast: false
+            ),
+            size: NSSize(width: 180, height: 46)
+        )
+
+        XCTAssertLessThan(resting.accent, 20)
+        XCTAssertGreaterThan(focused.accent, resting.accent + 300)
     }
 
     func testTraceInspectorHeaderRendersTheCanonicalIngress() throws {
@@ -251,6 +279,7 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
 
     private struct RenderedColorCounts {
         let accent: Int
+        let leadingAccent: Int
         let strongBoundary: Int
     }
 
@@ -291,6 +320,7 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
         let accentColor = try renderedTokenColor(Theme.accent)
         let strongBoundaryColor = try renderedTokenColor(Theme.borderStrong)
         var accentCount = 0
+        var leadingAccentCount = 0
         var strongBoundaryCount = 0
         for y in 0 ..< bitmap.pixelsHigh {
             for x in 0 ..< bitmap.pixelsWide {
@@ -298,6 +328,9 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
                 else { continue }
                 if colorDistance(pixel, accentColor) < 0.08 {
                     accentCount += 1
+                    if x < 4 {
+                        leadingAccentCount += 1
+                    }
                 }
                 if colorDistance(pixel, strongBoundaryColor) < 0.08 {
                     strongBoundaryCount += 1
@@ -306,6 +339,7 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
         }
         return RenderedColorCounts(
             accent: accentCount,
+            leadingAccent: leadingAccentCount,
             strongBoundary: strongBoundaryCount
         )
     }

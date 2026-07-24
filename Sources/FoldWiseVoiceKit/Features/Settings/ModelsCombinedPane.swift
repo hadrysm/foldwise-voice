@@ -818,9 +818,6 @@ struct ModelsTraceRowChrome: View {
                         )
                     )
             }
-            .overlay(alignment: .leading) {
-                EmberIngress(color: isInspected ? Theme.accent : .clear)
-            }
             .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
             .emberInsetFocusRing(
                 isKeyboardFocused,

@@ -162,6 +162,7 @@ struct SettingsView: View {
             .keyboardShortcut("\\", modifiers: .command)
             .help("Toggle sidebar (⌘\\)")
             .disabled(model.configurationReadOnly)
+            .accessibilityIdentifier("continuous-frame.sidebar-toggle")
             Image(systemName: "waveform")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Theme.accent)
@@ -476,18 +477,21 @@ struct SettingsView: View {
                 configurationPaneIsReadOnly ? "Read-only" : "Available"
             )
             .opacity(configurationPaneIsReadOnly ? 0.54 : 1)
-            if !model.status.isEmpty, model.statusOwner == .global {
-                EmberHairline(axis: .horizontal)
-                EmberStatusNotice(
-                    kind: model.statusIsError ? .error : .success,
-                    title: model.status,
-                    ingressWidth: Theme.noticeIngressWidth
-                )
-                .frame(minHeight: 38)
-                .accessibilityIdentifier("continuous-frame.status")
-            }
         }
         .background(Theme.canvas)
+        .overlay(alignment: .bottomTrailing) {
+            if globalToastIsVisible {
+                GlobalStatusToast(title: model.status, isError: model.statusIsError)
+                    .padding(16)
+                    .accessibilityIdentifier("continuous-frame.status")
+                    .transition(GlobalStatusToastMotion.transition)
+                    .id(presentationResetGeneration)
+            }
+        }
+        .animation(
+            Theme.ordinaryAnimation(reduceMotion: accessibilityReduceMotion),
+            value: globalToastIsVisible
+        )
     }
 
     @ViewBuilder
@@ -510,6 +514,10 @@ struct SettingsView: View {
 
     private var configurationPaneIsReadOnly: Bool {
         !model.isPaneAvailable(model.pane)
+    }
+
+    private var globalToastIsVisible: Bool {
+        !model.status.isEmpty && model.statusOwner == .global
     }
 
     private func recoveryBanner(_ message: String) -> some View {
@@ -1197,6 +1205,53 @@ struct SettingsView: View {
             return "Not assigned"
         }
         return "Assigned to \(keycapLabel(key))"
+    }
+}
+
+enum GlobalStatusToastMotion {
+    static let insertionOffset: CGFloat = 20
+    static let removalOffset: CGFloat = 12
+    static let insertionScale = 0.96
+    static let removalScale = 0.98
+
+    static var transition: AnyTransition {
+        .asymmetric(
+            insertion: .offset(x: 0, y: insertionOffset)
+                .combined(with: .scale(scale: insertionScale, anchor: .bottomTrailing))
+                .combined(with: .opacity),
+            removal: .offset(x: 0, y: removalOffset)
+                .combined(with: .scale(scale: removalScale, anchor: .bottomTrailing))
+                .combined(with: .opacity)
+        )
+    }
+}
+
+private struct GlobalStatusToast: View {
+    let title: String
+    let isError: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: isError ? "xmark.octagon.fill" : "checkmark.circle.fill")
+                .foregroundStyle(isError ? Theme.error : Theme.success)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(Theme.ui(12, .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(2)
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 16)
+        .frame(minWidth: 112, maxWidth: 320, minHeight: 40, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: true)
+        .background(Theme.raised, in: RoundedRectangle(cornerRadius: Theme.surfaceRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.surfaceRadius)
+                .strokeBorder(Theme.border, lineWidth: Theme.standardBorderWidth)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(isError ? "Error" : "Success"): \(title)")
     }
 }
 

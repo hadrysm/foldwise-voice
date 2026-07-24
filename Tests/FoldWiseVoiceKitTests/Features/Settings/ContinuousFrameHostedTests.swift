@@ -8,6 +8,7 @@ final class ContinuousFrameHostedTests: XCTestCase {
     private struct HostedNode {
         let element: AXUIElement
         let identifier: String?
+        let role: String?
         let frame: CGRect?
         let isEnabled: Bool?
         let isFocused: Bool?
@@ -37,6 +38,155 @@ final class ContinuousFrameHostedTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(titlebarFrame.maxX, destinationFrame.maxX)
         XCTAssertGreaterThanOrEqual(recoveryFrame.minX, navigationFrame.maxX)
         XCTAssertGreaterThanOrEqual(statusFrame.minX, navigationFrame.maxX)
+    }
+
+    func testHostedGlobalSaveConfirmationIsACompactBottomRightToast() throws {
+        let model = SettingsModel()
+        var committedOwner: SettingsFeedbackOwner?
+        model.onCommit = { owner in
+            committedOwner = owner
+            model.status = "Saved ✓"
+            model.statusOwner = owner
+        }
+        let window = host(model)
+        defer { window.orderOut(nil) }
+
+        XCTAssertEqual(
+            AXUIElementPerformAction(
+                try node("continuous-frame.sidebar-toggle", in: window).element,
+                kAXPressAction as CFString
+            ),
+            .success
+        )
+        window.contentView?.layoutSubtreeIfNeeded()
+        settleToastAnimation(in: window)
+
+        let destinationFrame = try XCTUnwrap(
+            node("continuous-frame.destination", in: window).frame
+        )
+        let statusFrame = try XCTUnwrap(
+            node("continuous-frame.status", in: window).frame
+        )
+
+        XCTAssertEqual(committedOwner, .global)
+        XCTAssertTrue(model.sidebar.prefersCollapsed)
+        XCTAssertLessThanOrEqual(
+            statusFrame.width, 240,
+            "a save confirmation should not span the destination column"
+        )
+        XCTAssertLessThanOrEqual(
+            statusFrame.height, 48,
+            "a save confirmation should not grow into a large panel"
+        )
+        XCTAssertEqual(
+            statusFrame.maxX, destinationFrame.maxX - 16, accuracy: 1,
+            "the toast should be inset from the destination's right edge"
+        )
+        XCTAssertEqual(
+            statusFrame.maxY, destinationFrame.maxY - 16, accuracy: 1,
+            "the toast should be inset from the destination's bottom edge"
+        )
+    }
+
+    func testHostedDisablingHistoryShowsACompactBottomRightToast() throws {
+        let model = SettingsModel()
+        model.pane = .history
+        model.saveHistory = true
+        var committedOwner: SettingsFeedbackOwner?
+        model.onCommit = { owner in
+            committedOwner = owner
+            model.status = "Saved ✓"
+            model.statusOwner = owner
+        }
+        let window = host(model)
+        defer { window.orderOut(nil) }
+
+        let savingPreference = try node("history.preference.saving", in: window)
+        let savingToggle = try XCTUnwrap(
+            descendants(of: savingPreference.element).first {
+                $0.role == kAXCheckBoxRole as String
+                    || $0.role == "AXSwitch"
+            },
+            "The saving preference should expose its switch; found roles "
+                + "\(descendants(of: savingPreference.element).compactMap(\.role))"
+        )
+        XCTAssertEqual(
+            AXUIElementPerformAction(savingToggle.element, kAXPressAction as CFString),
+            .success
+        )
+        window.contentView?.layoutSubtreeIfNeeded()
+        settleToastAnimation(in: window)
+
+        let destinationFrame = try XCTUnwrap(
+            node("continuous-frame.destination", in: window).frame
+        )
+        let statusFrame = try XCTUnwrap(
+            node("continuous-frame.status", in: window).frame
+        )
+
+        XCTAssertFalse(model.saveHistory)
+        XCTAssertEqual(committedOwner, .global)
+        XCTAssertLessThanOrEqual(statusFrame.width, 240)
+        XCTAssertLessThanOrEqual(statusFrame.height, 48)
+        XCTAssertEqual(statusFrame.maxX, destinationFrame.maxX - 16, accuracy: 1)
+        XCTAssertEqual(statusFrame.maxY, destinationFrame.maxY - 16, accuracy: 1)
+    }
+
+    func testHostedGlobalToastDoesNotDrawASecondLeadingSuccessStripe() throws {
+        let model = SettingsModel()
+        model.pane = .modes
+        model.status = "Saved ✓"
+        model.statusOwner = .global
+        let window = host(model)
+        defer { window.orderOut(nil) }
+
+        let content = try XCTUnwrap(window.contentView)
+        content.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(
+            content.bitmapImageRepForCachingDisplay(in: content.bounds)
+        )
+        content.cacheDisplay(in: content.bounds, to: bitmap)
+        let scale = CGFloat(bitmap.pixelsHigh) / content.bounds.height
+
+        XCTAssertLessThan(
+            CGFloat(maximumVerticalSuccessRun(in: bitmap)) / scale,
+            20,
+            "the toast icon may be green, but there should be no full-height green stripe"
+        )
+    }
+
+    func testHostedGlobalToastRisesFromBelowThenSettlesAtItsCorner() throws {
+        let model = SettingsModel()
+        model.pane = .modes
+        let window = host(model)
+        defer { window.orderOut(nil) }
+
+        model.statusOwner = .global
+        model.status = "Saved ✓"
+        _ = RunLoop.main.run(
+            mode: .default,
+            before: Date(timeIntervalSinceNow: 0.01)
+        )
+        window.contentView?.layoutSubtreeIfNeeded()
+        let enteringFrame = try XCTUnwrap(
+            node("continuous-frame.status", in: window).frame
+        )
+
+        settleToastAnimation(in: window)
+        let settledFrame = try XCTUnwrap(
+            node("continuous-frame.status", in: window).frame
+        )
+
+        XCTAssertGreaterThan(
+            enteringFrame.maxY,
+            settledFrame.maxY + 8,
+            "the toast should enter from below and travel upward into its corner"
+        )
+        XCTAssertLessThan(
+            enteringFrame.width,
+            settledFrame.width,
+            "the toast should gently scale into place while it rises"
+        )
     }
 
     func testHostedRecoveryDisablesOnlyConfigurationOwningDestinations() throws {
@@ -224,6 +374,7 @@ final class ContinuousFrameHostedTests: XCTestCase {
         let node = HostedNode(
             element: root,
             identifier: axString(attribute: kAXIdentifierAttribute, from: root),
+            role: axString(attribute: kAXRoleAttribute, from: root),
             frame: frame,
             isEnabled: axAttribute(attribute: kAXEnabledAttribute, from: root) as? Bool,
             isFocused: axAttribute(attribute: kAXFocusedAttribute, from: root) as? Bool,
@@ -231,6 +382,45 @@ final class ContinuousFrameHostedTests: XCTestCase {
                 ?? axString(attribute: kAXValueAttribute, from: root)
         )
         return [node] + axElements(attribute: kAXChildrenAttribute, from: root).flatMap(axTree)
+    }
+
+    private func descendants(of element: AXUIElement) -> [HostedNode] {
+        axElements(attribute: kAXChildrenAttribute, from: element).flatMap(axTree)
+    }
+
+    private func settleToastAnimation(in window: NSWindow) {
+        let deadline = Date(timeIntervalSinceNow: 0.25)
+        repeat {
+            _ = RunLoop.main.run(
+                mode: .default,
+                before: min(deadline, Date(timeIntervalSinceNow: 0.01))
+            )
+        } while Date() < deadline
+        window.contentView?.layoutSubtreeIfNeeded()
+    }
+
+    private func maximumVerticalSuccessRun(in bitmap: NSBitmapImageRep) -> Int {
+        var maximum = 0
+        for x in 0 ..< bitmap.pixelsWide {
+            var run = 0
+            for y in 0 ..< bitmap.pixelsHigh {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
+                else {
+                    run = 0
+                    continue
+                }
+                let isSuccess = color.greenComponent > 0.35
+                    && color.greenComponent > color.redComponent * 1.6
+                    && color.greenComponent > color.blueComponent * 1.35
+                if isSuccess {
+                    run += 1
+                    maximum = max(maximum, run)
+                } else {
+                    run = 0
+                }
+            }
+        }
+        return maximum
     }
 
     private func axElements(attribute: String, from element: AXUIElement) -> [AXUIElement] {
