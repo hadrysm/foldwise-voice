@@ -866,6 +866,7 @@ struct SettingsView: View {
                         title: notice.title,
                         detail: notice.detail
                     )
+                    .accessibilityIdentifier("settings.input.lifecycle")
                 }
                 ownedFeedback(.input, identifier: "settings.input.feedback")
             }

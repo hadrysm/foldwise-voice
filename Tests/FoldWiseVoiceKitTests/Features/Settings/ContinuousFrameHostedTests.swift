@@ -324,6 +324,33 @@ final class ContinuousFrameHostedTests: XCTestCase {
         }
     }
 
+    func testHostedInputLifecycleFeedbackStaysAttachedToInputRoster() throws {
+        let builtIn = AudioInputDevice(uid: "built-in", name: "MacBook Microphone")
+        let preferred = AudioInputDevice(uid: "usb", name: "Studio Microphone")
+        let model = SettingsModel()
+        model.pane = .settings
+        model.inputState = AudioInputState(
+            devices: [builtIn], systemDefault: builtIn,
+            preferredUID: preferred.uid, preferredName: preferred.name,
+            effectiveDevice: builtIn, pendingDevice: nil,
+            status: .fallback(preferred: preferred.name, effective: builtIn.name)
+        )
+        let window = host(model)
+        defer { window.orderOut(nil) }
+
+        let inputLabelFrame = try XCTUnwrap(node(withValue: "INPUT", in: window).frame)
+        let lifecycleFrame = try XCTUnwrap(node("settings.input.lifecycle", in: window).frame)
+        let soundLabelFrame = try XCTUnwrap(node(withValue: "SOUND", in: window).frame)
+        let globalStatus = try nodes(in: window).first {
+            $0.identifier == "continuous-frame.status"
+        }
+        XCTAssertTrue(
+            lifecycleFrame.minY >= inputLabelFrame.maxY
+                && lifecycleFrame.maxY <= soundLabelFrame.minY
+                && globalStatus == nil
+        )
+    }
+
     private func appearanceFrames(in window: NSWindow) throws -> [CGRect] {
         try ["system", "light", "dark"].map {
             try XCTUnwrap(node("settings.appearance.\($0)", in: window).frame)
@@ -353,6 +380,14 @@ final class ContinuousFrameHostedTests: XCTestCase {
         return try XCTUnwrap(
             allNodes.first { $0.identifier == identifier },
             "Available identifiers: \(allNodes.compactMap(\.identifier))"
+        )
+    }
+
+    private func node(withValue value: String, in window: NSWindow) throws -> HostedNode {
+        let allNodes = try nodes(in: window)
+        return try XCTUnwrap(
+            allNodes.first { $0.value == value },
+            "Available values: \(allNodes.compactMap(\.value))"
         )
     }
 
