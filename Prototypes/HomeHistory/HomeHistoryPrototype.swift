@@ -675,7 +675,7 @@ private struct HomeSurface: View {
                 Image(systemName: "waveform.badge.mic")
                     .font(.system(size: 30, weight: .light))
                     .foregroundStyle(palette.accent)
-                Text("Your dictations will appear here")
+                Text("Your Dictation sessions will appear here")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(palette.text)
                 Text("Hold ⌘ Right and speak. FoldWise keeps text on this Mac; no audio is saved.")
@@ -783,7 +783,7 @@ private struct CommandHome: View {
     private var recent: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                SectionTitle("Recent dictations", icon: "text.alignleft", palette: palette)
+                SectionTitle("Recent Dictation sessions", icon: "text.alignleft", palette: palette)
                 Spacer()
                 Text("All history →")
                     .font(.system(size: 10.5, weight: .semibold))
@@ -1466,7 +1466,7 @@ private struct HistorySearch: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(palette.tertiary)
-            Text("Search dictations")
+            Text("Search Dictation sessions")
                 .foregroundStyle(palette.tertiary)
             Spacer()
             TogglePill(title: "Flagged only", active: false, palette: palette)
@@ -1495,7 +1495,7 @@ private struct HistoryCollectionState: View {
         case .empty:
             EmptyPanel(
                 icon: "clock.badge.questionmark",
-                title: "No dictations yet",
+                title: "No Dictation sessions yet",
                 detail: "Your text will appear here after you speak. No audio is ever saved.",
                 palette: palette
             )

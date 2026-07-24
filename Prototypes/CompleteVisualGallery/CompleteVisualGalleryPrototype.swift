@@ -926,7 +926,7 @@ private struct ModesView: View {
                 if scene == .error {
                     InlineNotice(
                         icon: "exclamationmark.triangle.fill",
-                        title: "qwen2.5:7b is unavailable. Dictation falls back to raw text.",
+                        title: "qwen2.5:7b is unavailable. Polish falls back to raw text.",
                         color: palette.warning,
                         palette: palette
                     )
@@ -1035,6 +1035,16 @@ private struct ModelsView: View {
         .background(palette.canvas)
     }
 
+    private var modelNotice: (title: String, color: Color) {
+        if scene == .error {
+            return ("Local data needs repair", palette.error)
+        }
+        if scene == .progress {
+            return ("Downloading model · 64%", palette.orange)
+        }
+        return ("Selected for the next Dictation session", palette.success)
+    }
+
     private var modelInspector: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 0) {
@@ -1051,10 +1061,8 @@ private struct ModelsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 InlineNotice(
                     icon: scene == .error ? "exclamationmark.triangle.fill" : "checkmark.circle.fill",
-                    title: scene == .error
-                        ? "Local data needs repair"
-                        : (scene == .progress ? "Downloading model · 64%" : "Selected for the next Dictation session"),
-                    color: scene == .error ? palette.error : (scene == .progress ? palette.orange : palette.success),
+                    title: modelNotice.title,
+                    color: modelNotice.color,
                     palette: palette
                 )
                 DetailField(
@@ -1162,10 +1170,10 @@ private struct HistoryView: View {
                 )
                 HStack(spacing: 10) {
                     SettingCell(title: "Save History", value: "On", icon: "externaldrive", palette: palette)
-                    SettingCell(title: "Keep Dictations", value: "Forever", icon: "calendar", palette: palette)
+                    SettingCell(title: "Keep Dictation sessions", value: "Forever", icon: "calendar", palette: palette)
                 }
                 HStack {
-                    Label("Search Dictations", systemImage: "magnifyingglass")
+                    Label("Search Dictation sessions", systemImage: "magnifyingglass")
                     Spacer()
                     Label("Flagged only", systemImage: "flag")
                 }
@@ -1963,10 +1971,11 @@ private struct Hairline: View {
     let palette: Palette
     let contrast: GalleryContrast
     var body: some View {
+        let thickness: CGFloat = contrast == .increased ? 2 : 1
         Rectangle()
             .fill(contrast == .increased ? palette.borderStrong : palette.border)
-            .frame(width: vertical ? (contrast == .increased ? 2 : 1) : nil,
-                   height: vertical ? nil : (contrast == .increased ? 2 : 1))
+            .frame(width: vertical ? thickness : nil,
+                   height: vertical ? nil : thickness)
     }
 }
 

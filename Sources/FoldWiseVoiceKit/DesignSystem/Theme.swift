@@ -27,7 +27,6 @@ enum Theme {
     // MARK: - badge palette
 
     enum Badge {
-        /// Ember Trace strand colors, in strand order.
         static let ribbonPalette: [Color] = [
             Theme.accent,
             Theme.accent.opacity(0.86),

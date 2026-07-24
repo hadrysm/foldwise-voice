@@ -157,7 +157,7 @@ struct HomeView: View {
     private var recentHeader: some View {
         HStack {
             EmberSectionLabel(
-                projection.sections.first?.header ?? "Recent Dictation",
+                projection.sections.first?.header ?? "Recent Dictation sessions",
                 symbolName: "list.bullet"
             )
             Spacer()

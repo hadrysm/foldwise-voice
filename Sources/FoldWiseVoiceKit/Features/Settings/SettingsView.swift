@@ -779,7 +779,7 @@ struct SettingsView: View {
         EmberStatusNotice(
             kind: .warning,
             title: "\(name) is unavailable",
-            detail: "Dictation falls back to raw text.",
+            detail: "Polish falls back to raw text.",
             actionTitle: "Open Models"
         ) {
             model.pane = .models

@@ -1396,6 +1396,13 @@ private struct AppearanceChoice: View {
     let style: AppearanceStyle
     let palette: Palette
 
+    private var backgroundColor: Color {
+        if style == .lines {
+            return .clear
+        }
+        return selected ? palette.raised : palette.canvas
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: symbol)
@@ -1419,7 +1426,7 @@ private struct AppearanceChoice: View {
         .padding(.horizontal, style == .lines ? 2 : 0)
         .frame(maxWidth: .infinity, minHeight: style == .cards ? 78 : 54, alignment: .leading)
         .background(
-            style == .lines ? .clear : (selected ? palette.raised : palette.canvas),
+            backgroundColor,
             in: RoundedRectangle(cornerRadius: 7)
         )
         .overlay {
@@ -1631,6 +1638,13 @@ private struct ShortcutChip: View {
     var empty = false
     let palette: Palette
 
+    private var foregroundColor: Color {
+        if capturing {
+            return palette.accent
+        }
+        return empty ? palette.secondary : palette.text
+    }
+
     var body: some View {
         HStack(spacing: 5) {
             if capturing {
@@ -1641,7 +1655,7 @@ private struct ShortcutChip: View {
             Text(label)
                 .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
         }
-        .foregroundStyle(capturing ? palette.accent : (empty ? palette.secondary : palette.text))
+        .foregroundStyle(foregroundColor)
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
         .background(palette.raised, in: RoundedRectangle(cornerRadius: 6))

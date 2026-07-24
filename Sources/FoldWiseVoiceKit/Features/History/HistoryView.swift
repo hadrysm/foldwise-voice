@@ -98,7 +98,7 @@ struct HistoryPane: View {
 
             preferenceCell(
                 symbolName: "calendar",
-                title: "Keep dictations",
+                title: "Keep Dictation sessions",
                 detail: "Automatically removes older saved text"
             ) {
                 Picker(
@@ -228,11 +228,11 @@ struct HistoryPane: View {
                         .font(Theme.ui(12))
                         .foregroundStyle(Theme.textSecondary)
                         .accessibilityHidden(true)
-                    TextField("Search dictations", text: $search)
+                    TextField("Search Dictation sessions", text: $search)
                         .textFieldStyle(.plain)
                         .font(Theme.ui(11.5))
                         .focused($searchFocused)
-                        .accessibilityLabel("Search Dictations")
+                        .accessibilityLabel("Search Dictation sessions")
                         .accessibilityIdentifier("history.search")
                     if !search.isEmpty {
                         Button {

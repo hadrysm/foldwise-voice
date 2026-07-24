@@ -870,6 +870,13 @@ private struct BadgeSample: View {
     let contrast: ContrastPreview
     let cues: CuePreview
 
+    private var borderColor: Color {
+        if kind == .error {
+            return palette.error
+        }
+        return contrast == .increased ? palette.borderStrong : palette.border
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             switch kind {
@@ -894,9 +901,7 @@ private struct BadgeSample: View {
         .background(palette.surface, in: Capsule())
         .overlay {
             Capsule().strokeBorder(
-                kind == .error
-                    ? palette.error
-                    : (contrast == .increased ? palette.borderStrong : palette.border),
+                borderColor,
                 lineWidth: contrast == .increased || kind == .error ? 2 : 1
             )
         }

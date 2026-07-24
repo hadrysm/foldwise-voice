@@ -1119,9 +1119,11 @@ private struct CalendarPanel: View {
                     palette: palette,
                     onHover: { hovering in
                         guard !day.isFuture else { return }
-                        hoveredDay = hovering
-                            ? day.day
-                            : (hoveredDay == day.day ? nil : hoveredDay)
+                        if hovering {
+                            hoveredDay = day.day
+                        } else if hoveredDay == day.day {
+                            hoveredDay = nil
+                        }
                     },
                     onMove: moveFocus
                 )
@@ -1223,6 +1225,13 @@ private struct CalendarDayCell: View {
     let onHover: (Bool) -> Void
     let onMove: (Int) -> Void
 
+    private var activityLabel: String {
+        if day.hasActivity {
+            return day.words.formatted(.number.notation(.compactName))
+        }
+        return day.isFuture ? "" : "—"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -1239,14 +1248,10 @@ private struct CalendarDayCell: View {
             Spacer(minLength: 1)
             switch variant {
             case .tiles:
-                Text(day.hasActivity
-                    ? day.words.formatted(.number.notation(.compactName))
-                    : (day.isFuture ? "" : "—"))
+                Text(activityLabel)
                     .font(.system(size: 8.8, weight: .medium, design: .monospaced))
             case .rail:
-                Text(day.hasActivity
-                    ? day.words.formatted(.number.notation(.compactName))
-                    : (day.isFuture ? "" : "—"))
+                Text(activityLabel)
                     .font(.system(
                         size: 8.5,
                         weight: .medium,
