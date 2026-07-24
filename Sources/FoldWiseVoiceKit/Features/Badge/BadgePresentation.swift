@@ -421,6 +421,97 @@ struct BadgeProgrammaticMoveState {
     }
 }
 
+enum BadgeSemanticRole: Equatable {
+    case neutral
+    case active
+    case success
+    case error
+}
+
+enum BadgePersistentCue: Equatable {
+    case idleGlyph
+    case hoverActions
+    case ribbonsAndTimer
+    case ribbonsAndSpinner
+    case ribbonsAndStatus
+    case checkmarkAndText
+    case warningAndText
+    case modeSelection
+}
+
+struct BadgeVisualPresentation: Equatable {
+    let role: BadgeSemanticRole
+    let cue: BadgePersistentCue
+}
+
+enum BadgeVisualPolicy {
+    static func presentation(
+        for state: BadgeState,
+        presentsModeCycle: Bool
+    ) -> BadgeVisualPresentation {
+        if presentsModeCycle {
+            return BadgeVisualPresentation(role: .active, cue: .modeSelection)
+        }
+
+        return switch state {
+        case .idle:
+            BadgeVisualPresentation(role: .neutral, cue: .idleGlyph)
+        case .hover:
+            BadgeVisualPresentation(role: .neutral, cue: .hoverActions)
+        case .recording:
+            BadgeVisualPresentation(role: .active, cue: .ribbonsAndTimer)
+        case let .working(status):
+            BadgeVisualPresentation(
+                role: .active,
+                cue: status == nil ? .ribbonsAndSpinner : .ribbonsAndStatus
+            )
+        case .done:
+            BadgeVisualPresentation(role: .success, cue: .checkmarkAndText)
+        case .error:
+            BadgeVisualPresentation(role: .error, cue: .warningAndText)
+        }
+    }
+}
+
+struct BadgeMotionPresentation: Equatable {
+    let ordinaryTransitionDuration: Double?
+    let emphasizedHoverScale: CGFloat
+    let pausesDecorativeTimelines: Bool
+    let representativeTimelineTime: TimeInterval?
+    let representativeRecordingAmplitude: Double?
+
+    func ribbonAmplitude(
+        live: Bool,
+        sampledAmplitude: Double
+    ) -> Double {
+        guard live else { return 0.18 }
+        return representativeRecordingAmplitude ?? sampledAmplitude
+    }
+}
+
+enum BadgeMotionPolicy {
+    static func presentation(reduceMotion: Bool) -> BadgeMotionPresentation {
+        if reduceMotion {
+            return BadgeMotionPresentation(
+                ordinaryTransitionDuration: nil,
+                emphasizedHoverScale: 1,
+                pausesDecorativeTimelines: true,
+                representativeTimelineTime: 730,
+                representativeRecordingAmplitude: 0.28
+            )
+        }
+
+        return BadgeMotionPresentation(
+            ordinaryTransitionDuration: ThemeEnvironmentPolicy
+                .ordinaryMotionDuration(reduceMotion: false),
+            emphasizedHoverScale: 1.06,
+            pausesDecorativeTimelines: false,
+            representativeTimelineTime: nil,
+            representativeRecordingAmplitude: nil
+        )
+    }
+}
+
 enum BadgeState: Equatable {
     case idle
     case hover

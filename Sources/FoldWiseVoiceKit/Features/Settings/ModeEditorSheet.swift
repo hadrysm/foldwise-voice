@@ -4,25 +4,26 @@ import SwiftUI
 struct ModeEditorSheet: View {
     @ObservedObject var model: SettingsModel
     @State private var iconPickerPresented = false
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     var body: some View {
         if let editor = model.modeEditor {
             VStack(spacing: 0) {
                 header(editor)
-                Divider()
+                EmberHairline(axis: .horizontal)
                 ScrollView(.vertical) {
                     HStack(alignment: .top, spacing: 28) {
                         identityColumn(editor)
-                        Divider()
+                        EmberHairline(axis: .vertical)
                         instructionsColumn(editor)
                     }
                     .padding(24)
                 }
-                Divider()
+                EmberHairline(axis: .horizontal)
                 footer(editor)
             }
             .frame(width: 820, height: 570)
-            .background(Theme.windowBackground)
+            .background(Theme.canvas)
             .interactiveDismissDisabled()
         }
     }
@@ -48,12 +49,13 @@ struct ModeEditorSheet: View {
                     .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(EmberPlainButtonStyle())
             .accessibilityLabel("Close Mode editor")
             .accessibilityHint("Discards changes")
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 18)
+        .background(Theme.raised)
     }
 
     private func identityColumn(_ editor: ModeEditorState) -> some View {
@@ -85,16 +87,9 @@ struct ModeEditorSheet: View {
                     }
                     .padding(.horizontal, 10)
                     .frame(height: 30)
-                    .background(
-                        Theme.keycapBackground,
-                        in: RoundedRectangle(cornerRadius: Theme.keycapRadius)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Theme.keycapRadius)
-                            .strokeBorder(Theme.keycapBorder, lineWidth: 1)
-                    )
+                    .emberControlSurface()
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(EmberPlainButtonStyle())
                 .accessibilityLabel("Mode icon")
                 .accessibilityValue(accessibility.iconValue)
                 .accessibilityHint("Opens a palette of labeled symbols")
@@ -167,14 +162,7 @@ struct ModeEditorSheet: View {
                     .scrollContentBackground(.hidden)
                     .padding(7)
                     .frame(minHeight: 150)
-                    .background(
-                        Theme.keycapBackground,
-                        in: RoundedRectangle(cornerRadius: Theme.keycapRadius)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Theme.keycapRadius)
-                            .strokeBorder(Theme.keycapBorder, lineWidth: 1)
-                    )
+                    .emberControlSurface()
                     .accessibilityLabel("System prompt")
                     .accessibilityHint("Required instructions for Polish")
             }
@@ -186,14 +174,7 @@ struct ModeEditorSheet: View {
                     .scrollContentBackground(.hidden)
                     .padding(7)
                     .frame(minHeight: 86)
-                    .background(
-                        Theme.keycapBackground,
-                        in: RoundedRectangle(cornerRadius: Theme.keycapRadius)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Theme.keycapRadius)
-                            .strokeBorder(Theme.keycapBorder, lineWidth: 1)
-                    )
+                    .emberControlSurface()
                     .accessibilityLabel("Preserved vocabulary")
                     .accessibilityHint("Enter one term per line; order is preserved")
             }
@@ -210,20 +191,22 @@ struct ModeEditorSheet: View {
             if let error = editor.persistenceError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(Theme.ui(11))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Theme.error)
                     .accessibilityLabel(accessibility.persistenceErrorLabel ?? error)
             }
             Spacer()
             Button(accessibility.cancelAction.title) { model.onCancelModeEditor?() }
+                .buttonStyle(EmberButtonStyle(kind: .quiet))
                 .modeEditorKeyboardAction(accessibility.cancelAction.keyboardAction)
                 .accessibilityHint(accessibility.cancelAction.accessibilityHint)
             Button(accessibility.saveAction.title) { model.onSaveModeEditor?() }
+                .buttonStyle(EmberButtonStyle(kind: .primary))
                 .modeEditorKeyboardAction(accessibility.saveAction.keyboardAction)
-                .buttonStyle(.borderedProminent)
                 .accessibilityHint(accessibility.saveAction.accessibilityHint)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 14)
+        .background(Theme.raised)
     }
 
     private func columnHeading(_ title: String, detail: String) -> some View {
@@ -253,7 +236,7 @@ struct ModeEditorSheet: View {
         if let message {
             Label(message, systemImage: "exclamationmark.circle.fill")
                 .font(Theme.ui(10.5))
-                .foregroundStyle(.red)
+                .foregroundStyle(Theme.error)
                 .accessibilityLabel(
                     ModeEditorAccessibilityPresentation.validationLabel(
                         field: field,
@@ -267,7 +250,7 @@ struct ModeEditorSheet: View {
         VStack(alignment: .leading, spacing: 5) {
             Label(warning, systemImage: "exclamationmark.triangle.fill")
                 .font(Theme.ui(10.5))
-                .foregroundStyle(.orange)
+                .foregroundStyle(Theme.warning)
             Button("Open Models") { model.pane = .models }
                 .buttonStyle(.link)
                 .accessibilityHint("Shows Models after this sheet closes")
@@ -282,6 +265,7 @@ struct ModeEditorSheet: View {
                 spacing: 8
             ) {
                 ForEach(ModeIconCatalog.choices) { choice in
+                    let isSelected = selected == choice.symbolName
                     Button {
                         setDraft(\.icon, to: choice.symbolName)
                         iconPickerPresented = false
@@ -295,26 +279,41 @@ struct ModeEditorSheet: View {
                                 .lineLimit(1)
                         }
                         .foregroundStyle(
-                            selected == choice.symbolName ? Theme.accent : Theme.textPrimary
+                            isSelected ? Theme.accent : Theme.textPrimary
                         )
                         .frame(maxWidth: .infinity, minHeight: 58)
                         .background(
-                            selected == choice.symbolName
-                                ? Theme.activeNavBackground
-                                : Theme.cardBackground,
-                            in: RoundedRectangle(cornerRadius: Theme.cardRadius)
+                            isSelected ? Theme.raised : Theme.surface,
+                            in: RoundedRectangle(cornerRadius: Theme.surfaceRadius)
                         )
                         .overlay(
-                            RoundedRectangle(cornerRadius: Theme.cardRadius)
+                            RoundedRectangle(cornerRadius: Theme.surfaceRadius)
                                 .strokeBorder(
-                                    selected == choice.symbolName ? Theme.accent : Theme.hairline,
-                                    lineWidth: 1
+                                    isSelected
+                                        ? Theme.accent
+                                        : Theme.essentialBorderColor(
+                                            increaseContrast: usesStrongBoundary
+                                        ),
+                                    lineWidth: Theme.essentialBorderWidth(
+                                        increaseContrast: usesStrongBoundary
+                                    )
                                 )
                         )
+                        .overlay(alignment: .topTrailing) {
+                            if isSelected {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Theme.accent)
+                                    .padding(5)
+                                    .accessibilityHidden(true)
+                            }
+                        }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(EmberPlainButtonStyle(
+                        cornerRadius: Theme.surfaceRadius
+                    ))
                     .accessibilityLabel(choice.label)
-                    .accessibilityValue(selected == choice.symbolName ? "Selected" : "Not selected")
+                    .accessibilityValue(isSelected ? "Selected" : "Not selected")
                 }
             }
             .padding(12)
@@ -325,6 +324,10 @@ struct ModeEditorSheet: View {
 
     private var installedModelNames: [String] {
         model.installed?.map(\.name).sorted() ?? []
+    }
+
+    private var usesStrongBoundary: Bool {
+        colorSchemeContrast == .increased
     }
 
     private func unavailableModelWarning(_ editor: ModeEditorState) -> String? {

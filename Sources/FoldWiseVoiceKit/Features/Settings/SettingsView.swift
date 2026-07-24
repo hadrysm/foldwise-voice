@@ -1,10 +1,3 @@
-// Main window content (PRD #103, "Editorial"): a custom titlebar with a
-// sidebar toggle (button + ⌘\), a collapsible sidebar that animates between
-// the 190pt labeled list and the 52pt icon rail (tooltip chips on hover), and
-// six panes — Home, Modes, Models, History, Stats, Settings. The old Speech
-// pane lives inside Models; Configuration and Sound merged into Settings.
-// Preferences save immediately; Mode drafts use the editor's explicit Save.
-
 import AppKit
 import SwiftUI
 
@@ -64,11 +57,10 @@ struct RailTileBoundsKey: PreferenceKey {
 }
 
 struct SettingsView: View {
-    private static let appearanceHorizontalBreakpoint = 650.0
-
     @ObservedObject var model: SettingsModel
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var presentationResetGeneration = 0
+    @FocusState private var focusedNavigationPane: SettingsModel.Pane?
 
     var body: some View {
         GeometryReader { geo in
@@ -83,14 +75,14 @@ struct SettingsView: View {
                         ? geo.safeAreaInsets.top
                         : Theme.titlebarHeight
                 )
-                hairline(.horizontal)
+                EmberHairline(axis: .horizontal)
                 HStack(spacing: 0) {
                     sidebar
-                    hairline(.vertical)
+                    EmberHairline(axis: .vertical)
                     content
                 }
             }
-            .background(Theme.windowBackground)
+            .background(Theme.canvas)
             // Draw the custom titlebar in the real titlebar strip, sharing
             // its row with the traffic lights, instead of below the hosting
             // view's safe-area inset.
@@ -155,15 +147,6 @@ struct SettingsView: View {
         model.sidebar.mode(forWidth: model.windowWidth)
     }
 
-    private func hairline(_ axis: Axis) -> some View {
-        Rectangle()
-            .fill(Theme.hairline)
-            .frame(
-                width: axis == .vertical ? 1 : nil,
-                height: axis == .horizontal ? 1 : nil
-            )
-    }
-
     // MARK: - titlebar
 
     private func titlebar(height: CGFloat) -> some View {
@@ -179,24 +162,36 @@ struct SettingsView: View {
             .keyboardShortcut("\\", modifiers: .command)
             .help("Toggle sidebar (⌘\\)")
             .disabled(model.configurationReadOnly)
-            Text("FoldWise Voice")
-                .font(Theme.ui(12.5, .semibold))
-                .foregroundStyle(Theme.textTertiary)
+            .accessibilityIdentifier("continuous-frame.sidebar-toggle")
+            Image(systemName: "waveform")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+                .padding(.leading, 10)
+                .accessibilityHidden(true)
+            HStack(spacing: 0) {
+                Text("FoldWise")
+                    .foregroundStyle(Theme.accent)
+                Text(" Voice")
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            .font(Theme.ui(12.5, .semibold))
             Spacer()
         }
         .frame(height: height)
-        .background(Theme.sidebarBackground)
+        .background(Theme.navigation)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("continuous-frame.titlebar")
     }
 
     /// The standard macOS "toggle sidebar" glyph: a rounded rect with an
     /// inner vertical divider, sized as a peer of the traffic lights.
     private var sidebarToggleGlyph: some View {
         RoundedRectangle(cornerRadius: 4.5)
-            .strokeBorder(Theme.textFaint, lineWidth: 1.5)
+            .strokeBorder(Theme.textTertiary, lineWidth: 1.5)
             .frame(width: 21, height: 16)
             .overlay(alignment: .leading) {
                 Rectangle()
-                    .fill(Theme.textFaint)
+                    .fill(Theme.textTertiary)
                     .frame(width: 1.5)
                     .padding(.vertical, 1.5)
                     .offset(x: 6)
@@ -223,9 +218,11 @@ struct SettingsView: View {
             width: sidebarMode == .expanded ? Theme.sidebarWidth : Theme.railWidth,
             alignment: .topLeading
         )
-        .background(Theme.sidebarBackground)
+        .background(Theme.navigation)
         .clipped()
         .id(presentationResetGeneration)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("continuous-frame.navigation")
     }
 
     private var expandedSidebar: some View {
@@ -235,7 +232,6 @@ struct SettingsView: View {
             }
             Spacer()
             footer
-                .offset(x: sidebarMode == .expanded ? 0 : -Theme.sidebarLabelOffset)
         }
         .padding(.horizontal, Theme.sidebarHorizontalInset)
         .padding(.vertical, Theme.sidebarVerticalInset)
@@ -243,10 +239,11 @@ struct SettingsView: View {
 
     private func navRow(_ pane: SettingsModel.Pane) -> some View {
         let active = model.pane == pane
+        let disabled = !model.isPaneAvailable(pane)
         return Button {
             model.pane = pane
         } label: {
-            HStack(spacing: 10) {
+            EmberSelectionLabel(isSelected: active) {
                 Image(systemName: pane.icon)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(active ? Theme.accent : Theme.textTertiary)
@@ -254,19 +251,22 @@ struct SettingsView: View {
                 Text(pane.rawValue)
                     .font(active ? Theme.navActive : Theme.nav)
                     .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
-                    .offset(x: sidebarMode == .expanded ? 0 : -Theme.sidebarLabelOffset)
-                Spacer()
             }
-            .padding(.horizontal, 9)
+            .padding(.trailing, 9)
             .frame(height: Theme.sidebarRowHeight)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(
-            active ? Theme.activeNavBackground : Color.clear,
-            in: RoundedRectangle(cornerRadius: Theme.navRadius)
+        .focusEffectDisabled()
+        .focused($focusedNavigationPane, equals: pane)
+        .emberFocusRing(focusedNavigationPane == pane)
+        .disabled(disabled)
+        .opacity(disabled ? 0.46 : 1)
+        .accessibilityLabel(pane.rawValue)
+        .accessibilityValue(active ? "Selected" : "Not selected")
+        .accessibilityIdentifier(
+            "continuous-frame.navigation.\(pane.rawValue.lowercased())"
         )
-        .shadow(color: active ? Theme.activeNavShadow : .clear, radius: 3, y: 1)
     }
 
     private var railSidebar: some View {
@@ -275,6 +275,7 @@ struct SettingsView: View {
                 railTile(pane)
             }
             Spacer()
+            footer
         }
         .padding(.horizontal, Theme.sidebarHorizontalInset)
         .padding(.vertical, Theme.sidebarVerticalInset)
@@ -282,23 +283,39 @@ struct SettingsView: View {
 
     private func railTile(_ pane: SettingsModel.Pane) -> some View {
         let active = model.pane == pane
+        let disabled = !model.isPaneAvailable(pane)
         return Button {
             model.pane = pane
         } label: {
-            Image(systemName: pane.icon)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(active ? Theme.accent : Theme.textTertiary)
-                .frame(width: Theme.sidebarRowHeight, height: Theme.sidebarRowHeight)
-                .background(
-                    active ? Theme.activeNavBackground : Color.clear,
-                    in: RoundedRectangle(cornerRadius: Theme.railTileRadius)
-                )
-                .contentShape(Rectangle())
+            HStack(spacing: 0) {
+                EmberIngress(color: active ? Theme.accent : .clear)
+                    .frame(height: 22)
+                Image(systemName: pane.icon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(active ? Theme.accent : Theme.textTertiary)
+                    .frame(
+                        width: Theme.sidebarRowHeight - Theme.selectionIngressWidth,
+                        height: Theme.sidebarRowHeight
+                    )
+            }
+            .background(
+                active ? Theme.raised : .clear,
+                in: RoundedRectangle(cornerRadius: Theme.controlRadius)
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .shadow(color: active ? Theme.activeNavShadow : .clear, radius: 3, y: 1)
+        .focusEffectDisabled()
+        .focused($focusedNavigationPane, equals: pane)
+        .emberFocusRing(focusedNavigationPane == pane)
         .anchorPreference(key: RailTileBoundsKey.self, value: .bounds) { [pane: $0] }
         .accessibilityLabel(pane.rawValue)
+        .accessibilityValue(active ? "Selected" : "Not selected")
+        .accessibilityIdentifier(
+            "continuous-frame.navigation.\(pane.rawValue.lowercased())"
+        )
+        .disabled(disabled)
+        .opacity(disabled ? 0.46 : 1)
         .onHover { hovering in
             if hovering {
                 model.hoveredRailPane = pane
@@ -318,14 +335,13 @@ struct SettingsView: View {
                 let rect = proxy[anchor]
                 Text(pane.rawValue)
                     .font(Theme.tooltip)
-                    .foregroundStyle(Theme.tooltipText)
+                    .foregroundStyle(Theme.canvas)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(
-                        Theme.tooltipBackground,
-                        in: RoundedRectangle(cornerRadius: Theme.tooltipRadius)
+                        Theme.textPrimary,
+                        in: RoundedRectangle(cornerRadius: Theme.controlRadius)
                     )
-                    .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
                     .fixedSize()
                     .offset(x: rect.maxX + 10, y: rect.midY - 12)
                     .transition(.opacity.combined(with: .offset(x: -4)))
@@ -333,7 +349,7 @@ struct SettingsView: View {
             }
         }
         .animation(
-            accessibilityReduceMotion ? nil : .easeOut(duration: 0.15),
+            Theme.ordinaryAnimation(reduceMotion: accessibilityReduceMotion),
             value: model.hoveredRailPane
         )
         .id(presentationResetGeneration)
@@ -347,11 +363,11 @@ struct SettingsView: View {
         if accessibilityReduceMotion {
             model.sidebar.toggle(width: model.windowWidth)
         } else {
-            withAnimation(Theme.sidebarAnimation) {
+            withAnimation(Theme.ordinaryAnimation(reduceMotion: false)) {
                 model.sidebar.toggle(width: model.windowWidth)
             }
         }
-        model.onCommit?()
+        model.onCommit?(.global)
     }
 
     private func clearRailHover() {
@@ -384,21 +400,53 @@ struct SettingsView: View {
     /// Version footer pinned to the sidebar's bottom, with the update state
     /// folded into one faint line and an accent link when a release is out.
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if case let .available(version, downloadURL) = model.updateState {
-                Button("Get v\(version)") {
-                    NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
+        Group {
+            if sidebarMode == .expanded {
+                VStack(alignment: .leading, spacing: 3) {
+                    if case let .available(version, downloadURL) = model.updateState {
+                        Button("Get v\(version)") {
+                            NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
+                        }
+                        .buttonStyle(.plain)
+                        .font(Theme.ui(11, .semibold))
+                        .foregroundStyle(Theme.accent)
+                    }
+                    Text(footerText)
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.textTertiary)
                 }
-                .buttonStyle(.plain)
-                .font(Theme.ui(11, .semibold))
-                .foregroundStyle(Theme.accent)
+                .padding(.horizontal, 11)
+                .padding(.bottom, 8)
+            } else {
+                Image(systemName: footerSymbol)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(footerColor)
+                    .frame(width: Theme.sidebarRowHeight, height: 30)
+                    .background(
+                        Theme.raised,
+                        in: RoundedRectangle(cornerRadius: Theme.controlRadius)
+                    )
+                    .help(footerText)
+                    .accessibilityLabel(footerText)
+                    .padding(.bottom, 8)
             }
-            Text(footerText)
-                .font(Theme.ui(11))
-                .foregroundStyle(Theme.textFaint)
         }
-        .padding(.horizontal, 11)
-        .padding(.bottom, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("continuous-frame.footer")
+    }
+
+    private var footerSymbol: String {
+        if case .available = model.updateState {
+            return "arrow.down.circle.fill"
+        }
+        return "checkmark.circle.fill"
+    }
+
+    private var footerColor: Color {
+        if case .available = model.updateState {
+            return Theme.accent
+        }
+        return Theme.success
     }
 
     private var footerText: String {
@@ -416,77 +464,106 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             if let message = model.configurationRecoveryMessage {
                 recoveryBanner(message)
-                hairline(.horizontal)
+                EmberHairline(axis: .horizontal)
             }
-            Group {
-                switch model.pane {
-                case .home:
-                    HomeView(model: model)
-                case .modes:
-                    paneScroll("Modes") { modesPane }
-                case .models:
-                    ModelsCombinedPane(model: model)
-                case .history:
-                    paneScroll("History") { HistoryPane(model: model) }
-                case .stats:
-                    paneScroll("Stats") { StatsPane(model: model) }
-                case .settings:
-                    paneScroll("Settings") { settingsPane }
-                }
+            ZStack {
+                destination
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .disabled(configurationPaneIsReadOnly)
-            if !model.status.isEmpty {
-                hairline(.horizontal)
-                Text(model.status)
-                    .font(Theme.ui(12))
-                    .foregroundStyle(model.statusIsError ? AnyShapeStyle(.red) : AnyShapeStyle(Theme.textSecondary))
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("continuous-frame.destination")
+            .accessibilityValue(
+                configurationPaneIsReadOnly ? "Read-only" : "Available"
+            )
+            .opacity(configurationPaneIsReadOnly ? 0.54 : 1)
+        }
+        .background(Theme.canvas)
+        .overlay(alignment: .bottomTrailing) {
+            if globalToastIsVisible {
+                GlobalStatusToast(title: model.status, isError: model.statusIsError)
+                    .padding(16)
+                    .accessibilityIdentifier("continuous-frame.status")
+                    .transition(GlobalStatusToastMotion.transition)
+                    .id(presentationResetGeneration)
             }
+        }
+        .animation(
+            Theme.ordinaryAnimation(reduceMotion: accessibilityReduceMotion),
+            value: globalToastIsVisible
+        )
+    }
+
+    @ViewBuilder
+    private var destination: some View {
+        switch model.pane {
+        case .home:
+            HomeView(model: model)
+        case .modes:
+            paneScroll("Modes") { modesPane }
+        case .models:
+            ModelsCombinedPane(model: model)
+        case .history:
+            paneScroll("History") { HistoryPane(model: model) }
+        case .stats:
+            paneScroll("Stats") { StatsPane(model: model) }
+        case .settings:
+            paneScroll("Settings") { settingsPane }
         }
     }
 
     private var configurationPaneIsReadOnly: Bool {
-        guard model.configurationReadOnly else { return false }
-        return [.modes, .models, .history, .settings].contains(model.pane)
+        !model.isPaneAvailable(model.pane)
+    }
+
+    private var globalToastIsVisible: Bool {
+        !model.status.isEmpty && model.statusOwner == .global
     }
 
     private func recoveryBanner(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: 10) {
+            EmberIngress(color: Theme.warning, width: Theme.noticeIngressWidth)
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(Theme.warning)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text("Configuration recovery")
-                    .font(Theme.ui(13, .semibold))
-                Text(message)
-                    .font(Theme.ui(11))
-                    .foregroundStyle(Theme.textSecondary)
-                Text("Voice to Text remains available. Configuration changes are disabled.")
-                    .font(Theme.ui(11))
-                    .foregroundStyle(Theme.textSecondary)
+                    .font(Theme.ui(12, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(
+                    "\(message) Voice to Text remains available. "
+                        + "Configuration changes are disabled."
+                )
+                .font(Theme.ui(10.5))
+                .foregroundStyle(Theme.textSecondary)
             }
             Spacer()
             Button("Quit") { model.onQuitRecovery?() }
+                .buttonStyle(EmberButtonStyle(kind: .quiet))
+                .accessibilityIdentifier("continuous-frame.recovery.quit")
             Button("Reset Configuration") { model.onResetConfiguration?() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(EmberButtonStyle(kind: .primary))
+                .accessibilityIdentifier("continuous-frame.recovery.reset")
         }
-        .padding(14)
+        .padding(.trailing, 14)
+        .padding(.vertical, 11)
+        .background(Theme.raised)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("continuous-frame.recovery")
     }
 
     private func paneScroll(_ title: String, @ViewBuilder body: () -> some View) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(title)
-                    .font(Theme.pageTitle)
-                    .kerning(-0.56)
+                    .font(Theme.display)
+                    .tracking(Theme.displayTracking)
                     .foregroundStyle(Theme.textPrimary)
                     .padding(.bottom, 4)
                 body()
             }
-            .padding(.horizontal, Theme.contentPadding)
-            .padding(.top, Theme.contentPadding)
+            .padding(.horizontal, destinationPadding)
+            .padding(.top, destinationPadding)
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -497,59 +574,80 @@ struct SettingsView: View {
     private var modesPane: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline, spacing: 16) {
-                Text("Your Dictation selection decides how speech is processed after transcription.")
-                    .font(Theme.ui(12))
+                Text("Choose how the next Dictation session should shape your words.")
+                    .font(Theme.body)
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
                 Button("Add Mode", systemImage: "plus") { model.onAddMode?() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(EmberButtonStyle(kind: .primary))
                     .accessibilityHint("Opens a new unsaved Mode draft")
             }
-            sectionHeader("System")
-            Card {
-                modeSelectionButton(model.modeSelection.systemItem)
-            }
-            HStack(alignment: .top, spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader("Your Modes")
-                    if model.modeSelection.editableItems.isEmpty {
-                        Card {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Build your first Polish workflow")
-                                    .font(Theme.ui(13, .semibold))
-                                Text("Add a Mode with its own model and writing instructions.")
-                                    .font(Theme.ui(11))
-                                    .foregroundStyle(Theme.textSecondary)
-                                Button("Add Mode") { model.onAddMode?() }
-                                    .padding(.top, 4)
-                            }
-                            .padding(14)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    } else {
-                        Card {
-                            ForEach(
-                                Array(model.modeSelection.editableItems.enumerated()),
-                                id: \.element.id
-                            ) { index, item in
-                                if index > 0 {
-                                    Divider().padding(.leading, 14)
-                                }
-                                modeLibraryRow(item, index: index)
-                            }
-                        }
-                    }
-                }
-                .frame(maxWidth: 310)
+            HStack(alignment: .top, spacing: 14) {
+                modeLibrary
+                    .frame(width: 310)
                 modeDetail
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
     }
 
+    private var modeLibrary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            EmberSectionLabel("Dictation selection")
+            EmberSurface {
+                CommandLedgerSelectionRow(
+                    item: model.modeSelection.systemItem
+                ) {
+                    model.onSelectMode?(model.modeSelection.systemItem.id)
+                }
+            }
+            EmberSectionLabel("Your Modes · Cycle order")
+                .padding(.top, 4)
+            if model.modeSelection.editableItems.isEmpty {
+                EmberSurface {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .accessibilityHidden(true)
+                        Text("No Modes yet")
+                            .font(Theme.ui(13, .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("Voice to Text remains ready. Add a Mode when you want Polish.")
+                            .font(Theme.ui(11))
+                            .foregroundStyle(Theme.textSecondary)
+                        Button("Add Mode") { model.onAddMode?() }
+                            .buttonStyle(EmberButtonStyle(kind: .quiet))
+                            .padding(.top, 4)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .accessibilityElement(children: .contain)
+            } else {
+                EmberSurface {
+                    VStack(spacing: 0) {
+                        ForEach(
+                            Array(model.modeSelection.editableItems.enumerated()),
+                            id: \.element.id
+                        ) { index, item in
+                            if index > 0 {
+                                EmberHairline(axis: .horizontal)
+                                    .padding(.leading, 14)
+                            }
+                            CommandLedgerSelectionRow(item: item) {
+                                model.onSelectMode?(item.id)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private var modeDetail: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Mode details")
+            EmberSectionLabel("Mode details")
             if let mode = model.selectedEditableMode,
                let item = model.selectedEditableModeItem,
                let id = mode.id,
@@ -559,51 +657,63 @@ struct SettingsView: View {
                     index: modeIndex,
                     modeCount: model.modes.count
                 )
-                Card {
+                EmberSurface {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack(spacing: 10) {
                             Image(systemName: item.icon)
-                                .font(.system(size: 20, weight: .medium))
+                                .font(.system(size: 24, weight: .medium))
                                 .foregroundStyle(Theme.accent)
-                                .frame(width: 28)
+                                .frame(width: 32)
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(mode.name)
-                                    .font(Theme.ui(16, .semibold))
+                                    .font(Theme.ui(20, .semibold))
+                                    .foregroundStyle(Theme.textPrimary)
+                                    .lineLimit(2)
                                 Text(mode.transformation == .inPlace ? "Keep wording" : "Reshape")
-                                    .font(Theme.ui(11))
+                                    .font(Theme.body)
                                     .foregroundStyle(Theme.textSecondary)
                             }
                             Spacer()
                             HStack(spacing: 8) {
                                 Button("Edit") { model.onEditMode?(id) }
+                                    .buttonStyle(EmberButtonStyle(kind: .quiet))
                                     .accessibilityLabel("Edit \(mode.name)")
                                 Button("Duplicate") { model.onDuplicateMode?(id) }
+                                    .buttonStyle(EmberButtonStyle(kind: .quiet))
                                     .accessibilityLabel(actions.duplicateLabel)
                             }
                         }
-                        Divider()
-                        modeDetailField("AI model", mode.llmModel ?? "Unavailable")
+                        EmberHairline(axis: .horizontal)
+                        modeDetailField(
+                            "AI model",
+                            mode.llmModel ?? "Unavailable",
+                            monospaced: true
+                        )
                         modeDetailField("Polish instructions", mode.systemPrompt ?? "")
                         modeDetailField(
                             "Preserved vocabulary",
-                            mode.vocab.isEmpty ? "None" : mode.vocab.joined(separator: ", ")
+                            mode.vocab.isEmpty ? "None" : mode.vocab.joined(separator: " · "),
+                            monospaced: true
                         )
                         if let installed = model.installed,
                            !installed.contains(where: { $0.name == mode.llmModel }) {
                             unavailableModelNotice(mode.llmModel ?? "This model")
                         }
-                        Divider()
+                        Spacer(minLength: 12)
+                        EmberHairline(axis: .horizontal)
                         HStack(spacing: 8) {
                             Button("Move up", systemImage: "arrow.up") {
                                 model.onMoveMode?(id, .up)
                             }
+                            .buttonStyle(EmberButtonStyle(kind: .quiet))
                             .disabled(!actions.canMoveUp)
                             .accessibilityLabel(actions.moveUpLabel)
                             .keyboardShortcut(.upArrow, modifiers: [.command, .option])
                             Button("Move down", systemImage: "arrow.down") {
                                 model.onMoveMode?(id, .down)
                             }
+                            .buttonStyle(EmberButtonStyle(kind: .quiet))
                             .disabled(!actions.canMoveDown)
                             .accessibilityLabel(actions.moveDownLabel)
                             .keyboardShortcut(.downArrow, modifiers: [.command, .option])
@@ -611,38 +721,54 @@ struct SettingsView: View {
                             Button("Delete", role: .destructive) {
                                 model.onRequestModeDeletion?(id)
                             }
+                            .buttonStyle(EmberButtonStyle(kind: .destructive))
                             .accessibilityLabel(actions.deleteLabel)
                             .accessibilityHint(actions.deleteHint)
                         }
                     }
                     .padding(16)
+                    .frame(maxWidth: .infinity, minHeight: 370, alignment: .topLeading)
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Details for \(mode.name)")
             } else {
-                Card {
-                    VStack(alignment: .leading, spacing: 5) {
+                EmberSurface {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 22, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .accessibilityHidden(true)
                         Text("Choose a Mode")
                             .font(Theme.ui(13, .semibold))
-                        Text("Select a Mode to review or edit its Polish instructions.")
-                            .font(Theme.ui(11))
-                            .foregroundStyle(Theme.textSecondary)
+                            .foregroundStyle(Theme.textPrimary)
+                        Text(
+                            "Voice to Text is selected for the next Dictation session. "
+                                + "Select a Mode to review or edit its Polish instructions."
+                        )
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                        .accessibilityIdentifier("modes.inspector.voice-to-text-detail")
                     }
                     .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, minHeight: 370, alignment: .topLeading)
                 }
             }
         }
     }
 
-    private func modeDetailField(_ label: String, _ value: String) -> some View {
+    private func modeDetailField(
+        _ label: String,
+        _ value: String,
+        monospaced: Bool = false
+    ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(Theme.ui(10, .bold))
+                .font(Theme.sectionLabel)
+                .tracking(Theme.sectionTracking)
                 .foregroundStyle(Theme.textTertiary)
                 .textCase(.uppercase)
             Text(value)
-                .font(Theme.ui(12))
+                .font(monospaced ? Theme.data : Theme.body)
                 .foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
         }
@@ -650,180 +776,105 @@ struct SettingsView: View {
     }
 
     private func unavailableModelNotice(_ name: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(name) isn't installed. Polish will use the raw transcript.")
-                    .font(Theme.ui(11))
-                Button("Open Models") { model.pane = .models }
-                    .buttonStyle(.link)
-            }
+        EmberStatusNotice(
+            kind: .warning,
+            title: "\(name) is unavailable",
+            detail: "Polish falls back to raw text.",
+            actionTitle: "Open Models"
+        ) {
+            model.pane = .models
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(
-            "Unavailable model \(name). Polish will use the raw transcript. Open Models to install it."
+        .padding(.vertical, 8)
+        .accessibilityHint(
+            "Open Models to install \(name)."
         )
-    }
-
-    private func modeSelectionButton(_ item: ModeSelectionItem) -> some View {
-        Button {
-            model.onSelectMode?(item.id)
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: item.icon)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(item.isSelected ? Theme.accent : Theme.textSecondary)
-                    .frame(width: 20)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.name)
-                        .font(Theme.ui(13, .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                    Text(item.summary)
-                        .font(Theme.ui(11))
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                Spacer(minLength: 16)
-                Image(systemName: item.isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(item.isSelected ? Theme.accent : Theme.textTertiary)
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(item.accessibilityLabel)
-        .accessibilityValue(item.accessibilityValue)
-        .accessibilityHint(item.accessibilityHint)
-    }
-
-    @ViewBuilder
-    private func modeLibraryRow(_ item: ModeSelectionItem, index: Int) -> some View {
-        if case let .mode(id) = item.id {
-            let actions = ModeLibraryActionPresentation(
-                modeName: item.name,
-                index: index,
-                modeCount: model.modeSelection.editableItems.count
-            )
-            HStack(spacing: 2) {
-                modeSelectionButton(item)
-                Button {
-                    model.onMoveMode?(id, .up)
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .frame(width: 22, height: 28)
-                }
-                .buttonStyle(.plain)
-                .disabled(!actions.canMoveUp)
-                .help(actions.moveUpLabel)
-                .accessibilityLabel(actions.moveUpLabel)
-                Button {
-                    model.onMoveMode?(id, .down)
-                } label: {
-                    Image(systemName: "arrow.down")
-                        .frame(width: 22, height: 28)
-                }
-                .buttonStyle(.plain)
-                .disabled(!actions.canMoveDown)
-                .help(actions.moveDownLabel)
-                .accessibilityLabel(actions.moveDownLabel)
-            }
-            .padding(.trailing, 10)
-        }
     }
 
     // MARK: - settings (keyboard shortcuts + input + sound + appearance + updates)
 
     private var settingsPane: some View {
         VStack(alignment: .leading, spacing: 16) {
-            sectionHeader("Keyboard shortcuts")
-            Card {
-                CardRow(
+            SignalLedgerSection(title: "Keyboard shortcuts", symbolName: "command") {
+                SignalLedgerRow(
                     title: "Push to Talk",
-                    subtitle: "Hold to record, release when done"
+                    detail: "Hold to record, release when done"
                 ) {
                     HStack(spacing: 8) {
                         resetButton(icon: "arrow.counterclockwise", help: "Reset to right ⌥") {
                             model.pttKey = "alt_r"
-                            model.onCommit?()
+                            model.onCommit?(.shortcuts)
                         }
                         shortcutChip(key: model.pttKey, field: .ptt)
                     }
                 }
-                Divider().padding(.leading, 14)
-                CardRow(
+                SignalLedgerDivider()
+                SignalLedgerRow(
                     title: "Toggle Recording",
-                    subtitle: "Starts and stops recordings"
+                    detail: "Starts and stops Dictation sessions"
                 ) {
                     HStack(spacing: 8) {
                         if !model.toggleKey.isEmpty {
                             resetButton(icon: "xmark", help: "Remove shortcut") {
                                 model.toggleKey = ""
-                                model.onCommit?()
+                                model.onCommit?(.shortcuts)
                             }
                         }
                         shortcutChip(key: model.toggleKey, field: .toggle)
                     }
                 }
-                Divider().padding(.leading, 14)
-                CardRow(
+                SignalLedgerDivider()
+                SignalLedgerRow(
                     title: "Cycle Modes",
-                    subtitle: "Selects the next Mode for your next dictation"
+                    detail: "Selects the next Mode for the next Dictation session"
                 ) {
                     HStack(spacing: 8) {
                         if !model.cycleKey.isEmpty {
                             resetButton(icon: "xmark", help: "Remove shortcut") {
                                 model.cycleKey = ""
-                                model.onCommit?()
+                                model.onCommit?(.shortcuts)
                             }
                         }
                         shortcutChip(key: model.cycleKey, field: .cycle)
                     }
                 }
-            }
-            Text(
-                "Click a shortcut, then press the key you want — a modifier "
-                    + "(⌥ ⌘ ⌃ ⇧), a function key, or a single character."
-            )
-            .font(Theme.ui(11))
-            .foregroundStyle(Theme.textSecondary)
-            if model.shortcutListenerHealth == .focusedAppOnly {
-                HStack(spacing: 8) {
-                    Text(
-                        "Shortcuts currently work only while FoldWise is focused. "
-                            + "Allow Input Monitoring or Accessibility for global use."
-                    )
-                    .font(Theme.ui(11))
-                    .foregroundStyle(.orange)
-                    Button("Open System Settings…") {
-                        model.onOpenShortcutPermissions?()
-                    }
-                    .buttonStyle(.link)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(
-                    "Shortcut permission limited. Shortcuts work only while FoldWise is focused."
+                Text(
+                    "Click a shortcut, then press a modifier, function key, "
+                        + "or single character."
                 )
+                .font(Theme.ui(10.5))
+                .foregroundStyle(Theme.textTertiary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                if model.shortcutListenerHealth == .focusedAppOnly {
+                    SignalLedgerFeedback(
+                        kind: .warning,
+                        title: "Global shortcuts need permission",
+                        detail: "They currently work only while FoldWise is focused.",
+                        actionTitle: "Open System Settings…",
+                        action: model.onOpenShortcutPermissions
+                    )
+                    .accessibilityIdentifier("settings.shortcuts.permission")
+                }
+                ownedFeedback(.shortcuts, identifier: "settings.shortcuts.feedback")
             }
 
-            sectionHeader("Input")
-            inputDeviceRoster
-            if let message = inputDeviceMessage {
-                Text(message)
-                    .font(Theme.ui(11))
-                    .foregroundStyle(inputDeviceMessageIsError ? .red : Theme.textSecondary)
-                    .padding(.horizontal, 4)
+            SignalLedgerSection(title: "Input", symbolName: "mic") {
+                inputDeviceRoster
+                if let notice = inputDeviceNotice {
+                    SignalLedgerFeedback(
+                        kind: notice.kind,
+                        title: notice.title,
+                        detail: notice.detail
+                    )
+                    .accessibilityIdentifier("settings.input.lifecycle")
+                }
+                ownedFeedback(.input, identifier: "settings.input.feedback")
             }
 
-            sectionHeader("Sound")
-            Card {
-                CardRow(
+            SignalLedgerSection(title: "Sound", symbolName: "speaker.wave.2") {
+                SignalLedgerRow(
                     title: "Pause other audio",
-                    subtitle: "Pause music and mute system audio while dictating"
+                    detail: "Pause music and mute system audio while dictating"
                 ) {
                     Toggle(
                         "",
@@ -831,21 +882,32 @@ struct SettingsView: View {
                             get: { model.pauseAudio },
                             set: {
                                 model.pauseAudio = $0
-                                model.onCommit?()
+                                model.onCommit?(.sound)
                             }
                         )
                     )
                     .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .tint(Theme.accent)
                     .labelsHidden()
                 }
+                ownedFeedback(.sound, identifier: "settings.sound.feedback")
             }
 
-            sectionHeader("Appearance")
-            appearanceChoices
+            SignalLedgerSection(
+                title: "Appearance",
+                symbolName: "circle.lefthalf.filled"
+            ) {
+                appearanceChoices
+                    .padding(12)
+                ownedFeedback(.appearance, identifier: "settings.appearance.feedback")
+            }
 
-            sectionHeader("Updates")
-            Card {
-                CardRow(title: "Updates", subtitle: updateSubtitle) {
+            SignalLedgerSection(
+                title: "Updates",
+                symbolName: "arrow.triangle.2.circlepath"
+            ) {
+                SignalLedgerRow(title: "FoldWise Voice", detail: updateSubtitle) {
                     updateTrailing
                 }
             }
@@ -854,7 +916,7 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var appearanceChoices: some View {
-        if settingsContentWidth >= Self.appearanceHorizontalBreakpoint {
+        if SettingsAppearanceLayout.forContentWidth(settingsContentWidth) == .horizontal {
             HStack(spacing: 8) {
                 appearanceChoiceButtons
             }
@@ -867,52 +929,13 @@ struct SettingsView: View {
 
     private var appearanceChoiceButtons: some View {
         ForEach(AppearanceTilePresentation.all) { tile in
-            Button {
+            SignalLedgerAppearanceChoice(
+                presentation: tile,
+                isSelected: model.appearance == tile.preference
+            ) {
                 model.appearance = tile.preference
-                model.onCommit?()
-            } label: {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Image(systemName: tile.symbolName)
-                            .font(.system(size: 16, weight: .medium))
-                        Spacer()
-                        Image(
-                            systemName: model.appearance == tile.preference
-                                ? "checkmark.circle.fill"
-                                : "circle"
-                        )
-                    }
-                    Text(tile.title)
-                        .font(Theme.ui(13, .semibold))
-                    Text(tile.detail)
-                        .font(Theme.ui(10.5))
-                        .foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .foregroundStyle(Theme.textPrimary)
-                .padding(12)
-                .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
-                .background(
-                    model.appearance == tile.preference
-                        ? Theme.activeNavBackground
-                        : Theme.cardBackground,
-                    in: RoundedRectangle(cornerRadius: Theme.cardRadius)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.cardRadius)
-                        .strokeBorder(
-                            model.appearance == tile.preference ? Theme.accent : Theme.hairline,
-                            lineWidth: 1
-                        )
-                )
-                .contentShape(Rectangle())
+                model.onCommit?(.appearance)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(tile.title)
-            .accessibilityHint(tile.detail)
-            .accessibilityValue(
-                model.appearance == tile.preference ? "Selected" : "Not selected"
-            )
         }
     }
 
@@ -920,109 +943,122 @@ struct SettingsView: View {
         let sidebarWidth = sidebarMode == .expanded
             ? Double(Theme.sidebarWidth)
             : Double(Theme.railWidth)
-        return model.windowWidth - sidebarWidth - 1 - Double(Theme.contentPadding * 2)
+        return model.windowWidth - sidebarWidth - 1 - Double(destinationPadding * 2)
     }
 
+    private var destinationPadding: CGFloat {
+        ThemeLayoutPolicy.destinationPadding(windowWidth: model.windowWidth)
+    }
+
+    @ViewBuilder
     private var inputDeviceRoster: some View {
-        Card {
+        inputDeviceButton(
+            uid: nil,
+            icon: "macbook",
+            title: "System Default",
+            detail: model.inputState.systemDefault.map {
+                "\($0.name) — follows macOS"
+            } ?? "No macOS default input is available",
+            unavailable: false
+        )
+        ForEach(model.inputState.devices) { device in
+            SignalLedgerDivider()
             inputDeviceButton(
-                uid: nil,
-                icon: "macbook",
-                title: "System Default",
-                detail: model.inputState.systemDefault.map {
-                    "\($0.name) — follows macOS"
-                } ?? "No macOS default input is available",
+                uid: device.uid,
+                icon: "mic",
+                title: device.name,
+                detail: device.uid == model.inputState.effectiveDevice?.uid
+                    ? "Connected — in use"
+                    : "Connected",
                 unavailable: false
             )
-            ForEach(model.inputState.devices) { device in
-                Divider().padding(.leading, 14)
-                inputDeviceButton(
-                    uid: device.uid,
-                    icon: "mic",
-                    title: device.name,
-                    detail: device.uid == model.inputState.effectiveDevice?.uid
-                        ? "Connected — in use"
-                        : "Connected",
-                    unavailable: false
-                )
-            }
-            if let preferredUID = model.inputState.preferredUID,
-               !model.inputState.devices.contains(where: { $0.uid == preferredUID }) {
-                Divider().padding(.leading, 14)
-                inputDeviceButton(
-                    uid: preferredUID,
-                    icon: "mic.slash",
-                    title: model.inputState.preferredName ?? "Previously selected device",
-                    detail: "Not connected — Preferred",
-                    unavailable: true
-                )
-            }
+        }
+        if let preferredUID = model.inputState.preferredUID,
+           !model.inputState.devices.contains(where: { $0.uid == preferredUID }) {
+            SignalLedgerDivider()
+            inputDeviceButton(
+                uid: preferredUID,
+                icon: "mic.slash",
+                title: model.inputState.preferredName ?? "Previously selected device",
+                detail: "Not connected — Preferred",
+                unavailable: true
+            )
         }
     }
 
     private func inputDeviceButton(
         uid: String?, icon: String, title: String, detail: String, unavailable: Bool
     ) -> some View {
-        Button {
+        let selected = model.inputState.preferredUID == uid
+        return Button {
             guard !unavailable else { return }
             model.onSelectInputDevice?(uid)
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 20)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(Theme.ui(13, .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text(detail)
-                        .font(Theme.ui(11))
-                        .foregroundStyle(Theme.textSecondary)
+            HStack(spacing: 0) {
+                EmberIngress(color: selected ? Theme.accent : .clear)
+                    .frame(height: 24)
+                HStack(spacing: 10) {
+                    Image(systemName: selected ? "record.circle.fill" : icon)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(selected ? Theme.accent : Theme.textTertiary)
+                        .frame(width: 20)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(Theme.ui(12.5, .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text(detail)
+                            .font(Theme.ui(10))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    Spacer(minLength: 12)
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(selected ? Theme.accent : Theme.textTertiary)
+                        .accessibilityHidden(true)
                 }
-                Spacer(minLength: 16)
-                Image(
-                    systemName: model.inputState.preferredUID == uid
-                        ? "checkmark.circle.fill"
-                        : "circle"
-                )
-                .foregroundStyle(
-                    model.inputState.preferredUID == uid
-                        ? AnyShapeStyle(Theme.accent)
-                        : AnyShapeStyle(Theme.textTertiary)
-                )
+                .padding(.horizontal, 12)
             }
-            .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .contentShape(Rectangle())
-            .opacity(unavailable ? 0.55 : 1)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(EmberPlainButtonStyle(cornerRadius: Theme.surfaceRadius))
+        .frame(maxWidth: .infinity)
         .disabled(unavailable)
+        .opacity(unavailable ? 0.46 : 1)
         .accessibilityLabel(title)
-        .accessibilityHint(detail)
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityHint(unavailable ? "\(detail). Unavailable." : detail)
     }
 
-    private var inputDeviceMessage: String? {
+    private var inputDeviceNotice: (
+        kind: EmberStatusKind,
+        title: String,
+        detail: String
+    )? {
         switch model.inputState.status {
         case .ready:
             nil
         case let .fallback(preferred, effective):
-            "\(preferred) isn’t connected. Using \(effective) until it returns."
+            (
+                .warning,
+                "Preferred input is disconnected",
+                "\(preferred) is unavailable. Using \(effective) until it returns."
+            )
         case let .restored(device):
-            "\(device) is connected again and has been restored."
+            (
+                .success,
+                "Preferred input restored",
+                "\(device) is connected again and has been restored."
+            )
         case let .deferred(current, next):
-            "Using \(current) for this dictation. \(next) will be used next."
+            (
+                .warning,
+                "Input changes after this Dictation session",
+                "Using \(current) now; \(next) will be used next."
+            )
         case let .unavailable(message):
-            message
+            (.error, "No input device is available", message)
         }
-    }
-
-    private var inputDeviceMessageIsError: Bool {
-        if case .unavailable = model.inputState.status {
-            return true
-        }
-        return false
     }
 
     private var updateSubtitle: String {
@@ -1040,23 +1076,40 @@ struct SettingsView: View {
     private var updateTrailing: some View {
         switch model.updateState {
         case .checking:
-            ProgressView().controlSize(.small)
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Checking…")
+                    .font(Theme.compactData)
+                    .foregroundStyle(Theme.textSecondary)
+            }
         case let .available(version, downloadURL):
             Button("Download v\(version)…") {
                 NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
             }
-            .controlSize(.small)
+            .buttonStyle(EmberButtonStyle(kind: .primary))
         case .unavailable:
-            EmptyView()
+            Label("Packaged builds only", systemImage: "hammer")
+                .font(Theme.compactData)
+                .foregroundStyle(Theme.textTertiary)
         case .upToDate:
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                Button("Check for Updates") { model.onCheckUpdates?() }
-                    .controlSize(.small)
+            HStack(spacing: 8) {
+                Label("Current", systemImage: "checkmark.circle.fill")
+                    .font(Theme.compactData)
+                    .foregroundStyle(Theme.success)
+                Button("Check again") { model.onCheckUpdates?() }
+                    .buttonStyle(EmberButtonStyle(kind: .quiet))
             }
-        case .idle, .failed:
+        case .failed:
+            HStack(spacing: 8) {
+                Image(systemName: "xmark.octagon.fill")
+                    .foregroundStyle(Theme.error)
+                    .accessibilityHidden(true)
+                Button("Check again") { model.onCheckUpdates?() }
+                    .buttonStyle(EmberButtonStyle(kind: .quiet))
+            }
+        case .idle:
             Button("Check for Updates") { model.onCheckUpdates?() }
-                .controlSize(.small)
+                .buttonStyle(EmberButtonStyle(kind: .quiet))
         }
     }
 
@@ -1066,8 +1119,10 @@ struct SettingsView: View {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
+                .frame(width: 26, height: 26)
+                .emberControlSurface()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(EmberPlainButtonStyle())
         .help(help)
     }
 
@@ -1075,28 +1130,29 @@ struct SettingsView: View {
         Button {
             model.onRecord?(field)
         } label: {
-            Group {
+            HStack(spacing: 5) {
                 if model.recordingField == field {
-                    Text("Press a key…")
-                        .font(Theme.ui(12, .medium))
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
-                } else if key.isEmpty {
-                    Text("Click to set")
-                        .font(Theme.ui(12))
-                        .foregroundStyle(Theme.textSecondary)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 5))
-                } else {
-                    Keycap(text: keycapLabel(key))
+                    Circle()
+                        .fill(Theme.accent)
+                        .frame(width: 6, height: 6)
+                        .accessibilityHidden(true)
+                }
+                Text(shortcutLabel(key: key, field: field))
+                    .font(Theme.compactData)
+            }
+            .foregroundStyle(shortcutColor(key: key, field: field))
+            .padding(.horizontal, 9)
+            .frame(minHeight: 28)
+            .emberControlSurface()
+            .overlay {
+                if model.recordingField == field {
+                    RoundedRectangle(cornerRadius: Theme.controlRadius)
+                        .strokeBorder(Theme.accent, lineWidth: 1)
                 }
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(EmberPlainButtonStyle())
         .accessibilityLabel("\(field.command.title) shortcut")
         .accessibilityValue(shortcutAccessibilityValue(key: key, field: field))
         .accessibilityHint(
@@ -1104,6 +1160,43 @@ struct SettingsView: View {
                 ? "Press a key to assign it. The captured key will not run a command."
                 : "Activate to capture a key. Activate again to cancel."
         )
+    }
+
+    private func shortcutLabel(
+        key: String,
+        field: SettingsModel.RecordingField
+    ) -> String {
+        if model.recordingField == field {
+            return "Press a key…"
+        }
+        if key.isEmpty {
+            return "Click to set"
+        }
+        return keycapLabel(key)
+    }
+
+    private func shortcutColor(
+        key: String,
+        field: SettingsModel.RecordingField
+    ) -> Color {
+        if model.recordingField == field {
+            return Theme.accent
+        }
+        return key.isEmpty ? Theme.textSecondary : Theme.textPrimary
+    }
+
+    @ViewBuilder
+    private func ownedFeedback(
+        _ owner: SettingsFeedbackOwner,
+        identifier: String
+    ) -> some View {
+        if !model.status.isEmpty, model.statusOwner == owner {
+            SignalLedgerFeedback(
+                kind: model.statusIsError ? .error : .success,
+                title: model.status
+            )
+            .accessibilityIdentifier(identifier)
+        }
     }
 
     private func shortcutAccessibilityValue(
@@ -1117,6 +1210,184 @@ struct SettingsView: View {
             return "Not assigned"
         }
         return "Assigned to \(keycapLabel(key))"
+    }
+}
+
+enum GlobalStatusToastMotion {
+    static let insertionOffset: CGFloat = 20
+    static let removalOffset: CGFloat = 12
+    static let insertionScale = 0.96
+    static let removalScale = 0.98
+
+    static var transition: AnyTransition {
+        .asymmetric(
+            insertion: .offset(x: 0, y: insertionOffset)
+                .combined(with: .scale(scale: insertionScale, anchor: .bottomTrailing))
+                .combined(with: .opacity),
+            removal: .offset(x: 0, y: removalOffset)
+                .combined(with: .scale(scale: removalScale, anchor: .bottomTrailing))
+                .combined(with: .opacity)
+        )
+    }
+}
+
+struct GlobalStatusToast: View {
+    let title: String
+    let isError: Bool
+    var increaseContrastOverride: Bool?
+
+    var body: some View {
+        EmberSurface(level: .raised, increaseContrast: increaseContrastOverride) {
+            HStack(spacing: 8) {
+                Image(systemName: isError ? "xmark.octagon.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(isError ? Theme.error : Theme.success)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(Theme.ui(12, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(2)
+            }
+            .padding(.leading, 14)
+            .padding(.trailing, 16)
+            .frame(minWidth: 112, maxWidth: 320, minHeight: 40, alignment: .leading)
+            .fixedSize(horizontal: true, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(isError ? "Error" : "Success"): \(title)")
+    }
+}
+
+private struct SignalLedgerAppearanceChoice: View {
+    let presentation: AppearanceTilePresentation
+    let isSelected: Bool
+    let action: () -> Void
+
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: presentation.symbolName)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(isSelected ? Theme.accent : Theme.textSecondary)
+                    .frame(width: 18)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(presentation.title)
+                        .font(Theme.ui(12.5, .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(presentation.detail)
+                        .font(Theme.ui(9.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? Theme.accent : Theme.textTertiary)
+                    .accessibilityHidden(true)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
+            .background(
+                isSelected ? Theme.raised : Theme.canvas,
+                in: RoundedRectangle(cornerRadius: Theme.controlRadius)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: Theme.controlRadius)
+                    .strokeBorder(
+                        isSelected
+                            ? Theme.accent
+                            : Theme.essentialBorderColor(
+                                increaseContrast: colorSchemeContrast == .increased
+                            ),
+                        lineWidth: Theme.essentialBorderWidth(
+                            increaseContrast: colorSchemeContrast == .increased
+                        )
+                    )
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(EmberPlainButtonStyle())
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(presentation.title)
+        .accessibilityHint(presentation.detail)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityIdentifier(
+            "settings.appearance.\(presentation.preference.rawValue.lowercased())"
+        )
+    }
+}
+
+struct CommandLedgerSelectionRow: View {
+    let item: ModeSelectionItem
+    let onSelect: () -> Void
+
+    @State private var isHovering = false
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 0) {
+                EmberIngress(color: item.isSelected ? Theme.accent : .clear)
+                HStack(spacing: 10) {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 15, weight: item.isSelected ? .semibold : .medium))
+                        .foregroundStyle(
+                            item.isSelected ? Theme.accent : Theme.textTertiary
+                        )
+                        .frame(width: 20)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name)
+                            .font(Theme.ui(12, item.isSelected ? .semibold : .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                        Text(item.summary)
+                            .font(Theme.compactData)
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 12)
+                    Image(systemName: item.isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(
+                            item.isSelected ? Theme.accent : Theme.textTertiary
+                        )
+                        .accessibilityHidden(true)
+                }
+                .padding(.horizontal, 12)
+            }
+            .frame(maxWidth: .infinity, minHeight: 52, maxHeight: 52)
+            .background(rowBackground)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(EmberPlainButtonStyle(cornerRadius: Theme.surfaceRadius))
+        .onHover { isHovering = $0 }
+        .animation(
+            Theme.ordinaryAnimation(reduceMotion: accessibilityReduceMotion),
+            value: isHovering
+        )
+        .accessibilityLabel(item.accessibilityLabel)
+        .accessibilityValue(item.accessibilityValue)
+        .accessibilityHint(item.accessibilityHint)
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+
+    private var rowBackground: Color {
+        if item.isSelected {
+            return Theme.raised
+        }
+        return isHovering ? Theme.hover : Theme.surface
+    }
+
+    private var accessibilityIdentifier: String {
+        switch item.id {
+        case .voiceToText:
+            "modes.selection.voice-to-text"
+        case let .mode(id):
+            "modes.selection.\(id)"
+        }
     }
 }
 

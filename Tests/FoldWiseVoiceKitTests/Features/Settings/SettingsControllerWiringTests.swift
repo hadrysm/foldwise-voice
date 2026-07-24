@@ -146,7 +146,7 @@ final class SettingsControllerWiringTests: XCTestCase {
         )
         controller.model.pttKey = "F8"
 
-        controller.model.onCommit?()
+        controller.model.onCommit?(.global)
 
         XCTAssertEqual(config.hotkey, "F8")
     }

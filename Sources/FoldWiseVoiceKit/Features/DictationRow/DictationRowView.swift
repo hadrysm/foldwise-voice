@@ -46,6 +46,7 @@ struct DictationRowContent: View {
     @ObservedObject var copyFeedback: DictationRowCopyFeedback
     @FocusState private var focusedTarget: DictationRowInteraction.FocusTarget?
     @State private var keyboardMonitor: Any?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var actionsRevealed: Bool {
         DictationRowInteraction.actionsRevealed(
@@ -63,37 +64,43 @@ struct DictationRowContent: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Text(presentation.time)
-                .font(Theme.timestamp)
+                .font(Theme.data)
                 .foregroundStyle(Theme.textTertiary)
-                .frame(width: 44, alignment: .leading)
+                .frame(width: 42, alignment: .leading)
+            EmberIngress(color: Theme.accent)
+                .frame(height: 22)
             Text(presentation.text)
-                .font(Theme.body)
+                .font(Theme.ui(11.5))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            Spacer(minLength: 16)
+            Spacer(minLength: 12)
             trailingRegion
         }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 12)
         .frame(height: 44)
         .background(
-            actionsRevealed && interactionState.isHovered
-                ? Theme.accent.opacity(0.055)
-                : .clear
+            interactionState.isHovered
+                ? Theme.hover
+                : Theme.surface
         )
-        .overlay {
-            if interactionState.hasVisibleFocusIndicator {
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.accentColor, lineWidth: 2)
-            }
-        }
+        .focusEffectDisabled()
+        .emberInsetFocusRing(interactionState.focusedTarget == .row)
         .contentShape(Rectangle())
         .focusable(interactions: .activate)
         .focused($focusedTarget, equals: .row)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(presentation.accessibilityDescription)
+        .animation(
+            Theme.ordinaryAnimation(reduceMotion: reduceMotion),
+            value: actionsRevealed
+        )
+        .animation(
+            Theme.ordinaryAnimation(reduceMotion: reduceMotion),
+            value: interactionState.isHovered
+        )
         .onHover { interactionState.setHovered($0) }
         .onChange(of: focusedTarget) { _, target in
             interactionState.setFocused(target)
@@ -130,17 +137,21 @@ struct DictationRowContent: View {
                 .opacity(actionsRevealed ? 1 : 0)
                 .allowsHitTesting(actionsRevealed)
         }
-        .frame(width: 118, alignment: .trailing)
+        .frame(width: 150, alignment: .trailing)
     }
 
     private var identity: some View {
         HStack(spacing: 5) {
+            Image(systemName: presentation.polishStatusSymbolName)
+                .font(Theme.ui(9, .semibold))
+                .foregroundStyle(Theme.textTertiary)
+                .help(presentation.polishStatus.label)
             Image(systemName: presentation.modeIcon)
                 .font(Theme.ui(10, .semibold))
-                .foregroundStyle(Theme.textFaint)
+                .foregroundStyle(Theme.textTertiary)
             Text(presentation.compactModeName)
-                .font(Theme.modeTag)
-                .foregroundStyle(Theme.textFaint)
+                .font(Theme.compactData)
+                .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             if presentation.isDeletedMode {
@@ -151,7 +162,7 @@ struct DictationRowContent: View {
             if presentation.isFlagged {
                 Image(systemName: "flag.fill")
                     .font(Theme.ui(11, .semibold))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.accent)
             }
         }
         .help(presentation.fullModeName)
@@ -177,13 +188,15 @@ struct DictationRowContent: View {
                 .font(Theme.ui(12, .semibold))
                 .foregroundStyle(
                     copyFeedback.isConfirmed
-                        ? AnyShapeStyle(.green)
+                        ? AnyShapeStyle(Theme.success)
                         : AnyShapeStyle(Theme.textSecondary)
                 )
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .emberFocusRing(interactionState.focusedTarget == .copy)
         .focusable(interactions: .activate)
         .focused($focusedTarget, equals: .copy)
         .accessibilityLabel(DictationRowAccessibility.copyLabel)
@@ -200,13 +213,15 @@ struct DictationRowContent: View {
                 .font(Theme.ui(12, .semibold))
                 .foregroundStyle(
                     presentation.isFlagged
-                        ? AnyShapeStyle(.orange)
+                        ? AnyShapeStyle(Theme.accent)
                         : AnyShapeStyle(Theme.textSecondary)
                 )
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .emberFocusRing(interactionState.focusedTarget == .flag)
         .focusable(interactions: .activate)
         .focused($focusedTarget, equals: .flag)
         .accessibilityLabel(label)
@@ -232,6 +247,8 @@ struct DictationRowContent: View {
         .menuIndicator(.hidden)
         .controlSize(.small)
         .fixedSize()
+        .focusEffectDisabled()
+        .emberFocusRing(interactionState.focusedTarget == .more)
         .focusable(interactions: .activate)
         .focused($focusedTarget, equals: .more)
         .accessibilityLabel(DictationRowAccessibility.moreLabel)

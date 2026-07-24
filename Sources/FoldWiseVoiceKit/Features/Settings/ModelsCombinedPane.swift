@@ -7,6 +7,7 @@ struct ModelsCombinedPane: View {
     @State private var pendingDestructiveAction: ModelsDestructiveAction?
     @State private var previousPolishRowIDs: [ModelsRowID] = []
     @FocusState private var focusedControl: ModelsFocusTarget?
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     private var projection: ModelsWorkspaceProjection {
         ModelsWorkspaceProjection.make(
@@ -23,14 +24,14 @@ struct ModelsCombinedPane: View {
         let presentation = projection
         VStack(spacing: 0) {
             header
-            Divider()
+            EmberHairline(axis: .horizontal)
             ModelsNativeSplit(
                 leading: ledger(presentation),
                 trailing: inspector(presentation.inspector)
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.windowBackground)
+        .background(Theme.canvas)
         .onAppear { reconcileInspection(with: presentation) }
         .onChange(of: presentation) { _, updated in
             reconcileInspection(with: updated)
@@ -69,17 +70,21 @@ struct ModelsCombinedPane: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text("Models")
-                .font(Theme.pageTitle)
-                .kerning(-0.56)
+                .font(Theme.display)
+                .tracking(Theme.displayTracking)
                 .foregroundStyle(Theme.textPrimary)
-            Text("Compare what runs each stage, then manage its local data.")
+            Text("Compare what runs each Stage, then manage its local data.")
                 .font(Theme.ui(12))
                 .foregroundStyle(Theme.textSecondary)
         }
-        .padding(.horizontal, Theme.contentPadding)
-        .padding(.top, Theme.contentPadding)
+        .padding(.horizontal, destinationPadding)
+        .padding(.top, destinationPadding)
         .padding(.bottom, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var destinationPadding: CGFloat {
+        ThemeLayoutPolicy.destinationPadding(windowWidth: model.windowWidth)
     }
 
     private func ledger(_ presentation: ModelsWorkspaceProjection) -> some View {
@@ -92,7 +97,7 @@ struct ModelsCombinedPane: View {
                 }
                 .padding(18)
             }
-            .background(Theme.sidebarBackground.opacity(0.46))
+            .background(Theme.canvas)
             .focusable(!presentation.ledgerRowIDs.isEmpty)
             .focusEffectDisabled()
             .focused(
@@ -120,18 +125,18 @@ struct ModelsCombinedPane: View {
             familyHeading(section)
             columnHeaders
             if let notice = section.recoveryNotice {
-                Label(notice.message, systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
+                EmberSurface(level: .raised) {
+                    Label(
+                        notice.message,
+                        systemImage: "arrow.trianglehead.2.clockwise.rotate.90"
+                    )
                     .font(Theme.ui(10.5))
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: 7))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 7)
-                            .strokeBorder(Theme.hairline)
-                    }
+                }
             }
             if let placeholder = section.placeholder {
                 familyPlaceholder(
@@ -173,20 +178,17 @@ struct ModelsCombinedPane: View {
             }
             .padding(.horizontal, 10)
             .frame(minHeight: 42)
-            .background(
-                isInspected ? Theme.activeNavBackground : Theme.cardBackground,
-                in: RoundedRectangle(cornerRadius: 7)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(
-                        isKeyboardFocused ? Theme.accent : Theme.hairline,
-                        lineWidth: isKeyboardFocused ? 2 : 1
-                    )
+            .background {
+                ModelsTraceRowChrome(
+                    isInspected: isInspected,
+                    isHighlighted: isInspected,
+                    isKeyboardFocused: isKeyboardFocused,
+                    increaseContrast: usesStrongBoundary
+                )
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(EmberPlainButtonStyle(cornerRadius: Theme.controlRadius))
         .focusable(false)
         .disabled(family != .polish || placeholder.showsProgress)
         .id(ModelsRowID.polishPlaceholder)
@@ -200,7 +202,7 @@ struct ModelsCombinedPane: View {
                 .accessibilityHidden(true)
             Text(section.title.uppercased())
                 .font(Theme.sectionLabel)
-                .kerning(1.1)
+                .tracking(Theme.sectionTracking)
                 .foregroundStyle(Theme.textTertiary)
             Text("—")
                 .font(Theme.ui(9.5, .medium))
@@ -256,14 +258,18 @@ struct ModelsCombinedPane: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(EmberPlainButtonStyle(cornerRadius: Theme.controlRadius))
             .focusable(false)
             .frame(maxWidth: .infinity)
             .help(row.accessibilityLabel)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(row.accessibilityLabel)
-            .accessibilityValue(row.progress?.accessibilityValue ?? "")
-            .accessibilityAddTraits(isInspected ? .isSelected : [])
+            .accessibilityValue(
+                ModelsRowAccessibility.value(
+                    isInspected: isInspected,
+                    progressValue: row.progress?.accessibilityValue
+                )
+            )
             if showsInlineCancel {
                 ledgerState(row)
             }
@@ -301,7 +307,7 @@ struct ModelsCombinedPane: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Text(row.size)
-                .font(Theme.ui(9.5, .medium))
+                .font(Theme.compactData)
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
                 .frame(width: 42, alignment: .trailing)
@@ -351,10 +357,10 @@ struct ModelsCombinedPane: View {
                             }
                         }
                     }
-                    .font(Theme.ui(8.5, .semibold))
+                    .font(Theme.compactData)
                     .foregroundStyle(Theme.textSecondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(EmberPlainButtonStyle())
                 .frame(width: 64, alignment: .trailing)
                 .focused($focusedControl, equals: .inlineCancel(row.id))
                 .help("Cancel \(progress.label.lowercased())")
@@ -372,12 +378,12 @@ struct ModelsCombinedPane: View {
                 }
                 .frame(width: 64, alignment: .trailing)
                 .accessibilityHidden(true)
-                .font(Theme.ui(8.5, .semibold))
+                .font(Theme.compactData)
                 .foregroundStyle(Theme.textSecondary)
             }
         } else if !row.state.isEmpty {
             Text(row.state)
-                .font(Theme.ui(8.5, .semibold))
+                .font(Theme.compactData)
                 .foregroundStyle(
                     row.isSavedASRSelection
                         ? AnyShapeStyle(Theme.accent)
@@ -397,86 +403,97 @@ struct ModelsCombinedPane: View {
                 neutralInspector
             }
         }
-        .background(Theme.windowBackground)
+        .background(Theme.surface)
     }
 
     private func inspectorBody(_ presentation: ModelsInspectorPresentation) -> some View {
-        VStack(alignment: .leading, spacing: 22) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(presentation.familyLabel.uppercased())
-                    .font(Theme.sectionLabel)
-                    .kerning(1.1)
-                    .foregroundStyle(Theme.textTertiary)
-                Text(presentation.name)
-                    .font(Theme.ui(19, .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(presentation.fit)
-                    .font(Theme.ui(11.5))
+        VStack(alignment: .leading, spacing: 0) {
+            ModelsTraceInspectorHeader(isInspected: true) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(presentation.familyLabel.uppercased())
+                        .font(Theme.sectionLabel)
+                        .tracking(Theme.sectionTracking)
+                        .foregroundStyle(Theme.textTertiary)
+                    Text(presentation.name)
+                        .font(Theme.ui(19, .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(presentation.fit)
+                        .font(Theme.ui(11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Label(
+                        presentation.status,
+                        systemImage: presentation.primaryAction.statusSymbol
+                    )
+                    .font(Theme.compactData)
                     .foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Label(presentation.status, systemImage: presentation.primaryAction.statusSymbol)
-                    .font(Theme.ui(10, .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-                if let explanation = presentation.statusExplanation {
-                    Text(explanation)
+                    if let explanation = presentation.statusExplanation {
+                        Text(explanation)
+                            .font(Theme.ui(11))
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            VStack(alignment: .leading, spacing: 22) {
+                if let description = presentation.description, !description.isEmpty {
+                    Text(description)
+                        .font(Theme.ui(12))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if presentation.showsInstallByNameForm {
+                    TextField("model:tag", text: $model.customModel)
+                        .font(Theme.data)
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 8)
+                        .frame(height: 28)
+                        .emberControlSurface()
+                        .disabled(presentation.inputDisabledReason != nil)
+                        .help(
+                            presentation.inputDisabledReason
+                                ?? "Enter an Ollama model name in model:tag form"
+                        )
+                        .accessibilityLabel("Ollama model name")
+                        .accessibilityHint(presentation.inputDisabledReason ?? "")
+                }
+                if let error = presentation.errorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(Theme.ui(11))
+                        .foregroundStyle(Theme.error)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                inspectorManagement(presentation)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(presentation.semanticLabel.uppercased())
+                        .font(Theme.sectionLabel)
+                        .tracking(Theme.sectionTracking)
+                        .foregroundStyle(Theme.textTertiary)
+                    Text(presentation.familyExplanation)
+                        .font(Theme.ui(11.5))
                         .foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if let description = presentation.description, !description.isEmpty {
-                Text(description)
-                    .font(Theme.ui(12))
-                    .foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if presentation.showsInstallByNameForm {
-                TextField("model:tag", text: $model.customModel)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(presentation.inputDisabledReason != nil)
-                    .help(
-                        presentation.inputDisabledReason
-                            ?? "Enter an Ollama model name in model:tag form"
-                    )
-                    .accessibilityLabel("Ollama model name")
-                    .accessibilityHint(presentation.inputDisabledReason ?? "")
-            }
-            if let error = presentation.errorMessage {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(Theme.ui(11))
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            inspectorManagement(presentation)
-            VStack(alignment: .leading, spacing: 8) {
-                Text(presentation.semanticLabel.uppercased())
-                    .font(Theme.sectionLabel)
-                    .kerning(1.1)
-                    .foregroundStyle(Theme.textTertiary)
-                Text(presentation.familyExplanation)
-                    .font(Theme.ui(11.5))
-                    .foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            .frame(maxWidth: 520, alignment: .leading)
+            .padding(26)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: 520, alignment: .leading)
-        .padding(26)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var neutralInspector: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("MODEL DETAILS")
-                .font(Theme.sectionLabel)
-                .kerning(1.1)
-                .foregroundStyle(Theme.textTertiary)
-            Text("Checking local model information…")
-                .font(Theme.ui(12))
-                .foregroundStyle(Theme.textSecondary)
+        ModelsTraceInspectorHeader(isInspected: false) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("MODEL DETAILS")
+                    .font(Theme.sectionLabel)
+                    .tracking(Theme.sectionTracking)
+                    .foregroundStyle(Theme.textTertiary)
+                Text("Checking local model information…")
+                    .font(Theme.ui(12))
+                    .foregroundStyle(Theme.textSecondary)
+            }
         }
-        .padding(26)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func inspectorManagement(_ presentation: ModelsInspectorPresentation) -> some View {
@@ -524,7 +541,7 @@ struct ModelsCombinedPane: View {
             .accessibilityValue(progress.accessibilityValue)
             if progress.allowsCancellation, let id {
                 Button("Cancel") { model.onCancelASROperation?() }
-                    .controlSize(.small)
+                    .buttonStyle(EmberButtonStyle(kind: .quiet))
                     .focused($focusedControl, equals: .inspectorCancel(id))
                     .accessibilityLabel("Cancel \(progress.label.lowercased())")
             }
@@ -577,7 +594,7 @@ struct ModelsCombinedPane: View {
             ) { model.onDownloadASRModel?(modelID) }
         case .retryASRBootstrap:
             Button("Retry") { model.onRetryASRBootstrap?() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(EmberButtonStyle(kind: .primary))
                 .focused($focusedControl, equals: .inspectorPrimary(id))
         case .installed:
             Label("Installed", systemImage: "checkmark.circle")
@@ -587,21 +604,21 @@ struct ModelsCombinedPane: View {
                 .focused($focusedControl, equals: .inspectorPrimary(id))
         case let .installPolish(name):
             Button("Install") { model.onInstallModel?(name) }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(EmberButtonStyle(kind: .primary))
                 .disabled(disabledReason != nil)
                 .help(disabledReason ?? "Install \(name)")
                 .accessibilityHint(disabledReason ?? "")
                 .focused($focusedControl, equals: .inspectorPrimary(id))
         case .installCustomPolish:
             Button("Install") { model.onInstallCustomModel?() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(EmberButtonStyle(kind: .primary))
                 .disabled(disabledReason != nil)
                 .help(disabledReason ?? "Install the entered Ollama model")
                 .accessibilityHint(disabledReason ?? "")
                 .focused($focusedControl, equals: .inspectorPrimary(id))
         case .retryPolish:
             Button("Retry") { model.onRefreshModels?() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(EmberButtonStyle(kind: .primary))
                 .focused($focusedControl, equals: .inspectorPrimary(id))
         }
     }
@@ -614,7 +631,7 @@ struct ModelsCombinedPane: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(title, action: action)
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(EmberButtonStyle(kind: .primary))
             .disabled(disabledReason != nil)
             .help(disabledReason ?? help)
             .accessibilityHint(disabledReason ?? "")
@@ -640,7 +657,7 @@ struct ModelsCombinedPane: View {
                 .contentShape(Rectangle())
         }
         .menuStyle(.button)
-        .buttonStyle(.plain)
+        .buttonStyle(EmberPlainButtonStyle())
         .menuIndicator(.hidden)
         .controlSize(.small)
         .fixedSize()
@@ -769,6 +786,10 @@ struct ModelsCombinedPane: View {
         case let .uninstallPolish(name): model.onDeleteModel?(name)
         }
     }
+
+    private var usesStrongBoundary: Bool {
+        colorSchemeContrast == .increased
+    }
 }
 
 private extension ModelsFocusTarget {
@@ -783,45 +804,89 @@ private extension ModelsFocusTarget {
     }
 }
 
+struct ModelsTraceRowChrome: View {
+    let isInspected: Bool
+    let isHighlighted: Bool
+    let isKeyboardFocused: Bool
+    let increaseContrast: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: Theme.controlRadius)
+            .fill(background)
+            .overlay {
+                RoundedRectangle(cornerRadius: Theme.controlRadius)
+                    .strokeBorder(
+                        Theme.essentialBorderColor(increaseContrast: increaseContrast),
+                        lineWidth: Theme.essentialBorderWidth(
+                            increaseContrast: increaseContrast
+                        )
+                    )
+            }
+            .overlay(alignment: .leading) {
+                EmberIngress(color: isInspected ? Theme.accent : .clear)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
+            .emberInsetFocusRing(
+                isKeyboardFocused,
+                cornerRadius: Theme.controlRadius
+            )
+    }
+
+    private var background: Color {
+        if isInspected {
+            return Theme.raised
+        }
+        return isHighlighted ? Theme.hover : Theme.surface
+    }
+}
+
+enum ModelsRowAccessibility {
+    static func value(isInspected: Bool, progressValue: String?) -> String {
+        [isInspected ? "Inspected" : nil, progressValue]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+    }
+}
+
+struct ModelsTraceInspectorHeader<Content: View>: View {
+    let isInspected: Bool
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(spacing: 0) {
+            EmberIngress(color: isInspected ? Theme.accent : .clear)
+            content
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Theme.raised)
+        .overlay(alignment: .bottom) {
+            EmberHairline(axis: .horizontal)
+        }
+    }
+}
+
 private struct ModelsLedgerRowChrome: ViewModifier {
     let isInspected: Bool
     let isKeyboardFocused: Bool
     @State private var isHovered = false
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     func body(content: Content) -> some View {
-        let borderColor: Color = if isKeyboardFocused {
-            Theme.accent
-        } else if isInspected {
-            Theme.hairline
-        } else {
-            .clear
-        }
-
         content
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(ModelsLedgerRowBackground(
-                isHighlighted: isInspected || isHovered
-            ))
-            .overlay {
-                RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(
-                        borderColor,
-                        lineWidth: isKeyboardFocused ? 2 : 1
-                    )
+            .background {
+                ModelsTraceRowChrome(
+                    isInspected: isInspected,
+                    isHighlighted: isHovered,
+                    isKeyboardFocused: isKeyboardFocused,
+                    increaseContrast: colorSchemeContrast == .increased
+                )
             }
             .contentShape(Rectangle())
             .onHover { isHovered = $0 }
-    }
-}
-
-struct ModelsLedgerRowBackground: View {
-    let isHighlighted: Bool
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 7)
-            .fill(isHighlighted ? Theme.activeNavBackground : Color.clear)
     }
 }
 

@@ -12,7 +12,7 @@ struct ModelsRatingMeter: View {
                 HStack(spacing: 2) {
                     ForEach(1 ... 5, id: \.self) { segment in
                         Capsule()
-                            .fill(segment <= value ? activeColor : Theme.hairline)
+                            .fill(segment <= value ? activeColor : Theme.border)
                             .frame(width: 5, height: 10)
                     }
                 }

@@ -53,15 +53,25 @@ final class TitlebarAlignmentTests: XCTestCase {
         }
 
         // Bounding box of every pixel that contrasts with the bar background.
+        // Ignore a row when most sampled columns contrast: Ember Edge's
+        // essential boundary crosses the whole window below the titlebar and
+        // is not part of the toggle glyph.
         var minY = CGFloat.infinity
         var maxY = -CGFloat.infinity
         for y in stride(from: rows.lowerBound, through: rows.upperBound, by: 1 / scale) {
+            var contrastingPixels = 0
+            var sampledPixels = 0
             for x in stride(
                 from: Self.glyphColumns.lowerBound,
                 through: Self.glyphColumns.upperBound,
                 by: 1 / scale
             ) {
+                sampledPixels += 1
                 guard let color = sRGB(x, y), isGlyph(color) else { continue }
+                contrastingPixels += 1
+            }
+            guard contrastingPixels < sampledPixels * 3 / 4 else { continue }
+            if contrastingPixels > 0 {
                 minY = min(minY, y)
                 maxY = max(maxY, y)
             }

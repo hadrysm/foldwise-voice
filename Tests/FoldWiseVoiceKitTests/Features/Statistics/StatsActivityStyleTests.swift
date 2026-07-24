@@ -4,47 +4,99 @@ import XCTest
 @testable import FoldWiseVoiceKit
 
 final class StatsActivityStyleTests: XCTestCase {
-    func testActivityLevelsResolveFromLightAccent() throws {
+    func testWaveformFillPatternMapsEachIntensityToItsFilledBarCount() {
         XCTAssertEqual(
-            try resolvedLevelColors(appearance: .aqua),
+            StatsProjection.Day.Intensity.allCases.map(StatsActivityStyle.waveformFillPattern),
             [
-                "FCFBF8@0.72", "C24A22@0.20", "C24A22@0.36",
-                "C24A22@0.54", "C24A22@0.76", "C24A22@0.96",
+                [false, false, false, false, false],
+                [true, false, false, false, false],
+                [true, true, false, false, false],
+                [true, true, true, false, false],
+                [true, true, true, true, false],
+                [true, true, true, true, true],
             ]
         )
     }
 
-    func testActivityLevelsResolveFromDarkAccent() throws {
+    func testFutureDayUsesOpaqueRaisedAndTertiaryPalette() throws {
+        let style = StatsActivityStyle(
+            day: day(state: .future),
+            focused: false,
+            hovered: false,
+            increaseContrast: false
+        )
+
         XCTAssertEqual(
-            try resolvedLevelColors(appearance: .darkAqua),
+            try resolvedColors(
+                [style.background, style.foreground],
+                appearances: [.aqua, .darkAqua]
+            ),
             [
-                "161411@0.72", "E06A3E@0.20", "E06A3E@0.36",
-                "E06A3E@0.54", "E06A3E@0.76", "E06A3E@0.96",
+                ["F4EFE7@1.00", "766E65@1.00"],
+                ["13171B@1.00", "747C85@1.00"],
             ]
         )
     }
 
-    func testDayStatesResolveFromLightPalette() throws {
+    func testTodayUsesOpaqueRaisedPaletteAndPersistentOutline() throws {
+        let style = StatsActivityStyle(
+            day: day(state: .today),
+            focused: false,
+            hovered: false,
+            increaseContrast: false
+        )
+
         XCTAssertEqual(
-            try resolvedDayStateColors(appearance: .aqua),
+            try resolvedColors(
+                [style.background, style.foreground, style.outline],
+                appearances: [.aqua, .darkAqua]
+            ),
             [
-                "FCFBF8@0.28", "B0A995@0.42",
-                "FCFBF8@0.72", "1B1813@1.00", "8F887A@0.72",
-                "C24A22@0.54", "1B1813@1.00", "1B1813@1.00", "1B1813@0.22",
-                "000000@1.00",
+                ["F4EFE7@1.00", "625C55@1.00", "978B7C@1.00"],
+                ["13171B@1.00", "A4AAB0@1.00", "5B6570@1.00"],
             ]
         )
     }
 
-    func testDayStatesResolveFromDarkPalette() throws {
+    func testHoveredDayUsesOpaqueHoverPaletteAndStandardOutline() throws {
+        let style = StatsActivityStyle(
+            day: day(state: .elapsed),
+            focused: false,
+            hovered: true,
+            increaseContrast: false
+        )
+
         XCTAssertEqual(
-            try resolvedDayStateColors(appearance: .darkAqua),
+            try resolvedColors(
+                [style.background, style.foreground, style.outline],
+                appearances: [.aqua, .darkAqua]
+            ),
             [
-                "161411@0.28", "6B655A@0.42",
-                "161411@0.72", "F2EFE8@1.00", "87816F@0.72",
-                "E06A3E@0.54", "F2EFE8@1.00", "F2EFE8@1.00", "F2EFE8@0.22",
-                "000000@1.00",
+                ["EAE2D7@1.00", "625C55@1.00", "D8CFC1@1.00"],
+                ["1A2026@1.00", "A4AAB0@1.00", "262C32@1.00"],
             ]
+        )
+    }
+
+    func testIncreaseContrastStrengthensDayBoundaryWithoutChangingLayout() {
+        let day = day(state: .elapsed)
+
+        XCTAssertEqual(
+            [
+                StatsActivityStyle(
+                    day: day,
+                    focused: false,
+                    hovered: false,
+                    increaseContrast: false
+                ).boundaryWidth,
+                StatsActivityStyle(
+                    day: day,
+                    focused: false,
+                    hovered: false,
+                    increaseContrast: true
+                ).boundaryWidth,
+            ],
+            [1, 2]
         )
     }
 
@@ -64,33 +116,11 @@ final class StatsActivityStyleTests: XCTestCase {
         XCTAssertNil(transaction.animation)
     }
 
-    private func resolvedLevelColors(appearance name: NSAppearance.Name) throws -> [String] {
-        try resolvedColors(
-            (0 ... 5).map(StatsActivityStyle.legendFill(level:)),
-            appearance: name
-        )
-    }
-
-    private func resolvedDayStateColors(appearance name: NSAppearance.Name) throws -> [String] {
-        let future = StatsActivityStyle(day: day(state: .future), focused: false)
-        let today = StatsActivityStyle(day: day(state: .today), focused: false)
-        let focused = StatsActivityStyle(
-            day: day(state: .elapsed, intensity: .medium),
-            focused: true
-        )
-        let veryHigh = StatsActivityStyle(
-            day: day(state: .elapsed, intensity: .veryHigh),
-            focused: false
-        )
-        return try resolvedColors(
-            [
-                future.background, future.foreground,
-                today.background, today.foreground, today.outline,
-                focused.background, focused.foreground, focused.outline, focused.shadow,
-                veryHigh.foreground,
-            ],
-            appearance: name
-        )
+    private func resolvedColors(
+        _ colors: [Color],
+        appearances: [NSAppearance.Name]
+    ) throws -> [[String]] {
+        try appearances.map { try resolvedColors(colors, appearance: $0) }
     }
 
     private func resolvedColors(
