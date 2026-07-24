@@ -1,7 +1,5 @@
-// The production design-token owner for Ember Edge (PRD #260). Colors resolve
-// dynamically so the System Appearance preference follows live macOS changes.
-// Temporary compatibility aliases keep destinations awaiting their own slices
-// on this same owner without introducing a second palette.
+// The production design-token owner (PRD #260). Colors resolve dynamically so
+// the System Appearance preference follows live macOS changes.
 
 import AppKit
 import SwiftUI
@@ -25,21 +23,6 @@ enum Theme {
     static let success = dynamic(light: 0x147A42, dark: 0x43D17A)
     static let warning = dynamic(light: 0x865B00, dark: 0xF0B44B)
     static let error = dynamic(light: 0xB4232C, dark: 0xFF6464)
-
-    // MARK: - compatibility aliases for unmigrated destination content
-
-    static let windowBackground = canvas
-    static let sidebarBackground = navigation
-    static let hairline = border
-    static let textFaint = textTertiary
-    static let keycapBackground = raised
-    static let keycapBorder = borderStrong
-    static let activeNavBackground = raised
-    /// Rail tooltip chips invert against the window: dark chip in light mode,
-    /// light chip in dark mode.
-    static let tooltipBackground = textPrimary
-    static let tooltipText = canvas
-    static let cardBackground = surface
 
     // MARK: - badge palette
 
@@ -65,16 +48,12 @@ enum Theme {
     }
 
     static let display = font(ThemeTypographyPolicy.display)
-    static let pageTitle = display
-    static let statNumber = ui(27, .semibold)
     static let body = font(ThemeTypographyPolicy.body)
     static let nav = ui(13.5, .medium)
     static let navActive = ui(13.5, .semibold)
     static let sectionLabel = font(ThemeTypographyPolicy.section)
     static let data = font(ThemeTypographyPolicy.data)
     static let compactData = font(ThemeTypographyPolicy.compactData)
-    static let timestamp = data
-    static let modeTag = compactData
     static let tooltip = ui(11.5, .semibold)
     static let displayTracking = ThemeTypographyPolicy.display.tracking
     static let sectionTracking = ThemeTypographyPolicy.section.tracking
@@ -105,10 +84,6 @@ enum Theme {
     static let sidebarRowHeight: CGFloat = 36
     static let sidebarRowSpacing: CGFloat = 4
     static let homeCompactBreakpoint: Double = 940
-    static let contentPadding: CGFloat = 36
-    static let cardRadius = surfaceRadius
-    static let keycapRadius = controlRadius
-    static let tooltipRadius = controlRadius
     static let badgeHeight: CGFloat = 38
 
     // MARK: - helpers

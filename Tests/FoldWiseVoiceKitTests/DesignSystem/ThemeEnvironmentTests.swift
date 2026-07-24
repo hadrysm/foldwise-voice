@@ -78,4 +78,18 @@ final class ThemeEnvironmentTests: XCTestCase {
         XCTAssertEqual(ThemeEnvironmentPolicy.ordinaryMotionDuration(reduceMotion: false), 0.16)
         XCTAssertNil(ThemeEnvironmentPolicy.ordinaryMotionDuration(reduceMotion: true))
     }
+
+    func testWideDestinationsUseCanonicalWidePadding() {
+        XCTAssertEqual(
+            ThemeLayoutPolicy.destinationPadding(windowWidth: Theme.homeCompactBreakpoint),
+            Theme.contentPaddingWide
+        )
+    }
+
+    func testCompactDestinationsUseCanonicalCompactPadding() {
+        XCTAssertEqual(
+            ThemeLayoutPolicy.destinationPadding(windowWidth: Theme.homeCompactBreakpoint - 1),
+            Theme.contentPaddingCompact
+        )
+    }
 }

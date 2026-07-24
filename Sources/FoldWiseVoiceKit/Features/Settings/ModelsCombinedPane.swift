@@ -77,10 +77,14 @@ struct ModelsCombinedPane: View {
                 .font(Theme.ui(12))
                 .foregroundStyle(Theme.textSecondary)
         }
-        .padding(.horizontal, Theme.contentPadding)
-        .padding(.top, Theme.contentPadding)
+        .padding(.horizontal, destinationPadding)
+        .padding(.top, destinationPadding)
         .padding(.bottom, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var destinationPadding: CGFloat {
+        ThemeLayoutPolicy.destinationPadding(windowWidth: model.windowWidth)
     }
 
     private func ledger(_ presentation: ModelsWorkspaceProjection) -> some View {

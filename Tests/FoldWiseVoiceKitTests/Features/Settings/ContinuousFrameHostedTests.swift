@@ -279,16 +279,20 @@ final class ContinuousFrameHostedTests: XCTestCase {
     }
 
     func testHostedAppearanceChoicesCrossTheExactContentWidthBoundary() throws {
+        let exactBoundaryWindowWidth = 650
+            + Double(Theme.sidebarWidth)
+            + 1
+            + Double(Theme.contentPaddingCompact * 2)
         let horizontalModel = SettingsModel()
         horizontalModel.pane = .settings
-        horizontalModel.sidebar.toggle(width: 913)
-        let horizontalWindow = host(horizontalModel, width: 913)
+        horizontalModel.sidebar.toggle(width: exactBoundaryWindowWidth)
+        let horizontalWindow = host(horizontalModel, width: exactBoundaryWindowWidth)
         defer { horizontalWindow.orderOut(nil) }
 
         let verticalModel = SettingsModel()
         verticalModel.pane = .settings
-        verticalModel.sidebar.toggle(width: 912)
-        let verticalWindow = host(verticalModel, width: 912)
+        verticalModel.sidebar.toggle(width: exactBoundaryWindowWidth - 1)
+        let verticalWindow = host(verticalModel, width: exactBoundaryWindowWidth - 1)
         defer { verticalWindow.orderOut(nil) }
 
         let horizontalFrames = try appearanceFrames(in: horizontalWindow)

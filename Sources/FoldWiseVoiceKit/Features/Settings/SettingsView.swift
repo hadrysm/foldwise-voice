@@ -187,11 +187,11 @@ struct SettingsView: View {
     /// inner vertical divider, sized as a peer of the traffic lights.
     private var sidebarToggleGlyph: some View {
         RoundedRectangle(cornerRadius: 4.5)
-            .strokeBorder(Theme.textFaint, lineWidth: 1.5)
+            .strokeBorder(Theme.textTertiary, lineWidth: 1.5)
             .frame(width: 21, height: 16)
             .overlay(alignment: .leading) {
                 Rectangle()
-                    .fill(Theme.textFaint)
+                    .fill(Theme.textTertiary)
                     .frame(width: 1.5)
                     .padding(.vertical, 1.5)
                     .offset(x: 6)
@@ -335,12 +335,12 @@ struct SettingsView: View {
                 let rect = proxy[anchor]
                 Text(pane.rawValue)
                     .font(Theme.tooltip)
-                    .foregroundStyle(Theme.tooltipText)
+                    .foregroundStyle(Theme.canvas)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(
-                        Theme.tooltipBackground,
-                        in: RoundedRectangle(cornerRadius: Theme.tooltipRadius)
+                        Theme.textPrimary,
+                        in: RoundedRectangle(cornerRadius: Theme.controlRadius)
                     )
                     .fixedSize()
                     .offset(x: rect.maxX + 10, y: rect.midY - 12)
@@ -556,14 +556,14 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(title)
-                    .font(Theme.pageTitle)
+                    .font(Theme.display)
                     .tracking(Theme.displayTracking)
                     .foregroundStyle(Theme.textPrimary)
                     .padding(.bottom, 4)
                 body()
             }
-            .padding(.horizontal, Theme.contentPadding)
-            .padding(.top, Theme.contentPadding)
+            .padding(.horizontal, destinationPadding)
+            .padding(.top, destinationPadding)
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -943,7 +943,11 @@ struct SettingsView: View {
         let sidebarWidth = sidebarMode == .expanded
             ? Double(Theme.sidebarWidth)
             : Double(Theme.railWidth)
-        return model.windowWidth - sidebarWidth - 1 - Double(Theme.contentPadding * 2)
+        return model.windowWidth - sidebarWidth - 1 - Double(destinationPadding * 2)
+    }
+
+    private var destinationPadding: CGFloat {
+        ThemeLayoutPolicy.destinationPadding(windowWidth: model.windowWidth)
     }
 
     @ViewBuilder

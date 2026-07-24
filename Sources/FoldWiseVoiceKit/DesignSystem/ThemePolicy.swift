@@ -26,6 +26,14 @@ enum ThemeEnvironmentPolicy {
     }
 }
 
+enum ThemeLayoutPolicy {
+    static func destinationPadding(windowWidth: Double) -> CGFloat {
+        windowWidth >= Theme.homeCompactBreakpoint
+            ? Theme.contentPaddingWide
+            : Theme.contentPaddingCompact
+    }
+}
+
 enum EmberSemanticColorRole: String {
     case success
     case warning

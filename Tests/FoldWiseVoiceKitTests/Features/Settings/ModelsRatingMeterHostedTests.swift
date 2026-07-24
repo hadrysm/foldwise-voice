@@ -58,7 +58,7 @@ final class ModelsRatingMeterHostedTests: XCTestCase {
     ) throws -> NSBitmapImageRep {
         let controller = NSHostingController(
             rootView: ZStack {
-                Theme.windowBackground
+                Theme.canvas
                 ModelsRatingMeter(rating: .rated(value), isHighlighted: isHighlighted)
             }
             .frame(width: 42, height: 14)

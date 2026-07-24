@@ -66,7 +66,7 @@ struct DictationRowContent: View {
     var body: some View {
         HStack(spacing: 10) {
             Text(presentation.time)
-                .font(Theme.timestamp)
+                .font(Theme.data)
                 .foregroundStyle(Theme.textTertiary)
                 .frame(width: 42, alignment: .leading)
             EmberIngress(color: Theme.accent)
@@ -150,7 +150,7 @@ struct DictationRowContent: View {
                 .font(Theme.ui(10, .semibold))
                 .foregroundStyle(Theme.textTertiary)
             Text(presentation.compactModeName)
-                .font(Theme.modeTag)
+                .font(Theme.compactData)
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1)
                 .truncationMode(.tail)
