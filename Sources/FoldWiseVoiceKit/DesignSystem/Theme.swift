@@ -44,34 +44,14 @@ enum Theme {
     // MARK: - badge palette
 
     enum Badge {
-        static let pillBackground = Theme.dynamic(
-            light: 0xF7F5FB, dark: 0x100D16, alpha: 0.96
-        )
-        static let border = Theme.dynamic(light: 0x7654C7, dark: 0xA78BFA, alpha: 0.22)
-        static let borderRecording = Theme.dynamic(
-            light: 0x7654C7, dark: 0xA78BFA, alpha: 0.45
-        )
-        static let borderError = Theme.dynamic(
-            light: 0xC24A22, dark: 0xFAA078, alpha: 0.55
-        )
-        static let iconIdle = Theme.dynamic(light: 0x665A86, dark: 0xB8AEDB)
-        static let iconEmphasized = Theme.dynamic(light: 0x211A32, dark: 0xE8E2F7)
-        static let timerText = Theme.dynamic(light: 0x55496F, dark: 0xCFC4EA)
-        static let buttonBackground = Theme.dynamic(
-            light: 0x7654C7, dark: 0xA78BFA, alpha: 0.16
-        )
-        static let buttonHover = Theme.dynamic(
-            light: 0x7654C7, dark: 0xA78BFA, alpha: 0.30
-        )
-        /// Silk-ribbon strand colors, in strand order.
+        /// Ember Trace strand colors, in strand order.
         static let ribbonPalette: [Color] = [
-            Color(red: 196 / 255, green: 132 / 255, blue: 252 / 255),
-            Color(red: 124 / 255, green: 93 / 255, blue: 250 / 255),
-            Color(red: 94 / 255, green: 214 / 255, blue: 255 / 255),
-            Color(red: 244 / 255, green: 158 / 255, blue: 255 / 255),
+            Theme.accent,
+            Theme.accent.opacity(0.86),
+            Theme.warning,
+            Theme.accent.opacity(0.58),
         ]
-        static let baselineLeft = Color(red: 180 / 255, green: 150 / 255, blue: 255 / 255, opacity: 0.5)
-        static let baselineRight = Color(red: 120 / 255, green: 220 / 255, blue: 255 / 255, opacity: 0.5)
+        static let baseline = Theme.accent.opacity(0.5)
     }
 
     // MARK: - typography (SF Pro / SF Mono behind one seam)
@@ -130,7 +110,6 @@ enum Theme {
     static let keycapRadius = controlRadius
     static let tooltipRadius = controlRadius
     static let badgeHeight: CGFloat = 38
-    static let badgeCrossFade = Animation.easeOut(duration: 0.22)
 
     // MARK: - helpers
 

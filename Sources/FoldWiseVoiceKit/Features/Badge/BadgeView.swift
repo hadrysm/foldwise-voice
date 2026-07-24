@@ -1,7 +1,7 @@
-// The floating Badge pill (PRD #103), drawn entirely in SwiftUI: a fixed
-// adaptive capsule with a violet/ribbon identity that survives both appearances,
-// static idle glyph, hover action row, and the silk-ribbon recording
-// canvas. GPU-driven via TimelineView + Canvas — no main-thread drawing loop.
+// The floating Badge pill (PRDs #103 and #260), drawn entirely in SwiftUI:
+// a fixed adaptive capsule with Ember Trace semantics, a static idle glyph,
+// hover action row, and the mic-reactive recording canvas. GPU-driven via
+// TimelineView + Canvas — no main-thread drawing loop.
 // All state transitions come from the Badge reducers via the controller; this
 // file only renders `BadgeModel`.
 
@@ -19,94 +19,175 @@ final class BadgeModel: ObservableObject {
     var amplitude: Double = LevelSmoother.floor
 }
 
+struct BadgeEnvironmentAdaptations: Equatable {
+    let reduceMotion: Bool
+    let increaseContrast: Bool
+}
+
 struct BadgeView: View {
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @ObservedObject var model: BadgeModel
-    var onHover: (Bool) -> Void
-    var onClick: () -> Void
-    var onChangeMode: () -> Void
-    var onRecord: () -> Void
-    var onOpenApp: () -> Void
-    var onReduceMotionChanged: (Bool) -> Void = { _ in }
+    let onHover: (Bool) -> Void
+    let onClick: () -> Void
+    let onChangeMode: () -> Void
+    let onRecord: () -> Void
+    let onOpenApp: () -> Void
+    let onReduceMotionChanged: (Bool) -> Void
+    private let environmentOverride: BadgeEnvironmentAdaptations?
+
+    init(
+        model: BadgeModel,
+        onHover: @escaping (Bool) -> Void,
+        onClick: @escaping () -> Void,
+        onChangeMode: @escaping () -> Void,
+        onRecord: @escaping () -> Void,
+        onOpenApp: @escaping () -> Void,
+        onReduceMotionChanged: @escaping (Bool) -> Void = { _ in },
+        environmentOverride: BadgeEnvironmentAdaptations? = nil
+    ) {
+        self.model = model
+        self.onHover = onHover
+        self.onClick = onClick
+        self.onChangeMode = onChangeMode
+        self.onRecord = onRecord
+        self.onOpenApp = onOpenApp
+        self.onReduceMotionChanged = onReduceMotionChanged
+        self.environmentOverride = environmentOverride
+    }
 
     var body: some View {
         ZStack {
-            Capsule().fill(Theme.Badge.pillBackground)
+            Capsule().fill(Theme.surface)
             content
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                .transition(contentTransition)
         }
-        // No glow or drop shadow: blurs smudge light wallpapers, and the
-        // panel is exactly pill-sized so they'd clip anyway. The border and
-        // the ribbons carry the state, not a halo.
-        .overlay(Capsule().strokeBorder(borderColor, lineWidth: 1))
+        .overlay {
+            Capsule().strokeBorder(
+                borderColor,
+                lineWidth: resolvedEnvironment.increaseContrast ? 2 : 1
+            )
+        }
         .contentShape(Capsule())
         .onHover(perform: onHover)
         .onTapGesture(perform: onClick)
-        .animation(Theme.badgeCrossFade, value: model.state)
-        .onAppear { onReduceMotionChanged(accessibilityReduceMotion) }
+        .animation(ordinaryAnimation, value: model.state)
+        .onAppear { onReduceMotionChanged(resolvedEnvironment.reduceMotion) }
         .onChange(of: accessibilityReduceMotion) { _, reduced in
-            onReduceMotionChanged(reduced)
+            onReduceMotionChanged(environmentOverride?.reduceMotion ?? reduced)
         }
     }
 
     private var borderColor: Color {
-        switch model.state {
-        case .recording, .working: Theme.Badge.borderRecording
-        case .error: Theme.Badge.borderError
-        default: Theme.Badge.border
+        switch visualPresentation.role {
+        case .neutral:
+            resolvedEnvironment.increaseContrast ? Theme.borderStrong : Theme.border
+        case .active:
+            Theme.accent
+        case .success:
+            Theme.success
+        case .error:
+            Theme.error
         }
+    }
+
+    private var visualPresentation: BadgeVisualPresentation {
+        BadgeVisualPolicy.presentation(
+            for: model.state,
+            presentsModeCycle: model.modeCycleDisplay != nil
+        )
+    }
+
+    private var resolvedEnvironment: BadgeEnvironmentAdaptations {
+        environmentOverride ?? BadgeEnvironmentAdaptations(
+            reduceMotion: accessibilityReduceMotion,
+            increaseContrast: colorSchemeContrast == .increased
+        )
+    }
+
+    private var motion: BadgeMotionPresentation {
+        BadgeMotionPolicy.presentation(reduceMotion: resolvedEnvironment.reduceMotion)
+    }
+
+    private var ordinaryAnimation: Animation? {
+        motion.ordinaryTransitionDuration.map(Animation.easeOut(duration:))
+    }
+
+    private var contentTransition: AnyTransition {
+        motion.ordinaryTransitionDuration == nil
+            ? .identity
+            : .opacity.combined(with: .scale(scale: 0.9))
     }
 
     @ViewBuilder
     private var content: some View {
-        if let modeCycleDisplay = model.modeCycleDisplay {
-            BadgeModeCycleReel(display: modeCycleDisplay)
-        } else {
-            switch model.state {
-            case .idle:
-                BadgeIdleGlyph()
-            case .hover:
-                hoverActions
-            case .recording:
-                HStack(spacing: 10) {
-                    RibbonCanvas(live: true, amplitude: { model.amplitude })
-                        .frame(height: 20)
-                    Text(timerText)
-                        .font(Theme.mono(11, .medium))
-                        .foregroundStyle(Theme.Badge.timerText)
-                }
-                .padding(.horizontal, 13)
-            case .working:
-                HStack(spacing: 10) {
-                    RibbonCanvas(live: false, amplitude: { 0.18 })
-                        .frame(height: 20)
-                    if model.state.statusText != nil {
-                        statusLine
-                    } else {
-                        BadgeSpinner()
-                    }
-                }
-                .padding(.horizontal, 13)
-            case .done:
-                HStack(spacing: 7) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Theme.Badge.iconEmphasized)
-                    Text("inserted")
-                        .font(Theme.mono(11, .medium))
-                        .foregroundStyle(Theme.Badge.timerText)
-                }
-            case .error:
+        switch visualPresentation.cue {
+        case .idleGlyph:
+            BadgeIdleGlyph()
+        case .hoverActions:
+            hoverActions
+        case .ribbonsAndTimer:
+            HStack(spacing: 10) {
+                RibbonCanvas(
+                    live: true,
+                    amplitude: { model.amplitude },
+                    motion: motion
+                )
+                .frame(height: 20)
+                Text(timerText)
+                    .font(Theme.mono(11, .medium))
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            .padding(.horizontal, 13)
+        case .ribbonsAndSpinner:
+            HStack(spacing: 10) {
+                workingRibbon
+                BadgeSpinner(motion: motion)
+            }
+            .padding(.horizontal, 13)
+        case .ribbonsAndStatus:
+            HStack(spacing: 10) {
+                workingRibbon
                 statusLine
-                    .padding(.horizontal, 13)
+            }
+            .padding(.horizontal, 13)
+        case .checkmarkAndText:
+            HStack(spacing: 7) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Theme.success)
+                Text("inserted")
+                    .font(Theme.mono(11, .medium))
+                    .foregroundStyle(Theme.textPrimary)
+            }
+        case .warningAndText:
+            HStack(spacing: 7) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Theme.error)
+                statusLine
+            }
+            .padding(.horizontal, 13)
+        case .modeSelection:
+            if let modeCycleDisplay = model.modeCycleDisplay {
+                BadgeModeCycleReel(display: modeCycleDisplay)
             }
         }
+    }
+
+    private var workingRibbon: some View {
+        RibbonCanvas(
+            live: false,
+            amplitude: { 0.18 },
+            motion: motion
+        )
+        .frame(height: 20)
     }
 
     private var statusLine: some View {
         Text(model.state.statusText ?? "")
             .font(Theme.mono(11, .medium))
-            .foregroundStyle(Theme.Badge.timerText)
+            .foregroundStyle(Theme.textPrimary)
             .lineLimit(1)
     }
 
@@ -122,14 +203,16 @@ struct BadgeView: View {
     private var hoverActions: some View {
         HStack(spacing: 8) {
             BadgeRoundButton(
-                symbol: "sparkles", diameter: 28, emphasized: false, action: onChangeMode
+                symbol: "sparkles", diameter: 28, emphasized: false,
+                motion: motion, action: onChangeMode
             )
             .help("Mode: \(model.activeModeName)")
             .accessibilityLabel(
                 BadgeHoverAccessibility.selectionLabel(currentSelection: model.activeModeName)
             )
             BadgeRoundButton(
-                symbol: "mic.fill", diameter: 30, emphasized: true, action: onRecord
+                symbol: "mic.fill", diameter: 30, emphasized: true,
+                motion: motion, action: onRecord
             )
             .help("Dictate — \(model.hotkeyLabel)")
             .accessibilityLabel(
@@ -137,7 +220,7 @@ struct BadgeView: View {
             )
             BadgeRoundButton(
                 symbol: "arrow.up.left.and.arrow.down.right", diameter: 28,
-                emphasized: false, action: onOpenApp
+                emphasized: false, motion: motion, action: onOpenApp
             )
             .help("Open FoldWise")
             .accessibilityLabel(BadgeHoverAccessibility.openAppLabel)
@@ -182,12 +265,13 @@ private struct BadgeModeCycleReel: View {
         HStack(spacing: 8) {
             Image(systemName: item.icon)
                 .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.accent)
             Text(item.name)
                 .font(Theme.ui(12, .semibold))
+                .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
-        .foregroundStyle(Theme.Badge.iconEmphasized)
     }
 }
 
@@ -196,6 +280,7 @@ private struct BadgeRoundButton: View {
     let diameter: CGFloat
     /// The mic gets a standing tint and a slight hover scale-up.
     let emphasized: Bool
+    let motion: BadgeMotionPresentation
     let action: () -> Void
     @State private var hovering = false
 
@@ -203,23 +288,32 @@ private struct BadgeRoundButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: diameter * 0.36, weight: .semibold))
-                .foregroundStyle(hovering || emphasized
-                    ? Theme.Badge.iconEmphasized
-                    : Theme.Badge.iconIdle)
-                    .frame(width: diameter, height: diameter)
-                    .background(Circle().fill(background))
-                    .scaleEffect(emphasized && hovering ? 1.06 : 1)
+                .foregroundStyle(iconColor)
+                .frame(width: diameter, height: diameter)
+                .background(Circle().fill(background))
+                .scaleEffect(emphasized && hovering ? motion.emphasizedHoverScale : 1)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.15), value: hovering)
+        .animation(hoverAnimation, value: hovering)
+    }
+
+    private var iconColor: Color {
+        if emphasized {
+            return hovering ? Theme.accentHover : Theme.accent
+        }
+        return hovering ? Theme.textPrimary : Theme.textSecondary
     }
 
     private var background: Color {
         if emphasized {
-            return hovering ? Theme.Badge.buttonHover : Theme.Badge.buttonBackground
+            return hovering ? Theme.hover : Theme.raised
         }
-        return hovering ? Theme.Badge.buttonBackground.opacity(0.6) : .clear
+        return hovering ? Theme.hover : .clear
+    }
+
+    private var hoverAnimation: Animation? {
+        motion.ordinaryTransitionDuration.map(Animation.easeOut(duration:))
     }
 }
 
@@ -240,7 +334,6 @@ struct BadgeIdleGlyph: View {
             let total = CGFloat(count) * width + CGFloat(count - 1) * gap
             let x0 = (size.width - total) / 2
             for (i, height) in Self.heights.enumerated() {
-                let isBar = height > 3.5
                 let rect = CGRect(
                     x: x0 + CGFloat(i) * (width + gap),
                     y: (size.height - height) / 2,
@@ -248,7 +341,7 @@ struct BadgeIdleGlyph: View {
                 )
                 ctx.fill(
                     Path(roundedRect: rect, cornerRadius: width / 2),
-                    with: .color(isBar ? Theme.Badge.iconEmphasized : Theme.Badge.iconIdle)
+                    with: .color(Theme.accent)
                 )
             }
         }
@@ -260,13 +353,19 @@ struct BadgeIdleGlyph: View {
 /// the same TimelineView clock as the other badge animations — no implicit
 /// animations inside the non-activating panel.
 struct BadgeSpinner: View {
+    let motion: BadgeMotionPresentation
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+        TimelineView(.animation(
+            minimumInterval: 1.0 / 30.0,
+            paused: motion.pausesDecorativeTimelines
+        )) { context in
+            let t = motion.representativeTimelineTime
+                ?? context.date.timeIntervalSinceReferenceDate
             Circle()
                 .trim(from: 0, to: 0.72)
                 .stroke(
-                    Theme.Badge.timerText,
+                    Theme.accent,
                     style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
                 )
                 .frame(width: 12, height: 12)
@@ -276,26 +375,30 @@ struct BadgeSpinner: View {
     }
 }
 
-/// The silk-ribbon light animation (PRD #103): four additive-blended strands,
-/// each drawn as three phase-offset sub-strokes over a gradient hairline,
-/// flattened at the edges by a sin² envelope. `live` ribbons move at the
-/// recording speed with mic-driven amplitude; calm ribbons (working state)
-/// keep the slow idle-preview speed at a low fixed amplitude.
+/// The Ember Trace animation: four orange-led strands over a subtle accent
+/// baseline, flattened at the edges by a sin² envelope. `live` ribbons move
+/// at the recording speed with mic-driven amplitude; calm ribbons use the
+/// fixed working amplitude.
 struct RibbonCanvas: View {
     let live: Bool
     /// Sampled every frame; recording feeds the smoothed mic level.
     let amplitude: () -> Double
+    let motion: BadgeMotionPresentation
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-            // The spec's algorithm works in milliseconds.
-            let t = context.date.timeIntervalSinceReferenceDate * 1000
+        TimelineView(.animation(
+            minimumInterval: 1.0 / 30.0,
+            paused: motion.pausesDecorativeTimelines
+        )) { context in
+            let time = motion.representativeTimelineTime
+                ?? context.date.timeIntervalSinceReferenceDate
             Canvas { ctx, size in
                 drawBaseline(&ctx, size: size)
-                drawStrands(&ctx, size: size, t: t)
+                drawStrands(&ctx, size: size, t: time * 1000)
             }
         }
         .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     private func drawBaseline(_ ctx: inout GraphicsContext, size: CGSize) {
@@ -304,8 +407,8 @@ struct RibbonCanvas: View {
         line.addLine(to: CGPoint(x: size.width, y: size.height / 2))
         let gradient = Gradient(stops: [
             .init(color: .clear, location: 0),
-            .init(color: Theme.Badge.baselineLeft, location: 0.15),
-            .init(color: Theme.Badge.baselineRight, location: 0.85),
+            .init(color: Theme.Badge.baseline, location: 0.15),
+            .init(color: Theme.Badge.baseline, location: 0.85),
             .init(color: .clear, location: 1),
         ])
         ctx.stroke(
@@ -323,7 +426,10 @@ struct RibbonCanvas: View {
         let w = size.width
         let h = size.height
         let speed = live ? 0.0009 : 0.00045
-        let amp = amplitude()
+        let amp = motion.ribbonAmplitude(
+            live: live,
+            sampledAmplitude: amplitude()
+        )
         let flat = 0.09
         for strand in 0 ..< 4 {
             let i = Double(strand)
@@ -333,7 +439,6 @@ struct RibbonCanvas: View {
             let drift = sin(t * 0.00012 + i) * 0.12
             var strandCtx = ctx
             strandCtx.blendMode = .plusLighter
-            strandCtx.addFilter(.shadow(color: color.opacity(0.8), radius: 6))
             for sub in 0 ..< 3 {
                 let s = Double(sub)
                 var path = Path()

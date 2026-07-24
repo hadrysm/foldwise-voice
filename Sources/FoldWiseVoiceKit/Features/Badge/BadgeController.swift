@@ -47,6 +47,7 @@ final class BadgeController: NSObject {
     private var modeSelectionRevision = 0
     private var programmaticMove = BadgeProgrammaticMoveState()
     private var smoother = LevelSmoother()
+    private var reduceMotion = false
     /// Pill anchor: (capsule center-x, bottom-y) in screen points.
     private var anchor: CGPoint?
 
@@ -247,7 +248,10 @@ final class BadgeController: NSObject {
         }
         let wasRecording = model.state == .recording
         model.state = state
-        setSize(CGSize(width: state.width, height: Theme.badgeHeight))
+        setSize(
+            CGSize(width: state.width, height: Theme.badgeHeight),
+            animate: !reduceMotion
+        )
         if state == .recording, !wasRecording {
             startRecordingTimers()
         } else if state != .recording, wasRecording {
@@ -295,7 +299,7 @@ final class BadgeController: NSObject {
             onRecord: { [weak self] in self?.onRecord?() },
             onOpenApp: { [weak self] in self?.onOpenApp() },
             onReduceMotionChanged: { [weak self] reduced in
-                self?.handleModeCycle(.reduceMotionChanged(reduced))
+                self?.applyReduceMotion(reduced)
             }
         )
         p.contentView = NSHostingView(rootView: view)
@@ -308,6 +312,11 @@ final class BadgeController: NSObject {
 
         panel = p
         setSize(rect.size, animate: false)
+    }
+
+    private func applyReduceMotion(_ reduced: Bool) {
+        reduceMotion = reduced
+        handleModeCycle(.reduceMotionChanged(reduced))
     }
 
     /// The sparkle button's mode picker: every Mode with the active one

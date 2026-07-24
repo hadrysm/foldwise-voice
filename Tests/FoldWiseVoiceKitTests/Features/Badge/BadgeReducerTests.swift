@@ -271,6 +271,8 @@ final class BadgeReducerTests: XCTestCase {
         XCTAssertEqual(BadgeState.hover.width, 132)
         XCTAssertEqual(BadgeState.recording.width, 208)
         XCTAssertEqual(BadgeState.working(status: nil).width, 208)
+        XCTAssertEqual(BadgeState.done.width, 208)
+        XCTAssertEqual(BadgeState.error(message: "x").width, 208)
     }
 
     func testRibbonsFollowTheMicOnlyWhileRecording() {

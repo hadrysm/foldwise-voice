@@ -30,20 +30,6 @@ final class ThemeAppearanceTests: XCTestCase {
         }
     }
 
-    func testBadgeBackgroundResolvesToApprovedVariants() throws {
-        try assertColor(
-            Theme.Badge.pillBackground, appearance: .aqua, hex: 0xF7F5FB, alpha: 0.96
-        )
-        try assertColor(
-            Theme.Badge.pillBackground, appearance: .darkAqua, hex: 0x100D16, alpha: 0.96
-        )
-    }
-
-    func testBadgeForegroundResolvesToApprovedVariants() throws {
-        try assertColor(Theme.Badge.iconEmphasized, appearance: .aqua, hex: 0x211A32)
-        try assertColor(Theme.Badge.iconEmphasized, appearance: .darkAqua, hex: 0xE8E2F7)
-    }
-
     private func assertColor(
         _ color: Color,
         appearance name: NSAppearance.Name,
