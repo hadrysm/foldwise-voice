@@ -125,13 +125,19 @@ Testing targets, XCUITest targets, automatic retries, or dynamic exclusions.
 Run the focused rendered checks with:
 
 ```sh
-swift test --filter 'BadgeHaloTests|BadgeIdleSilhouetteTests|TitlebarAlignmentTests'
+swift test --filter 'BadgeHaloTests|BadgeIdleSilhouetteTests|BadgeViewHostedTests|TitlebarAlignmentTests'
 ```
 
-These tests intentionally protect only three visible invariants:
+These tests intentionally protect only these visible invariants:
 
 - the idle Badge has no glow or shadow bleeding onto a light background;
-- the idle Badge glyph keeps its intentional dot/bar silhouette; and
+- the idle Badge glyph keeps its intentional dot/bar silhouette;
+- neutral Badge surfaces resolve to the canonical opaque Light and Dark tokens;
+- primary Badge presentations render their canonical active, success, and error
+  semantic tokens;
+- Reduce Motion freezes the Badge's decorative recording waveform at its
+  representative amplitude;
+- Increase Contrast strengthens the Badge's essential capsule boundary; and
 - the sidebar toggle stays aligned and proportionate to the traffic lights in a
   real AppKit window.
 
