@@ -1231,30 +1231,27 @@ enum GlobalStatusToastMotion {
     }
 }
 
-private struct GlobalStatusToast: View {
+struct GlobalStatusToast: View {
     let title: String
     let isError: Bool
+    var increaseContrastOverride: Bool?
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: isError ? "xmark.octagon.fill" : "checkmark.circle.fill")
-                .foregroundStyle(isError ? Theme.error : Theme.success)
-                .accessibilityHidden(true)
-            Text(title)
-                .font(Theme.ui(12, .semibold))
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(2)
+        EmberSurface(level: .raised, increaseContrast: increaseContrastOverride) {
+            HStack(spacing: 8) {
+                Image(systemName: isError ? "xmark.octagon.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(isError ? Theme.error : Theme.success)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(Theme.ui(12, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(2)
+            }
+            .padding(.leading, 14)
+            .padding(.trailing, 16)
+            .frame(minWidth: 112, maxWidth: 320, minHeight: 40, alignment: .leading)
+            .fixedSize(horizontal: true, vertical: true)
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 16)
-        .frame(minWidth: 112, maxWidth: 320, minHeight: 40, alignment: .leading)
-        .fixedSize(horizontal: true, vertical: true)
-        .background(Theme.raised, in: RoundedRectangle(cornerRadius: Theme.surfaceRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: Theme.surfaceRadius)
-                .strokeBorder(Theme.border, lineWidth: Theme.standardBorderWidth)
-        }
-        .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(isError ? "Error" : "Success"): \(title)")
     }

@@ -131,14 +131,17 @@ enum EmberSurfaceLevel {
 
 struct EmberSurface<Content: View>: View {
     let level: EmberSurfaceLevel
+    let increaseContrastOverride: Bool?
     @ViewBuilder let content: Content
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     init(
         level: EmberSurfaceLevel = .standard,
+        increaseContrast: Bool? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.level = level
+        increaseContrastOverride = increaseContrast
         self.content = content()
     }
 
@@ -155,7 +158,7 @@ struct EmberSurface<Content: View>: View {
     }
 
     private var usesStrongBoundary: Bool {
-        colorSchemeContrast == .increased
+        increaseContrastOverride ?? (colorSchemeContrast == .increased)
     }
 }
 
