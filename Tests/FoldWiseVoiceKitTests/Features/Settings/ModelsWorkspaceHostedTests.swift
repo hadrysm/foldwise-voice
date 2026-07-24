@@ -32,7 +32,7 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
         )
     }
 
-    func testInspectedTraceRowDoesNotDrawASecondLeadingAccentStripe() throws {
+    func testInspectedTraceRowRendersTheCanonicalLeadingIngress() throws {
         let row = try renderedColorCounts(
             ModelsTraceRowChrome(
                 isInspected: true,
@@ -43,10 +43,10 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
             size: NSSize(width: 180, height: 46)
         )
 
-        XCTAssertLessThan(
+        XCTAssertGreaterThan(
             row.leadingAccent,
-            10,
-            "the selected-row chrome should not add a separate orange ingress stripe"
+            100,
+            "the inspected row should continue the orange ingress shown in the inspector"
         )
     }
 
