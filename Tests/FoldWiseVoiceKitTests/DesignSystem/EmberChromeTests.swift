@@ -4,6 +4,11 @@ import XCTest
 @testable import FoldWiseVoiceKit
 
 final class EmberChromeTests: XCTestCase {
+    private struct ToastRenderAnalysis {
+        let strongBoundaryPixels: Int
+        let bleedPixels: Int
+    }
+
     func testGlobalToastMotionRisesFromBelowAndExitsTowardTheBottom() {
         XCTAssertEqual(GlobalStatusToastMotion.insertionOffset, 20)
         XCTAssertEqual(GlobalStatusToastMotion.removalOffset, 12)
@@ -12,11 +17,48 @@ final class EmberChromeTests: XCTestCase {
     }
 
     @MainActor
-    func testGlobalToastUsesStrongContrastBoundaryWithoutShadowBleed() throws {
+    func testGlobalToastUsesStrongContrastBoundary() throws {
+        XCTAssertGreaterThan(
+            try analyzeGlobalToast(increaseContrast: true).strongBoundaryPixels,
+            100
+        )
+    }
+
+    @MainActor
+    func testGlobalToastCastsNoShadowBleed() throws {
+        XCTAssertEqual(
+            try analyzeGlobalToast(increaseContrast: false).bleedPixels,
+            0
+        )
+    }
+
+    func testSemanticNoticeUsesCanonicalIngressByDefault() {
+        let notice = EmberStatusNotice(kind: .success, title: "Saved")
+
+        XCTAssertEqual(notice.ingressWidth, Theme.noticeIngressWidth)
+    }
+
+    func testSemanticNoticesPairColorWithPermanentIconAndTextCues() {
+        XCTAssertEqual(
+            EmberStatusKind.allCases.map {
+                [$0.accessibilityName, $0.symbolName, $0.colorRole.rawValue]
+            },
+            [
+                ["Success", "checkmark.circle.fill", "success"],
+                ["Warning", "exclamationmark.triangle.fill", "warning"],
+                ["Error", "xmark.octagon.fill", "error"],
+            ]
+        )
+    }
+
+    @MainActor
+    private func analyzeGlobalToast(
+        increaseContrast: Bool
+    ) throws -> ToastRenderAnalysis {
         let toast = GlobalStatusToast(
             title: "Saved",
             isError: false,
-            increaseContrastOverride: true
+            increaseContrastOverride: increaseContrast
         )
         .environment(\.colorScheme, .light)
         let hosting = NSHostingView(rootView: toast)
@@ -56,26 +98,9 @@ final class EmberChromeTests: XCTestCase {
             }
         }
 
-        XCTAssertGreaterThan(strongBoundaryPixels, 100)
-        XCTAssertEqual(bleedPixels, 0)
-    }
-
-    func testSemanticNoticeUsesCanonicalIngressByDefault() {
-        let notice = EmberStatusNotice(kind: .success, title: "Saved")
-
-        XCTAssertEqual(notice.ingressWidth, Theme.noticeIngressWidth)
-    }
-
-    func testSemanticNoticesPairColorWithPermanentIconAndTextCues() {
-        XCTAssertEqual(
-            EmberStatusKind.allCases.map {
-                [$0.accessibilityName, $0.symbolName, $0.colorRole.rawValue]
-            },
-            [
-                ["Success", "checkmark.circle.fill", "success"],
-                ["Warning", "exclamationmark.triangle.fill", "warning"],
-                ["Error", "xmark.octagon.fill", "error"],
-            ]
+        return ToastRenderAnalysis(
+            strongBoundaryPixels: strongBoundaryPixels,
+            bleedPixels: bleedPixels
         )
     }
 

@@ -77,7 +77,7 @@ canonical-token and responsive-spacing gaps.
 | Check | Result |
 | --- | --- |
 | Focused red/green and hosted suites | Pass without retry |
-| Full XCTest suite | Pass — `1,092` tests, `0` failures |
+| Full XCTest suite | Pass — `1,093` tests, `0` failures |
 | SwiftFormat lint | Pass — `0/173` files require formatting |
 | Strict SwiftLint | Pass — `0` violations in `161` files |
 | Git diff check | Pass |
