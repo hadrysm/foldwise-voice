@@ -504,8 +504,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         private var pipeline: Pipeline?
         private var hotkeyHealth: ShortcutListenerHealth?
         private var updaterController: SPUStandardUpdaterController?
-        private var signalSource: DispatchSourceFileSystemObject?
-        private var signalDirectoryDescriptor: Int32 = -1
+        private var signalMonitor: UpdateRuntimeAcceptanceSignalMonitor?
         private var didRequestTermination = false
         private var didRecordTerminationDeferral = false
         private lazy var lifecycleCoordinator = DictationLifecycleCoordinator { [weak self] in
@@ -688,43 +687,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         }
 
         private func watchForHarnessSignals() throws {
-            signalDirectoryDescriptor = open(directory.path, O_EVTONLY)
-            guard signalDirectoryDescriptor >= 0 else {
+            let signalName = role == .source ? "finish-dictation" : "terminate-target"
+            let role = role
+            let insertionGate = insertionGate
+            let monitor = UpdateRuntimeAcceptanceSignalMonitor(
+                directory: directory,
+                signalName: signalName
+            ) {
+                switch role {
+                case .source:
+                    Task { await insertionGate.open() }
+                case .target:
+                    DispatchQueue.main.async {
+                        NSApp.terminate(nil)
+                    }
+                }
+            }
+            do {
+                try monitor.start()
+            } catch {
                 throw AcceptanceError.contract("could not watch acceptance directory")
             }
-            let source = DispatchSource.makeFileSystemObjectSource(
-                fileDescriptor: signalDirectoryDescriptor,
-                eventMask: .write,
-                queue: .main
-            )
-            source.setEventHandler { [weak self] in
-                self?.consumeHarnessSignal()
-            }
-            source.setCancelHandler { [descriptor = signalDirectoryDescriptor] in
-                close(descriptor)
-            }
-            signalSource = source
-            source.resume()
-        }
-
-        private func consumeHarnessSignal() {
-            let signalName = role == .source ? "finish-dictation" : "terminate-target"
-            let signal = directory.appendingPathComponent(signalName)
-            guard FileManager.default.fileExists(atPath: signal.path) else { return }
-            do {
-                try FileManager.default.removeItem(at: signal)
-            } catch {
-                Log.app.error(
-                    "Acceptance signal cleanup failed: \(error.localizedDescription)"
-                )
-            }
-
-            switch role {
-            case .source:
-                Task { await insertionGate.open() }
-            case .target:
-                NSApp.terminate(nil)
-            }
+            signalMonitor = monitor
         }
 
         private func receiveSessionEvent(_ event: DictationSessionEvent) {
@@ -784,8 +768,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             hotkeys?.stop()
             pipeline?.shutdown()
             badge?.hide()
-            signalSource?.cancel()
-            signalSource = nil
+            signalMonitor?.stop()
+            signalMonitor = nil
         }
 
         private func record(
