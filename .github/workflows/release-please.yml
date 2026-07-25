@@ -25,60 +25,88 @@ jobs:
   # Must be chained here (not an `on: release` workflow): releases created
   # with the default GITHUB_TOKEN don't trigger other workflows.
   #
-  # Signing/notarization is optional and driven by repo secrets. Without them
-  # the .dmg is ad-hoc signed and Gatekeeper requires "Open Anyway" on first
-  # launch. To ship notarized builds, add:
+  # Release artifacts are always Developer ID signed and notarized. Configure:
   #   MACOS_CERTIFICATE          base64 of the Developer ID Application .p12
   #                              (base64 -i cert.p12 | pbcopy)
   #   MACOS_CERTIFICATE_PASSWORD password of that .p12
-  #   CODESIGN_IDENTITY          e.g. "Developer ID Application: Name (TEAMID)"
-  #   NOTARY_APPLE_ID            Apple ID email
-  #   NOTARY_PASSWORD            app-specific password (appleid.apple.com)
-  #   NOTARY_TEAM_ID             10-char team ID
+  #   CODESIGN_IDENTITY          "Developer ID Application: Name (TEAMID)"
+  #   NOTARY_API_PRIVATE_KEY_BASE64
+  #                              base64 of a Team App Store Connect API .p8 key
+  #   NOTARY_API_KEY_ID          App Store Connect API key ID
+  #   NOTARY_API_ISSUER_ID       App Store Connect API issuer ID
   upload-dmg:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: macos-latest
-    # `secrets` isn't allowed in step `if:` expressions, so surface the
-    # presence checks as job env vars and gate on those instead.
-    env:
-      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
-      HAS_NOTARY_CREDS: ${{ secrets.NOTARY_APPLE_ID != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
       - name: Import Developer ID certificate
-        if: ${{ env.HAS_SIGNING_CERT == 'true' }}
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
+          set -euo pipefail
+          : "${MACOS_CERTIFICATE:?MACOS_CERTIFICATE secret is required}"
+          : "${MACOS_CERTIFICATE_PASSWORD:?MACOS_CERTIFICATE_PASSWORD secret is required}"
           KEYCHAIN_PASSWORD=$(uuidgen)
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          echo "$MACOS_CERTIFICATE" | base64 --decode > cert.p12
-          security import cert.p12 -k build.keychain \
+          KEYCHAIN_PATH="$RUNNER_TEMP/foldwise-build.keychain-db"
+          CERTIFICATE_PATH="$RUNNER_TEMP/foldwise-developer-id.p12"
+          trap 'rm -f "$CERTIFICATE_PATH"' EXIT
+
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -k "$KEYCHAIN_PATH" \
             -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          rm cert.p12
           security set-key-partition-list -S apple-tool:,apple: \
-            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
       - name: Build .dmg
         env:
           CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
-        run: python3 scripts/build_swift_app.py --dmg
-      - name: Notarize and staple
-        if: ${{ env.HAS_NOTARY_CREDS == 'true' }}
-        env:
-          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
-          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
         run: |
+          set -euo pipefail
+          : "${CODESIGN_IDENTITY:?CODESIGN_IDENTITY secret is required}"
+          python3 scripts/build_swift_app.py --dmg
+      - name: Notarize and staple
+        env:
+          NOTARY_API_PRIVATE_KEY_BASE64: ${{ secrets.NOTARY_API_PRIVATE_KEY_BASE64 }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          : "${NOTARY_API_PRIVATE_KEY_BASE64:?NOTARY_API_PRIVATE_KEY_BASE64 secret is required}"
+          : "${NOTARY_API_KEY_ID:?NOTARY_API_KEY_ID secret is required}"
+          : "${NOTARY_API_ISSUER_ID:?NOTARY_API_ISSUER_ID secret is required}"
+          NOTARY_KEY_PATH="$RUNNER_TEMP/foldwise-notary-key.p8"
+          trap 'rm -f "$NOTARY_KEY_PATH"' EXIT
+          umask 077
+          printf '%s' "$NOTARY_API_PRIVATE_KEY_BASE64" \
+            | base64 --decode > "$NOTARY_KEY_PATH"
+
           xcrun notarytool submit dist/FoldWise-Voice-*.dmg \
-            --apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_PASSWORD" \
-            --team-id "$NOTARY_TEAM_ID" --wait
+            --key "$NOTARY_KEY_PATH" \
+            --key-id "$NOTARY_API_KEY_ID" \
+            --issuer "$NOTARY_API_ISSUER_ID" \
+            --wait
           xcrun stapler staple dist/FoldWise-Voice-*.dmg
+      - name: Verify release artifact
+        run: |
+          set -euo pipefail
+          APP_PATH="dist/dmg/FoldWise Voice.app"
+          DMG_PATH=(dist/FoldWise-Voice-*.dmg)
+
+          codesign --verify --strict --verbose=2 "$APP_PATH"
+          codesign --verify --strict --verbose=2 "${DMG_PATH[0]}"
+          codesign -dvvv "$APP_PATH"
+          codesign -dr - "$APP_PATH"
+          spctl -a -vvv -t exec "$APP_PATH"
+          spctl -a -vvv -t open \
+            --context context:primary-signature "${DMG_PATH[0]}"
+          xcrun stapler validate "${DMG_PATH[0]}"
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -42,6 +42,13 @@ Text is usable with built-in runtime defaults until an explicit reset backs up
 and replaces the file.
 _Avoid_: safe mode, fallback configuration
 
+**Permission recovery guide** — The dismissible app surface shown when
+Microphone or Accessibility access is missing. It reports live grant status,
+guides the user back to full Dictation capability, and remains reachable until
+both permissions are restored. Input Monitoring is offered only as the narrower
+global-shortcut fallback when Accessibility is declined.
+_Avoid_: migration wizard, permission onboarding
+
 **Monthly activity calendar** — The Stats view of the current calendar month,
 where each day reflects the total spoken words in saved Dictation sessions for
 that day. Day details may also describe session count, speaking time, and the
