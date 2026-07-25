@@ -143,6 +143,8 @@ jobs:
         }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Download preserved submission
         uses: actions/download-artifact@v4
         with:
@@ -151,12 +153,28 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ env.SOURCE_RUN_ID }}
-      - name: Wait, staple, verify, and publish
+      - name: Restore the release source and publication tools
+        run: |
+          set -euo pipefail
+          RELEASE_COMMIT=$(jq -r '.commit' dist/notarization/submission.json)
+          git checkout --detach "$RELEASE_COMMIT"
+          swift package resolve
+          if ! command -v aws >/dev/null 2>&1; then
+            brew install awscli
+          fi
+          test -x .build/artifacts/sparkle/Sparkle/bin/generate_appcast
+      - name: Wait, staple, verify, and publish authenticated update
         env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
           GH_TOKEN: ${{ github.token }}
           NOTARY_API_PRIVATE_KEY_BASE64: ${{ secrets.NOTARY_API_PRIVATE_KEY_BASE64 }}
           NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
           NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          UPDATE_R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          UPDATE_R2_BUCKET: ${{ vars.R2_BUCKET_NAME }}
         run: |
           set -euo pipefail
           : "${NOTARY_API_PRIVATE_KEY_BASE64:?NOTARY_API_PRIVATE_KEY_BASE64 secret is required}"

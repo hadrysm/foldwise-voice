@@ -12,9 +12,10 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Protocol
 
 
 class JSONCommandRunner(Protocol):
@@ -82,6 +83,10 @@ class GitHubReleasePublisher:
         self.repository = repository
 
     def publish(self, tag: str, dmg: Path, sha256: str) -> None:
+        self.stage_asset(tag, dmg, sha256)
+        self.publish_draft(tag)
+
+    def stage_asset(self, tag: str, dmg: Path, sha256: str) -> None:
         release = self._release(tag)
         asset = self._asset(release, dmg.name)
         if asset is not None:
@@ -109,6 +114,8 @@ class GitHubReleasePublisher:
                 )
             self._verify_asset_digest(uploaded, sha256)
 
+    def publish_draft(self, tag: str) -> None:
+        release = self._release(tag)
         if release.get("draft") is True:
             self.runner.run(
                 [
@@ -180,11 +187,19 @@ class SystemCommandRunner:
     def run(self, command: list[str]) -> None:
         self._run(command, capture_output=False)
 
+    def run_input(self, command: list[str], value: str | None) -> None:
+        self._run(
+            command,
+            capture_output=False,
+            input_value=value,
+        )
+
     @staticmethod
     def _run(
         command: list[str],
         *,
         capture_output: bool,
+        input_value: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         try:
             return subprocess.run(
@@ -192,6 +207,7 @@ class SystemCommandRunner:
                 check=True,
                 text=True,
                 capture_output=capture_output,
+                input=input_value,
             )
         except subprocess.CalledProcessError as error:
             detail = (error.stderr or error.stdout or "").strip()
@@ -610,9 +626,61 @@ def main() -> None:
         json.loads(args.record.read_text()),
     )
     dmg = args.artifact_directory / record.filename
-    publisher = GitHubReleasePublisher(
+    from release_publication import (
+        AuthenticatedUpdatePublisher,
+        R2UpdateOrigin,
+        SparkleAppcastGenerator,
+        SystemPublicFetcher,
+    )
+
+    required_publication_environment = {
+        "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID"),
+        "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY"),
+        "SPARKLE_ED_PRIVATE_KEY": os.environ.get("SPARKLE_ED_PRIVATE_KEY"),
+        "UPDATE_R2_ACCOUNT_ID": os.environ.get("UPDATE_R2_ACCOUNT_ID"),
+        "UPDATE_R2_BUCKET": os.environ.get("UPDATE_R2_BUCKET"),
+    }
+    missing = [
+        name for name, value in required_publication_environment.items() if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            "Missing required publication environment: " + ", ".join(missing),
+        )
+    repository_root = Path(__file__).resolve().parents[1]
+    github = GitHubReleasePublisher(
         runner,
         repository=args.repository,
+    )
+    generator = SparkleAppcastGenerator(
+        runner,
+        tool=(
+            repository_root
+            / ".build"
+            / "artifacts"
+            / "sparkle"
+            / "Sparkle"
+            / "bin"
+            / "generate_appcast"
+        ),
+        package_resolved=repository_root / "Package.resolved",
+        private_key=required_publication_environment["SPARKLE_ED_PRIVATE_KEY"] or "",
+    )
+    origin = R2UpdateOrigin(
+        runner,
+        fetcher=SystemPublicFetcher(),
+        bucket=required_publication_environment["UPDATE_R2_BUCKET"] or "",
+        endpoint=(
+            "https://"
+            f"{required_publication_environment['UPDATE_R2_ACCOUNT_ID']}"
+            ".r2.cloudflarestorage.com"
+        ),
+    )
+    publisher = AuthenticatedUpdatePublisher(
+        generator=generator,
+        origin=origin,
+        github=github,
+        changelog=repository_root / "CHANGELOG.md",
     )
     transaction.finalize(
         dmg=dmg,
@@ -632,5 +700,6 @@ if __name__ == "__main__":
         RecoverableTimeout,
         TerminalSubmissionFailure,
         ValueError,
+        RuntimeError,
     ) as error:
         sys.exit(str(error))

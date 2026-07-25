@@ -8,7 +8,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 MODULE_PATH = Path(__file__).parents[1] / "release_notarization.py"
 SPEC = importlib.util.spec_from_file_location("release_notarization", MODULE_PATH)
 assert SPEC is not None
@@ -436,6 +435,15 @@ class ReleaseNotarizationTests(unittest.TestCase):
                             },
                         ],
                     },
+                    {
+                        "draft": True,
+                        "assets": [
+                            {
+                                "name": dmg.name,
+                                "digest": f"sha256:{digest}",
+                            },
+                        ],
+                    },
                 ]
             )
 
@@ -487,6 +495,15 @@ class ReleaseNotarizationTests(unittest.TestCase):
             runner = FakeRunner(
                 [
                     {"draft": True, "assets": []},
+                    {
+                        "draft": True,
+                        "assets": [
+                            {
+                                "name": dmg.name,
+                                "digest": f"sha256:{digest}",
+                            },
+                        ],
+                    },
                     {
                         "draft": True,
                         "assets": [
