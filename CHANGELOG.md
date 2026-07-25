@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.17.0](https://github.com/hadrysm/foldwise-voice/compare/v0.16.0...v0.17.0) (2026-07-25)
+
+### Existing users: one manual update and permission refresh
+
+This is the first Developer ID-signed and notarized FoldWise Voice release.
+Download the DMG, replace FoldWise Voice in Applications, and open it. Because
+macOS treats this build as a new app identity, you’ll need to allow Microphone
+and Accessibility again. FoldWise Voice’s Permission recovery guide will walk
+you through it.
+
+This is a one-time transition—future signed updates retain the same identity
+and permissions. If System Settings shows an enabled FoldWise Voice entry but
+the guide still reports missing access, follow the guide to remove the old entry
+and add the installed app again. You do not need to run `tccutil`.
+
+### Features
+
+* add transition-release permission recovery ([b215faa](https://github.com/hadrysm/foldwise-voice/commit/b215faab4a3d75a11188c8d1f184fba0d347818b))
+* modernize dark-mode views with the new visual system ([#272](https://github.com/hadrysm/foldwise-voice/issues/272)) ([fe4949f](https://github.com/hadrysm/foldwise-voice/commit/fe4949f92006afac9bf58bda3234de6a42a157a9)), closes [#270](https://github.com/hadrysm/foldwise-voice/issues/270)
+
+
+### Bug Fixes
+
+* **ci:** stabilize hosted visual tests ([#274](https://github.com/hadrysm/foldwise-voice/issues/274)) ([a908d73](https://github.com/hadrysm/foldwise-voice/commit/a908d73bda79f48c3f022b04a60fbc61fe0a0dbb))
+* clip EmberSurface content to its rounded silhouette ([#275](https://github.com/hadrysm/foldwise-voice/issues/275)) ([b1f8502](https://github.com/hadrysm/foldwise-voice/commit/b1f8502db2a4691aeab361f4eceb64778829d116))
+* smooth sidebar selection movement ([#276](https://github.com/hadrysm/foldwise-voice/issues/276)) ([cc7888b](https://github.com/hadrysm/foldwise-voice/commit/cc7888b21e614298d5e25c2e131b203c2ced2ac1))
+
 ## [0.16.0](https://github.com/hadrysm/foldwise-voice/compare/v0.15.0...v0.16.0) (2026-07-23)
 
 
