@@ -63,6 +63,11 @@ release archives. Its ownership and renewal commitment belong to FoldWise
 distribution even when the parent domain also serves another project.
 _Avoid_: website, download mirror, temporary host
 
+**Forward repair** — A newly versioned FoldWise release that restores users
+from an already-installed bad release without downgrading. It advances update
+version ordering even when it rebuilds the last-known-good behavior.
+_Avoid_: rollback, downgrade, republished release
+
 ## Dictation pipeline
 
 **Dictation session** — One press-to-insert cycle: from holding the hotkey
