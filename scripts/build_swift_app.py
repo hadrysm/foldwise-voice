@@ -57,11 +57,13 @@ def render_assets() -> tuple[Path, Path]:
     return out / "icon.icns", out / "dmg-background.png"
 
 
-def build_binary() -> Path:
-    subprocess.run(
-        ["swift", "build", "-c", "release", "--package-path", str(SWIFT_DIR)],
-        check=True,
-    )
+def build_binary(swift_defines: tuple[str, ...] = ()) -> Path:
+    command = [
+        "swift", "build", "-c", "release", "--package-path", str(SWIFT_DIR),
+    ]
+    for define in swift_defines:
+        command += ["-Xswiftc", f"-D{define}"]
+    subprocess.run(command, check=True)
     binary = SWIFT_DIR / ".build" / "release" / "FoldWiseVoice"
     if not binary.exists():
         sys.exit("Release binary not found — did the build fail?")
@@ -102,8 +104,20 @@ def embed_sparkle_framework(app: Path) -> Path:
     return framework
 
 
-def build_bundle(binary: Path, dest: Path, name: str, icon: Path,
-                 share_repo_config: bool) -> Path:
+def build_bundle(
+    binary: Path,
+    dest: Path,
+    name: str,
+    icon: Path,
+    share_repo_config: bool,
+    *,
+    version: str = VERSION,
+    update_feed_url: str = SPARKLE_FEED_URL,
+    update_public_ed_key: str = SPARKLE_PUBLIC_ED_KEY,
+    launch_environment: dict[str, str] | None = None,
+    extra_info: dict[str, object] | None = None,
+    timestamp_signatures: bool = True,
+) -> Path:
     app = dest / f"{name}.app"
     shutil.rmtree(app, ignore_errors=True)
     macos = app / "Contents" / "MacOS"
@@ -117,8 +131,8 @@ def build_bundle(binary: Path, dest: Path, name: str, icon: Path,
         "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleExecutable": "FoldWiseVoice",
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": VERSION,
-        "CFBundleVersion": VERSION,
+        "CFBundleShortVersionString": version,
+        "CFBundleVersion": version,
         "LSMinimumSystemVersion": "14.0.0",
         "LSUIElement": True,  # menu-bar app: no Dock icon
         "NSHighResolutionCapable": True,
@@ -139,14 +153,18 @@ def build_bundle(binary: Path, dest: Path, name: str, icon: Path,
         }
     else:
         plist.update({
-            "SUFeedURL": SPARKLE_FEED_URL,
-            "SUPublicEDKey": SPARKLE_PUBLIC_ED_KEY,
+            "SUFeedURL": update_feed_url,
+            "SUPublicEDKey": update_public_ed_key,
             "SURequireSignedFeed": True,
             "SUVerifyUpdateBeforeExtraction": True,
             "SUEnableAutomaticChecks": True,
             "SUAutomaticallyUpdate": True,
             "SUScheduledCheckInterval": 24 * 60 * 60,
         })
+    if launch_environment is not None:
+        plist["LSEnvironment"] = launch_environment
+    if extra_info is not None:
+        plist.update(extra_info)
     shutil.copy2(icon, resources / "icon.icns")
     plist["CFBundleIconFile"] = "icon"
 
@@ -155,22 +173,29 @@ def build_bundle(binary: Path, dest: Path, name: str, icon: Path,
 
     shutil.copy2(binary, macos / "FoldWiseVoice")
     embed_sparkle_framework(app)
-    sign_app(app)
+    sign_app(app, timestamp=timestamp_signatures)
     return app
 
 
-def sign_code(path: Path, entitlements: Path | None = None) -> None:
+def sign_code(
+    path: Path,
+    entitlements: Path | None = None,
+    *,
+    timestamp: bool = True,
+) -> None:
     # Empty (e.g. an unset local environment variable) means ad-hoc.
     identity = os.environ.get("CODESIGN_IDENTITY") or "-"
     cmd = ["codesign", "--force", "--sign", identity]
     if identity != "-":
-        cmd += ["--timestamp", "--options", "runtime"]
+        cmd += ["--options", "runtime"]
+        if timestamp:
+            cmd.append("--timestamp")
     if entitlements is not None:
         cmd += ["--entitlements", str(entitlements)]
     subprocess.run(cmd + [str(path)], check=True)
 
 
-def sign_app(app: Path) -> None:
+def sign_app(app: Path, *, timestamp: bool = True) -> None:
     # An ad-hoc signature's designated requirement is tied to that exact code
     # version, so it does not provide a stable identity across releases. A real
     # Developer ID does, and additionally enables the hardened runtime and
@@ -179,18 +204,18 @@ def sign_app(app: Path) -> None:
     # Do not use `codesign --deep`: embedded code is signed inside-out before
     # the outer app, and FoldWise entitlements apply only to that outer app.
     framework = app / "Contents" / "Frameworks" / "Sparkle.framework"
-    sign_code(framework / "Versions" / "B" / "Autoupdate")
-    sign_code(framework / "Versions" / "B" / "Updater.app")
-    sign_code(framework)
+    sign_code(framework / "Versions" / "B" / "Autoupdate", timestamp=timestamp)
+    sign_code(framework / "Versions" / "B" / "Updater.app", timestamp=timestamp)
+    sign_code(framework, timestamp=timestamp)
 
     entitlements = DIST / "entitlements.plist"
     try:
         if os.environ.get("CODESIGN_IDENTITY"):
             with open(entitlements, "wb") as f:
                 plistlib.dump({"com.apple.security.device.audio-input": True}, f)
-            sign_code(app, entitlements)
+            sign_code(app, entitlements, timestamp=timestamp)
         else:
-            sign_code(app)
+            sign_code(app, timestamp=timestamp)
     finally:
         entitlements.unlink(missing_ok=True)
 
