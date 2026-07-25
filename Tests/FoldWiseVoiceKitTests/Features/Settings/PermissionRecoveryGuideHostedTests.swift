@@ -69,6 +69,64 @@ final class PermissionRecoveryGuideHostedTests: XCTestCase {
         )
     }
 
+    func testHostedGuideUsesPermissionSpecificStaleGuidance() throws {
+        let model = SettingsModel()
+        let unresolved = PermissionRecoverySnapshot(
+            microphone: .denied,
+            accessibilityGranted: false,
+            inputMonitoringGranted: false
+        )
+        PermissionRecoveryWorkflow.reduce(
+            state: &model.permissionRecovery,
+            action: .launch(unresolved)
+        )
+        PermissionRecoveryWorkflow.reduce(
+            state: &model.permissionRecovery,
+            action: .openedSystemSettings(.microphone)
+        )
+        PermissionRecoveryWorkflow.reduce(
+            state: &model.permissionRecovery,
+            action: .returnedFromSystemSettings(unresolved)
+        )
+        PermissionRecoveryWorkflow.reduce(
+            state: &model.permissionRecovery,
+            action: .openedSystemSettings(.accessibility)
+        )
+        PermissionRecoveryWorkflow.reduce(
+            state: &model.permissionRecovery,
+            action: .returnedFromSystemSettings(unresolved)
+        )
+        PermissionRecoveryWorkflow.reduce(
+            state: &model.permissionRecovery,
+            action: .revealShortcutFallback
+        )
+        PermissionRecoveryWorkflow.reduce(
+            state: &model.permissionRecovery,
+            action: .openedSystemSettings(.inputMonitoring)
+        )
+        PermissionRecoveryWorkflow.reduce(
+            state: &model.permissionRecovery,
+            action: .returnedFromSystemSettings(unresolved)
+        )
+        let window = host(model)
+        defer { window.orderOut(nil) }
+
+        let microphone = try XCTUnwrap(
+            node("permission-recovery.microphone.stale", in: window).value
+        )
+        let accessibility = try XCTUnwrap(
+            node("permission-recovery.accessibility.stale", in: window).value
+        )
+        let inputMonitoring = try XCTUnwrap(
+            node("permission-recovery.input-monitoring.stale", in: window).value
+        )
+
+        XCTAssertTrue(microphone.contains("enable the current FoldWise Voice"))
+        XCTAssertFalse(microphone.contains("remove"))
+        XCTAssertTrue(accessibility.contains("remove"))
+        XCTAssertTrue(inputMonitoring.contains("remove"))
+    }
+
     private func makeModel() -> SettingsModel {
         let model = SettingsModel()
         PermissionRecoveryWorkflow.reduce(

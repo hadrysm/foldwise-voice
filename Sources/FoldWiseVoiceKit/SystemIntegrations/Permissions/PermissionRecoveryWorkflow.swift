@@ -170,6 +170,7 @@ final class PermissionRecoveryCoordinator {
 
     private(set) var state = PermissionRecoveryWorkflow.State()
     var onStateChange: ((PermissionRecoveryWorkflow.State) -> Void)?
+    var onPresentationRequest: (() -> Void)?
 
     init(
         environment: PermissionRecoveryEnvironment,
@@ -235,7 +236,11 @@ final class PermissionRecoveryCoordinator {
     }
 
     private func apply(_ action: PermissionRecoveryWorkflow.Action) {
+        let wasPresented = state.isPresented
         PermissionRecoveryWorkflow.reduce(state: &state, action: action)
         onStateChange?(state)
+        if !wasPresented, state.isPresented {
+            onPresentationRequest?()
+        }
     }
 }

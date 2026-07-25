@@ -76,8 +76,8 @@ final class SettingsController {
         )
         permissionRecovery.onStateChange = { [weak self] state in
             self?.model.permissionRecovery = state
-            self?.model.axTrusted = state.snapshot.accessibilityGranted
         }
+        permissionRecovery.onPresentationRequest = { [weak self] in self?.show() }
         if let inputDevices {
             model.inputState = inputDevices.inputState
             inputDevices.onInputStateChange = { [weak self] state in
@@ -116,9 +116,6 @@ final class SettingsController {
 
     func beginPermissionRecovery() {
         permissionRecovery.start()
-        if model.permissionRecovery.isPresented {
-            show()
-        }
     }
 
     private func wire() {
@@ -131,7 +128,6 @@ final class SettingsController {
             self?.permissionRecovery.openSystemSettings(.inputMonitoring)
         }
         model.onOpenPermissionRecovery = { [weak self] in
-            self?.show()
             self?.permissionRecovery.reopen()
         }
         model.onDismissPermissionRecovery = { [weak self] in
@@ -247,7 +243,6 @@ final class SettingsController {
         if let inputDevices {
             model.inputState = inputDevices.inputState
         }
-        model.axTrusted = model.permissionRecovery.snapshot.accessibilityGranted
         workflow.populateHistory()
         workflow.refreshLLMModels()
         workflow.checkForUpdates()

@@ -117,7 +117,6 @@ final class SettingsModel: ObservableObject {
     @Published var windowWidth: Double = 980
     /// The rail tile currently under the pointer, driving its tooltip chip.
     @Published var hoveredRailPane: Pane?
-    @Published var axTrusted = false
     @Published var status = ""
     @Published var statusIsError = false
     @Published var statusOwner = SettingsFeedbackOwner.global

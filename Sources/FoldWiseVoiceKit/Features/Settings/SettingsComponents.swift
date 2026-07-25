@@ -194,8 +194,13 @@ struct PermissionRecoveryGuide: View {
     }
 
     private func staleGuidance(for permission: PermissionKind) -> String {
-        "Still missing? In \(permission.displayName), remove an enabled-looking old FoldWise "
-            + "Voice row, add the installed app from Applications, and enable it again."
+        switch permission {
+        case .microphone:
+            "Still missing? In Microphone, enable the current FoldWise Voice app."
+        case .accessibility, .inputMonitoring:
+            "Still missing? In \(permission.displayName), remove an enabled-looking old "
+                + "FoldWise Voice row, add the installed app from Applications, and enable it again."
+        }
     }
 }
 
