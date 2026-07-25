@@ -2,6 +2,18 @@
 
 ## [0.17.0](https://github.com/hadrysm/foldwise-voice/compare/v0.16.0...v0.17.0) (2026-07-25)
 
+### Existing users: one manual update and permission refresh
+
+This is the first Developer ID-signed and notarized FoldWise Voice release.
+Download the DMG, replace FoldWise Voice in Applications, and open it. Because
+macOS treats this build as a new app identity, you’ll need to allow Microphone
+and Accessibility again. FoldWise Voice’s Permission recovery guide will walk
+you through it.
+
+This is a one-time transition—future signed updates retain the same identity
+and permissions. If System Settings shows an enabled FoldWise Voice entry but
+the guide still reports missing access, follow the guide to remove the old entry
+and add the installed app again. You do not need to run `tccutil`.
 
 ### Features
 
