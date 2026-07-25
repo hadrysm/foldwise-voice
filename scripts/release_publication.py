@@ -36,6 +36,28 @@ class PublicationPolicy:
     bad_version: str | None
     validation_reference: str | None
 
+    def __post_init__(self) -> None:
+        release_components = _version_components(self.release_version)
+        repair_fields = (
+            self.bad_version is not None,
+            self.validation_reference is not None,
+        )
+        if any(repair_fields) and not all(repair_fields):
+            raise PublicationError(
+                "A publication policy must be entirely routine or Forward repair.",
+            )
+        if self.bad_version is None:
+            return
+        bad_components = _version_components(self.bad_version)
+        if release_components <= bad_components:
+            raise PublicationError(
+                "A Forward repair must have a version greater than the bad release.",
+            )
+        if not self.validation_reference or not self.validation_reference.strip():
+            raise PublicationError(
+                "A Forward repair requires bad-to-repair validation evidence.",
+            )
+
     @property
     def is_forward_repair(self) -> bool:
         return self.bad_version is not None
@@ -58,16 +80,6 @@ class PublicationPolicy:
         validation_reference: str,
         confirmation: str,
     ) -> PublicationPolicy:
-        bad_components = _version_components(bad_version)
-        repair_components = _version_components(repair_version)
-        if repair_components <= bad_components:
-            raise PublicationError(
-                "A Forward repair must have a version greater than the bad release.",
-            )
-        if not validation_reference.strip():
-            raise PublicationError(
-                "A Forward repair requires bad-to-repair validation evidence.",
-            )
         expected = f"PUBLISH FORWARD REPAIR {repair_version}"
         if confirmation != expected:
             raise PublicationError(
@@ -126,8 +138,8 @@ class UpdateOrigin(Protocol):
 
 
 class GitHubRelease(Protocol):
-    def stage_asset(self, tag: str, dmg: Path, sha256: str) -> None:
-        """Attach and verify the exact DMG while the release stays draft."""
+    def stage_asset(self, tag: str, asset: Path, sha256: str) -> None:
+        """Attach and verify exact asset bytes while the release stays draft."""
 
     def publish_draft(self, tag: str) -> None:
         """Publish the fully staged draft release."""
@@ -451,9 +463,29 @@ class R2UpdateOrigin:
         freeze = self.fetcher.fetch(
             f"{self.public_base_url}/controls/publication-frozen.json",
         )
-        if freeze is not None and not policy.is_forward_repair:
+        if freeze is None:
+            if policy.is_forward_repair:
+                raise PublicationError(
+                    "A Forward repair requires an active frozen incident.",
+                )
+            return
+        if not policy.is_forward_repair:
             raise PublicationError(
                 "Routine publication is frozen by an active release incident.",
+            )
+        try:
+            incident = json.loads(freeze)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise PublicationError(
+                "The publication freeze is malformed; fail closed.",
+            ) from error
+        if (
+            not isinstance(incident, dict)
+            or incident.get("frozen") is not True
+            or incident.get("bad_version") != policy.bad_version
+        ):
+            raise PublicationError(
+                "The Forward repair does not match the active frozen incident.",
             )
 
     def fetch_appcast(self) -> bytes | None:
@@ -589,7 +621,7 @@ class AuthenticatedUpdatePublisher:
                 working_directory=Path(directory),
                 policy=policy,
             )
-            self._preserve_record(
+            record_files = self._preserve_record(
                 tag=tag,
                 dmg=dmg,
                 sha256=sha256,
@@ -599,6 +631,12 @@ class AuthenticatedUpdatePublisher:
             )
             self.origin.stage_archive(dmg, sha256)
             self.github.stage_asset(tag, dmg, sha256)
+            for record_file in record_files:
+                self.github.stage_asset(
+                    tag,
+                    record_file,
+                    _sha256(record_file),
+                )
             self.origin.publish_appcast(appcast)
             self.github.publish_draft(tag)
 
@@ -611,21 +649,22 @@ class AuthenticatedUpdatePublisher:
         previous_appcast: bytes | None,
         appcast: Path,
         policy: PublicationPolicy,
-    ) -> None:
+    ) -> list[Path]:
         if self.record_directory is None:
-            return
+            return []
         self.record_directory.mkdir(parents=True, exist_ok=True)
         retained_dmg = self.record_directory / dmg.name
         if retained_dmg.resolve() != dmg.resolve():
             shutil.copy2(dmg, retained_dmg)
+        record_files: list[Path] = []
         if previous_appcast is not None:
-            (self.record_directory / "appcast-before.xml").write_bytes(
-                previous_appcast,
-            )
+            previous = self.record_directory / "appcast-before.xml"
+            previous.write_bytes(previous_appcast)
+            record_files.append(previous)
         published = appcast.read_bytes()
-        (self.record_directory / "appcast-published.xml").write_bytes(
-            published,
-        )
+        published_snapshot = self.record_directory / "appcast-published.xml"
+        published_snapshot.write_bytes(published)
+        record_files.append(published_snapshot)
         record = {
             "schema_version": 1,
             "tag": tag,
@@ -643,12 +682,21 @@ class AuthenticatedUpdatePublisher:
             ),
             "published_appcast_sha256": hashlib.sha256(published).hexdigest(),
             "recovery_paths": {
-                "ed25519_private_key": "SPARKLE_ED_PRIVATE_KEY recovery copy",
+                "ed25519_private_key": (
+                    "GitHub Actions secret SPARKLE_ED_PRIVATE_KEY plus the "
+                    "offline recovery copy required by "
+                    "docs/research/sparkle-bad-release-rollback-policy.md"
+                ),
                 "developer_id_identity": (
-                    "Developer ID .p12 and password reference"
+                    "GitHub Actions secrets MACOS_CERTIFICATE and "
+                    "MACOS_CERTIFICATE_PASSWORD for Team 6849P798YW; see "
+                    "docs/research/developer-id-certificate-rotation-policy.md"
                 ),
             },
         }
-        (self.record_directory / "publication.json").write_text(
+        publication_record = self.record_directory / "publication.json"
+        publication_record.write_text(
             json.dumps(record, indent=2, sort_keys=True) + "\n",
         )
+        record_files.append(publication_record)
+        return record_files

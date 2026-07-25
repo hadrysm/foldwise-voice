@@ -38,7 +38,10 @@ class FakeRecoveryOrigin:
         self.events.append(f"fetch archive {filename}")
         return self.archive
 
-    def freeze_publication(self) -> None:
+    def freeze_publication(
+        self,
+        request: release_recovery.WithdrawalRequest,
+    ) -> None:
         self.events.append("freeze publication")
 
     def remove_archive(self, filename: str) -> None:
@@ -66,9 +69,13 @@ class FakeRecoveryOrigin:
 class FakeInputRunner:
     def __init__(self) -> None:
         self.commands: list[list[str]] = []
+        self.bodies: list[bytes] = []
 
     def run_input(self, command: list[str], value: str | None) -> None:
         self.commands.append(command)
+        if "--body" in command:
+            body = Path(command[command.index("--body") + 1])
+            self.bodies.append(body.read_bytes())
 
 
 class FakeFetcher:
@@ -107,6 +114,28 @@ length: 123
 
 
 class BadReleaseWithdrawalTests(unittest.TestCase):
+    def testForwardRepairPlanNeedsNoCredentialsOrConfirmation(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(MODULE_PATH),
+                "plan-forward-repair",
+                "--bad-version",
+                "0.18.0",
+                "--repair-version",
+                "0.18.1",
+                "--validation-reference",
+                "acceptance-run-123",
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+            env={},
+        )
+
+        self.assertIn("DRY RUN", result.stdout)
+        self.assertIn("PUBLISH FORWARD REPAIR 0.18.1", result.stdout)
+
     def testDryRunCliNeedsNoCredentialsAndPrintsPreparedUpdateWarning(
         self,
     ) -> None:
@@ -308,6 +337,10 @@ class R2RecoveryOriginTests(unittest.TestCase):
                 operations,
                 ["put-object", "delete-object", "put-object"],
             )
+            freeze = json.loads(runner.bodies[0])
+            self.assertEqual(freeze["bad_version"], "0.18.0")
+            self.assertEqual(freeze["bad_filename"], filename)
+            self.assertEqual(freeze["source_commit"], "bad-commit")
             self.assertEqual(
                 purger.requests,
                 [[freeze_url], [archive_url], [appcast_url]],

@@ -32,7 +32,7 @@ class RecoveryOrigin(Protocol):
     def fetch_archive(self, filename: str) -> bytes | None:
         """Fetch a public release archive."""
 
-    def freeze_publication(self) -> None:
+    def freeze_publication(self, request: WithdrawalRequest) -> None:
         """Block routine publication before changing public release state."""
 
     def remove_archive(self, filename: str) -> None:
@@ -132,7 +132,7 @@ class BadReleaseWithdrawal:
                 "The live appcast does not advertise the named bad release.",
             )
 
-        self.origin.freeze_publication()
+        self.origin.freeze_publication(request)
         self._preserve_evidence(
             request=request,
             current_appcast=current_appcast,
@@ -204,9 +204,15 @@ class BadReleaseWithdrawal:
                 request.last_good_appcast,
             ).hexdigest(),
             recovery_paths={
-                "ed25519_private_key": "SPARKLE_ED_PRIVATE_KEY recovery copy",
+                "ed25519_private_key": (
+                    "GitHub Actions secret SPARKLE_ED_PRIVATE_KEY plus the "
+                    "offline recovery copy required by "
+                    "docs/research/sparkle-bad-release-rollback-policy.md"
+                ),
                 "developer_id_identity": (
-                    "Developer ID .p12 and password reference"
+                    "GitHub Actions secrets MACOS_CERTIFICATE and "
+                    "MACOS_CERTIFICATE_PASSWORD for Team 6849P798YW; see "
+                    "docs/research/developer-id-certificate-rotation-policy.md"
                 ),
             },
         )
@@ -241,7 +247,7 @@ class R2RecoveryOrigin:
             f"{self.public_base_url}/releases/{filename}",
         )
 
-    def freeze_publication(self) -> None:
+    def freeze_publication(self, request: WithdrawalRequest) -> None:
         freeze_url = (
             f"{self.public_base_url}/controls/publication-frozen.json"
         )
@@ -249,7 +255,19 @@ class R2RecoveryOrigin:
             prefix="foldwise-recovery-",
         ) as directory:
             freeze = Path(directory) / "publication-frozen.json"
-            freeze.write_text('{"frozen": true}\n')
+            freeze.write_text(
+                json.dumps(
+                    {
+                        "frozen": True,
+                        "bad_version": request.bad_version,
+                        "bad_filename": request.bad_filename,
+                        "source_commit": request.source_commit,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+            )
             self._put_object(
                 key="controls/publication-frozen.json",
                 body=freeze,
@@ -438,7 +456,39 @@ def main() -> None:
     withdraw.add_argument("--source-commit", required=True)
     withdraw.add_argument("--execute", action="store_true")
     withdraw.add_argument("--confirmation", default="")
+    repair = subparsers.add_parser(
+        "plan-forward-repair",
+        help="validate and print a non-mutating Forward-repair plan",
+    )
+    repair.add_argument("--bad-version", required=True)
+    repair.add_argument("--repair-version", required=True)
+    repair.add_argument("--validation-reference", required=True)
     args = parser.parse_args()
+    if args.command == "plan-forward-repair":
+        from release_publication import PublicationError, PublicationPolicy
+
+        expected_confirmation = (
+            f"PUBLISH FORWARD REPAIR {args.repair_version}"
+        )
+        try:
+            PublicationPolicy.forward_repair(
+                bad_version=args.bad_version,
+                repair_version=args.repair_version,
+                validation_reference=args.validation_reference,
+                confirmation=expected_confirmation,
+            )
+        except PublicationError as error:
+            raise RecoveryError(str(error)) from error
+        print("DRY RUN")
+        print(
+            "1. verify the repair version and build are strictly greater "
+            "than the frozen bad version",
+        )
+        print("2. validate the installed bad build against the exact repair")
+        print("3. publish an unphased critical update only after explicit action")
+        print(f"Required confirmation: {expected_confirmation}")
+        return
+
     last_good_appcast = args.last_good_appcast.read_bytes()
     if args.last_good_record is not None:
         record = json.loads(args.last_good_record.read_text())

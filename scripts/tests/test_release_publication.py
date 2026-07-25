@@ -94,10 +94,12 @@ class FakeOrigin:
         events: list[str],
         previous_appcast: bytes | None = None,
         frozen: bool = False,
+        frozen_bad_version: str | None = None,
     ) -> None:
         self.events = events
         self.previous_appcast = previous_appcast
         self.frozen = frozen
+        self.frozen_bad_version = frozen_bad_version
         self.archives: list[tuple[Path, str]] = []
         self.appcasts: list[Path] = []
 
@@ -106,7 +108,12 @@ class FakeOrigin:
         policy: release_publication.PublicationPolicy,
     ) -> None:
         self.events.append("check publication freeze")
-        if self.frozen and not policy.is_forward_repair:
+        if not self.frozen:
+            return
+        if (
+            not policy.is_forward_repair
+            or policy.bad_version != self.frozen_bad_version
+        ):
             raise release_publication.PublicationError("publication frozen")
 
     def fetch_appcast(self) -> bytes | None:
@@ -425,6 +432,86 @@ class R2UpdateOriginTests(unittest.TestCase):
                 release_publication.PublicationPolicy.routine("0.18.0"),
             )
 
+    def testForwardRepairMustMatchTheFrozenIncidentVersion(self) -> None:
+        freeze_url = (
+            "https://updates.guarcode.com/"
+            "controls/publication-frozen.json"
+        )
+        policy = release_publication.PublicationPolicy.forward_repair(
+            bad_version="0.18.0",
+            repair_version="0.18.1",
+            validation_reference="acceptance-run-123",
+            confirmation="PUBLISH FORWARD REPAIR 0.18.1",
+        )
+        origin = release_publication.R2UpdateOrigin(
+            FakeInputRunner(),
+            fetcher=FakeFetcher(
+                {
+                    freeze_url: json.dumps(
+                        {
+                            "frozen": True,
+                            "bad_version": "0.19.0",
+                        }
+                    ).encode()
+                }
+            ),
+            bucket="foldwise-updates",
+            endpoint="https://account.r2.cloudflarestorage.com",
+        )
+
+        with self.assertRaises(release_publication.PublicationError):
+            origin.assert_publication_allowed(policy)
+
+    def testForwardRepairRequiresAnActiveFrozenIncident(self) -> None:
+        freeze_url = (
+            "https://updates.guarcode.com/"
+            "controls/publication-frozen.json"
+        )
+        policy = release_publication.PublicationPolicy.forward_repair(
+            bad_version="0.18.0",
+            repair_version="0.18.1",
+            validation_reference="acceptance-run-123",
+            confirmation="PUBLISH FORWARD REPAIR 0.18.1",
+        )
+        origin = release_publication.R2UpdateOrigin(
+            FakeInputRunner(),
+            fetcher=FakeFetcher({freeze_url: None}),
+            bucket="foldwise-updates",
+            endpoint="https://account.r2.cloudflarestorage.com",
+        )
+
+        with self.assertRaises(release_publication.PublicationError):
+            origin.assert_publication_allowed(policy)
+
+    def testForwardRepairMayPublishOnlyForTheFrozenIncidentVersion(self) -> None:
+        freeze_url = (
+            "https://updates.guarcode.com/"
+            "controls/publication-frozen.json"
+        )
+        policy = release_publication.PublicationPolicy.forward_repair(
+            bad_version="0.18.0",
+            repair_version="0.18.1",
+            validation_reference="acceptance-run-123",
+            confirmation="PUBLISH FORWARD REPAIR 0.18.1",
+        )
+        origin = release_publication.R2UpdateOrigin(
+            FakeInputRunner(),
+            fetcher=FakeFetcher(
+                {
+                    freeze_url: json.dumps(
+                        {
+                            "frozen": True,
+                            "bad_version": "0.18.0",
+                        }
+                    ).encode()
+                }
+            ),
+            bucket="foldwise-updates",
+            endpoint="https://account.r2.cloudflarestorage.com",
+        )
+
+        origin.assert_publication_allowed(policy)
+
     def testStageArchiveUploadsImmutableMetadataThenVerifiesPublicBytes(
         self,
     ) -> None:
@@ -536,6 +623,14 @@ class AuthenticatedUpdatePublisherTests(unittest.TestCase):
                 with self.assertRaises(release_publication.PublicationError):
                     release_publication.PublicationPolicy.forward_repair(**request)
 
+    def testPublicationPolicyRejectsInvalidDirectState(self) -> None:
+        with self.assertRaises(release_publication.PublicationError):
+            release_publication.PublicationPolicy(
+                release_version="0.18.1",
+                bad_version=None,
+                validation_reference="acceptance-run-123",
+            )
+
     def testPublishOrdersArchiveVerificationBeforeSignedAppcastAndRelease(
         self,
     ) -> None:
@@ -644,11 +739,12 @@ class AuthenticatedUpdatePublisherTests(unittest.TestCase):
             events: list[str] = []
             previous = b"<rss>last-known-good signed feed</rss>"
             published = b"<rss>new signed feed</rss>"
+            github = FakeGitHubRelease(events)
 
             release_publication.AuthenticatedUpdatePublisher(
                 generator=FakeGenerator(events, published),
                 origin=FakeOrigin(events, previous),
-                github=FakeGitHubRelease(events),
+                github=github,
                 changelog=root / "CHANGELOG.md",
                 record_directory=record_directory,
                 source_commit="release-commit",
@@ -674,6 +770,16 @@ class AuthenticatedUpdatePublisherTests(unittest.TestCase):
             self.assertEqual(record["source_commit"], "release-commit")
             self.assertEqual(record["source_run_id"], "12345")
             self.assertIn("ed25519_private_key", record["recovery_paths"])
+            staged_names = [asset.name for _, asset, _ in github.staged]
+            self.assertEqual(
+                staged_names,
+                [
+                    artifact.name,
+                    "appcast-before.xml",
+                    "appcast-published.xml",
+                    "publication.json",
+                ],
+            )
             self.assertLess(
                 events.index("generate appcast"),
                 events.index("stage archive"),

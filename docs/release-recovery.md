@@ -22,11 +22,13 @@ path can create an unphased critical item.
 
 ## Withdraw the bad release
 
-1. Stop other release work and identify the last-known-good finalizer run. Its
-   `release-record-<run-id>-<attempt>` artifact contains the notarized DMG,
-   checksum-bearing submission record, source commit/run, signed feed before
-   publication, signed published feed, and references to both signing recovery
-   paths.
+1. Stop other release work and identify the last-known-good release tag. Its
+   durable GitHub Release assets include the notarized DMG,
+   checksum-bearing `publication.json`, source commit/run,
+   `appcast-before.xml`, `appcast-published.xml`, and actionable references to
+   both signing recovery paths. The finalizer also creates a 90-day
+   `release-record-<run-id>-<attempt>` workflow artifact as a convenience copy;
+   recovery does not depend on that expiring artifact.
 2. Run the **release-recovery** workflow with `execute` off. Review its complete
    plan. A dry run requires no production authorization and cannot call R2 or
    Cloudflare mutation APIs. The command verifies the signed snapshot against
@@ -59,7 +61,12 @@ uploading anything, so an incident cannot race a later routine release.
    normal strict artifact checks.
 3. Validate an installed bad build updating to this exact repair artifact.
    Record the acceptance run or evidence URL.
-4. Explicitly dispatch **release-please** for the preserved source run with:
+4. Run the credential-free plan before authorizing publication:
+   `python3 scripts/release_recovery.py plan-forward-repair --bad-version
+   <bad-version> --repair-version <repair-version> --validation-reference
+   <evidence>`. This validates the repair constraints without making network
+   requests or mutations.
+5. Explicitly dispatch **release-please** for the preserved source run with:
    `publication_mode=forward-repair`, the bad version, the validation
    reference, and `PUBLISH FORWARD REPAIR <repair-version>` exactly.
 

@@ -86,9 +86,9 @@ class GitHubReleasePublisher:
         self.stage_asset(tag, dmg, sha256)
         self.publish_draft(tag)
 
-    def stage_asset(self, tag: str, dmg: Path, sha256: str) -> None:
+    def stage_asset(self, tag: str, asset_path: Path, sha256: str) -> None:
         release = self._release(tag)
-        asset = self._asset(release, dmg.name)
+        asset = self._asset(release, asset_path.name)
         if asset is not None:
             self._verify_asset_digest(asset, sha256)
         else:
@@ -102,12 +102,12 @@ class GitHubReleasePublisher:
                     "release",
                     "upload",
                     tag,
-                    str(dmg),
+                    str(asset_path),
                     "--repo",
                     self.repository,
                 ]
             )
-            uploaded = self._asset(self._release(tag), dmg.name)
+            uploaded = self._asset(self._release(tag), asset_path.name)
             if uploaded is None:
                 raise ArtifactMismatch(
                     "GitHub did not report the uploaded release asset.",
@@ -165,7 +165,7 @@ class GitHubReleasePublisher:
         expected = f"sha256:{sha256}"
         if asset.get("digest") != expected:
             raise ArtifactMismatch(
-                "GitHub release asset digest does not match the stapled DMG.",
+                "GitHub release asset digest does not match the local asset.",
             )
 
 
