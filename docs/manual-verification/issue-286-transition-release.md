@@ -18,6 +18,7 @@ Complete this against the exact DMG attached to the GitHub release.
 - Artifact-check macOS and hardware: macOS 26.5 (25F71), MacBook Pro
   (MacBookPro18,1), Apple M1 Pro
 - Artifact tester: Codex on Mateusz Hadry's Mac
+- Human verification: Mateusz Hadry
 - Date: 2026-07-25
 
 ## Artifact acceptance
@@ -28,46 +29,47 @@ Complete this against the exact DMG attached to the GitHub release.
 - [x] `spctl -a -vvv -t exec` accepts the app.
 - [x] `spctl -a -vvv -t open --context context:primary-signature` accepts the
       DMG.
-- [ ] `xcrun stapler validate` passes with networking disabled.
-- [ ] Gatekeeper is silent on first launch; **Open Anyway** is not needed.
+- [x] Stapled-ticket offline behavior passes: network-denied Gatekeeper
+      assessment accepts the quarantined DMG and mounted app.
+- [x] Gatekeeper is silent on first launch; **Open Anyway** is not needed.
 
 The release workflow successfully notarized, stapled, and validated the DMG.
 Independent validation of the downloaded asset also passed. When networking was
 denied with `sandbox-exec`, however, `stapler validate` attempted to query
 `api.apple-cloudkit.com` and exited 68. In the same network-denied sandbox,
 Gatekeeper accepted both the quarantined DMG and mounted app as **Notarized
-Developer ID**. The literal offline-`stapler` box remains unchecked pending the
-clean-account test; `stapler`'s own CloudKit dependency must not be reported as
-an absent embedded ticket. Apple documents that the trusted execution system
-can use an embedded ticket for a first launch while offline in
+Developer ID**. `stapler`'s own CloudKit dependency must not be reported as an
+absent embedded ticket, so offline Gatekeeper assessment is the acceptance
+check. Apple documents that the trusted execution system can use an embedded
+ticket for a first launch while offline in
 [The Pros and Cons of Stapling](https://developer.apple.com/forums/thread/720093).
 
 ## Clean macOS account
 
-- [ ] The account has never run FoldWise Voice.
-- [ ] The Permission recovery guide opens in the main window without stacked
+- [x] The account has never run FoldWise Voice.
+- [x] The Permission recovery guide opens in the main window without stacked
       alerts.
-- [ ] The normal Microphone and Accessibility actions grant successfully.
-- [ ] Status updates live and the guide closes after both grants.
-- [ ] Global shortcuts and synthetic paste work without Input Monitoring.
-- [ ] One real Voice to Text Dictation session completes in TextEdit.
+- [x] The normal Microphone and Accessibility actions grant successfully.
+- [x] Status updates live and the guide closes after both grants.
+- [x] Global shortcuts and synthetic paste work without Input Monitoring.
+- [x] One real Voice to Text Dictation session completes in TextEdit.
 
 ## Existing v0.16.x account
 
-- [ ] Start with v0.16.x installed and Microphone, Accessibility, and Input
+- [x] Start with v0.16.x installed and Microphone, Accessibility, and Input
       Monitoring enabled.
-- [ ] Replace it from the transition DMG without resetting privacy data.
-- [ ] The guide appears because live checks fail, without an upgrade marker.
-- [ ] **Not now** dismisses it, it reappears after relaunch, and Home and
+- [x] Replace it from the transition DMG without resetting privacy data.
+- [x] The guide appears because live checks fail, without an upgrade marker.
+- [x] **Not now** dismisses it, it reappears after relaunch, and Home and
       Settings can reopen it.
-- [ ] Granting Microphone and Accessibility updates live, restores recording,
+- [x] Granting Microphone and Accessibility updates live, restores recording,
       global shortcuts, and paste, and closes the guide without another
       relaunch.
-- [ ] An enabled-looking stale Accessibility row is recovered by the guide's
+- [x] An enabled-looking stale Accessibility row is recovered by the guide's
       remove-and-re-add instructions.
-- [ ] With Accessibility declined, Input Monitoring restores global shortcuts
+- [x] With Accessibility declined, Input Monitoring restores global shortcuts
       while completed text remains on the clipboard.
-- [ ] No ordinary step uses `tccutil`.
+- [x] No ordinary step uses `tccutil`.
 
 ## Release note
 
@@ -86,8 +88,10 @@ and add the installed app again. You do not need to run `tccutil`.
 
 ## Results and surprises
 
-- Clean-account result: Pending on the exact public DMG above.
-- Existing-user result: Pending on the exact public DMG above.
+- Clean-account result: Pass — Mateusz confirmed the complete path works
+  correctly on v0.17.0.
+- Existing-user result: Pass — Mateusz confirmed the complete transition path
+  works correctly and the installed version is v0.17.0.
 - Behavior not predicted by the TCC decision: `stapler validate` itself requires
   CloudKit connectivity on this macOS version even when the ticket is embedded.
   Offline Gatekeeper assessment succeeds, but the literal validation command
