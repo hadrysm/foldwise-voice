@@ -603,6 +603,9 @@ def main() -> None:
     finalize.add_argument("--record", type=Path, required=True)
     finalize.add_argument("--log", type=Path, required=True)
     finalize.add_argument("--repository", required=True)
+    finalize.add_argument("--forward-repair-bad-version")
+    finalize.add_argument("--forward-repair-validation-reference")
+    finalize.add_argument("--confirm-forward-repair")
 
     args = parser.parse_args()
     runner = SystemCommandRunner()
@@ -628,6 +631,7 @@ def main() -> None:
     dmg = args.artifact_directory / record.filename
     from release_publication import (
         AuthenticatedUpdatePublisher,
+        PublicationPolicy,
         R2UpdateOrigin,
         SparkleAppcastGenerator,
         SystemPublicFetcher,
@@ -676,11 +680,35 @@ def main() -> None:
             ".r2.cloudflarestorage.com"
         ),
     )
+    release_version = record.tag.removeprefix("v")
+    forward_repair_arguments = [
+        args.forward_repair_bad_version,
+        args.forward_repair_validation_reference,
+        args.confirm_forward_repair,
+    ]
+    if any(forward_repair_arguments):
+        if not all(forward_repair_arguments):
+            raise RuntimeError(
+                "Forward repair publication requires the bad version, "
+                "validation reference, and exact confirmation.",
+            )
+        policy = PublicationPolicy.forward_repair(
+            bad_version=args.forward_repair_bad_version,
+            repair_version=release_version,
+            validation_reference=args.forward_repair_validation_reference,
+            confirmation=args.confirm_forward_repair,
+        )
+    else:
+        policy = PublicationPolicy.routine(release_version)
     publisher = AuthenticatedUpdatePublisher(
         generator=generator,
         origin=origin,
         github=github,
         changelog=repository_root / "CHANGELOG.md",
+        policy=policy,
+        record_directory=args.artifact_directory,
+        source_commit=record.commit,
+        source_run_id=record.source_run_id,
     )
     transaction.finalize(
         dmg=dmg,

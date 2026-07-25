@@ -9,6 +9,26 @@ on:
         description: Run ID that submitted the preserved DMG
         required: true
         type: string
+      publication_mode:
+        description: Routine resume or explicitly validated Forward repair
+        required: true
+        type: choice
+        default: routine
+        options:
+          - routine
+          - forward-repair
+      bad_version:
+        description: Bad version replaced by a Forward repair
+        required: false
+        type: string
+      validation_reference:
+        description: Bad-to-repair acceptance run or evidence reference
+        required: false
+        type: string
+      forward_repair_confirmation:
+        description: Type PUBLISH FORWARD REPAIR followed by the repair version
+        required: false
+        type: string
 
 permissions:
   actions: read
@@ -175,6 +195,11 @@ jobs:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
           UPDATE_R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
           UPDATE_R2_BUCKET: ${{ vars.R2_BUCKET_NAME }}
+          PUBLICATION_MODE: ${{ inputs.publication_mode || 'routine' }}
+          BAD_VERSION: ${{ inputs.bad_version }}
+          VALIDATION_REFERENCE: ${{ inputs.validation_reference }}
+          FORWARD_REPAIR_CONFIRMATION: >-
+            ${{ inputs.forward_repair_confirmation }}
         run: |
           set -euo pipefail
           : "${NOTARY_API_PRIVATE_KEY_BASE64:?NOTARY_API_PRIVATE_KEY_BASE64 secret is required}"
@@ -187,11 +212,31 @@ jobs:
           printf '%s' "$NOTARY_API_PRIVATE_KEY_BASE64" \
             | base64 --decode > "$NOTARY_KEY_PATH"
 
+          PUBLICATION_ARGS=()
+          if [[ "$PUBLICATION_MODE" == "forward-repair" ]]; then
+            PUBLICATION_ARGS=(
+              --forward-repair-bad-version "$BAD_VERSION"
+              --forward-repair-validation-reference "$VALIDATION_REFERENCE"
+              --confirm-forward-repair "$FORWARD_REPAIR_CONFIRMATION"
+            )
+          fi
+
           python3 scripts/release_notarization.py finalize \
             --artifact-directory dist/notarization \
             --record dist/notarization/submission.json \
             --log dist/notarization/notarization-log.json \
-            --repository "$GITHUB_REPOSITORY"
+            --repository "$GITHUB_REPOSITORY" \
+            "${PUBLICATION_ARGS[@]}"
+      - name: Preserve release and recovery record
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: >-
+            release-record-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/notarization/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
       - name: Preserve failed finalizer evidence
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4

@@ -61,6 +61,7 @@ class FakeGenerator:
         changelog: Path,
         previous_appcast: bytes | None,
         working_directory: Path,
+        policy: release_publication.PublicationPolicy | None = None,
     ) -> Path:
         self.events.append("generate appcast")
         self.previous_appcasts.append(previous_appcast)
@@ -81,6 +82,7 @@ class FailingGenerator:
         changelog: Path,
         previous_appcast: bytes | None,
         working_directory: Path,
+        policy: release_publication.PublicationPolicy | None = None,
     ) -> Path:
         self.events.append("generate appcast")
         raise release_publication.PublicationError("generation failed")
@@ -91,11 +93,21 @@ class FakeOrigin:
         self,
         events: list[str],
         previous_appcast: bytes | None = None,
+        frozen: bool = False,
     ) -> None:
         self.events = events
         self.previous_appcast = previous_appcast
+        self.frozen = frozen
         self.archives: list[tuple[Path, str]] = []
         self.appcasts: list[Path] = []
+
+    def assert_publication_allowed(
+        self,
+        policy: release_publication.PublicationPolicy,
+    ) -> None:
+        self.events.append("check publication freeze")
+        if self.frozen and not policy.is_forward_repair:
+            raise release_publication.PublicationError("publication frozen")
 
     def fetch_appcast(self) -> bytes | None:
         self.events.append("fetch appcast")
@@ -125,7 +137,20 @@ class FakeGitHubRelease:
         self.published.append(tag)
 
 
-def appcast_xml(version: str, filename: str) -> str:
+def appcast_xml(
+    version: str,
+    filename: str,
+    *,
+    critical: bool = False,
+    phased: bool = True,
+) -> str:
+    rollout = (
+        "      <sparkle:phasedRolloutInterval>86400"
+        "</sparkle:phasedRolloutInterval>\n"
+        if phased
+        else ""
+    )
+    critical_update = "      <sparkle:criticalUpdate />\n" if critical else ""
     content = f"""<?xml version="1.0" encoding="utf-8"?>
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
      version="2.0">
@@ -134,7 +159,7 @@ def appcast_xml(version: str, filename: str) -> str:
       <sparkle:version>{version}</sparkle:version>
       <sparkle:shortVersionString>{version}</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
-      <sparkle:phasedRolloutInterval>86400</sparkle:phasedRolloutInterval>
+{rollout}{critical_update}\
       <sparkle:fullReleaseNotesLink>
         https://github.com/hadrysm/foldwise-voice/blob/main/CHANGELOG.md
       </sparkle:fullReleaseNotesLink>
@@ -240,6 +265,113 @@ class SparkleAppcastGeneratorTests(unittest.TestCase):
                 output.read_bytes(),
             )
 
+    def testGenerateForwardRepairIsUnphasedAndCritical(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dmg = root / "FoldWise-Voice-0.18.1.dmg"
+            dmg.write_bytes(b"stapled repair DMG bytes")
+            changelog = root / "CHANGELOG.md"
+            changelog.write_text(
+                "# Changelog\n\n## [0.18.1](link)\n\n### Fixes\n\n* Repair\n"
+            )
+            resolved = root / "Package.resolved"
+            resolved.write_text(
+                json.dumps(
+                    {
+                        "pins": [
+                            {
+                                "identity": "sparkle",
+                                "state": {"version": "2.9.4"},
+                            }
+                        ]
+                    }
+                )
+            )
+            tool = root / "generate_appcast"
+            tool.touch()
+            runner = FakeInputRunner(
+                appcast_xml(
+                    "0.18.1",
+                    dmg.name,
+                    critical=True,
+                    phased=False,
+                ),
+            )
+            policy = release_publication.PublicationPolicy.forward_repair(
+                bad_version="0.18.0",
+                repair_version="0.18.1",
+                validation_reference="acceptance-run-123",
+                confirmation="PUBLISH FORWARD REPAIR 0.18.1",
+            )
+
+            release_publication.SparkleAppcastGenerator(
+                runner,
+                tool=tool,
+                package_resolved=resolved,
+                private_key="private signing material",
+            ).generate(
+                dmg=dmg,
+                version="0.18.1",
+                changelog=changelog,
+                previous_appcast=b"<rss>known-good history</rss>",
+                working_directory=root / "publication",
+                policy=policy,
+            )
+
+            command = runner.commands[0]
+            self.assertNotIn("--phased-rollout-interval", command)
+            self.assertEqual(
+                command[command.index("--critical-update-version") + 1],
+                "",
+            )
+
+    def testGenerateRoutineRejectsCriticalItem(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dmg = root / "FoldWise-Voice-0.18.0.dmg"
+            dmg.write_bytes(b"stapled DMG bytes")
+            changelog = root / "CHANGELOG.md"
+            changelog.write_text(
+                "# Changelog\n\n## [0.18.0](link)\n\n### Features\n\n* Update\n"
+            )
+            resolved = root / "Package.resolved"
+            resolved.write_text(
+                json.dumps(
+                    {
+                        "pins": [
+                            {
+                                "identity": "sparkle",
+                                "state": {"version": "2.9.4"},
+                            }
+                        ]
+                    }
+                )
+            )
+            tool = root / "generate_appcast"
+            tool.touch()
+            runner = FakeInputRunner(
+                appcast_xml(
+                    "0.18.0",
+                    dmg.name,
+                    critical=True,
+                    phased=False,
+                ),
+            )
+
+            with self.assertRaises(release_publication.PublicationError):
+                release_publication.SparkleAppcastGenerator(
+                    runner,
+                    tool=tool,
+                    package_resolved=resolved,
+                    private_key="private signing material",
+                ).generate(
+                    dmg=dmg,
+                    version="0.18.0",
+                    changelog=changelog,
+                    previous_appcast=None,
+                    working_directory=root / "publication",
+                )
+
     def testGenerateRejectsUnexpectedSparkleVersion(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -276,6 +408,23 @@ class SparkleAppcastGeneratorTests(unittest.TestCase):
 
 
 class R2UpdateOriginTests(unittest.TestCase):
+    def testRoutinePublicationStopsWhenIncidentFreezeIsPublic(self) -> None:
+        freeze_url = (
+            "https://updates.guarcode.com/"
+            "controls/publication-frozen.json"
+        )
+        origin = release_publication.R2UpdateOrigin(
+            FakeInputRunner(),
+            fetcher=FakeFetcher({freeze_url: b'{"frozen": true}\n'}),
+            bucket="foldwise-updates",
+            endpoint="https://account.r2.cloudflarestorage.com",
+        )
+
+        with self.assertRaises(release_publication.PublicationError):
+            origin.assert_publication_allowed(
+                release_publication.PublicationPolicy.routine("0.18.0"),
+            )
+
     def testStageArchiveUploadsImmutableMetadataThenVerifiesPublicBytes(
         self,
     ) -> None:
@@ -358,6 +507,35 @@ class R2UpdateOriginTests(unittest.TestCase):
 
 
 class AuthenticatedUpdatePublisherTests(unittest.TestCase):
+    def testForwardRepairRequiresNewerVersionValidationAndConfirmation(
+        self,
+    ) -> None:
+        invalid_requests = [
+            {
+                "bad_version": "0.18.0",
+                "repair_version": "0.18.0",
+                "validation_reference": "acceptance-run-123",
+                "confirmation": "PUBLISH FORWARD REPAIR 0.18.0",
+            },
+            {
+                "bad_version": "0.18.0",
+                "repair_version": "0.18.1",
+                "validation_reference": "",
+                "confirmation": "PUBLISH FORWARD REPAIR 0.18.1",
+            },
+            {
+                "bad_version": "0.18.0",
+                "repair_version": "0.18.1",
+                "validation_reference": "acceptance-run-123",
+                "confirmation": "yes",
+            },
+        ]
+
+        for request in invalid_requests:
+            with self.subTest(request=request):
+                with self.assertRaises(release_publication.PublicationError):
+                    release_publication.PublicationPolicy.forward_repair(**request)
+
     def testPublishOrdersArchiveVerificationBeforeSignedAppcastAndRelease(
         self,
     ) -> None:
@@ -382,6 +560,7 @@ class AuthenticatedUpdatePublisherTests(unittest.TestCase):
             self.assertEqual(
                 events,
                 [
+                    "check publication freeze",
                     "fetch appcast",
                     "generate appcast",
                     "stage archive",
@@ -427,7 +606,78 @@ class AuthenticatedUpdatePublisherTests(unittest.TestCase):
                     changelog=root / "CHANGELOG.md",
                 ).publish("v0.18.0", dmg, digest)
 
-            self.assertEqual(events, ["fetch appcast", "generate appcast"])
+            self.assertEqual(
+                events,
+                [
+                    "check publication freeze",
+                    "fetch appcast",
+                    "generate appcast",
+                ],
+            )
+
+    def testPublishRoutineStopsWhenIncidentFreezeIsLive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dmg = root / "FoldWise-Voice-0.18.0.dmg"
+            dmg.write_bytes(b"stapled DMG bytes")
+            digest = hashlib.sha256(dmg.read_bytes()).hexdigest()
+            events: list[str] = []
+
+            with self.assertRaises(release_publication.PublicationError):
+                release_publication.AuthenticatedUpdatePublisher(
+                    generator=FakeGenerator(events, b"<rss />"),
+                    origin=FakeOrigin(events, frozen=True),
+                    github=FakeGitHubRelease(events),
+                    changelog=root / "CHANGELOG.md",
+                ).publish("v0.18.0", dmg, digest)
+
+            self.assertEqual(events, ["check publication freeze"])
+
+    def testPublishPreservesReleaseRecordBeforePublicMutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact = root / "source" / "FoldWise-Voice-0.18.0.dmg"
+            artifact.parent.mkdir()
+            artifact.write_bytes(b"stapled DMG bytes")
+            digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            record_directory = root / "record"
+            events: list[str] = []
+            previous = b"<rss>last-known-good signed feed</rss>"
+            published = b"<rss>new signed feed</rss>"
+
+            release_publication.AuthenticatedUpdatePublisher(
+                generator=FakeGenerator(events, published),
+                origin=FakeOrigin(events, previous),
+                github=FakeGitHubRelease(events),
+                changelog=root / "CHANGELOG.md",
+                record_directory=record_directory,
+                source_commit="release-commit",
+                source_run_id="12345",
+            ).publish("v0.18.0", artifact, digest)
+
+            self.assertEqual(
+                (record_directory / artifact.name).read_bytes(),
+                artifact.read_bytes(),
+            )
+            self.assertEqual(
+                (record_directory / "appcast-before.xml").read_bytes(),
+                previous,
+            )
+            self.assertEqual(
+                (record_directory / "appcast-published.xml").read_bytes(),
+                published,
+            )
+            record = json.loads(
+                (record_directory / "publication.json").read_text(),
+            )
+            self.assertEqual(record["sha256"], digest)
+            self.assertEqual(record["source_commit"], "release-commit")
+            self.assertEqual(record["source_run_id"], "12345")
+            self.assertIn("ed25519_private_key", record["recovery_paths"])
+            self.assertLess(
+                events.index("generate appcast"),
+                events.index("stage archive"),
+            )
 
 
 if __name__ == "__main__":

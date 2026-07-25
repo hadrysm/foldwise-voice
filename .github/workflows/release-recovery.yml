@@ -1,0 +1,94 @@
+name: release-recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      bad_version:
+        description: Advertised bad version to withdraw
+        required: true
+        type: string
+      bad_source_commit:
+        description: Source commit recorded for the bad release
+        required: true
+        type: string
+      last_good_record_run_id:
+        description: Finalizer run containing the last-known-good release record
+        required: true
+        type: string
+      last_good_record_run_attempt:
+        description: Attempt number for that finalizer run
+        required: true
+        default: "1"
+        type: string
+      execute:
+        description: Mutate the Update origin after the dry run is reviewed
+        required: true
+        default: false
+        type: boolean
+      confirmation:
+        description: Type WITHDRAW followed by the bad version
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: foldwise-release-notarization
+  cancel-in-progress: false
+
+jobs:
+  withdraw:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download last-known-good release record
+        uses: actions/download-artifact@v4
+        with:
+          name: >-
+            release-record-${{ inputs.last_good_record_run_id }}-${{
+            inputs.last_good_record_run_attempt }}
+          path: dist/last-known-good
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.last_good_record_run_id }}
+      - name: Plan or execute withdrawal
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          UPDATE_CF_API_TOKEN: ${{ secrets.UPDATE_CF_API_TOKEN }}
+          UPDATE_CF_ZONE_ID: ${{ vars.UPDATE_CF_ZONE_ID }}
+          UPDATE_R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          UPDATE_R2_BUCKET: ${{ vars.R2_BUCKET_NAME }}
+          EXECUTE: ${{ inputs.execute }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          BAD_VERSION: ${{ inputs.bad_version }}
+          BAD_SOURCE_COMMIT: ${{ inputs.bad_source_commit }}
+        run: |
+          set -euo pipefail
+          EXECUTE_ARGS=()
+          if [[ "$EXECUTE" == "true" ]]; then
+            EXECUTE_ARGS=(--execute --confirmation "$CONFIRMATION")
+          fi
+
+          python3 scripts/release_recovery.py withdraw \
+            --bad-version "$BAD_VERSION" \
+            --last-good-appcast \
+              dist/last-known-good/appcast-published.xml \
+            --last-good-record dist/last-known-good/publication.json \
+            --evidence-directory dist/incident \
+            --source-commit "$BAD_SOURCE_COMMIT" \
+            "${EXECUTE_ARGS[@]}"
+      - name: Preserve private incident evidence
+        if: ${{ inputs.execute }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: >-
+            release-incident-${{ inputs.bad_version }}-${{ github.run_id }}-${{
+            github.run_attempt }}
+          path: dist/incident/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

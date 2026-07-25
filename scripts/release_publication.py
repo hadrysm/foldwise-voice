@@ -12,6 +12,7 @@ import tempfile
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -27,6 +28,63 @@ class PublicationError(RuntimeError):
 
 class ArtifactMismatch(PublicationError):
     """Local, stored, or publicly served release bytes do not match."""
+
+
+@dataclass(frozen=True)
+class PublicationPolicy:
+    release_version: str
+    bad_version: str | None
+    validation_reference: str | None
+
+    @property
+    def is_forward_repair(self) -> bool:
+        return self.bad_version is not None
+
+    @classmethod
+    def routine(cls, release_version: str) -> PublicationPolicy:
+        _version_components(release_version)
+        return cls(
+            release_version=release_version,
+            bad_version=None,
+            validation_reference=None,
+        )
+
+    @classmethod
+    def forward_repair(
+        cls,
+        *,
+        bad_version: str,
+        repair_version: str,
+        validation_reference: str,
+        confirmation: str,
+    ) -> PublicationPolicy:
+        bad_components = _version_components(bad_version)
+        repair_components = _version_components(repair_version)
+        if repair_components <= bad_components:
+            raise PublicationError(
+                "A Forward repair must have a version greater than the bad release.",
+            )
+        if not validation_reference.strip():
+            raise PublicationError(
+                "A Forward repair requires bad-to-repair validation evidence.",
+            )
+        expected = f"PUBLISH FORWARD REPAIR {repair_version}"
+        if confirmation != expected:
+            raise PublicationError(
+                f"Forward repair publication requires confirmation: {expected}",
+            )
+        return cls(
+            release_version=repair_version,
+            bad_version=bad_version,
+            validation_reference=validation_reference,
+        )
+
+
+def _version_components(version: str) -> tuple[int, int, int]:
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
+    if match is None:
+        raise PublicationError(f"Unsupported release version {version}.")
+    return tuple(int(component) for component in match.groups())
 
 
 class InputCommandRunner(Protocol):
@@ -48,11 +106,15 @@ class AppcastGenerator(Protocol):
         changelog: Path,
         previous_appcast: bytes | None,
         working_directory: Path,
+        policy: PublicationPolicy | None = None,
     ) -> Path:
         """Generate and validate a signed appcast for one exact archive."""
 
 
 class UpdateOrigin(Protocol):
+    def assert_publication_allowed(self, policy: PublicationPolicy) -> None:
+        """Fail when an incident freeze blocks this publication mode."""
+
     def fetch_appcast(self) -> bytes | None:
         """Fetch the currently public signed appcast, when one exists."""
 
@@ -188,7 +250,13 @@ class SparkleAppcastGenerator:
         changelog: Path,
         previous_appcast: bytes | None,
         working_directory: Path,
+        policy: PublicationPolicy | None = None,
     ) -> Path:
+        policy = policy or PublicationPolicy.routine(version)
+        if policy.release_version != version:
+            raise PublicationError(
+                "The publication policy version does not match the release archive.",
+            )
         self._validate_sparkle_pin()
         if not self.tool.is_file():
             raise PublicationError(
@@ -226,12 +294,12 @@ class SparkleAppcastGenerator:
             "0",
             "--maximum-deltas",
             "0",
-            "--phased-rollout-interval",
-            "86400",
-            "-o",
-            str(appcast),
-            str(working_directory),
         ]
+        if policy.is_forward_repair:
+            command.extend(["--critical-update-version", ""])
+        else:
+            command.extend(["--phased-rollout-interval", "86400"])
+        command.extend(["-o", str(appcast), str(working_directory)])
         self.runner.run_input(command, self.private_key)
         if not appcast.is_file():
             raise PublicationError("Sparkle did not generate appcast.xml.")
@@ -239,7 +307,7 @@ class SparkleAppcastGenerator:
             raise ArtifactMismatch(
                 "The release DMG changed during appcast generation.",
             )
-        self._validate_appcast(appcast, version, dmg.name)
+        self._validate_appcast(appcast, version, dmg.name, policy)
         return appcast
 
     def _validate_sparkle_pin(self) -> None:
@@ -270,6 +338,7 @@ class SparkleAppcastGenerator:
         appcast: Path,
         version: str,
         filename: str,
+        policy: PublicationPolicy,
     ) -> None:
         appcast_bytes = appcast.read_bytes()
         try:
@@ -293,7 +362,6 @@ class SparkleAppcastGenerator:
             "version": version,
             "shortVersionString": version,
             "minimumSystemVersion": "14.0.0",
-            "phasedRolloutInterval": "86400",
             "fullReleaseNotesLink": self.full_changelog_url,
         }
         for name, expected in expected_elements.items():
@@ -302,6 +370,19 @@ class SparkleAppcastGenerator:
                 raise PublicationError(
                     f"The appcast has an unexpected sparkle:{name}.",
                 )
+        phased_interval = item.findtext(
+            f"{namespace}phasedRolloutInterval",
+        )
+        critical_update = item.find(f"{namespace}criticalUpdate")
+        if policy.is_forward_repair:
+            if phased_interval is not None or critical_update is None:
+                raise PublicationError(
+                    "A Forward repair must be unphased and critical.",
+                )
+        elif phased_interval != "86400" or critical_update is not None:
+            raise PublicationError(
+                "A routine update must be phased and non-critical.",
+            )
         enclosure = item.find("enclosure")
         if enclosure is None:
             raise PublicationError("The appcast item has no enclosure.")
@@ -365,6 +446,15 @@ class R2UpdateOrigin:
         self.bucket = bucket
         self.endpoint = endpoint
         self.public_base_url = public_base_url.rstrip("/")
+
+    def assert_publication_allowed(self, policy: PublicationPolicy) -> None:
+        freeze = self.fetcher.fetch(
+            f"{self.public_base_url}/controls/publication-frozen.json",
+        )
+        if freeze is not None and not policy.is_forward_repair:
+            raise PublicationError(
+                "Routine publication is frozen by an active release incident.",
+            )
 
     def fetch_appcast(self) -> bytes | None:
         return self.fetcher.fetch(f"{self.public_base_url}/appcast.xml")
@@ -452,11 +542,19 @@ class AuthenticatedUpdatePublisher:
         origin: UpdateOrigin,
         github: GitHubRelease,
         changelog: Path,
+        policy: PublicationPolicy | None = None,
+        record_directory: Path | None = None,
+        source_commit: str | None = None,
+        source_run_id: str | None = None,
     ) -> None:
         self.generator = generator
         self.origin = origin
         self.github = github
         self.changelog = changelog
+        self.policy = policy
+        self.record_directory = record_directory
+        self.source_commit = source_commit
+        self.source_run_id = source_run_id
 
     def publish(self, tag: str, dmg: Path, sha256: str) -> None:
         if _sha256(dmg) != sha256:
@@ -473,6 +571,12 @@ class AuthenticatedUpdatePublisher:
                 f"Expected release archive {expected_filename}; got {dmg.name}.",
             )
 
+        policy = self.policy or PublicationPolicy.routine(version)
+        if policy.release_version != version:
+            raise PublicationError(
+                "The publication policy does not match the release tag.",
+            )
+        self.origin.assert_publication_allowed(policy)
         previous_appcast = self.origin.fetch_appcast()
         with tempfile.TemporaryDirectory(
             prefix="foldwise-publication-",
@@ -483,8 +587,68 @@ class AuthenticatedUpdatePublisher:
                 changelog=self.changelog,
                 previous_appcast=previous_appcast,
                 working_directory=Path(directory),
+                policy=policy,
+            )
+            self._preserve_record(
+                tag=tag,
+                dmg=dmg,
+                sha256=sha256,
+                previous_appcast=previous_appcast,
+                appcast=appcast,
+                policy=policy,
             )
             self.origin.stage_archive(dmg, sha256)
             self.github.stage_asset(tag, dmg, sha256)
             self.origin.publish_appcast(appcast)
             self.github.publish_draft(tag)
+
+    def _preserve_record(
+        self,
+        *,
+        tag: str,
+        dmg: Path,
+        sha256: str,
+        previous_appcast: bytes | None,
+        appcast: Path,
+        policy: PublicationPolicy,
+    ) -> None:
+        if self.record_directory is None:
+            return
+        self.record_directory.mkdir(parents=True, exist_ok=True)
+        retained_dmg = self.record_directory / dmg.name
+        if retained_dmg.resolve() != dmg.resolve():
+            shutil.copy2(dmg, retained_dmg)
+        if previous_appcast is not None:
+            (self.record_directory / "appcast-before.xml").write_bytes(
+                previous_appcast,
+            )
+        published = appcast.read_bytes()
+        (self.record_directory / "appcast-published.xml").write_bytes(
+            published,
+        )
+        record = {
+            "schema_version": 1,
+            "tag": tag,
+            "version": policy.release_version,
+            "bad_version": policy.bad_version,
+            "validation_reference": policy.validation_reference,
+            "filename": dmg.name,
+            "sha256": sha256,
+            "source_commit": self.source_commit,
+            "source_run_id": self.source_run_id,
+            "previous_appcast_sha256": (
+                hashlib.sha256(previous_appcast).hexdigest()
+                if previous_appcast is not None
+                else None
+            ),
+            "published_appcast_sha256": hashlib.sha256(published).hexdigest(),
+            "recovery_paths": {
+                "ed25519_private_key": "SPARKLE_ED_PRIVATE_KEY recovery copy",
+                "developer_id_identity": (
+                    "Developer ID .p12 and password reference"
+                ),
+            },
+        }
+        (self.record_directory / "publication.json").write_text(
+            json.dumps(record, indent=2, sort_keys=True) + "\n",
+        )
