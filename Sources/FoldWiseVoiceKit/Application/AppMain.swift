@@ -6,6 +6,7 @@
 import AppKit
 import Foundation
 import os
+import Sparkle
 
 final class LiveLLMModelManager: LLMModelManaging {
     func list() async -> [OllamaClient.InstalledModel] {
@@ -20,16 +21,6 @@ final class LiveLLMModelManager: LLMModelManaging {
 
     func delete(_ name: String) async -> String? {
         await OllamaClient.delete(model: name)
-    }
-}
-
-final class LiveSettingsUpdateChecker: SettingsUpdateChecking {
-    var isAvailable: Bool {
-        UpdateChecker.currentVersion() != nil
-    }
-
-    func check() async -> UpdateChecker.CheckResult {
-        await UpdateChecker.checkNow()
     }
 }
 
@@ -74,10 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeys: HotkeyBindingCoordinator!
     private var dictationCommands: DictationCommandQueue!
     private var modeCycleCommand: ModeCycleCommand!
-    private var updateChecker: UpdateChecker!
     private let asrBadgePresentation = ASRBadgePresentation()
     private let shortcutCaptureGate = ShortcutCaptureGate()
     // swiftlint:enable implicitly_unwrapped_optional
+    private var updaterController: SPUStandardUpdaterController?
+    private var updaterAvailabilityObservation: NSKeyValueObservation?
 
     init(configPath: String?, showSettingsOnLaunch: Bool) {
         self.configPath = configPath
@@ -195,15 +187,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             inputDevices: recorder, hotkeys: hotkeys, captureGate: shortcutCaptureGate,
             asrLifecycle: asrLifecycle
         )
+        if Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil {
+            updaterController = SPUStandardUpdaterController(
+                startingUpdater: true,
+                updaterDelegate: nil,
+                userDriverDelegate: nil
+            )
+        }
+        let canCheckForUpdates = updaterController?.updater.canCheckForUpdates ?? false
+        let checkForUpdates: () -> Void = { [weak self] in
+            self?.updaterController?.checkForUpdates(nil)
+        }
+        settings.configureUpdates(
+            canCheckForUpdates: canCheckForUpdates,
+            checkForUpdates: checkForUpdates
+        )
         menuBar = MenuBarController(
             config: config,
             onSettings: { [weak self] in self?.settings.show() },
-            onCheckForUpdates: { [weak self] in self?.checkForUpdatesManually() },
+            onCheckForUpdates: checkForUpdates,
+            canCheckForUpdates: canCheckForUpdates,
             onModeSelectionError: { [weak self] in self?.badge.showModeSelectionError() },
             onQuit: { [weak self] in self?.quit() }
         )
-        settings.onUpdateAvailable = { [weak self] version in
-            self?.menuBar.showUpdateAvailable(version)
+        updaterAvailabilityObservation = updaterController?.updater.observe(
+            \.canCheckForUpdates,
+            options: [.new]
+        ) { [weak self] updater, _ in
+            Task { @MainActor [weak self] in
+                self?.applyUpdaterAvailability(updater.canCheckForUpdates)
+            }
         }
         pipeline.onState = { [weak self] state in
             Task { @MainActor in self?.apply(state) }
@@ -214,11 +227,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.applyASRLifecycle(snapshot)
             }
         }
-
-        updateChecker = UpdateChecker { [weak self] version in
-            self?.menuBar.showUpdateAvailable(version)
-        }
-        updateChecker.start()
 
         settings.beginPermissionRecovery()
 
@@ -239,41 +247,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// "Check for Updates…" from the menu bar: check immediately and always
-    /// report the outcome in an alert, unlike the silent passive check.
-    private func checkForUpdatesManually() {
-        Task { @MainActor in
-            let result = await UpdateChecker.checkNow()
-            NSApp.activate(ignoringOtherApps: true)
-            let alert = NSAlert()
-            switch result {
-            case let .upToDate(current):
-                alert.messageText = "You're up to date"
-                alert.informativeText =
-                    "FoldWise Voice \(current) is the latest version."
-                alert.runModal()
-            case let .updateAvailable(version, downloadURL):
-                menuBar.showUpdateAvailable(version)
-                alert.messageText = "Update available"
-                alert.informativeText =
-                    "FoldWise Voice v\(version) is available — you have "
-                        + "\(UpdateChecker.currentVersion() ?? "an older version"). "
-                        + "The download opens in your browser; drag the new app "
-                        + "into Applications to update."
-                alert.addButton(withTitle: "Download")
-                alert.addButton(withTitle: "Later")
-                if alert.runModal() == .alertFirstButtonReturn {
-                    NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
-                }
-            case .failed:
-                alert.messageText = "Couldn't check for updates"
-                alert.informativeText = UpdateChecker.currentVersion() == nil
-                    ? "This build has no version number (dev run), so there's "
-                        + "nothing to compare against."
-                    : "GitHub couldn't be reached. Check your connection and try again."
-                alert.runModal()
-            }
-        }
+    private func applyUpdaterAvailability(_ canCheckForUpdates: Bool) {
+        settings.setCanCheckForUpdates(canCheckForUpdates)
+        menuBar.setCanCheckForUpdates(canCheckForUpdates)
     }
 
     private func apply(_ state: PipelineState) {

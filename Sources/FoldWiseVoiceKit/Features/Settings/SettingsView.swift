@@ -463,20 +463,11 @@ struct SettingsView: View {
         }
     }
 
-    /// Version footer pinned to the sidebar's bottom, with the update state
-    /// folded into one faint line and an accent link when a release is out.
+    /// Version footer pinned to the sidebar's bottom.
     private var footer: some View {
         Group {
             if sidebarMode == .expanded {
                 VStack(alignment: .leading, spacing: 3) {
-                    if case let .available(version, downloadURL) = model.updateState {
-                        Button("Get v\(version)") {
-                            NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
-                        }
-                        .buttonStyle(.plain)
-                        .font(Theme.ui(11, .semibold))
-                        .foregroundStyle(Theme.accent)
-                    }
                     Text(footerText)
                         .font(Theme.ui(11))
                         .foregroundStyle(Theme.textTertiary)
@@ -484,9 +475,9 @@ struct SettingsView: View {
                 .padding(.horizontal, 11)
                 .padding(.bottom, 8)
             } else {
-                Image(systemName: footerSymbol)
+                Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(footerColor)
+                    .foregroundStyle(Theme.success)
                     .frame(width: Theme.sidebarRowHeight, height: 30)
                     .background(
                         Theme.raised,
@@ -501,27 +492,8 @@ struct SettingsView: View {
         .accessibilityIdentifier("continuous-frame.footer")
     }
 
-    private var footerSymbol: String {
-        if case .available = model.updateState {
-            return "arrow.down.circle.fill"
-        }
-        return "checkmark.circle.fill"
-    }
-
-    private var footerColor: Color {
-        if case .available = model.updateState {
-            return Theme.accent
-        }
-        return Theme.success
-    }
-
     private var footerText: String {
-        switch model.updateState {
-        case .checking: "v\(AppInfo.version) · checking…"
-        case .upToDate: "v\(AppInfo.version) · up to date"
-        case let .available(version, _): "v\(AppInfo.version) · v\(version) available"
-        case .idle, .failed, .unavailable: "v\(AppInfo.version)"
-        }
+        "v\(AppInfo.version)"
     }
 
     // MARK: - content shell
@@ -1157,55 +1129,14 @@ struct SettingsView: View {
     }
 
     private var updateSubtitle: String {
-        switch model.updateState {
-        case .idle: "Version \(AppInfo.version)"
-        case .checking: "Version \(AppInfo.version) — checking for updates…"
-        case .upToDate: "Version \(AppInfo.version) — you're up to date"
-        case let .available(version, _): "Version \(AppInfo.version) — v\(version) is available"
-        case .failed: "Version \(AppInfo.version) — couldn't reach GitHub, try again later"
-        case .unavailable: "Version \(AppInfo.version) — update checks need a packaged build"
-        }
+        "Version \(AppInfo.version)"
     }
 
-    @ViewBuilder
     private var updateTrailing: some View {
-        switch model.updateState {
-        case .checking:
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Checking…")
-                    .font(Theme.compactData)
-                    .foregroundStyle(Theme.textSecondary)
-            }
-        case let .available(version, downloadURL):
-            Button("Download v\(version)…") {
-                NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
-            }
-            .buttonStyle(EmberButtonStyle(kind: .primary))
-        case .unavailable:
-            Label("Packaged builds only", systemImage: "hammer")
-                .font(Theme.compactData)
-                .foregroundStyle(Theme.textTertiary)
-        case .upToDate:
-            HStack(spacing: 8) {
-                Label("Current", systemImage: "checkmark.circle.fill")
-                    .font(Theme.compactData)
-                    .foregroundStyle(Theme.success)
-                Button("Check again") { model.onCheckUpdates?() }
-                    .buttonStyle(EmberButtonStyle(kind: .quiet))
-            }
-        case .failed:
-            HStack(spacing: 8) {
-                Image(systemName: "xmark.octagon.fill")
-                    .foregroundStyle(Theme.error)
-                    .accessibilityHidden(true)
-                Button("Check again") { model.onCheckUpdates?() }
-                    .buttonStyle(EmberButtonStyle(kind: .quiet))
-            }
-        case .idle:
-            Button("Check for Updates") { model.onCheckUpdates?() }
-                .buttonStyle(EmberButtonStyle(kind: .quiet))
-        }
+        Button("Check for Updates") { model.onCheckUpdates?() }
+            .buttonStyle(EmberButtonStyle(kind: .quiet))
+            .disabled(!model.canCheckForUpdates)
+            .accessibilityIdentifier("settings.updates.check")
     }
 
     private func resetButton(icon: String, help: String, action: @escaping () -> Void)

@@ -99,7 +99,7 @@ jobs:
           APP_PATH="dist/dmg/FoldWise Voice.app"
           DMG_PATH=(dist/FoldWise-Voice-*.dmg)
 
-          codesign --verify --strict --verbose=2 "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           codesign --verify --strict --verbose=2 "${DMG_PATH[0]}"
           codesign -dvvv "$APP_PATH"
           codesign -dr - "$APP_PATH"

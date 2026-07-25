@@ -69,18 +69,8 @@ final class SettingsModel: ObservableObject {
         }
     }
 
-    enum UpdateState {
-        case idle
-        case checking
-        case upToDate
-        case available(version: String, downloadURL: URL?)
-        case failed
-        /// Dev builds (`swift run`) have no bundle version to compare.
-        case unavailable
-    }
-
     @Published var pane: Pane = .home
-    @Published var updateState: UpdateState = .idle
+    @Published var canCheckForUpdates = false
     @Published var selectedModel = ""
     /// The lifecycle is the single source of ASR truth. Presentation properties
     /// below derive from one immutable value so Settings cannot expose mixed

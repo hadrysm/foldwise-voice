@@ -1,5 +1,5 @@
 // Owns the settings NSWindow and mediates between SettingsModel (UI state)
-// and Config/OllamaClient/UpdateChecker. Preferences commit immediately;
+// and Config/OllamaClient. Preferences commit immediately;
 // Mode drafts commit only through the editor's Save action.
 
 import AppKit
@@ -28,7 +28,6 @@ final class SettingsController {
         copy: Self.copyToPasteboard,
         statsStore: statsStore,
         calendar: calendar,
-        reportUpdate: { [weak self] version in self?.onUpdateAvailable?(version) },
         updateHotkeys: { [weak self] bindings in
             if let hotkeys = self?.hotkeys {
                 try hotkeys.update(bindings)
@@ -45,10 +44,6 @@ final class SettingsController {
     private var closeObserver: NSObjectProtocol?
     private var resignObserver: NSObjectProtocol?
     private var boundaryObservers: [NSObjectProtocol] = []
-
-    /// Wired by AppDelegate so a manual check here also lights up the
-    /// menu-bar "Update Available" item.
-    var onUpdateAvailable: ((String) -> Void)?
 
     init(
         config: Config, historyStore: HistoryStore, statsStore: StatsStore,
@@ -99,6 +94,18 @@ final class SettingsController {
         for observer in boundaryObservers {
             notificationCenter.removeObserver(observer)
         }
+    }
+
+    func configureUpdates(
+        canCheckForUpdates: Bool,
+        checkForUpdates: @escaping () -> Void
+    ) {
+        model.canCheckForUpdates = canCheckForUpdates
+        model.onCheckUpdates = checkForUpdates
+    }
+
+    func setCanCheckForUpdates(_ canCheckForUpdates: Bool) {
+        model.canCheckForUpdates = canCheckForUpdates
     }
 
     func show() {
@@ -165,7 +172,6 @@ final class SettingsController {
         model.onCancelASROperation = { [weak self] in self?.workflow.cancelASROperation() }
         model.onRetryASRBootstrap = { [weak self] in self?.workflow.retryASRBootstrap() }
         model.onDeleteASRModel = { [weak self] id in self?.workflow.deleteASRModel(id) }
-        model.onCheckUpdates = { [weak self] in self?.workflow.checkForUpdates() }
         model.onHistoryCommand = { [weak self] entry, command in
             self?.workflow.performHistoryCommand(command, for: entry)
         }
@@ -245,7 +251,6 @@ final class SettingsController {
         }
         workflow.populateHistory()
         workflow.refreshLLMModels()
-        workflow.checkForUpdates()
     }
 
     private func resetConfiguration() {

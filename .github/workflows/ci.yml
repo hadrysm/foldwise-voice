@@ -53,3 +53,26 @@ jobs:
         env:
           COVERAGE_BASE_REF: ${{ github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || '' }}
         run: ./scripts/coverage.sh
+
+  sparkle-bundle:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Capture Swift toolchain version
+        id: swift
+        run: echo "hash=$(swift --version | shasum -a 256 | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-bundle-${{ runner.os }}-${{ steps.swift.outputs.hash }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-bundle-${{ runner.os }}-${{ steps.swift.outputs.hash }}-
+      - name: Build updater-enabled and development bundles
+        run: |
+          python3 scripts/build_swift_app.py --bundle-only
+          python3 scripts/build_swift_app.py --development-bundle-only
+      - name: Verify Sparkle bundle contract
+        env:
+          RUN_SPARKLE_BUNDLE_TESTS: "1"
+        run: swift test --filter SparkleBundleTests

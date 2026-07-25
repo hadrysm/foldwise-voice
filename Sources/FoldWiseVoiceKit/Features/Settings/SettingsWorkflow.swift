@@ -9,12 +9,6 @@ protocol LLMModelManaging {
     func delete(_ name: String) async -> String?
 }
 
-@MainActor
-protocol SettingsUpdateChecking {
-    var isAvailable: Bool { get }
-    func check() async -> UpdateChecker.CheckResult
-}
-
 /// Deterministic settings decisions shared by the SwiftUI/AppKit shell.
 @MainActor
 final class SettingsWorkflow {
@@ -32,8 +26,6 @@ final class SettingsWorkflow {
     private let statsStore: StatsStore
     private let calendar: Calendar
     private let reprocessor: HistoryReprocessor
-    private let updates: any SettingsUpdateChecking
-    private let reportUpdate: (String) -> Void
     private let updateHotkeys: (ShortcutBindings) throws -> Void
     private let captureGate: ShortcutCaptureGate
     private var llmRefreshID: UUID?
@@ -50,8 +42,6 @@ final class SettingsWorkflow {
         statsStore: StatsStore = JSONStatsStore(url: JSONStatsStore.defaultURL),
         calendar: Calendar = .current,
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
-        updates: (any SettingsUpdateChecking)? = nil,
-        reportUpdate: @escaping (String) -> Void = { _ in },
         updateHotkeys: ((ShortcutBindings) throws -> Void)? = nil,
         captureGate: ShortcutCaptureGate = ShortcutCaptureGate(),
         asrLifecycle: ASRModelLifecycle
@@ -68,8 +58,6 @@ final class SettingsWorkflow {
             statsStore: statsStore,
             calendar: calendar,
             polish: polish,
-            updates: updates,
-            reportUpdate: reportUpdate,
             updateHotkeys: updateHotkeys,
             captureGate: captureGate
         )
@@ -87,8 +75,6 @@ final class SettingsWorkflow {
         statsStore: StatsStore = JSONStatsStore(url: JSONStatsStore.defaultURL),
         calendar: Calendar = .current,
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
-        updates: (any SettingsUpdateChecking)? = nil,
-        reportUpdate: @escaping (String) -> Void = { _ in },
         updateHotkeys: ((ShortcutBindings) throws -> Void)? = nil,
         captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
     ) {
@@ -103,8 +89,6 @@ final class SettingsWorkflow {
         self.statsStore = statsStore
         self.calendar = calendar
         reprocessor = HistoryReprocessor(store: historyStore, polish: polish)
-        self.updates = updates ?? LiveSettingsUpdateChecker()
-        self.reportUpdate = reportUpdate
         self.updateHotkeys = updateHotkeys ?? { try config.setShortcutBindings($0) }
         self.captureGate = captureGate
         observeConfigChanges()
@@ -176,28 +160,6 @@ final class SettingsWorkflow {
                 guard let self else { return }
                 self.prependHistory(entry)
                 self.refreshStreak()
-            }
-        }
-    }
-
-    func checkForUpdates() {
-        guard updates.isAvailable else {
-            model.updateState = .unavailable
-            return
-        }
-        if case .checking = model.updateState {
-            return
-        }
-        model.updateState = .checking
-        Task { @MainActor in
-            switch await updates.check() {
-            case .upToDate:
-                model.updateState = .upToDate
-            case let .updateAvailable(version, downloadURL):
-                model.updateState = .available(version: version, downloadURL: downloadURL)
-                reportUpdate(version)
-            case .failed:
-                model.updateState = .failed
             }
         }
     }

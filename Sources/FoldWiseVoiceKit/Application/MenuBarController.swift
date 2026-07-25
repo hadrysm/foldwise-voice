@@ -11,32 +11,35 @@ final class MenuBarController: NSObject {
     private let onModeSelectionError: () -> Void
     private let onQuit: () -> Void
 
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private var modeItems: [NSMenuItem] = []
-    private let modeEndSeparator: NSMenuItem = .separator()
-    /// Hidden until UpdateChecker reports a newer release.
-    private let updateItem = NSMenuItem(
-        title: "Update Available…",
-        action: #selector(MenuBarController.openReleasePage(_:)),
+    private let statusItem: NSStatusItem
+    private let checkUpdatesItem = NSMenuItem(
+        title: "Check for Updates…",
+        action: #selector(MenuBarController.checkForUpdates(_:)),
         keyEquivalent: ""
     )
-    private let updateSeparator: NSMenuItem = .separator()
+    private var modeItems: [NSMenuItem] = []
+    private let modeEndSeparator: NSMenuItem = .separator()
 
     init(
         config: Config,
         onSettings: @escaping () -> Void,
         onCheckForUpdates: @escaping () -> Void,
+        canCheckForUpdates: Bool = true,
         onModeSelectionError: @escaping () -> Void,
         onQuit: @escaping () -> Void,
-        menu: NSMenu? = nil
+        menu: NSMenu? = nil,
+        statusItem: NSStatusItem? = nil
     ) {
         self.config = config
         self.onSettings = onSettings
         self.onCheckForUpdates = onCheckForUpdates
         self.onModeSelectionError = onModeSelectionError
         self.onQuit = onQuit
+        self.statusItem = statusItem
+            ?? NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
         build(menu ?? NSMenu())
+        checkUpdatesItem.isEnabled = canCheckForUpdates
         // Wherever the active mode is changed — here, the Badge's mode menu,
         // or Settings — the checkmarks follow.
         config.onChange { [weak self] changes in
@@ -63,10 +66,8 @@ final class MenuBarController: NSObject {
         button.contentTintColor = tint
     }
 
-    func showUpdateAvailable(_ version: String) {
-        updateItem.title = "Update Available: v\(version)…"
-        updateItem.isHidden = false
-        updateSeparator.isHidden = false
+    func setCanCheckForUpdates(_ canCheckForUpdates: Bool) {
+        checkUpdatesItem.isEnabled = canCheckForUpdates
     }
 
     private func refreshModeChecks() {
@@ -114,15 +115,6 @@ final class MenuBarController: NSObject {
         menu.addItem(header)
         menu.addItem(.separator())
 
-        updateItem.target = self
-        updateItem.isHidden = true
-        updateItem.image = NSImage(
-            systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil
-        )
-        menu.addItem(updateItem)
-        updateSeparator.isHidden = true
-        menu.addItem(updateSeparator)
-
         menu.addItem(modeEndSeparator)
         let settings = NSMenuItem(
             title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ","
@@ -130,12 +122,8 @@ final class MenuBarController: NSObject {
         settings.target = self
         menu.addItem(settings)
 
-        let checkUpdates = NSMenuItem(
-            title: "Check for Updates…", action: #selector(checkForUpdates(_:)),
-            keyEquivalent: ""
-        )
-        checkUpdates.target = self
-        menu.addItem(checkUpdates)
+        checkUpdatesItem.target = self
+        menu.addItem(checkUpdatesItem)
 
         menu.addItem(.separator())
         let quit = NSMenuItem(
@@ -158,10 +146,6 @@ final class MenuBarController: NSObject {
                 "Could not select Mode from the menu bar: \(error.localizedDescription, privacy: .public)"
             )
         }
-    }
-
-    @objc private func openReleasePage(_ sender: Any?) {
-        NSWorkspace.shared.open(UpdateChecker.releasesPage)
     }
 
     @objc private func openSettings(_ sender: Any?) {
