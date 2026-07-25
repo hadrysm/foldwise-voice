@@ -9,7 +9,7 @@ With --dmg it instead builds a distributable disk image: a self-contained
 config.json in ~/Library/Application Support/FoldWise Voice/ on first launch)
 inside a drag-to-Applications .dmg.
 
-By default the bundle is ad-hoc signed. To sign the .dmg build with a real
+By default the bundle is ad-hoc signed. To sign the app and .dmg with a real
 Developer ID (required for notarization), set CODESIGN_IDENTITY, e.g.
 CODESIGN_IDENTITY="Developer ID Application: Jane Doe (TEAMID)".
 
@@ -106,26 +106,48 @@ def build_bundle(binary: Path, dest: Path, name: str, icon: Path,
         plistlib.dump(plist, f)
 
     shutil.copy2(binary, macos / "FoldWiseVoice")
-    sign(app)
+    sign_app(app)
     return app
 
 
-def sign(app: Path) -> None:
-    # Ad-hoc signature gives the bundle a stable identity for TCC grants.
-    # A real Developer ID (CODESIGN_IDENTITY) additionally enables the
-    # hardened runtime, which notarization requires.
-    # Empty (e.g. an unset CI secret) means ad-hoc, same as unset.
+def sign_app(app: Path) -> None:
+    # An ad-hoc signature's designated requirement is tied to that exact code
+    # version, so it does not provide a stable identity across releases. A real
+    # Developer ID does, and additionally enables the hardened runtime and
+    # secure timestamp required for notarization.
+    #
+    # Do not use `codesign --deep`: embedded code must be signed inside-out by
+    # the build step that adds it, before this outer app-bundle signature.
+    # Empty (e.g. an unset local environment variable) means ad-hoc.
     identity = os.environ.get("CODESIGN_IDENTITY") or "-"
-    cmd = ["codesign", "--force", "--deep", "-s", identity]
+    cmd = ["codesign", "--force", "--sign", identity]
     entitlements = DIST / "entitlements.plist"
     if identity != "-":
         with open(entitlements, "wb") as f:
             plistlib.dump({"com.apple.security.device.audio-input": True}, f)
-        cmd += ["--options", "runtime", "--entitlements", str(entitlements)]
+        cmd += [
+            "--timestamp",
+            "--options", "runtime",
+            "--entitlements", str(entitlements),
+        ]
     try:
         subprocess.run(cmd + [str(app)], check=True)
     finally:
         entitlements.unlink(missing_ok=True)
+
+
+def sign_dmg(dmg: Path) -> None:
+    """Sign a disk image when a Developer ID identity was requested."""
+    identity = os.environ.get("CODESIGN_IDENTITY")
+    if not identity:
+        return
+    subprocess.run(
+        [
+            "codesign", "--force", "--timestamp",
+            "--sign", identity, str(dmg),
+        ],
+        check=True,
+    )
 
 
 DMG_LAYOUT_SCRIPT = """
@@ -219,6 +241,7 @@ def build_dmg(app: Path, background: Path, icon: Path) -> Path:
         check=True,
     )
     rw_dmg.unlink()
+    sign_dmg(dmg)
     return dmg
 
 
@@ -257,7 +280,8 @@ def main() -> None:
         dmg = build_dmg(app, background, icon)
         print(f"Built: {dmg}")
         if os.environ.get("CODESIGN_IDENTITY"):
-            print("Signed with your Developer ID. To pass Gatekeeper on download,")
+            print("App and DMG signed with your Developer ID.")
+            print("To pass Gatekeeper on download,")
             print("notarize it:  xcrun notarytool submit <dmg> --keychain-profile <p> --wait")
             print("then:         xcrun stapler staple <dmg>")
         else:
