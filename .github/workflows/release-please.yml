@@ -3,13 +3,27 @@ name: release-please
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Run ID that submitted the preserved DMG
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: write
   pull-requests: write
 
+# A normal release and a recovery finalizer must never race each other. Apple
+# continues processing timed-out submissions, so queued runs are not canceled.
+concurrency:
+  group: foldwise-release-notarization
+  cancel-in-progress: false
+
 jobs:
   release-please:
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
@@ -21,22 +35,15 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # Build the .dmg and attach it to the release the job above just created.
-  # Must be chained here (not an `on: release` workflow): releases created
-  # with the default GITHUB_TOKEN don't trigger other workflows.
-  #
-  # Release artifacts are always Developer ID signed and notarized. Configure:
-  #   MACOS_CERTIFICATE          base64 of the Developer ID Application .p12
-  #                              (base64 -i cert.p12 | pbcopy)
-  #   MACOS_CERTIFICATE_PASSWORD password of that .p12
-  #   CODESIGN_IDENTITY          "Developer ID Application: Name (TEAMID)"
-  #   NOTARY_API_PRIVATE_KEY_BASE64
-  #                              base64 of a Team App Store Connect API .p8 key
-  #   NOTARY_API_KEY_ID          App Store Connect API key ID
-  #   NOTARY_API_ISSUER_ID       App Store Connect API issuer ID
-  upload-dmg:
+  # Build and submit exactly once. The draft release and forced tag already
+  # exist, but no public release asset is attached in this stage.
+  submit-notarization:
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created }}
+    if: >-
+      ${{
+        github.event_name == 'push' &&
+        needs.release-please.outputs.release_created == 'true'
+      }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,15 +71,89 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-      - name: Build .dmg
+      - name: Build signed DMG
         env:
           CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
         run: |
           set -euo pipefail
           : "${CODESIGN_IDENTITY:?CODESIGN_IDENTITY secret is required}"
           python3 scripts/build_swift_app.py --dmg
-      - name: Notarize and staple
+          mkdir -p dist/notarization
+          DMG_PATH=(dist/FoldWise-Voice-*.dmg)
+          mv "${DMG_PATH[0]}" dist/notarization/
+      - name: Submit without waiting
         env:
+          NOTARY_API_PRIVATE_KEY_BASE64: ${{ secrets.NOTARY_API_PRIVATE_KEY_BASE64 }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          : "${NOTARY_API_PRIVATE_KEY_BASE64:?NOTARY_API_PRIVATE_KEY_BASE64 secret is required}"
+          : "${NOTARY_API_KEY_ID:?NOTARY_API_KEY_ID secret is required}"
+          : "${NOTARY_API_ISSUER_ID:?NOTARY_API_ISSUER_ID secret is required}"
+          NOTARY_KEY_PATH="$RUNNER_TEMP/foldwise-notary-key.p8"
+          export NOTARY_KEY_PATH
+          trap 'rm -f "$NOTARY_KEY_PATH"' EXIT
+          umask 077
+          printf '%s' "$NOTARY_API_PRIVATE_KEY_BASE64" \
+            | base64 --decode > "$NOTARY_KEY_PATH"
+
+          DMG_PATH=(dist/notarization/FoldWise-Voice-*.dmg)
+          python3 scripts/release_notarization.py submit \
+            --dmg "${DMG_PATH[0]}" \
+            --record dist/notarization/submission.json \
+            --tag "$RELEASE_TAG" \
+            --source-run-id "$GITHUB_RUN_ID" \
+            --commit "$(git rev-parse HEAD)"
+      - name: Preserve submission recovery state
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: notarization-${{ github.run_id }}
+          path: dist/notarization/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  # The same job handles the first finalization and every later recovery. A
+  # manual dispatch names only the source run; its immutable artifact carries
+  # the tag, filename, checksum, commit, and Apple submission UUID.
+  finalize-notarization:
+    needs: [release-please, submit-notarization]
+    if: >-
+      ${{
+        always() &&
+        (
+          github.event_name == 'workflow_dispatch' ||
+          (
+            github.event_name == 'push' &&
+            needs.submit-notarization.result == 'success'
+          )
+        )
+      }}
+    runs-on: macos-latest
+    timeout-minutes: 240
+    env:
+      SOURCE_RUN_ID: >-
+        ${{
+          github.event_name == 'workflow_dispatch' &&
+          inputs.source_run_id ||
+          github.run_id
+        }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download preserved submission
+        uses: actions/download-artifact@v4
+        with:
+          name: notarization-${{ env.SOURCE_RUN_ID }}
+          path: dist/notarization
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Wait, staple, verify, and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
           NOTARY_API_PRIVATE_KEY_BASE64: ${{ secrets.NOTARY_API_PRIVATE_KEY_BASE64 }}
           NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
           NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
@@ -82,32 +163,25 @@ jobs:
           : "${NOTARY_API_KEY_ID:?NOTARY_API_KEY_ID secret is required}"
           : "${NOTARY_API_ISSUER_ID:?NOTARY_API_ISSUER_ID secret is required}"
           NOTARY_KEY_PATH="$RUNNER_TEMP/foldwise-notary-key.p8"
+          export NOTARY_KEY_PATH
           trap 'rm -f "$NOTARY_KEY_PATH"' EXIT
           umask 077
           printf '%s' "$NOTARY_API_PRIVATE_KEY_BASE64" \
             | base64 --decode > "$NOTARY_KEY_PATH"
 
-          xcrun notarytool submit dist/FoldWise-Voice-*.dmg \
-            --key "$NOTARY_KEY_PATH" \
-            --key-id "$NOTARY_API_KEY_ID" \
-            --issuer "$NOTARY_API_ISSUER_ID" \
-            --wait
-          xcrun stapler staple dist/FoldWise-Voice-*.dmg
-      - name: Verify release artifact
-        run: |
-          set -euo pipefail
-          APP_PATH="dist/dmg/FoldWise Voice.app"
-          DMG_PATH=(dist/FoldWise-Voice-*.dmg)
-
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-          codesign --verify --strict --verbose=2 "${DMG_PATH[0]}"
-          codesign -dvvv "$APP_PATH"
-          codesign -dr - "$APP_PATH"
-          spctl -a -vvv -t exec "$APP_PATH"
-          spctl -a -vvv -t open \
-            --context context:primary-signature "${DMG_PATH[0]}"
-          xcrun stapler validate "${DMG_PATH[0]}"
-      - name: Upload to release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ needs.release-please.outputs.tag_name }}" dist/FoldWise-Voice-*.dmg
+          python3 scripts/release_notarization.py finalize \
+            --artifact-directory dist/notarization \
+            --record dist/notarization/submission.json \
+            --log dist/notarization/notarization-log.json \
+            --repository "$GITHUB_REPOSITORY"
+      - name: Preserve failed finalizer evidence
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: >-
+            notarization-finalizer-${{ env.SOURCE_RUN_ID }}-${{
+            github.run_id }}-${{ github.run_attempt }}
+          path: dist/notarization/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
