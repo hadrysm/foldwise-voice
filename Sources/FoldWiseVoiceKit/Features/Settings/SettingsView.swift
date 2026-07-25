@@ -56,6 +56,33 @@ struct RailTileBoundsKey: PreferenceKey {
     }
 }
 
+/// The single piece of selection chrome that moves between navigation rows.
+/// Keeping it separate from row content gives the sidebar Motion-style layout
+/// animation without transitioning the destination views themselves.
+private struct SidebarSelectionChrome: View {
+    let showsCheckmark: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: Theme.controlRadius)
+            .fill(Theme.raised)
+            .overlay(alignment: .leading) {
+                EmberIngress(color: Theme.accent)
+                    .frame(height: 22)
+            }
+            .overlay(alignment: .trailing) {
+                if showsCheckmark {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Theme.accent)
+                        .padding(.trailing, Theme.sidebarRowContentInset)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
@@ -226,15 +253,21 @@ struct SettingsView: View {
     }
 
     private var expandedSidebar: some View {
-        VStack(alignment: .leading, spacing: Theme.sidebarRowSpacing) {
-            ForEach(SettingsModel.Pane.allCases) { pane in
-                navRow(pane)
+        ZStack(alignment: .topLeading) {
+            sidebarSelectionChrome(
+                width: Theme.sidebarWidth - Theme.sidebarHorizontalInset * 2,
+                showsCheckmark: true
+            )
+            VStack(alignment: .leading, spacing: Theme.sidebarRowSpacing) {
+                ForEach(SettingsModel.Pane.allCases) { pane in
+                    navRow(pane)
+                }
+                Spacer()
+                footer
             }
-            Spacer()
-            footer
+            .padding(.horizontal, Theme.sidebarHorizontalInset)
+            .padding(.vertical, Theme.sidebarVerticalInset)
         }
-        .padding(.horizontal, Theme.sidebarHorizontalInset)
-        .padding(.vertical, Theme.sidebarVerticalInset)
     }
 
     private func navRow(_ pane: SettingsModel.Pane) -> some View {
@@ -243,7 +276,7 @@ struct SettingsView: View {
         return Button {
             model.pane = pane
         } label: {
-            EmberSelectionLabel(isSelected: active) {
+            HStack(spacing: 9) {
                 Image(systemName: pane.icon)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(active ? Theme.accent : Theme.textTertiary)
@@ -251,8 +284,10 @@ struct SettingsView: View {
                 Text(pane.rawValue)
                     .font(active ? Theme.navActive : Theme.nav)
                     .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
+                Spacer()
             }
-            .padding(.trailing, 9)
+            .padding(.horizontal, Theme.sidebarRowContentInset)
+            .frame(maxWidth: .infinity)
             .frame(height: Theme.sidebarRowHeight)
             .contentShape(Rectangle())
         }
@@ -270,15 +305,21 @@ struct SettingsView: View {
     }
 
     private var railSidebar: some View {
-        VStack(alignment: .leading, spacing: Theme.sidebarRowSpacing) {
-            ForEach(SettingsModel.Pane.allCases) { pane in
-                railTile(pane)
+        ZStack(alignment: .topLeading) {
+            sidebarSelectionChrome(
+                width: Theme.railWidth - Theme.sidebarHorizontalInset * 2,
+                showsCheckmark: false
+            )
+            VStack(alignment: .leading, spacing: Theme.sidebarRowSpacing) {
+                ForEach(SettingsModel.Pane.allCases) { pane in
+                    railTile(pane)
+                }
+                Spacer()
+                footer
             }
-            Spacer()
-            footer
+            .padding(.horizontal, Theme.sidebarHorizontalInset)
+            .padding(.vertical, Theme.sidebarVerticalInset)
         }
-        .padding(.horizontal, Theme.sidebarHorizontalInset)
-        .padding(.vertical, Theme.sidebarVerticalInset)
     }
 
     private func railTile(_ pane: SettingsModel.Pane) -> some View {
@@ -287,22 +328,11 @@ struct SettingsView: View {
         return Button {
             model.pane = pane
         } label: {
-            HStack(spacing: 0) {
-                EmberIngress(color: active ? Theme.accent : .clear)
-                    .frame(height: 22)
-                Image(systemName: pane.icon)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(active ? Theme.accent : Theme.textTertiary)
-                    .frame(
-                        width: Theme.sidebarRowHeight - Theme.selectionIngressWidth,
-                        height: Theme.sidebarRowHeight
-                    )
-            }
-            .background(
-                active ? Theme.raised : .clear,
-                in: RoundedRectangle(cornerRadius: Theme.controlRadius)
-            )
-            .contentShape(Rectangle())
+            Image(systemName: pane.icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(active ? Theme.accent : Theme.textTertiary)
+                .frame(width: Theme.sidebarRowHeight, height: Theme.sidebarRowHeight)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
@@ -323,6 +353,28 @@ struct SettingsView: View {
                 model.hoveredRailPane = nil
             }
         }
+    }
+
+    private func sidebarSelectionChrome(
+        width: CGFloat,
+        showsCheckmark: Bool
+    ) -> some View {
+        SidebarSelectionChrome(showsCheckmark: showsCheckmark)
+            .frame(width: width, height: Theme.sidebarRowHeight)
+            .offset(
+                x: Theme.sidebarHorizontalInset,
+                y: sidebarSelectionOffset
+            )
+            .animation(
+                Theme.sidebarSelectionAnimation(reduceMotion: accessibilityReduceMotion),
+                value: model.pane
+            )
+    }
+
+    private var sidebarSelectionOffset: CGFloat {
+        let index = SettingsModel.Pane.allCases.firstIndex(of: model.pane) ?? 0
+        return Theme.sidebarVerticalInset
+            + CGFloat(index) * (Theme.sidebarRowHeight + Theme.sidebarRowSpacing)
     }
 
     /// The hovered rail tile's tooltip chip, 10pt to its right and vertically

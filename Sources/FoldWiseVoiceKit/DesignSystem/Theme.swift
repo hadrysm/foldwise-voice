@@ -81,6 +81,7 @@ enum Theme {
     static let sidebarHorizontalInset: CGFloat = 8
     static let sidebarVerticalInset: CGFloat = 10
     static let sidebarRowHeight: CGFloat = 36
+    static let sidebarRowContentInset: CGFloat = 12
     static let sidebarRowSpacing: CGFloat = 4
     static let homeCompactBreakpoint: Double = 940
     static let badgeHeight: CGFloat = 38
@@ -98,6 +99,11 @@ enum Theme {
     static func ordinaryAnimation(reduceMotion: Bool) -> Animation? {
         ThemeEnvironmentPolicy.ordinaryMotionDuration(reduceMotion: reduceMotion)
             .map(Animation.easeOut(duration:))
+    }
+
+    static func sidebarSelectionAnimation(reduceMotion: Bool) -> Animation? {
+        guard !reduceMotion else { return nil }
+        return .spring(response: 0.28, dampingFraction: 0.88)
     }
 
     /// A dynamic color resolving per the system appearance, from hex sRGB.
@@ -286,28 +292,6 @@ struct EmberEmptyState: View {
             .frame(maxWidth: .infinity, minHeight: 150)
         }
         .accessibilityElement(children: .combine)
-    }
-}
-
-struct EmberSelectionLabel<Content: View>: View {
-    let isSelected: Bool
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        HStack(spacing: 9) {
-            EmberIngress(color: isSelected ? Theme.accent : .clear)
-                .frame(height: 22)
-            content
-            Spacer()
-            if isSelected {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Theme.accent)
-                    .accessibilityHidden(true)
-            }
-        }
-        .background(isSelected ? Theme.raised : .clear)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
     }
 }
 
