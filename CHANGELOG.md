@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.18.0](https://github.com/hadrysm/foldwise-voice/compare/v0.17.0...v0.18.0) (2026-07-25)
+
+
+### Features
+
+* ship safe signed Sparkle updates and release recovery ([#310](https://github.com/hadrysm/foldwise-voice/issues/310)) ([f0418b1](https://github.com/hadrysm/foldwise-voice/commit/f0418b1d3e7b4c2e12a9ca1bcc51e9906c9efeb7)), closes [#309](https://github.com/hadrysm/foldwise-voice/issues/309)
+
+
+### Documentation
+
+* confirm transition release verification ([89a4c7d](https://github.com/hadrysm/foldwise-voice/commit/89a4c7d602ca85fb2c55ebae557e2e47ddd9addb))
+* record transition release artifact ([4cc7a82](https://github.com/hadrysm/foldwise-voice/commit/4cc7a82566a7a59d06b10e6e71a6121c49549b3d))
+
 ## [0.17.0](https://github.com/hadrysm/foldwise-voice/compare/v0.16.0...v0.17.0) (2026-07-25)
 
 ### Existing users: one manual update and permission refresh
