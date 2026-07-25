@@ -79,6 +79,11 @@ final class ThemeEnvironmentTests: XCTestCase {
         XCTAssertNil(ThemeEnvironmentPolicy.ordinaryMotionDuration(reduceMotion: true))
     }
 
+    func testReduceMotionMakesSidebarSelectionTravelImmediate() {
+        XCTAssertNotNil(Theme.sidebarSelectionAnimation(reduceMotion: false))
+        XCTAssertNil(Theme.sidebarSelectionAnimation(reduceMotion: true))
+    }
+
     func testWideDestinationsUseCanonicalWidePadding() {
         XCTAssertEqual(
             ThemeLayoutPolicy.destinationPadding(windowWidth: Theme.homeCompactBreakpoint),
