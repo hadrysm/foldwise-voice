@@ -267,6 +267,19 @@ final class StateCollector {
     }
 }
 
+final class EventCollector<Event>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var collected: [Event] = []
+
+    func append(_ event: Event) {
+        lock.withLock { collected.append(event) }
+    }
+
+    var events: [Event] {
+        lock.withLock { collected }
+    }
+}
+
 /// A single-mode Config that never touches the filesystem (nothing saves it)
 /// and keeps the audio ducker inert (`pauseAudio: false`).
 func makeTestConfig(

@@ -15,8 +15,6 @@ private extension SettingsWorkflow {
         statsStore: StatsStore = JSONStatsStore(url: JSONStatsStore.defaultURL),
         calendar: Calendar = .current,
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
-        updates: (any SettingsUpdateChecking)? = nil,
-        reportUpdate: @escaping (String) -> Void = { _ in },
         updateHotkeys: ((ShortcutBindings) throws -> Void)? = nil,
         captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
     ) {
@@ -35,8 +33,6 @@ private extension SettingsWorkflow {
             statsStore: statsStore,
             calendar: calendar,
             polish: polish,
-            updates: updates,
-            reportUpdate: reportUpdate,
             updateHotkeys: updateHotkeys,
             captureGate: captureGate
         )
@@ -608,21 +604,6 @@ final class SettingsWorkflowTests: XCTestCase {
                     availableModelIDs.remove(id)
                 }
             }
-        }
-    }
-
-    @MainActor
-    private final class CannedUpdateChecker: SettingsUpdateChecking {
-        let isAvailable: Bool
-        let result: UpdateChecker.CheckResult
-
-        init(isAvailable: Bool = true, result: UpdateChecker.CheckResult) {
-            self.isAvailable = isAvailable
-            self.result = result
-        }
-
-        func check() async -> UpdateChecker.CheckResult {
-            result
         }
     }
 
@@ -1748,66 +1729,6 @@ final class SettingsWorkflowTests: XCTestCase {
                 ),
             ]
         )
-    }
-
-    func testUnavailableUpdateCheckPublishesUnavailableState() {
-        let config = makeConfig()
-        let model = SettingsModel()
-        let updates = CannedUpdateChecker(isAvailable: false, result: .failed)
-        let workflow = makeWorkflow(config: config, model: model, updates: updates)
-
-        workflow.checkForUpdates()
-
-        guard case .unavailable = model.updateState else {
-            return XCTFail("expected unavailable update state")
-        }
-    }
-
-    func testAvailableUpdatePublishesStateAndReportsVersion() async {
-        let config = makeConfig()
-        let model = SettingsModel()
-        let updates = CannedUpdateChecker(
-            result: .updateAvailable(version: "2.0.0", downloadURL: nil)
-        )
-        var reported: String?
-        let workflow = makeWorkflow(
-            config: config,
-            model: model,
-            updates: updates,
-            reportUpdate: { reported = $0 }
-        )
-
-        workflow.checkForUpdates()
-        await waitUntil {
-            if case .available = model.updateState {
-                return true
-            }
-            return false
-        }
-
-        XCTAssertEqual(reported, "2.0.0")
-    }
-
-    func testFailedUpdateCheckPublishesFailureState() async {
-        let config = makeConfig()
-        let model = SettingsModel()
-        let workflow = makeWorkflow(
-            config: config,
-            model: model,
-            updates: CannedUpdateChecker(result: .failed)
-        )
-
-        workflow.checkForUpdates()
-        await waitUntil {
-            if case .failed = model.updateState {
-                return true
-            }
-            return false
-        }
-
-        guard case .failed = model.updateState else {
-            return XCTFail("expected failed update state")
-        }
     }
 
     func testCommitPersistsEditedPreferencesWithoutBypassingASRLifecycle() throws {
@@ -3624,8 +3545,6 @@ final class SettingsWorkflowTests: XCTestCase {
         now: @escaping () -> Date = { Date(timeIntervalSince1970: 1_700_000_000) },
         calendar: Calendar = .current,
         polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
-        updates: (any SettingsUpdateChecking)? = nil,
-        reportUpdate: @escaping (String) -> Void = { _ in },
         updateHotkeys: ((ShortcutBindings) throws -> Void)? = nil,
         captureGate: ShortcutCaptureGate = ShortcutCaptureGate()
     ) -> SettingsWorkflow {
@@ -3654,8 +3573,6 @@ final class SettingsWorkflowTests: XCTestCase {
             statsStore: statsStore,
             calendar: calendar,
             polish: polish,
-            updates: updates ?? CannedUpdateChecker(result: .failed),
-            reportUpdate: reportUpdate,
             updateHotkeys: updateHotkeys,
             captureGate: captureGate
         )

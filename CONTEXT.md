@@ -55,6 +55,19 @@ that day. Day details may also describe session count, speaking time, and the
 time-saved estimate, but the spoken-word total is the activity measure.
 _Avoid_: contribution graph, yearly heatmap
 
+## App distribution
+
+**Update origin** — The permanent, project-controlled HTTPS origin from which
+installed copies of FoldWise retrieve the signed update feed and immutable
+release archives. Its ownership and renewal commitment belong to FoldWise
+distribution even when the parent domain also serves another project.
+_Avoid_: website, download mirror, temporary host
+
+**Forward repair** — A newly versioned FoldWise release that restores users
+from an already-installed bad release without downgrading. It advances update
+version ordering even when it rebuilds the last-known-good behavior.
+_Avoid_: rollback, downgrade, republished release
+
 ## Dictation pipeline
 
 **Dictation session** — One press-to-insert cycle: from holding the hotkey
