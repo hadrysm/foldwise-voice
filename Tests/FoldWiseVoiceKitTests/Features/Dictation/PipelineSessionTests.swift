@@ -383,6 +383,85 @@ final class PipelineSessionTests: XCTestCase {
         )
     }
 
+    func testFullSessionEmitsPairedDictationSessionEvents() async {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success("hello world")
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: FakeRecorder(),
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
+            polish: { text, _ in text },
+            insert: { _ in true },
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+        let collector = EventCollector<DictationSessionEvent>()
+        pipeline.onSessionEvent = { collector.append($0) }
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        guard case let .started(startedID) = collector.events.first,
+              case let .finished(finishedID) = collector.events.last
+        else {
+            return XCTFail("Expected paired Dictation session events")
+        }
+        XCTAssertEqual(startedID, finishedID)
+    }
+
+    func testCaptureStartupFailureEmitsNoDictationSessionEvents() {
+        let recorder = FakeRecorder()
+        recorder.startError = .bindFailed(device: "Studio Mic")
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: recorder,
+            sessionProvider: FakeTranscriberSessionProvider(FakeTranscriber()),
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+        let collector = EventCollector<DictationSessionEvent>()
+        pipeline.onSessionEvent = { collector.append($0) }
+
+        pipeline.startRecording()
+
+        XCTAssertEqual(collector.events, [])
+    }
+
+    func testRelaunchDuringInsertionWaitsForSessionFinish() async {
+        let events = EventCollector<String>()
+        let insertionStarted = expectation(description: "insertion started")
+        let finishInsertion = Latch()
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success("hello world")
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: FakeRecorder(),
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
+            insert: { _ in
+                insertionStarted.fulfill()
+                await finishInsertion.wait()
+                return true
+            },
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+        let coordinator = DictationLifecycleCoordinator(tearDown: {})
+        pipeline.onSessionEvent = { coordinator.sessionDidChange($0) }
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await fulfillment(of: [insertionStarted])
+        let postponed = coordinator.shouldPostponeRelaunch {
+            events.append("install")
+        }
+        events.append(postponed ? "postponed" : "continued")
+        await finishInsertion.open()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(events.events, ["postponed", "install"])
+    }
+
     func testFullSessionDucksAndRestoresAudio() async {
         let transcriber = FakeTranscriber()
         transcriber.result = .success("hello world")

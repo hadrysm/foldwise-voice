@@ -48,7 +48,7 @@ private func acquireInstanceLock(port: UInt16) -> Bool {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     let configPath: String?
     let showSettingsOnLaunch: Bool
 
@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let asrBadgePresentation = ASRBadgePresentation()
     private let shortcutCaptureGate = ShortcutCaptureGate()
     // swiftlint:enable implicitly_unwrapped_optional
+    private var lifecycleCoordinator: DictationLifecycleCoordinator?
     private var updaterController: SPUStandardUpdaterController?
     private var updaterAvailabilityObservation: NSKeyValueObservation?
 
@@ -187,10 +188,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             inputDevices: recorder, hotkeys: hotkeys, captureGate: shortcutCaptureGate,
             asrLifecycle: asrLifecycle
         )
+        lifecycleCoordinator = DictationLifecycleCoordinator { [weak self] in
+            self?.tearDownForTermination()
+        }
         if Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil {
             updaterController = SPUStandardUpdaterController(
                 startingUpdater: true,
-                updaterDelegate: nil,
+                updaterDelegate: self,
                 userDriverDelegate: nil
             )
         }
@@ -220,6 +224,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         pipeline.onState = { [weak self] state in
             Task { @MainActor in self?.apply(state) }
+        }
+        pipeline.onSessionEvent = { [weak self] event in
+            Task { @MainActor in self?.lifecycleCoordinator?.sessionDidChange(event) }
         }
         Task { [weak self] in
             for await snapshot in await asrLifecycle.snapshots() {
@@ -279,10 +286,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
+    private func tearDownForTermination() {
         hotkeys.stop()
         pipeline.shutdown()
         badge.hide()
-        NSApp.terminate(nil)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let lifecycleCoordinator else { return .terminateNow }
+        let decision = lifecycleCoordinator.applicationShouldTerminate {
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        switch decision {
+        case .terminateNow:
+            return .terminateNow
+        case .terminateLater:
+            return .terminateLater
+        }
+    }
+
+    func updater(
+        _ updater: SPUUpdater,
+        shouldPostponeRelaunchForUpdate item: SUAppcastItem,
+        untilInvokingBlock installHandler: @escaping () -> Void
+    ) -> Bool {
+        lifecycleCoordinator?.shouldPostponeRelaunch(
+            untilInvoking: installHandler
+        ) ?? false
     }
 
     private func buildMainMenu() -> NSMenu {
