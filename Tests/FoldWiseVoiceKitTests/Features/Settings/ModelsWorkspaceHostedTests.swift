@@ -33,6 +33,7 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
     }
 
     func testInspectedTraceRowRendersTheCanonicalLeadingIngress() throws {
+        let size = NSSize(width: 180, height: 46)
         let row = try renderedColorCounts(
             ModelsTraceRowChrome(
                 isInspected: true,
@@ -40,12 +41,12 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
                 isKeyboardFocused: false,
                 increaseContrast: false
             ),
-            size: NSSize(width: 180, height: 46)
+            size: size
         )
 
         XCTAssertGreaterThan(
             row.leadingAccent,
-            100,
+            Theme.selectionIngressWidth * size.height * 0.7,
             "the inspected row should continue the orange ingress shown in the inspector"
         )
     }
@@ -75,14 +76,18 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
     }
 
     func testTraceInspectorHeaderRendersTheCanonicalIngress() throws {
+        let size = NSSize(width: 180, height: 70)
         let inspector = try renderedColorCounts(
             ModelsTraceInspectorHeader(isInspected: true) {
                 Color.clear.frame(height: 70)
             },
-            size: NSSize(width: 180, height: 70)
+            size: size
         )
 
-        XCTAssertGreaterThan(inspector.accent, 160)
+        XCTAssertGreaterThan(
+            inspector.accent,
+            Theme.selectionIngressWidth * size.height * 0.7
+        )
     }
 
     func testTraceRowStrengthensItsBoundaryForIncreaseContrast() throws {
@@ -278,9 +283,9 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
     }
 
     private struct RenderedColorCounts {
-        let accent: Int
-        let leadingAccent: Int
-        let strongBoundary: Int
+        let accent: CGFloat
+        let leadingAccent: CGFloat
+        let strongBoundary: CGFloat
     }
 
     private func compactSplitController() -> NSSplitViewController {
@@ -319,6 +324,7 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
         controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
         let accentColor = try renderedTokenColor(Theme.accent)
         let strongBoundaryColor = try renderedTokenColor(Theme.borderStrong)
+        let scale = CGFloat(bitmap.pixelsWide) / size.width
         var accentCount = 0
         var leadingAccentCount = 0
         var strongBoundaryCount = 0
@@ -328,7 +334,7 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
                 else { continue }
                 if colorDistance(pixel, accentColor) < 0.08 {
                     accentCount += 1
-                    if x < 4 {
+                    if CGFloat(x) / scale < 4 {
                         leadingAccentCount += 1
                     }
                 }
@@ -337,10 +343,11 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
                 }
             }
         }
+        let pixelAreaPerPoint = scale * scale
         return RenderedColorCounts(
-            accent: accentCount,
-            leadingAccent: leadingAccentCount,
-            strongBoundary: strongBoundaryCount
+            accent: CGFloat(accentCount) / pixelAreaPerPoint,
+            leadingAccent: CGFloat(leadingAccentCount) / pixelAreaPerPoint,
+            strongBoundary: CGFloat(strongBoundaryCount) / pixelAreaPerPoint
         )
     }
 

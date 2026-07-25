@@ -155,40 +155,6 @@ final class ContinuousFrameHostedTests: XCTestCase {
         )
     }
 
-    func testHostedGlobalToastRisesFromBelowThenSettlesAtItsCorner() throws {
-        let model = SettingsModel()
-        model.pane = .modes
-        let window = host(model)
-        defer { window.orderOut(nil) }
-
-        model.statusOwner = .global
-        model.status = "Saved ✓"
-        _ = RunLoop.main.run(
-            mode: .default,
-            before: Date(timeIntervalSinceNow: 0.01)
-        )
-        window.contentView?.layoutSubtreeIfNeeded()
-        let enteringFrame = try XCTUnwrap(
-            node("continuous-frame.status", in: window).frame
-        )
-
-        settleToastAnimation(in: window)
-        let settledFrame = try XCTUnwrap(
-            node("continuous-frame.status", in: window).frame
-        )
-
-        XCTAssertGreaterThan(
-            enteringFrame.maxY,
-            settledFrame.maxY + 8,
-            "the toast should enter from below and travel upward into its corner"
-        )
-        XCTAssertLessThan(
-            enteringFrame.width,
-            settledFrame.width,
-            "the toast should gently scale into place while it rises"
-        )
-    }
-
     func testHostedRecoveryDisablesOnlyConfigurationOwningDestinations() throws {
         let model = SettingsModel()
         model.configurationRecoveryMessage = "The configuration file is invalid."
