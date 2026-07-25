@@ -52,8 +52,11 @@ class FakeRecoveryOrigin:
         self.events.append("restore appcast")
         self.current_appcast = appcast.read_bytes()
 
-    def purge(self, urls: list[str]) -> None:
-        self.events.append(f"purge {','.join(urls)}")
+    def purge_archive(self, filename: str) -> None:
+        self.events.append(f"purge archive {filename}")
+
+    def purge_appcast(self) -> None:
+        self.events.append("purge appcast")
 
     def verify_archive_absent(self, filename: str) -> None:
         self.events.append(f"verify archive absent {filename}")
@@ -286,6 +289,31 @@ class BadReleaseWithdrawalTests(unittest.TestCase):
 
 
 class R2RecoveryOriginTests(unittest.TestCase):
+    def testPurgeTargetsUseTheConfiguredPublicOrigin(self) -> None:
+        purger = FakePurger()
+        origin = release_recovery.R2RecoveryOrigin(
+            FakeInputRunner(),
+            fetcher=FakeFetcher({}),
+            purger=purger,
+            bucket="foldwise-updates",
+            endpoint="https://account.r2.cloudflarestorage.com",
+            public_base_url="https://staging-updates.example",
+        )
+
+        origin.purge_archive("FoldWise-Voice-0.18.0.dmg")
+        origin.purge_appcast()
+
+        self.assertEqual(
+            purger.requests,
+            [
+                [
+                    "https://staging-updates.example/"
+                    "releases/FoldWise-Voice-0.18.0.dmg"
+                ],
+                ["https://staging-updates.example/appcast.xml"],
+            ],
+        )
+
     def testWithdrawalMutatesR2OnlyAfterEvidenceInputsAreReadable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             filename = "FoldWise-Voice-0.18.0.dmg"

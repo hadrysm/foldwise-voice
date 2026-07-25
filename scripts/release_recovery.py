@@ -41,8 +41,11 @@ class RecoveryOrigin(Protocol):
     def restore_appcast(self, appcast: Path) -> None:
         """Restore exact last-known-good signed feed bytes."""
 
-    def purge(self, urls: list[str]) -> None:
-        """Purge the named public URLs from the cache."""
+    def purge_archive(self, filename: str) -> None:
+        """Purge one archive URL from the cache."""
+
+    def purge_appcast(self) -> None:
+        """Purge the public appcast URL from the cache."""
 
     def verify_archive_absent(self, filename: str) -> None:
         """Fail unless the bad archive is unavailable publicly."""
@@ -138,15 +141,13 @@ class BadReleaseWithdrawal:
             current_appcast=current_appcast,
             archive=archive,
         )
-        archive_url = f"{UPDATE_ORIGIN}/releases/{request.bad_filename}"
-        appcast_url = f"{UPDATE_ORIGIN}/appcast.xml"
         self.origin.remove_archive(request.bad_filename)
-        self.origin.purge([archive_url])
+        self.origin.purge_archive(request.bad_filename)
         self.origin.verify_archive_absent(request.bad_filename)
 
         snapshot = request.evidence_directory / "last-known-good-appcast.xml"
         self.origin.restore_appcast(snapshot)
-        self.origin.purge([appcast_url])
+        self.origin.purge_appcast()
         self.origin.verify_appcast(request.last_good_appcast)
         return plan
 
@@ -274,7 +275,7 @@ class R2RecoveryOrigin:
                 content_type="application/json",
                 cache_control="no-store",
             )
-        self.purge([freeze_url])
+        self.purger.purge([freeze_url])
         if self.fetcher.fetch(freeze_url) is None:
             raise RecoveryError(
                 "The public publication freeze could not be verified.",
@@ -304,8 +305,13 @@ class R2RecoveryOrigin:
             cache_control="no-cache",
         )
 
-    def purge(self, urls: list[str]) -> None:
-        self.purger.purge(urls)
+    def purge_archive(self, filename: str) -> None:
+        self.purger.purge(
+            [f"{self.public_base_url}/releases/{filename}"],
+        )
+
+    def purge_appcast(self) -> None:
+        self.purger.purge([f"{self.public_base_url}/appcast.xml"])
 
     def verify_archive_absent(self, filename: str) -> None:
         if self.fetch_archive(filename) is not None:
