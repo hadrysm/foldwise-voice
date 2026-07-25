@@ -135,6 +135,9 @@ struct SettingsView: View {
             }
         }
         .frame(minWidth: 880, minHeight: 640)
+        .sheet(isPresented: permissionRecoveryPresented) {
+            PermissionRecoveryGuide(model: model)
+        }
         .sheet(isPresented: modeEditorPresented) {
             ModeEditorSheet(model: model)
         }
@@ -156,6 +159,17 @@ struct SettingsView: View {
             set: { isPresented in
                 if !isPresented {
                     model.onCancelModeEditor?()
+                }
+            }
+        )
+    }
+
+    private var permissionRecoveryPresented: Binding<Bool> {
+        Binding(
+            get: { model.permissionRecovery.isPresented },
+            set: { isPresented in
+                if !isPresented {
+                    model.onDismissPermissionRecovery?()
                 }
             }
         )
@@ -846,6 +860,19 @@ struct SettingsView: View {
 
     private var settingsPane: some View {
         VStack(alignment: .leading, spacing: 16) {
+            SignalLedgerSection(title: "Permissions", symbolName: "hand.raised") {
+                SignalLedgerRow(
+                    title: "Microphone and Accessibility",
+                    detail: permissionSummary
+                ) {
+                    Button("Open guide…") {
+                        model.onOpenPermissionRecovery?()
+                    }
+                    .buttonStyle(EmberButtonStyle(kind: .quiet))
+                    .accessibilityIdentifier("settings.permission-recovery")
+                }
+            }
+
             SignalLedgerSection(title: "Keyboard shortcuts", symbolName: "command") {
                 SignalLedgerRow(
                     title: "Push to Talk",
@@ -964,6 +991,16 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private var permissionSummary: String {
+        if model.permissionRecovery.snapshot.hasFullRecovery {
+            return "Full Dictation capability is available"
+        }
+        if model.permissionRecovery.snapshot.hasShortcutFallback {
+            return "Text stays on the clipboard until Accessibility is restored"
+        }
+        return "Review the permissions needed for full Dictation capability"
     }
 
     @ViewBuilder

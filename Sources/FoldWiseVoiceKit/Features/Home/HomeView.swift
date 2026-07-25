@@ -31,10 +31,6 @@ struct HomeView: View {
     @State private var stats = UsageStats.empty
     @State private var projection = HomeProjection(sections: [])
 
-    private static let accessibilitySettingsURL = URL(
-        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-    )
-
     init(
         model: SettingsModel,
         now: @escaping () -> Date = Date.init,
@@ -286,14 +282,11 @@ struct HomeView: View {
                 }
                 Spacer(minLength: 12)
                 HStack(spacing: 8) {
-                    if !model.axTrusted {
-                        Button("Open Accessibility…") {
-                            if let url = Self.accessibilitySettingsURL {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
-                        .buttonStyle(EmberButtonStyle(kind: .quiet))
+                    Button("Permissions…") {
+                        model.onOpenPermissionRecovery?()
                     }
+                    .buttonStyle(EmberButtonStyle(kind: .quiet))
+                    .accessibilityIdentifier("home.permission-recovery")
                     Button("Stats →") {
                         model.pane = .stats
                     }

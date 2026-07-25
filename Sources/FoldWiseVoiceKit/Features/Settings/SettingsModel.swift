@@ -124,6 +124,7 @@ final class SettingsModel: ObservableObject {
     @Published var recordingField: RecordingField?
     @Published var shortcutListenerHealth: ShortcutListenerHealth = .global
     @Published var configurationRecoveryMessage: String?
+    @Published var permissionRecovery = PermissionRecoveryWorkflow.State()
 
     func isPaneAvailable(_ pane: Pane) -> Bool {
         configurationRecoveryMessage == nil || pane.isAvailableInConfigurationRecovery
@@ -282,6 +283,10 @@ final class SettingsModel: ObservableObject {
     var onSelectInputDevice: ((String?) -> Void)?
     var onRecord: ((RecordingField) -> Void)?
     var onOpenShortcutPermissions: (() -> Void)?
+    var onOpenPermissionRecovery: (() -> Void)?
+    var onDismissPermissionRecovery: (() -> Void)?
+    var onRequestPermission: ((PermissionKind) -> Void)?
+    var onOpenPermissionSettings: ((PermissionKind) -> Void)?
     var onSelectMode: ((DictationSelection) -> Void)?
     var onAddMode: (() -> Void)?
     var onEditMode: ((ModeID) -> Void)?

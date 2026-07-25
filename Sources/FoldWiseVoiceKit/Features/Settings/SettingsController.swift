@@ -41,6 +41,7 @@ final class SettingsController {
     private var window: NSWindow?
     private var keyMonitor: Any?
     private var statusClearTask: Task<Void, Never>?
+    private var permissionRefreshTask: Task<Void, Never>?
     private var closeObserver: NSObjectProtocol?
     private var resignObserver: NSObjectProtocol?
     private var boundaryObservers: [NSObjectProtocol] = []
@@ -81,6 +82,7 @@ final class SettingsController {
     }
 
     deinit {
+        permissionRefreshTask?.cancel()
         if let closeObserver {
             NotificationCenter.default.removeObserver(closeObserver)
         }
@@ -105,6 +107,21 @@ final class SettingsController {
         window?.makeKeyAndOrderFront(nil)
     }
 
+    func beginPermissionRecovery() {
+        applyPermissionAction(.launch(Permissions.snapshot()))
+        if model.permissionRecovery.isPresented {
+            show()
+        }
+        permissionRefreshTask?.cancel()
+        permissionRefreshTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard !Task.isCancelled, let self else { return }
+                applyPermissionAction(.refresh(Permissions.snapshot()))
+            }
+        }
+    }
+
     private func wire() {
         model.onCommit = { [weak self] owner in self?.workflow.commit(owner: owner) }
         model.onSelectInputDevice = { [weak self] uid in
@@ -112,6 +129,20 @@ final class SettingsController {
         }
         model.onRecord = { [weak self] field in self?.startRecording(field) }
         model.onOpenShortcutPermissions = { Self.openShortcutPermissions() }
+        model.onOpenPermissionRecovery = { [weak self] in
+            self?.show()
+            self?.applyPermissionAction(.reopen)
+        }
+        model.onDismissPermissionRecovery = { [weak self] in
+            self?.applyPermissionAction(.dismiss)
+        }
+        model.onRequestPermission = { permission in
+            Permissions.request(permission)
+        }
+        model.onOpenPermissionSettings = { [weak self] permission in
+            self?.applyPermissionAction(.openedSystemSettings(permission))
+            Permissions.openSystemSettings(for: permission)
+        }
         model.onSelectMode = { [weak self] selection in self?.workflow.selectMode(selection) }
         model.onAddMode = { [weak self] in self?.workflow.beginAddMode() }
         model.onEditMode = { [weak self] id in self?.workflow.beginEditMode(id) }
@@ -208,6 +239,14 @@ final class SettingsController {
         workflow.populateHistory()
         workflow.refreshLLMModels()
         workflow.checkForUpdates()
+    }
+
+    private func applyPermissionAction(_ action: PermissionRecoveryWorkflow.Action) {
+        PermissionRecoveryWorkflow.reduce(
+            state: &model.permissionRecovery,
+            action: action
+        )
+        model.axTrusted = model.permissionRecovery.snapshot.accessibilityGranted
     }
 
     private func resetConfiguration() {

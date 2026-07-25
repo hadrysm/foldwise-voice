@@ -220,7 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         updateChecker.start()
 
-        Permissions.requestAtLaunch()
+        settings.beginPermissionRecovery()
 
         do {
             try hotkeys.start()

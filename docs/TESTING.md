@@ -204,18 +204,20 @@ run FoldWise Voice; resetting privacy data in an existing account is not an
 equivalent first-run check.
 
 1. Sign in to the clean account, install the candidate, and launch it.
-2. Follow the Microphone, Accessibility, and Input Monitoring onboarding. Check
-   that every explanation names the capability being requested and opens the
+2. Follow the Permission recovery guide for Microphone and Accessibility. Check
+   that each explanation names the capability being requested and opens the
    matching **System Settings → Privacy & Security** pane when offered.
-3. Grant all three capabilities. Keep another app frontmost and confirm the
-   global hotkey begins working after the grant (relaunch if macOS explicitly
-   requires it).
+3. Grant Microphone and Accessibility. Keep another app frontmost and confirm
+   the global hotkey begins working without also granting Input Monitoring
+   (relaunch only if macOS explicitly requires it).
 4. Complete one raw dictation into TextEdit.
 
 Pass when the app appears under the correct privacy categories, captures audible
 speech, responds to the hotkey outside its own windows, and inserts the spoken
-text. Fail if prompts overlap, point to the wrong pane, silently leave the user
-stuck, or only work because the account held an earlier grant.
+text. The guide must update live and close after both grants. Fail if prompts
+overlap, point to the wrong pane, require Input Monitoring for full capability,
+silently leave the user stuck, or only work because the account held an earlier
+grant.
 
 ### 2. Parakeet push-to-talk and insertion
 
