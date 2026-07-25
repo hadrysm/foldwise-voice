@@ -261,18 +261,19 @@ struct HomeView: View {
     }
 
     /// The at-a-glance system summary: active ASR model, Polish model,
-    /// accessibility, version — plus a link into Stats.
+    /// permissions, version — plus a link into Stats.
     private var systemStatusCard: some View {
-        EmberSurface(level: .raised) {
+        let fullRecovery = model.permissionRecovery.snapshot.hasFullRecovery
+        return EmberSurface(level: .raised) {
             HStack(spacing: 12) {
                 EmberIngress(color: Theme.accent)
-                Image(systemName: model.axTrusted
+                Image(systemName: fullRecovery
                     ? "checkmark.circle.fill"
                     : "exclamationmark.triangle.fill")
-                    .foregroundStyle(model.axTrusted ? Theme.success : Theme.warning)
+                    .foregroundStyle(fullRecovery ? Theme.success : Theme.warning)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.axTrusted ? "All systems go" : "Needs attention")
+                    Text(fullRecovery ? "All systems go" : "Needs attention")
                         .font(Theme.ui(12, .semibold))
                         .foregroundStyle(Theme.textPrimary)
                     Text(summaryLine)
@@ -282,11 +283,13 @@ struct HomeView: View {
                 }
                 Spacer(minLength: 12)
                 HStack(spacing: 8) {
-                    Button("Permissions…") {
-                        model.onOpenPermissionRecovery?()
+                    if !fullRecovery {
+                        Button("Permissions…") {
+                            model.onOpenPermissionRecovery?()
+                        }
+                        .buttonStyle(EmberButtonStyle(kind: .quiet))
+                        .accessibilityIdentifier("home.permission-recovery")
                     }
-                    .buttonStyle(EmberButtonStyle(kind: .quiet))
-                    .accessibilityIdentifier("home.permission-recovery")
                     Button("Stats →") {
                         model.pane = .stats
                     }
@@ -304,8 +307,19 @@ struct HomeView: View {
         [
             model.effectiveASRModelName,
             model.selectedModel.isEmpty ? "no polish model" : model.selectedModel,
-            model.axTrusted ? "accessibility granted" : "accessibility missing",
+            permissionSummary,
             "v\(AppInfo.version)",
         ].joined(separator: " · ")
+    }
+
+    private var permissionSummary: String {
+        let snapshot = model.permissionRecovery.snapshot
+        if snapshot.hasFullRecovery {
+            return "permissions granted"
+        }
+        if snapshot.hasShortcutFallback {
+            return "clipboard-only permissions"
+        }
+        return "permissions missing"
     }
 }

@@ -2,6 +2,25 @@ import XCTest
 @testable import FoldWiseVoiceKit
 
 final class PermissionRecoveryWorkflowTests: XCTestCase {
+    func testPermissionMetadataMatchesMacOSAndAccessibilityContracts() {
+        let permissions: [PermissionKind] = [
+            .microphone,
+            .accessibility,
+            .inputMonitoring,
+        ]
+
+        XCTAssertEqual(
+            permissions.map {
+                [$0.identifier, $0.displayName, $0.systemSettingsPane]
+            },
+            [
+                ["microphone", "Microphone", "Privacy_Microphone"],
+                ["accessibility", "Accessibility", "Privacy_Accessibility"],
+                ["input-monitoring", "Input Monitoring", "Privacy_ListenEvent"],
+            ]
+        )
+    }
+
     func testLaunchPresentsGuideWhenFullRecoveryIsMissing() {
         var state = PermissionRecoveryWorkflow.State()
 
@@ -86,6 +105,82 @@ final class PermissionRecoveryWorkflowTests: XCTestCase {
         XCTAssertFalse(state.isPresented)
     }
 
+    func testLivePermissionLossPresentsGuideAfterHealthyLaunch() {
+        var state = PermissionRecoveryWorkflow.State()
+        PermissionRecoveryWorkflow.reduce(
+            state: &state,
+            action: .launch(
+                snapshot(
+                    microphone: .authorized,
+                    accessibility: true,
+                    inputMonitoring: false
+                )
+            )
+        )
+
+        PermissionRecoveryWorkflow.reduce(
+            state: &state,
+            action: .refresh(
+                snapshot(
+                    microphone: .denied,
+                    accessibility: true,
+                    inputMonitoring: false
+                )
+            )
+        )
+
+        XCTAssertTrue(state.isPresented)
+    }
+
+    func testInputMonitoringStaysHiddenUntilUserChoosesShortcutFallback() {
+        var state = PermissionRecoveryWorkflow.State()
+        PermissionRecoveryWorkflow.reduce(
+            state: &state,
+            action: .launch(
+                snapshot(
+                    microphone: .authorized,
+                    accessibility: false,
+                    inputMonitoring: false
+                )
+            )
+        )
+        let initiallyVisible = state.showsShortcutFallback
+
+        PermissionRecoveryWorkflow.reduce(
+            state: &state,
+            action: .revealShortcutFallback
+        )
+
+        XCTAssertEqual([initiallyVisible, state.showsShortcutFallback], [false, true])
+    }
+
+    func testLiveInputMonitoringGrantRevealsChosenShortcutFallback() {
+        var state = PermissionRecoveryWorkflow.State()
+        PermissionRecoveryWorkflow.reduce(
+            state: &state,
+            action: .launch(
+                snapshot(
+                    microphone: .authorized,
+                    accessibility: false,
+                    inputMonitoring: false
+                )
+            )
+        )
+
+        PermissionRecoveryWorkflow.reduce(
+            state: &state,
+            action: .refresh(
+                snapshot(
+                    microphone: .authorized,
+                    accessibility: false,
+                    inputMonitoring: true
+                )
+            )
+        )
+
+        XCTAssertTrue(state.showsShortcutFallback)
+    }
+
     func testInputMonitoringIsShortcutFallbackNotFullRecovery() {
         let permissions = snapshot(
             microphone: .authorized,
@@ -99,7 +194,7 @@ final class PermissionRecoveryWorkflowTests: XCTestCase {
         )
     }
 
-    func testStaleGuidanceAppearsOnlyAfterSettingsAttemptAndFailedLiveRefresh() {
+    func testStaleGuidanceAppearsOnlyAfterReturningFromFailedSettingsAttempt() {
         var state = PermissionRecoveryWorkflow.State()
         let missingAccessibility = snapshot(
             microphone: .authorized,
@@ -120,14 +215,19 @@ final class PermissionRecoveryWorkflowTests: XCTestCase {
             state: &state,
             action: .refresh(missingAccessibility)
         )
-
+        let visibleDuringSettings = state.staleGuidance.contains(.accessibility)
+        PermissionRecoveryWorkflow.reduce(
+            state: &state,
+            action: .returnedFromSystemSettings(missingAccessibility)
+        )
         XCTAssertEqual(
             [
                 initiallyVisible,
                 visibleBeforeRefresh,
+                visibleDuringSettings,
                 state.staleGuidance.contains(.accessibility),
             ],
-            [false, false, true]
+            [false, false, false, true]
         )
     }
 
@@ -148,7 +248,7 @@ final class PermissionRecoveryWorkflowTests: XCTestCase {
         )
         PermissionRecoveryWorkflow.reduce(
             state: &state,
-            action: .refresh(missingAccessibility)
+            action: .returnedFromSystemSettings(missingAccessibility)
         )
 
         PermissionRecoveryWorkflow.reduce(

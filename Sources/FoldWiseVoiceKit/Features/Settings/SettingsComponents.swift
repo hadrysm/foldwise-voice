@@ -67,17 +67,27 @@ struct PermissionRecoveryGuide: View {
                             )
                             .font(Theme.ui(10.5))
                             .foregroundStyle(Theme.textSecondary)
-                            permissionRow(
-                                permission: .inputMonitoring,
-                                title: "Input Monitoring",
-                                detail: "Optional clipboard-only shortcut fallback.",
-                                status: state.snapshot.inputMonitoringGranted
-                                    ? "Granted"
-                                    : "Optional shortcut fallback",
-                                requestTitle: state.snapshot.inputMonitoringGranted
-                                    ? nil
-                                    : "Request Access"
-                            )
+                            if state.showsShortcutFallback {
+                                permissionRow(
+                                    permission: .inputMonitoring,
+                                    title: "Input Monitoring",
+                                    detail: "Optional clipboard-only shortcut fallback.",
+                                    status: state.snapshot.inputMonitoringGranted
+                                        ? "Granted"
+                                        : "Optional shortcut fallback",
+                                    requestTitle: state.snapshot.inputMonitoringGranted
+                                        ? nil
+                                        : "Request Access"
+                                )
+                            } else {
+                                Button("Use clipboard-only fallback") {
+                                    model.onRevealShortcutFallback?()
+                                }
+                                .buttonStyle(EmberButtonStyle(kind: .quiet))
+                                .accessibilityIdentifier(
+                                    "permission-recovery.input-monitoring.reveal"
+                                )
+                            }
                         }
                         .padding(.top, 4)
                     }
@@ -124,7 +134,6 @@ struct PermissionRecoveryGuide: View {
         status: String,
         requestTitle: String?
     ) -> some View {
-        let identifier = identifierComponent(permission)
         let granted = state.snapshot.isGranted(permission)
         return EmberSurface(level: .raised) {
             VStack(alignment: .leading, spacing: 10) {
@@ -147,7 +156,7 @@ struct PermissionRecoveryGuide: View {
                         .font(Theme.compactData)
                         .foregroundStyle(granted ? Theme.success : Theme.warning)
                         .accessibilityIdentifier(
-                            "permission-recovery.\(identifier).status"
+                            "permission-recovery.\(permission.identifier).status"
                         )
                         .accessibilityValue(status)
                     if let requestTitle {
@@ -156,7 +165,7 @@ struct PermissionRecoveryGuide: View {
                         }
                         .buttonStyle(EmberButtonStyle(kind: .primary))
                         .accessibilityIdentifier(
-                            "permission-recovery.\(identifier).request"
+                            "permission-recovery.\(permission.identifier).request"
                         )
                     }
                     if !granted {
@@ -165,7 +174,7 @@ struct PermissionRecoveryGuide: View {
                         }
                         .buttonStyle(EmberButtonStyle(kind: .quiet))
                         .accessibilityIdentifier(
-                            "permission-recovery.\(identifier).settings"
+                            "permission-recovery.\(permission.identifier).settings"
                         )
                     }
                 }
@@ -175,7 +184,7 @@ struct PermissionRecoveryGuide: View {
                         .foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier(
-                            "permission-recovery.\(identifier).stale"
+                            "permission-recovery.\(permission.identifier).stale"
                         )
                 }
             }
@@ -184,27 +193,8 @@ struct PermissionRecoveryGuide: View {
         .accessibilityElement(children: .contain)
     }
 
-    private func identifierComponent(_ permission: PermissionKind) -> String {
-        switch permission {
-        case .microphone:
-            "microphone"
-        case .accessibility:
-            "accessibility"
-        case .inputMonitoring:
-            "input-monitoring"
-        }
-    }
-
     private func staleGuidance(for permission: PermissionKind) -> String {
-        let pane = switch permission {
-        case .microphone:
-            "Microphone"
-        case .accessibility:
-            "Accessibility"
-        case .inputMonitoring:
-            "Input Monitoring"
-        }
-        return "Still missing? In \(pane), remove an enabled-looking old FoldWise "
+        "Still missing? In \(permission.displayName), remove an enabled-looking old FoldWise "
             + "Voice row, add the installed app from Applications, and enable it again."
     }
 }

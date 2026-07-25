@@ -4,6 +4,14 @@ import AVFoundation
 
 @MainActor
 enum Permissions {
+    static var environment: PermissionRecoveryEnvironment {
+        PermissionRecoveryEnvironment(
+            snapshot: { snapshot() },
+            request: { request($0) },
+            openSystemSettings: { openSystemSettings(for: $0) }
+        )
+    }
+
     static func snapshot() -> PermissionRecoverySnapshot {
         PermissionRecoverySnapshot(
             microphone: microphoneStatus,
@@ -27,16 +35,9 @@ enum Permissions {
     }
 
     static func openSystemSettings(for permission: PermissionKind) {
-        let pane = switch permission {
-        case .microphone:
-            "Privacy_Microphone"
-        case .accessibility:
-            "Privacy_Accessibility"
-        case .inputMonitoring:
-            "Privacy_ListenEvent"
-        }
         guard let url = URL(
-            string: "x-apple.systempreferences:com.apple.preference.security?\(pane)"
+            string: "x-apple.systempreferences:com.apple.preference.security?"
+                + permission.systemSettingsPane
         ) else {
             Log.app.error("Could not construct the permission settings URL")
             return

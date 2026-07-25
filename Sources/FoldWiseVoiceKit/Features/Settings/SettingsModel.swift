@@ -285,6 +285,7 @@ final class SettingsModel: ObservableObject {
     var onOpenShortcutPermissions: (() -> Void)?
     var onOpenPermissionRecovery: (() -> Void)?
     var onDismissPermissionRecovery: (() -> Void)?
+    var onRevealShortcutFallback: (() -> Void)?
     var onRequestPermission: ((PermissionKind) -> Void)?
     var onOpenPermissionSettings: ((PermissionKind) -> Void)?
     var onSelectMode: ((DictationSelection) -> Void)?

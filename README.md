@@ -249,9 +249,10 @@ deleting the repository breaks that installed bundle until it is rebuilt.
   Model files are downloaded only once and used locally afterward.
 - **The menu-bar icon is missing:** On a notched MacBook it may be hidden behind
   the notch or crowded icons. Command-drag other items to make room.
-- **macOS blocks the downloaded app:** Click Done in the warning, then use
-  **System Settings → Privacy & Security → Open Anyway**. Alternatively run
-  `xattr -dr com.apple.quarantine "/Applications/FoldWise Voice.app"`.
+- **macOS blocks the downloaded app:** Delete that copy and download the current
+  notarized DMG from GitHub Releases again. A current release should open
+  without a Gatekeeper workaround; report the release URL and macOS version if
+  it does not.
 - **The app says it is already running:** Use the existing menu-bar instance or
   quit it before launching another build.
 
@@ -334,14 +335,15 @@ python3 scripts/build_swift_app.py --dmg
 ```
 
 The result is `dist/FoldWise-Voice-<version>.dmg`, containing a self-contained
-**FoldWise Voice.app** with no repository paths. Builds are ad-hoc signed unless
-`CODESIGN_IDENTITY` is set to a Developer ID Application identity. A signed
-release still needs notarization and stapling before Gatekeeper accepts it
-without the Open Anyway step:
+**FoldWise Voice.app** with no repository paths. A local build without
+`CODESIGN_IDENTITY` is ad-hoc signed and is only for development. Publishable
+artifacts come from the release workflow, which requires the Developer ID
+identity, signs the app and DMG, submits the DMG to Apple, staples the ticket,
+and fails unless Gatekeeper accepts both artifacts.
 
 ```sh
-xcrun notarytool submit dist/FoldWise-Voice-<version>.dmg --keychain-profile <profile> --wait
-xcrun stapler staple dist/FoldWise-Voice-<version>.dmg
+CODESIGN_IDENTITY="Developer ID Application: Name (TEAMID)" \
+  python3 scripts/build_swift_app.py --dmg
 ```
 
 GitHub releases are managed by release-please. Conventional Commit subjects on

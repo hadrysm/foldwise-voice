@@ -13,35 +13,59 @@ final class PermissionRecoveryGuideHostedTests: XCTestCase {
 
     func testHostedGuideExposesFullRecoveryAndShortcutFallbackStates() throws {
         let model = makeModel()
+        model.onRevealShortcutFallback = {
+            PermissionRecoveryWorkflow.reduce(
+                state: &model.permissionRecovery,
+                action: .revealShortcutFallback
+            )
+        }
         let window = host(model)
         defer { window.orderOut(nil) }
 
+        let initiallyVisible = identifiers(in: window).contains(
+            "permission-recovery.input-monitoring.status"
+        )
+        try press("permission-recovery.input-monitoring.reveal", in: window)
+
         XCTAssertEqual(
             try [
+                initiallyVisible ? "Visible" : "Hidden",
                 node("permission-recovery.microphone.status", in: window).value,
                 node("permission-recovery.accessibility.status", in: window).value,
                 node("permission-recovery.input-monitoring.status", in: window).value,
             ],
-            ["Granted", "Missing", "Optional shortcut fallback"]
+            ["Hidden", "Granted", "Missing", "Optional shortcut fallback"]
         )
     }
 
     func testHostedGuideRoutesPermissionAndDismissActions() throws {
         let model = makeModel()
-        var actions: [String] = []
-        model.onRequestPermission = { actions.append("request:\($0.rawValue)") }
-        model.onOpenPermissionSettings = { actions.append("settings:\($0.rawValue)") }
-        model.onDismissPermissionRecovery = { actions.append("dismiss") }
+        enum RoutedAction: Equatable {
+            case request(PermissionKind)
+            case settings(PermissionKind)
+            case dismiss
+        }
+        var actions: [RoutedAction] = []
+        model.onRevealShortcutFallback = {
+            PermissionRecoveryWorkflow.reduce(
+                state: &model.permissionRecovery,
+                action: .revealShortcutFallback
+            )
+        }
+        model.onRequestPermission = { actions.append(.request($0)) }
+        model.onOpenPermissionSettings = { actions.append(.settings($0)) }
+        model.onDismissPermissionRecovery = { actions.append(.dismiss) }
         let window = host(model)
         defer { window.orderOut(nil) }
 
         try press("permission-recovery.accessibility.request", in: window)
+        try press("permission-recovery.input-monitoring.reveal", in: window)
         try press("permission-recovery.input-monitoring.settings", in: window)
         try press("permission-recovery.dismiss", in: window)
 
         XCTAssertEqual(
             actions,
-            ["request:accessibility", "settings:inputMonitoring", "dismiss"]
+            [.request(.accessibility), .settings(.inputMonitoring), .dismiss]
         )
     }
 
@@ -95,6 +119,10 @@ final class PermissionRecoveryGuideHostedTests: XCTestCase {
             allNodes.first { $0.identifier == identifier },
             "Available identifiers: \(allNodes.compactMap(\.identifier))"
         )
+    }
+
+    private func identifiers(in window: NSWindow) -> [String] {
+        (try? nodes(in: window).compactMap(\.identifier)) ?? []
     }
 
     private func nodes(in window: NSWindow) throws -> [HostedNode] {

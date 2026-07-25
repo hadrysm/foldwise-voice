@@ -865,11 +865,17 @@ struct SettingsView: View {
                     title: "Microphone and Accessibility",
                     detail: permissionSummary
                 ) {
-                    Button("Open guide…") {
-                        model.onOpenPermissionRecovery?()
+                    if model.permissionRecovery.snapshot.hasFullRecovery {
+                        Label("Granted", systemImage: "checkmark.circle.fill")
+                            .font(Theme.compactData)
+                            .foregroundStyle(Theme.success)
+                    } else {
+                        Button("Open guide…") {
+                            model.onOpenPermissionRecovery?()
+                        }
+                        .buttonStyle(EmberButtonStyle(kind: .quiet))
+                        .accessibilityIdentifier("settings.permission-recovery")
                     }
-                    .buttonStyle(EmberButtonStyle(kind: .quiet))
-                    .accessibilityIdentifier("settings.permission-recovery")
                 }
             }
 

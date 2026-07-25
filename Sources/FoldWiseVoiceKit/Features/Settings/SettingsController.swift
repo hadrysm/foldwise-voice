@@ -17,6 +17,7 @@ final class SettingsController {
     private let now: () -> Date
     private let calendar: Calendar
     private let notificationCenter: NotificationCenter
+    private let permissionRecovery: PermissionRecoveryCoordinator
     let model = SettingsModel()
     private lazy var workflow = SettingsWorkflow(
         config: config,
@@ -41,7 +42,6 @@ final class SettingsController {
     private var window: NSWindow?
     private var keyMonitor: Any?
     private var statusClearTask: Task<Void, Never>?
-    private var permissionRefreshTask: Task<Void, Never>?
     private var closeObserver: NSObjectProtocol?
     private var resignObserver: NSObjectProtocol?
     private var boundaryObservers: [NSObjectProtocol] = []
@@ -58,7 +58,8 @@ final class SettingsController {
         asrLifecycle: ASRModelLifecycle,
         now: @escaping () -> Date = Date.init,
         calendar: Calendar = .autoupdatingCurrent,
-        notificationCenter: NotificationCenter = .default
+        notificationCenter: NotificationCenter = .default,
+        permissionRecoveryEnvironment: PermissionRecoveryEnvironment? = nil
     ) {
         self.config = config
         self.historyStore = historyStore
@@ -70,6 +71,13 @@ final class SettingsController {
         self.now = now
         self.calendar = calendar
         self.notificationCenter = notificationCenter
+        permissionRecovery = PermissionRecoveryCoordinator(
+            environment: permissionRecoveryEnvironment ?? Permissions.environment
+        )
+        permissionRecovery.onStateChange = { [weak self] state in
+            self?.model.permissionRecovery = state
+            self?.model.axTrusted = state.snapshot.accessibilityGranted
+        }
         if let inputDevices {
             model.inputState = inputDevices.inputState
             inputDevices.onInputStateChange = { [weak self] state in
@@ -77,12 +85,11 @@ final class SettingsController {
             }
         }
         wire()
-        observeCalendarBoundaries()
+        observeBoundaryNotifications()
         workflow.observeHistoryAppends()
     }
 
     deinit {
-        permissionRefreshTask?.cancel()
         if let closeObserver {
             NotificationCenter.default.removeObserver(closeObserver)
         }
@@ -108,17 +115,9 @@ final class SettingsController {
     }
 
     func beginPermissionRecovery() {
-        applyPermissionAction(.launch(Permissions.snapshot()))
+        permissionRecovery.start()
         if model.permissionRecovery.isPresented {
             show()
-        }
-        permissionRefreshTask?.cancel()
-        permissionRefreshTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                guard !Task.isCancelled, let self else { return }
-                applyPermissionAction(.refresh(Permissions.snapshot()))
-            }
         }
     }
 
@@ -128,20 +127,24 @@ final class SettingsController {
             self?.workflow.selectInputDevice(uid)
         }
         model.onRecord = { [weak self] field in self?.startRecording(field) }
-        model.onOpenShortcutPermissions = { Self.openShortcutPermissions() }
+        model.onOpenShortcutPermissions = { [weak self] in
+            self?.permissionRecovery.openSystemSettings(.inputMonitoring)
+        }
         model.onOpenPermissionRecovery = { [weak self] in
             self?.show()
-            self?.applyPermissionAction(.reopen)
+            self?.permissionRecovery.reopen()
         }
         model.onDismissPermissionRecovery = { [weak self] in
-            self?.applyPermissionAction(.dismiss)
+            self?.permissionRecovery.dismiss()
         }
-        model.onRequestPermission = { permission in
-            Permissions.request(permission)
+        model.onRevealShortcutFallback = { [weak self] in
+            self?.permissionRecovery.revealShortcutFallback()
+        }
+        model.onRequestPermission = { [weak self] permission in
+            self?.permissionRecovery.request(permission)
         }
         model.onOpenPermissionSettings = { [weak self] permission in
-            self?.applyPermissionAction(.openedSystemSettings(permission))
-            Permissions.openSystemSettings(for: permission)
+            self?.permissionRecovery.openSystemSettings(permission)
         }
         model.onSelectMode = { [weak self] selection in self?.workflow.selectMode(selection) }
         model.onAddMode = { [weak self] in self?.workflow.beginAddMode() }
@@ -175,7 +178,7 @@ final class SettingsController {
         model.onQuitRecovery = { NSApp.terminate(nil) }
     }
 
-    private func observeCalendarBoundaries() {
+    private func observeBoundaryNotifications() {
         for name in [Notification.Name.NSCalendarDayChanged, .NSSystemTimeZoneDidChange] {
             boundaryObservers.append(notificationCenter.addObserver(
                 forName: name,
@@ -187,6 +190,15 @@ final class SettingsController {
                 }
             })
         }
+        boundaryObservers.append(notificationCenter.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.permissionRecovery.returnedFromSystemSettings()
+            }
+        })
     }
 
     private func build() {
@@ -235,18 +247,10 @@ final class SettingsController {
         if let inputDevices {
             model.inputState = inputDevices.inputState
         }
-        model.axTrusted = TextInserter.accessibilityTrusted()
+        model.axTrusted = model.permissionRecovery.snapshot.accessibilityGranted
         workflow.populateHistory()
         workflow.refreshLLMModels()
         workflow.checkForUpdates()
-    }
-
-    private func applyPermissionAction(_ action: PermissionRecoveryWorkflow.Action) {
-        PermissionRecoveryWorkflow.reduce(
-            state: &model.permissionRecovery,
-            action: action
-        )
-        model.axTrusted = model.permissionRecovery.snapshot.accessibilityGranted
     }
 
     private func resetConfiguration() {
@@ -308,16 +312,6 @@ final class SettingsController {
     private func cancelRecording() {
         stopKeyMonitor()
         workflow.cancelRecording()
-    }
-
-    private static func openShortcutPermissions() {
-        guard let url = URL(
-            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
-        ) else {
-            Log.hotkey.error("Could not construct the shortcut permission settings URL")
-            return
-        }
-        NSWorkspace.shared.open(url)
     }
 
     private func stopKeyMonitor() {
