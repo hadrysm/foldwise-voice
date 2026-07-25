@@ -153,6 +153,11 @@ struct EmberSurface<Content: View>: View {
     var body: some View {
         content
             .background(level.color, in: RoundedRectangle(cornerRadius: Theme.surfaceRadius))
+            // The silhouette governs the content: square-edged children — a
+            // flush leading EmberIngress, a full-bleed row background — would
+            // otherwise reach past the rounded corners and read as a nub
+            // hanging off the boundary arc.
+            .clipShape(RoundedRectangle(cornerRadius: Theme.surfaceRadius))
             .overlay {
                 RoundedRectangle(cornerRadius: Theme.surfaceRadius)
                     .strokeBorder(
