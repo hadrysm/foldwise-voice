@@ -148,7 +148,6 @@ struct HomeView: View {
                             }
                         }
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.surfaceRadius))
                 }
             }
         }

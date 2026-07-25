@@ -334,7 +334,6 @@ private struct HistoryCollection: View {
                             }
                         }
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.surfaceRadius))
                 }
             }
         }
