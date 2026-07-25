@@ -703,11 +703,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
                     }
                 }
             }
-            do {
-                try monitor.start()
-            } catch {
-                throw AcceptanceError.contract("could not watch acceptance directory")
-            }
+            monitor.start()
             signalMonitor = monitor
         }
 

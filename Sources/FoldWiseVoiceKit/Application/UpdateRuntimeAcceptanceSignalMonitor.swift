@@ -1,18 +1,12 @@
-import Darwin
 import Foundation
 
 final class UpdateRuntimeAcceptanceSignalMonitor {
-    enum MonitorError: Error {
-        case couldNotWatchDirectory
-    }
-
     private let signalURL: URL
     private let onSignal: @Sendable () -> Void
     private let queue = DispatchQueue(
         label: "com.foldwise.voice.update-runtime-acceptance-signals"
     )
-    private var source: DispatchSourceFileSystemObject?
-    private var directoryDescriptor: Int32 = -1
+    private var timer: DispatchSourceTimer?
 
     init(
         directory: URL,
@@ -23,30 +17,23 @@ final class UpdateRuntimeAcceptanceSignalMonitor {
         self.onSignal = onSignal
     }
 
-    func start() throws {
-        directoryDescriptor = open(signalURL.deletingLastPathComponent().path, O_EVTONLY)
-        guard directoryDescriptor >= 0 else {
-            throw MonitorError.couldNotWatchDirectory
-        }
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: directoryDescriptor,
-            eventMask: .write,
-            queue: queue
+    func start() {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(
+            deadline: .now(),
+            repeating: .milliseconds(50),
+            leeway: .milliseconds(10)
         )
-        source.setEventHandler { [weak self] in
+        timer.setEventHandler { [weak self] in
             self?.consumeSignal()
         }
-        source.setCancelHandler { [descriptor = directoryDescriptor] in
-            close(descriptor)
-        }
-        self.source = source
-        source.resume()
+        self.timer = timer
+        timer.resume()
     }
 
     func stop() {
-        source?.cancel()
-        source = nil
-        directoryDescriptor = -1
+        timer?.cancel()
+        timer = nil
     }
 
     private func consumeSignal() {
@@ -57,6 +44,7 @@ final class UpdateRuntimeAcceptanceSignalMonitor {
             Log.app.error(
                 "Acceptance signal cleanup failed: \(error.localizedDescription)"
             )
+            return
         }
         onSignal()
     }
