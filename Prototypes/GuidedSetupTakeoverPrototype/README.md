@@ -42,8 +42,8 @@ and crossfades while the active marker moves along the signal path. The progress
 rail and navigation stay anchored. Reduce Motion changes immediately.
 
 Diagnostic actions now live in a visibly separate **Prototype controls** panel.
-Use them to trigger the permission-recovery interruption, preview Badge
-visibility, and compare direct close with close confirmation.
+Use them to trigger the permission-recovery interruption and compare direct
+close with close confirmation.
 
 ## Fixed constraints
 
@@ -51,6 +51,8 @@ visibility, and compare direct close with close confirmation.
   closing returns it to `.accessory`.
 - The app's six-destination sidebar and its toggle are unreachable during the
   takeover.
+- The live Badge is hidden throughout the takeover because Dictation may not be
+  usable yet. It returns when Guided setup finishes, skips, or closes.
 - A permission-recovery presentation request never opens a competing sheet
   during Guided setup; the active Setup step owns the same live permission
   state.

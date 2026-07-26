@@ -111,7 +111,6 @@ private final class PrototypeModel: ObservableObject {
     @Published var polishChoice: PolishChoice?
     @Published var ollamaPhase = OllamaSetupPhase.notDetected
     @Published var polishPullProgress = 0.0
-    @Published var badgeVisibleDuringSetup = true
     @Published var confirmsBeforeClose = true
     @Published var closeConfirmationPresented = false
     @Published var transitionDirection = 1
@@ -126,7 +125,7 @@ private final class PrototypeModel: ObservableObject {
     }
 
     var badgeVisible: Bool {
-        !setupActive || badgeVisibleDuringSetup
+        !setupActive
     }
 
     var activationPolicy: String {
@@ -1476,9 +1475,6 @@ private struct PrototypeInspector: View {
             fact("Activation", model.activationPolicy)
             fact("App sidebar", model.setupActive ? "unreachable" : "available")
             fact("Outcome", model.outcome.rawValue)
-            Toggle("Show Badge during setup", isOn: $model.badgeVisibleDuringSetup)
-                .toggleStyle(.switch)
-                .font(.system(size: 11))
             Toggle("Confirm before close", isOn: $model.confirmsBeforeClose)
                 .toggleStyle(.switch)
                 .font(.system(size: 11))
