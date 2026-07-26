@@ -518,13 +518,6 @@ class R2UpdateOrigin:
                 "The local DMG no longer matches its verified checksum.",
             )
         url = f"{self.public_base_url}/releases/{dmg.name}"
-        current = self.fetcher.fetch(url)
-        if current is not None:
-            if hashlib.sha256(current).hexdigest() != sha256:
-                raise ArtifactMismatch(
-                    "The immutable archive URL already contains other bytes.",
-                )
-
         key = f"releases/{dmg.name}"
         if self._object_exists(key):
             self._verify_object(
@@ -532,7 +525,13 @@ class R2UpdateOrigin:
                 sha256=sha256,
                 content_length=dmg.stat().st_size,
             )
+            current = self.fetcher.fetch(url)
             if current is not None:
+                if hashlib.sha256(current).hexdigest() != sha256:
+                    raise ArtifactMismatch(
+                        "The immutable archive URL already contains "
+                        "other bytes.",
+                    )
                 return
             published = self._fetch_until(
                 url,
