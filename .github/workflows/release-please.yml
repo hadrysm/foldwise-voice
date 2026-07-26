@@ -176,9 +176,10 @@ jobs:
       - name: Restore the release source and publication tools
         run: |
           set -euo pipefail
-          FINALIZER_PATH="$RUNNER_TEMP/foldwise-finalize-release.sh"
-          cp scripts/finalize_release.sh "$FINALIZER_PATH"
-          chmod +x "$FINALIZER_PATH"
+          RELEASE_TOOL_DIRECTORY="$RUNNER_TEMP/foldwise-release-tools"
+          FINALIZER_PATH=$(
+            scripts/stage_release_tools.sh "$RELEASE_TOOL_DIRECTORY"
+          )
           echo "FINALIZER_PATH=$FINALIZER_PATH" >> "$GITHUB_ENV"
           RELEASE_COMMIT=$(jq -r '.commit' dist/notarization/submission.json)
           git checkout --detach "$RELEASE_COMMIT"
