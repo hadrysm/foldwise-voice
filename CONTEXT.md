@@ -42,11 +42,38 @@ Text is usable with built-in runtime defaults until an explicit reset backs up
 and replaces the file.
 _Avoid_: safe mode, fallback configuration
 
-**Permission recovery guide** — The dismissible app surface shown when
-Microphone or Accessibility access is missing. It reports live grant status,
-guides the user back to full Dictation capability, and remains reachable until
-both permissions are restored. Input Monitoring is offered only as the narrower
-global-shortcut fallback when Accessibility is declined.
+**Guided setup** — The ordered, rerunnable app surface that helps a user prepare
+FoldWise's core Dictation capability and opt into Polish. It first appears for a
+new installation but does not define whether Dictation is currently usable.
+_Avoid_: onboarding, setup wizard, walkthrough, intro
+
+**Setup step** — One ordered unit of Guided setup, presented and resolved as a
+distinct user choice or readiness check.
+_Avoid_: setup page, setup screen, setup stage
+
+**Setup completed** — The Guided setup outcome reached after every Setup step
+has been visited and each optional choice has either been accepted or explicitly
+declined.
+_Avoid_: setup finished, onboarding complete
+
+**Setup skipped** — The Guided setup outcome created when the user exits before
+reaching Setup completed. It records an explicit exit, not a claim that
+Dictation is or is not ready.
+_Avoid_: setup dismissed, setup cancelled
+
+**Step declined** — The outcome of explicitly refusing an optional Setup step.
+It does not skip Guided setup and does not prevent Setup completed.
+_Avoid_: step skipped, setup skipped
+
+**Dictation ready** — The capability state in which Microphone access and a
+usable speech model are available. It is independent of whether Guided setup is
+completed, skipped, or still in progress.
+_Avoid_: setup complete, all systems go
+
+**Permission recovery guide** — The dismissible repair surface that helps a
+returning user restore missing Microphone or Accessibility access. It does not
+configure speech models, shortcuts, or Polish; Input Monitoring is offered only
+as the narrower global-shortcut fallback when Accessibility is declined.
 _Avoid_: migration wizard, permission onboarding
 
 **Monthly activity calendar** — The Stats view of the current calendar month,
