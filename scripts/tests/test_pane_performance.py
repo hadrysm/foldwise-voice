@@ -55,6 +55,8 @@ class PanePerformanceHarnessTests(unittest.TestCase):
                 "screenshots": False,
                 "sanitizers": False,
                 "runtimeDiagnostics": False,
+                "appNap": False,
+                "windowVisibility": "foreground",
                 "windowSizePoints": {"width": 980, "height": 720},
             },
         )

@@ -56,6 +56,8 @@ def measurement_configuration() -> dict[str, object]:
         "screenshots": False,
         "sanitizers": False,
         "runtimeDiagnostics": False,
+        "appNap": False,
+        "windowVisibility": "foreground",
         "windowSizePoints": {"width": 980, "height": 720},
     }
 

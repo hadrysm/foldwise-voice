@@ -18,6 +18,8 @@ configuration and launches its executable without a debugger, coverage,
 screenshots, sanitizers, or runtime diagnostics. It measures both deterministic
 profiles, all six destinations, and cold and warm visit classes. Every class
 discards one harness warm-up and records 20 samples.
+The packaged process holds a latency-critical activity to prevent App Nap and
+reasserts its key foreground window before each independent sample.
 
 Use a non-authoritative smoke run while changing the harness:
 
@@ -51,8 +53,10 @@ measures the revisit. This preserves disposable destination views and allows
 later controller-retained projection work to become observably warm.
 After every first-meaningful-frame marker, the driver waits 350 ms outside the
 measured interval. This returns control to the run loop, drains transient view
-work, and lets the 280 ms sidebar-selection animation finish before the next
-independent journey.
+work, and lets the sidebar-selection spring settle before the next independent
+journey. After each cold or warm journey, it also detaches the hosting
+controller, releases the model, and waits another unmeasured interval so view
+tasks from one sample cannot contaminate the next.
 
 `FirstWindowOpening` is a separate signposted interval from loading the
 profile's production JSONL History through settings-window construction to

@@ -418,6 +418,7 @@ private final class PanePerformanceApplication {
     private let performance = PaneNavigationPerformance()
     private var window: NSWindow?
     private var currentModel: SettingsModel?
+    private var processActivity: NSObjectProtocol?
     private var firstWindowMilliseconds: Double?
     private var firstWindowContinuation: CheckedContinuation<Double, Never>?
     private var frameContinuation:
@@ -431,6 +432,10 @@ private final class PanePerformanceApplication {
     }
 
     func start() {
+        processActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .latencyCritical],
+            reason: "Measure foreground pane-navigation latency"
+        )
         do {
             try fixture.write(
                 to: plan.dataDirectory.appendingPathComponent("history.jsonl")
@@ -523,6 +528,7 @@ private final class PanePerformanceApplication {
             routes: results
         )
         try report.write(to: plan.outputURL)
+        endProcessActivity()
         NSApp.terminate(nil)
     }
 
@@ -542,6 +548,7 @@ private final class PanePerformanceApplication {
             if index > 0 {
                 recorded.append(duration)
             }
+            await releaseCurrentHost()
         }
         return recorded
     }
@@ -554,6 +561,8 @@ private final class PanePerformanceApplication {
             window?.contentViewController = NSHostingController(
                 rootView: SettingsView(model: model)
             )
+            NSApp.activate(ignoringOtherApps: true)
+            window?.makeKeyAndOrderFront(nil)
             window?.displayIfNeeded()
         }
         await settleAfterFrame()
@@ -579,6 +588,18 @@ private final class PanePerformanceApplication {
                 continuation.resume()
             }
         }
+    }
+
+    private func releaseCurrentHost() async {
+        window?.contentViewController = NSViewController()
+        currentModel = nil
+        await settleAfterFrame()
+    }
+
+    private func endProcessActivity() {
+        guard let processActivity else { return }
+        ProcessInfo.processInfo.endActivity(processActivity)
+        self.processActivity = nil
     }
 
     private func waitForFirstWindow() async -> Double {
@@ -621,6 +642,7 @@ private final class PanePerformanceApplication {
     }
 
     private func fail(_ error: Error) {
+        endProcessActivity()
         let failureURL = plan.outputURL
             .deletingPathExtension()
             .appendingPathExtension("failure.txt")
