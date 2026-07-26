@@ -5,6 +5,39 @@ import XCTest
 
 @MainActor
 final class ModelsWorkspaceHostedTests: XCTestCase {
+    func testHostedModelsDoesNotReprojectForUnrelatedShortcutChange() {
+        let model = SettingsModel()
+        var projectionCount = 0
+        let controller = NSHostingController(
+            rootView: ModelsCombinedPane(
+                interface: model.modelsPaneInterface,
+                project: {
+                    projectionCount += 1
+                    return ModelsWorkspaceProjection.make(
+                        asrSnapshot: $0,
+                        asrFailures: $1,
+                        polishState: $2,
+                        modes: $3,
+                        inspectedID: $4,
+                        previousPolishRowIDs: $5
+                    )
+                }
+            )
+            .frame(width: 900, height: 700)
+        )
+        controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        controller.view.layoutSubtreeIfNeeded()
+        let initialProjectionCount = projectionCount
+
+        model.pttKey = "f18"
+        let observationSettled = expectation(description: "unrelated observation settled")
+        DispatchQueue.main.async { observationSettled.fulfill() }
+        wait(for: [observationSettled], timeout: 1)
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(projectionCount, initialProjectionCount)
+    }
+
     func testNativeSplitProtectsBothPaneMinimumsAtCompactWidth() {
         let controller = compactSplitController()
 

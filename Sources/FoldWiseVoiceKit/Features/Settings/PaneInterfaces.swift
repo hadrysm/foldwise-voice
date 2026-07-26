@@ -1,136 +1,213 @@
 import Foundation
 
+@MainActor
 struct HomePaneInterface {
-    let readProjectionInput: () -> HomeProjection.Input
-    let readCurrentStreak: () -> Int?
-    let readPushToTalkKey: () -> String
-    let readPermissionSnapshot: () -> PermissionRecoverySnapshot
-    let readEffectiveASRModelName: () -> String
-    let readSelectedPolishModel: () -> String
-    let readWindowWidth: () -> Double
-    let performance: PaneNavigationPerformance
-    let selectPane: (SettingsModel.Pane) -> Void
-    let performHistoryCommand: (HistoryEntry, DictationRowCommand) -> Void
-    let openPermissionRecovery: () -> Void
+    private let model: SettingsModel
+
+    init(model: SettingsModel) {
+        self.model = model
+    }
 
     var projectionInput: HomeProjection.Input {
-        readProjectionInput()
+        HomeProjection.Input(entries: model.historyEntries, modes: model.modes)
     }
 
     var currentStreak: Int? {
-        readCurrentStreak()
+        model.currentStreak
     }
 
     var pushToTalkKey: String {
-        readPushToTalkKey()
+        model.pttKey
     }
 
     var permissionSnapshot: PermissionRecoverySnapshot {
-        readPermissionSnapshot()
+        model.permissionRecovery.snapshot
     }
 
     var effectiveASRModelName: String {
-        readEffectiveASRModelName()
+        model.effectiveASRModelName
     }
 
     var selectedPolishModel: String {
-        readSelectedPolishModel()
+        model.selectedModel
     }
 
     var windowWidth: Double {
-        readWindowWidth()
-    }
-}
-
-struct HistoryPaneInterface {
-    let readEntries: () -> [HistoryEntry]
-    let readModes: () -> [Mode]
-    let readSaveHistory: () -> Bool
-    let readRetention: () -> RetentionWindow
-    let performance: PaneNavigationPerformance
-    let setSaveHistory: (Bool) -> Void
-    let setRetention: (RetentionWindow) -> Void
-    let performHistoryCommand: (HistoryEntry, DictationRowCommand) -> Void
-    let clearHistory: () -> Void
-
-    var entries: [HistoryEntry] {
-        readEntries()
+        model.windowWidth
     }
 
-    var modes: [Mode] {
-        readModes()
+    var performance: PaneNavigationPerformance {
+        model.panePerformance
     }
 
-    var saveHistory: Bool {
-        readSaveHistory()
+    func selectPane(_ pane: SettingsModel.Pane) {
+        model.selectPane(pane)
     }
 
-    var retention: RetentionWindow {
-        readRetention()
-    }
-}
-
-struct StatsPaneInterface {
-    let readInput: () -> StatsProjection.Input
-    let performance: PaneNavigationPerformance
-    let openHistory: () -> Void
-
-    var input: StatsProjection.Input {
-        readInput()
-    }
-}
-
-struct ModelsPaneInterface {
-    let readASRSnapshot: () -> ASRModelLifecycleSnapshot?
-    let readASRFailures: () -> ModelsASRFailures
-    let readPolishState: () -> ModelsPolishState
-    let readModes: () -> [Mode]
-    let readRequestedPolishInspection: () -> String?
-    let readCustomModel: () -> String
-    let readWindowWidth: () -> Double
-    let setCustomModel: (String) -> Void
-    let clearRequestedPolishInspection: () -> Void
-    let cancelASROperation: () -> Void
-    let selectASRModel: (String) -> Void
-    let downloadASRModel: (String) -> Void
-    let retryASRBootstrap: () -> Void
-    let installPolishModel: (String) -> Void
-    let installCustomPolishModel: () -> Void
-    let refreshPolishModels: () -> Void
-    let deleteASRModel: (String) -> Void
-    let deletePolishModel: (String) -> Void
-
-    var asrSnapshot: ASRModelLifecycleSnapshot? {
-        readASRSnapshot()
+    func performHistoryCommand(_ entry: HistoryEntry, _ command: DictationRowCommand) {
+        model.onHistoryCommand?(entry, command)
     }
 
-    var asrFailures: ModelsASRFailures {
-        readASRFailures()
-    }
-
-    var polishState: ModelsPolishState {
-        readPolishState()
-    }
-
-    var modes: [Mode] {
-        readModes()
-    }
-
-    var requestedPolishInspection: String? {
-        readRequestedPolishInspection()
-    }
-
-    var customModel: String {
-        readCustomModel()
-    }
-
-    var windowWidth: Double {
-        readWindowWidth()
+    func openPermissionRecovery() {
+        model.onOpenPermissionRecovery?()
     }
 }
 
 @MainActor
-final class ModesPaneInterface {
+struct HistoryPaneInterface {
+    private let model: SettingsModel
+
+    init(model: SettingsModel) {
+        self.model = model
+    }
+
+    var entries: [HistoryEntry] {
+        model.historyEntries
+    }
+
+    var modes: [Mode] {
+        model.modes
+    }
+
+    var saveHistory: Bool {
+        model.saveHistory
+    }
+
+    var retention: RetentionWindow {
+        model.retention
+    }
+
+    var performance: PaneNavigationPerformance {
+        model.panePerformance
+    }
+
+    func setSaveHistory(_ isEnabled: Bool) {
+        model.saveHistory = isEnabled
+        model.onCommit?(.global)
+    }
+
+    func setRetention(_ retention: RetentionWindow) {
+        model.retention = retention
+        model.onCommit?(.global)
+    }
+
+    func performHistoryCommand(_ entry: HistoryEntry, _ command: DictationRowCommand) {
+        model.onHistoryCommand?(entry, command)
+    }
+
+    func clearHistory() {
+        model.onClearHistory?()
+    }
+}
+
+@MainActor
+struct StatsPaneInterface {
+    private let model: SettingsModel
+
+    init(model: SettingsModel) {
+        self.model = model
+    }
+
+    var input: StatsProjection.Input {
+        StatsProjection.Input(
+            entries: model.historyEntries,
+            currentStreak: model.currentStreak,
+            savingEnabled: model.saveHistory
+        )
+    }
+
+    var performance: PaneNavigationPerformance {
+        model.panePerformance
+    }
+
+    func openHistory() {
+        model.selectPane(.history)
+    }
+}
+
+@MainActor
+struct ModelsPaneInterface {
+    private let model: SettingsModel
+
+    init(model: SettingsModel) {
+        self.model = model
+    }
+
+    var asrSnapshot: ASRModelLifecycleSnapshot? {
+        model.asrSnapshot
+    }
+
+    var asrFailures: ModelsASRFailures {
+        model.asrFailures
+    }
+
+    var polishState: ModelsPolishState {
+        model.polishModelsState
+    }
+
+    var modes: [Mode] {
+        model.modes
+    }
+
+    var requestedPolishInspection: String? {
+        model.requestedPolishInspection
+    }
+
+    var customModel: String {
+        model.customModel
+    }
+
+    var windowWidth: Double {
+        model.windowWidth
+    }
+
+    func setCustomModel(_ name: String) {
+        model.customModel = name
+    }
+
+    func clearRequestedPolishInspection() {
+        model.requestedPolishInspection = nil
+    }
+
+    func cancelASROperation() {
+        model.onCancelASROperation?()
+    }
+
+    func selectASRModel(_ id: String) {
+        model.onSelectASRModel?(id)
+    }
+
+    func downloadASRModel(_ id: String) {
+        model.onDownloadASRModel?(id)
+    }
+
+    func retryASRBootstrap() {
+        model.onRetryASRBootstrap?()
+    }
+
+    func installPolishModel(_ name: String) {
+        model.onInstallModel?(name)
+    }
+
+    func installCustomPolishModel() {
+        model.onInstallCustomModel?()
+    }
+
+    func refreshPolishModels() {
+        model.onRefreshModels?()
+    }
+
+    func deleteASRModel(_ id: String) {
+        model.onDeleteASRModel?(id)
+    }
+
+    func deletePolishModel(_ name: String) {
+        model.onDeleteModel?(name)
+    }
+}
+
+@MainActor
+struct ModesPaneInterface {
     private let model: SettingsModel
 
     init(model: SettingsModel) {
@@ -157,28 +234,28 @@ final class ModesPaneInterface {
         model.installed
     }
 
-    var onSelectMode: ((DictationSelection) -> Void)? {
-        model.onSelectMode
+    func selectMode(_ selection: DictationSelection) {
+        model.onSelectMode?(selection)
     }
 
-    var onAddMode: (() -> Void)? {
-        model.onAddMode
+    func addMode() {
+        model.onAddMode?()
     }
 
-    var onEditMode: ((ModeID) -> Void)? {
-        model.onEditMode
+    func editMode(_ id: ModeID) {
+        model.onEditMode?(id)
     }
 
-    var onDuplicateMode: ((ModeID) -> Void)? {
-        model.onDuplicateMode
+    func duplicateMode(_ id: ModeID) {
+        model.onDuplicateMode?(id)
     }
 
-    var onMoveMode: ((ModeID, ModeMoveDirection) -> Void)? {
-        model.onMoveMode
+    func moveMode(_ id: ModeID, _ direction: ModeMoveDirection) {
+        model.onMoveMode?(id, direction)
     }
 
-    var onRequestModeDeletion: ((ModeID) -> Void)? {
-        model.onRequestModeDeletion
+    func requestModeDeletion(_ id: ModeID) {
+        model.onRequestModeDeletion?(id)
     }
 
     func selectPane(_ pane: SettingsModel.Pane) {
@@ -187,7 +264,7 @@ final class ModesPaneInterface {
 }
 
 @MainActor
-final class PreferencesPaneInterface {
+struct PreferencesPaneInterface {
     private let model: SettingsModel
 
     init(model: SettingsModel) {
@@ -200,27 +277,27 @@ final class PreferencesPaneInterface {
 
     var pttKey: String {
         get { model.pttKey }
-        set { model.pttKey = newValue }
+        nonmutating set { model.pttKey = newValue }
     }
 
     var toggleKey: String {
         get { model.toggleKey }
-        set { model.toggleKey = newValue }
+        nonmutating set { model.toggleKey = newValue }
     }
 
     var cycleKey: String {
         get { model.cycleKey }
-        set { model.cycleKey = newValue }
+        nonmutating set { model.cycleKey = newValue }
     }
 
     var pauseAudio: Bool {
         get { model.pauseAudio }
-        set { model.pauseAudio = newValue }
+        nonmutating set { model.pauseAudio = newValue }
     }
 
     var appearance: AppearancePreference {
         get { model.appearance }
-        set { model.appearance = newValue }
+        nonmutating set { model.appearance = newValue }
     }
 
     var inputState: AudioInputState {
@@ -229,6 +306,10 @@ final class PreferencesPaneInterface {
 
     var windowWidth: Double {
         model.windowWidth
+    }
+
+    var sidebarMode: SidebarMode {
+        model.sidebar.mode(forWidth: model.windowWidth)
     }
 
     var shortcutListenerHealth: ShortcutListenerHealth {
@@ -255,117 +336,54 @@ final class PreferencesPaneInterface {
         model.statusOwner
     }
 
-    var onOpenPermissionRecovery: (() -> Void)? {
-        model.onOpenPermissionRecovery
+    func openPermissionRecovery() {
+        model.onOpenPermissionRecovery?()
     }
 
-    var onOpenShortcutPermissions: (() -> Void)? {
-        model.onOpenShortcutPermissions
+    func openShortcutPermissions() {
+        model.onOpenShortcutPermissions?()
     }
 
-    var onCommit: ((SettingsFeedbackOwner) -> Void)? {
-        model.onCommit
+    func commit(_ owner: SettingsFeedbackOwner) {
+        model.onCommit?(owner)
     }
 
-    var onSelectInputDevice: ((String?) -> Void)? {
-        model.onSelectInputDevice
+    func selectInputDevice(_ uid: String?) {
+        model.onSelectInputDevice?(uid)
     }
 
-    var onCheckUpdates: (() -> Void)? {
-        model.onCheckUpdates
+    func checkForUpdates() {
+        model.onCheckUpdates?()
     }
 
-    var onRecord: ((SettingsModel.RecordingField) -> Void)? {
-        model.onRecord
+    func record(_ field: SettingsModel.RecordingField) {
+        model.onRecord?(field)
     }
 }
 
 @MainActor
 extension SettingsModel {
+    var homePaneInterface: HomePaneInterface {
+        HomePaneInterface(model: self)
+    }
+
     var modesPaneInterface: ModesPaneInterface {
         ModesPaneInterface(model: self)
     }
 
-    var preferencesPaneInterface: PreferencesPaneInterface {
-        PreferencesPaneInterface(model: self)
-    }
-
-    var homePaneInterface: HomePaneInterface {
-        HomePaneInterface(
-            readProjectionInput: {
-                HomeProjection.Input(entries: self.historyEntries, modes: self.modes)
-            },
-            readCurrentStreak: { self.currentStreak },
-            readPushToTalkKey: { self.pttKey },
-            readPermissionSnapshot: { self.permissionRecovery.snapshot },
-            readEffectiveASRModelName: { self.effectiveASRModelName },
-            readSelectedPolishModel: { self.selectedModel },
-            readWindowWidth: { self.windowWidth },
-            performance: panePerformance,
-            selectPane: { [weak self] in self?.selectPane($0) },
-            performHistoryCommand: { [weak self] in self?.onHistoryCommand?($0, $1) },
-            openPermissionRecovery: { [weak self] in self?.onOpenPermissionRecovery?() }
-        )
+    var modelsPaneInterface: ModelsPaneInterface {
+        ModelsPaneInterface(model: self)
     }
 
     var historyPaneInterface: HistoryPaneInterface {
-        HistoryPaneInterface(
-            readEntries: { self.historyEntries },
-            readModes: { self.modes },
-            readSaveHistory: { self.saveHistory },
-            readRetention: { self.retention },
-            performance: panePerformance,
-            setSaveHistory: { [weak self] isEnabled in
-                guard let self else { return }
-                saveHistory = isEnabled
-                onCommit?(.global)
-            },
-            setRetention: { [weak self] retention in
-                guard let self else { return }
-                self.retention = retention
-                onCommit?(.global)
-            },
-            performHistoryCommand: { [weak self] in self?.onHistoryCommand?($0, $1) },
-            clearHistory: { [weak self] in self?.onClearHistory?() }
-        )
+        HistoryPaneInterface(model: self)
     }
 
     var statsPaneInterface: StatsPaneInterface {
-        StatsPaneInterface(
-            readInput: {
-                StatsProjection.Input(
-                    entries: self.historyEntries,
-                    currentStreak: self.currentStreak,
-                    savingEnabled: self.saveHistory
-                )
-            },
-            performance: panePerformance,
-            openHistory: { [weak self] in self?.selectPane(.history) }
-        )
+        StatsPaneInterface(model: self)
     }
 
-    var modelsPaneInterface: ModelsPaneInterface {
-        ModelsPaneInterface(
-            readASRSnapshot: { self.asrSnapshot },
-            readASRFailures: { self.asrFailures },
-            readPolishState: { self.polishModelsState },
-            readModes: { self.modes },
-            readRequestedPolishInspection: { self.requestedPolishInspection },
-            readCustomModel: { self.customModel },
-            readWindowWidth: { self.windowWidth },
-            setCustomModel: { [weak self] in self?.customModel = $0 },
-            clearRequestedPolishInspection: { [weak self] in
-                self?.requestedPolishInspection = nil
-            },
-            cancelASROperation: { [weak self] in self?.onCancelASROperation?() },
-            selectASRModel: { [weak self] in self?.onSelectASRModel?($0) },
-            downloadASRModel: { [weak self] in self?.onDownloadASRModel?($0) },
-            retryASRBootstrap: { [weak self] in self?.onRetryASRBootstrap?() },
-            installPolishModel: { [weak self] in self?.onInstallModel?($0) },
-            installCustomPolishModel: { [weak self] in self?.onInstallCustomModel?() },
-            refreshPolishModels: { [weak self] in self?.onRefreshModels?() },
-            deleteASRModel: { [weak self] in self?.onDeleteASRModel?($0) },
-            deletePolishModel: { [weak self] in self?.onDeleteModel?($0) }
-        )
+    var preferencesPaneInterface: PreferencesPaneInterface {
+        PreferencesPaneInterface(model: self)
     }
 }

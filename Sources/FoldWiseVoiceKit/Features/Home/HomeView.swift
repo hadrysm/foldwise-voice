@@ -25,9 +25,8 @@ struct HomeView: View {
     private let notificationCenter: NotificationCenter
     private let project: (HomeProjection.Input, Date, Calendar, Locale) -> HomeProjection
 
-    /// Both projections are memoized off their actual inputs — SettingsModel
-    /// has dozens of unrelated @Published fields, and recomputing a whole-
-    /// history scan on every publish would put it on the render path.
+    /// Both projections are memoized off their semantic inputs so unrelated
+    /// settings changes cannot put a whole-history scan on the render path.
     @State private var stats = UsageStats.empty
     @State private var projection = HomeProjection(sections: [])
     @State private var projectionIsReady = false

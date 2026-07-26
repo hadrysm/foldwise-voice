@@ -1,16 +1,39 @@
 import AppKit
 import SwiftUI
 
+typealias ModelsWorkspaceProjector = (
+    ASRModelLifecycleSnapshot?,
+    ModelsASRFailures,
+    ModelsPolishState,
+    [Mode],
+    ModelsRowID?,
+    [ModelsRowID]
+) -> ModelsWorkspaceProjection
+
 struct ModelsCombinedPane: View {
     let interface: ModelsPaneInterface
+    private let project: ModelsWorkspaceProjector
     @State private var inspectedID: ModelsRowID?
     @State private var pendingDestructiveAction: ModelsDestructiveAction?
     @State private var previousPolishRowIDs: [ModelsRowID] = []
     @FocusState private var focusedControl: ModelsFocusTarget?
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
-    init(interface: ModelsPaneInterface) {
+    init(
+        interface: ModelsPaneInterface,
+        project: @escaping ModelsWorkspaceProjector = {
+            ModelsWorkspaceProjection.make(
+                asrSnapshot: $0,
+                asrFailures: $1,
+                polishState: $2,
+                modes: $3,
+                inspectedID: $4,
+                previousPolishRowIDs: $5
+            )
+        }
+    ) {
         self.interface = interface
+        self.project = project
     }
 
     init(model: SettingsModel) {
@@ -18,13 +41,13 @@ struct ModelsCombinedPane: View {
     }
 
     private var projection: ModelsWorkspaceProjection {
-        ModelsWorkspaceProjection.make(
-            asrSnapshot: interface.asrSnapshot,
-            asrFailures: interface.asrFailures,
-            polishState: interface.polishState,
-            modes: interface.modes,
-            inspectedID: interface.requestedPolishInspection.map(ModelsRowID.polish) ?? inspectedID,
-            previousPolishRowIDs: previousPolishRowIDs
+        project(
+            interface.asrSnapshot,
+            interface.asrFailures,
+            interface.polishState,
+            interface.modes,
+            interface.requestedPolishInspection.map(ModelsRowID.polish) ?? inspectedID,
+            previousPolishRowIDs
         )
     }
 

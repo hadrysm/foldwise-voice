@@ -151,6 +151,15 @@ private struct SettingsContentObservationScope<Content: View>: View {
     }
 }
 
+private struct SettingsDestinationObservationScope<Input, Content: View>: View {
+    let input: Input
+    @ViewBuilder let content: (Input) -> Content
+
+    var body: some View {
+        content(input)
+    }
+}
+
 struct SettingsView: View {
     var model: SettingsModel
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
@@ -608,8 +617,12 @@ struct SettingsView: View {
         case .home:
             HomeView(interface: model.homePaneInterface)
         case .modes:
-            paneScroll("Modes") { modesPane }
-                .paneFirstMeaningfulFrame(.modes, performance: model.panePerformance)
+            paneScroll("Modes") {
+                SettingsDestinationObservationScope(input: model.modesPaneInterface) {
+                    modesPane($0)
+                }
+            }
+            .paneFirstMeaningfulFrame(.modes, performance: model.panePerformance)
         case .models:
             ModelsCombinedPane(interface: model.modelsPaneInterface)
                 .paneFirstMeaningfulFrame(.models, performance: model.panePerformance)
@@ -618,8 +631,12 @@ struct SettingsView: View {
         case .stats:
             paneScroll("Stats") { StatsPane(interface: model.statsPaneInterface) }
         case .settings:
-            paneScroll("Settings") { settingsPane }
-                .paneFirstMeaningfulFrame(.settings, performance: model.panePerformance)
+            paneScroll("Settings") {
+                SettingsDestinationObservationScope(input: model.preferencesPaneInterface) {
+                    settingsPane($0)
+                }
+            }
+            .paneFirstMeaningfulFrame(.settings, performance: model.panePerformance)
         }
     }
 
@@ -682,38 +699,34 @@ struct SettingsView: View {
 
     // MARK: - modes
 
-    private var modesModel: ModesPaneInterface {
-        model.modesPaneInterface
-    }
-
-    private var modesPane: some View {
+    private func modesPane(_ modesModel: ModesPaneInterface) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline, spacing: 16) {
                 Text("Choose how the next Dictation session should shape your words.")
                     .font(Theme.body)
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
-                Button("Add Mode", systemImage: "plus") { modesModel.onAddMode?() }
+                Button("Add Mode", systemImage: "plus") { modesModel.addMode() }
                     .buttonStyle(EmberButtonStyle(kind: .primary))
                     .accessibilityHint("Opens a new unsaved Mode draft")
             }
             HStack(alignment: .top, spacing: 14) {
-                modeLibrary
+                modeLibrary(modesModel)
                     .frame(width: 310)
-                modeDetail
+                modeDetail(modesModel)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
     }
 
-    private var modeLibrary: some View {
+    private func modeLibrary(_ modesModel: ModesPaneInterface) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             EmberSectionLabel("Dictation selection")
             EmberSurface {
                 CommandLedgerSelectionRow(
                     item: modesModel.modeSelection.systemItem
                 ) {
-                    modesModel.onSelectMode?(modesModel.modeSelection.systemItem.id)
+                    modesModel.selectMode(modesModel.modeSelection.systemItem.id)
                 }
             }
             EmberSectionLabel("Your Modes · Cycle order")
@@ -731,7 +744,7 @@ struct SettingsView: View {
                         Text("Voice to Text remains ready. Add a Mode when you want Polish.")
                             .font(Theme.ui(11))
                             .foregroundStyle(Theme.textSecondary)
-                        Button("Add Mode") { modesModel.onAddMode?() }
+                        Button("Add Mode") { modesModel.addMode() }
                             .buttonStyle(EmberButtonStyle(kind: .quiet))
                             .padding(.top, 4)
                     }
@@ -751,7 +764,7 @@ struct SettingsView: View {
                                     .padding(.leading, 14)
                             }
                             CommandLedgerSelectionRow(item: item) {
-                                modesModel.onSelectMode?(item.id)
+                                modesModel.selectMode(item.id)
                             }
                         }
                     }
@@ -760,7 +773,7 @@ struct SettingsView: View {
         }
     }
 
-    private var modeDetail: some View {
+    private func modeDetail(_ modesModel: ModesPaneInterface) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             EmberSectionLabel("Mode details")
             if let mode = modesModel.selectedEditableMode,
@@ -791,10 +804,10 @@ struct SettingsView: View {
                             }
                             Spacer()
                             HStack(spacing: 8) {
-                                Button("Edit") { modesModel.onEditMode?(id) }
+                                Button("Edit") { modesModel.editMode(id) }
                                     .buttonStyle(EmberButtonStyle(kind: .quiet))
                                     .accessibilityLabel("Edit \(mode.name)")
-                                Button("Duplicate") { modesModel.onDuplicateMode?(id) }
+                                Button("Duplicate") { modesModel.duplicateMode(id) }
                                     .buttonStyle(EmberButtonStyle(kind: .quiet))
                                     .accessibilityLabel(actions.duplicateLabel)
                             }
@@ -813,20 +826,23 @@ struct SettingsView: View {
                         )
                         if let installed = modesModel.installed,
                            !installed.contains(where: { $0.name == mode.llmModel }) {
-                            unavailableModelNotice(mode.llmModel ?? "This model")
+                            unavailableModelNotice(
+                                mode.llmModel ?? "This model",
+                                interface: modesModel
+                            )
                         }
                         Spacer(minLength: 12)
                         EmberHairline(axis: .horizontal)
                         HStack(spacing: 8) {
                             Button("Move up", systemImage: "arrow.up") {
-                                modesModel.onMoveMode?(id, .up)
+                                modesModel.moveMode(id, .up)
                             }
                             .buttonStyle(EmberButtonStyle(kind: .quiet))
                             .disabled(!actions.canMoveUp)
                             .accessibilityLabel(actions.moveUpLabel)
                             .keyboardShortcut(.upArrow, modifiers: [.command, .option])
                             Button("Move down", systemImage: "arrow.down") {
-                                modesModel.onMoveMode?(id, .down)
+                                modesModel.moveMode(id, .down)
                             }
                             .buttonStyle(EmberButtonStyle(kind: .quiet))
                             .disabled(!actions.canMoveDown)
@@ -834,7 +850,7 @@ struct SettingsView: View {
                             .keyboardShortcut(.downArrow, modifiers: [.command, .option])
                             Spacer()
                             Button("Delete", role: .destructive) {
-                                modesModel.onRequestModeDeletion?(id)
+                                modesModel.requestModeDeletion(id)
                             }
                             .buttonStyle(EmberButtonStyle(kind: .destructive))
                             .accessibilityLabel(actions.deleteLabel)
@@ -890,7 +906,10 @@ struct SettingsView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func unavailableModelNotice(_ name: String) -> some View {
+    private func unavailableModelNotice(
+        _ name: String,
+        interface modesModel: ModesPaneInterface
+    ) -> some View {
         EmberStatusNotice(
             kind: .warning,
             title: "\(name) is unavailable",
@@ -907,16 +926,12 @@ struct SettingsView: View {
 
     // MARK: - settings (keyboard shortcuts + input + sound + appearance + updates)
 
-    private var preferencesModel: PreferencesPaneInterface {
-        model.preferencesPaneInterface
-    }
-
-    private var settingsPane: some View {
+    private func settingsPane(_ preferencesModel: PreferencesPaneInterface) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             SignalLedgerSection(title: "Permissions", symbolName: "hand.raised") {
                 SignalLedgerRow(
                     title: "Microphone and Accessibility",
-                    detail: permissionSummary
+                    detail: permissionSummary(preferencesModel)
                 ) {
                     if preferencesModel.permissionRecovery.snapshot.hasFullRecovery {
                         Label("Granted", systemImage: "checkmark.circle.fill")
@@ -924,7 +939,7 @@ struct SettingsView: View {
                             .foregroundStyle(Theme.success)
                     } else {
                         Button("Open guide…") {
-                            preferencesModel.onOpenPermissionRecovery?()
+                            preferencesModel.openPermissionRecovery()
                         }
                         .buttonStyle(EmberButtonStyle(kind: .quiet))
                         .accessibilityIdentifier("settings.permission-recovery")
@@ -940,9 +955,13 @@ struct SettingsView: View {
                     HStack(spacing: 8) {
                         resetButton(icon: "arrow.counterclockwise", help: "Reset to right ⌥") {
                             preferencesModel.pttKey = "alt_r"
-                            preferencesModel.onCommit?(.shortcuts)
+                            preferencesModel.commit(.shortcuts)
                         }
-                        shortcutChip(key: preferencesModel.pttKey, field: .ptt)
+                        shortcutChip(
+                            key: preferencesModel.pttKey,
+                            field: .ptt,
+                            interface: preferencesModel
+                        )
                     }
                 }
                 SignalLedgerDivider()
@@ -954,10 +973,14 @@ struct SettingsView: View {
                         if !preferencesModel.toggleKey.isEmpty {
                             resetButton(icon: "xmark", help: "Remove shortcut") {
                                 preferencesModel.toggleKey = ""
-                                preferencesModel.onCommit?(.shortcuts)
+                                preferencesModel.commit(.shortcuts)
                             }
                         }
-                        shortcutChip(key: preferencesModel.toggleKey, field: .toggle)
+                        shortcutChip(
+                            key: preferencesModel.toggleKey,
+                            field: .toggle,
+                            interface: preferencesModel
+                        )
                     }
                 }
                 SignalLedgerDivider()
@@ -969,10 +992,14 @@ struct SettingsView: View {
                         if !preferencesModel.cycleKey.isEmpty {
                             resetButton(icon: "xmark", help: "Remove shortcut") {
                                 preferencesModel.cycleKey = ""
-                                preferencesModel.onCommit?(.shortcuts)
+                                preferencesModel.commit(.shortcuts)
                             }
                         }
-                        shortcutChip(key: preferencesModel.cycleKey, field: .cycle)
+                        shortcutChip(
+                            key: preferencesModel.cycleKey,
+                            field: .cycle,
+                            interface: preferencesModel
+                        )
                     }
                 }
                 Text(
@@ -989,16 +1016,20 @@ struct SettingsView: View {
                         title: "Global shortcuts need permission",
                         detail: "They currently work only while FoldWise is focused.",
                         actionTitle: "Open System Settings…",
-                        action: preferencesModel.onOpenShortcutPermissions
+                        action: preferencesModel.openShortcutPermissions
                     )
                     .accessibilityIdentifier("settings.shortcuts.permission")
                 }
-                ownedFeedback(.shortcuts, identifier: "settings.shortcuts.feedback")
+                ownedFeedback(
+                    .shortcuts,
+                    identifier: "settings.shortcuts.feedback",
+                    interface: preferencesModel
+                )
             }
 
             SignalLedgerSection(title: "Input", symbolName: "mic") {
-                inputDeviceRoster
-                if let notice = inputDeviceNotice {
+                inputDeviceRoster(preferencesModel)
+                if let notice = inputDeviceNotice(preferencesModel) {
                     SignalLedgerFeedback(
                         kind: notice.kind,
                         title: notice.title,
@@ -1006,7 +1037,11 @@ struct SettingsView: View {
                     )
                     .accessibilityIdentifier("settings.input.lifecycle")
                 }
-                ownedFeedback(.input, identifier: "settings.input.feedback")
+                ownedFeedback(
+                    .input,
+                    identifier: "settings.input.feedback",
+                    interface: preferencesModel
+                )
             }
 
             SignalLedgerSection(title: "Sound", symbolName: "speaker.wave.2") {
@@ -1020,7 +1055,7 @@ struct SettingsView: View {
                             get: { preferencesModel.pauseAudio },
                             set: {
                                 preferencesModel.pauseAudio = $0
-                                preferencesModel.onCommit?(.sound)
+                                preferencesModel.commit(.sound)
                             }
                         )
                     )
@@ -1029,16 +1064,24 @@ struct SettingsView: View {
                     .tint(Theme.accent)
                     .labelsHidden()
                 }
-                ownedFeedback(.sound, identifier: "settings.sound.feedback")
+                ownedFeedback(
+                    .sound,
+                    identifier: "settings.sound.feedback",
+                    interface: preferencesModel
+                )
             }
 
             SignalLedgerSection(
                 title: "Appearance",
                 symbolName: "circle.lefthalf.filled"
             ) {
-                appearanceChoices
+                appearanceChoices(preferencesModel)
                     .padding(12)
-                ownedFeedback(.appearance, identifier: "settings.appearance.feedback")
+                ownedFeedback(
+                    .appearance,
+                    identifier: "settings.appearance.feedback",
+                    interface: preferencesModel
+                )
             }
 
             SignalLedgerSection(
@@ -1046,13 +1089,13 @@ struct SettingsView: View {
                 symbolName: "arrow.triangle.2.circlepath"
             ) {
                 SignalLedgerRow(title: "FoldWise Voice", detail: updateSubtitle) {
-                    updateTrailing
+                    updateTrailing(preferencesModel)
                 }
             }
         }
     }
 
-    private var permissionSummary: String {
+    private func permissionSummary(_ preferencesModel: PreferencesPaneInterface) -> String {
         if preferencesModel.permissionRecovery.snapshot.hasFullRecovery {
             return "Full Dictation capability is available"
         }
@@ -1063,43 +1106,56 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var appearanceChoices: some View {
-        if SettingsAppearanceLayout.forContentWidth(settingsContentWidth) == .horizontal {
+    private func appearanceChoices(
+        _ preferencesModel: PreferencesPaneInterface
+    ) -> some View {
+        if SettingsAppearanceLayout.forContentWidth(
+            settingsContentWidth(preferencesModel)
+        ) == .horizontal {
             HStack(spacing: 8) {
-                appearanceChoiceButtons
+                appearanceChoiceButtons(preferencesModel)
             }
         } else {
             VStack(spacing: 8) {
-                appearanceChoiceButtons
+                appearanceChoiceButtons(preferencesModel)
             }
         }
     }
 
-    private var appearanceChoiceButtons: some View {
+    private func appearanceChoiceButtons(
+        _ preferencesModel: PreferencesPaneInterface
+    ) -> some View {
         ForEach(AppearanceTilePresentation.all) { tile in
             SignalLedgerAppearanceChoice(
                 presentation: tile,
                 isSelected: preferencesModel.appearance == tile.preference
             ) {
                 preferencesModel.appearance = tile.preference
-                preferencesModel.onCommit?(.appearance)
+                preferencesModel.commit(.appearance)
             }
         }
     }
 
-    private var settingsContentWidth: Double {
-        let sidebarWidth = sidebarMode == .expanded
+    private func settingsContentWidth(
+        _ preferencesModel: PreferencesPaneInterface
+    ) -> Double {
+        let sidebarWidth = preferencesModel.sidebarMode == .expanded
             ? Double(Theme.sidebarWidth)
             : Double(Theme.railWidth)
-        return preferencesModel.windowWidth - sidebarWidth - 1 - Double(destinationPadding * 2)
+        let padding = ThemeLayoutPolicy.destinationPadding(
+            windowWidth: preferencesModel.windowWidth
+        )
+        return preferencesModel.windowWidth - sidebarWidth - 1 - Double(padding * 2)
     }
 
     private var destinationPadding: CGFloat {
-        ThemeLayoutPolicy.destinationPadding(windowWidth: preferencesModel.windowWidth)
+        ThemeLayoutPolicy.destinationPadding(windowWidth: model.windowWidth)
     }
 
     @ViewBuilder
-    private var inputDeviceRoster: some View {
+    private func inputDeviceRoster(
+        _ preferencesModel: PreferencesPaneInterface
+    ) -> some View {
         inputDeviceButton(
             uid: nil,
             icon: "macbook",
@@ -1107,7 +1163,8 @@ struct SettingsView: View {
             detail: preferencesModel.inputState.systemDefault.map {
                 "\($0.name) — follows macOS"
             } ?? "No macOS default input is available",
-            unavailable: false
+            unavailable: false,
+            interface: preferencesModel
         )
         ForEach(preferencesModel.inputState.devices) { device in
             SignalLedgerDivider()
@@ -1118,7 +1175,8 @@ struct SettingsView: View {
                 detail: device.uid == preferencesModel.inputState.effectiveDevice?.uid
                     ? "Connected — in use"
                     : "Connected",
-                unavailable: false
+                unavailable: false,
+                interface: preferencesModel
             )
         }
         if let preferredUID = preferencesModel.inputState.preferredUID,
@@ -1129,18 +1187,24 @@ struct SettingsView: View {
                 icon: "mic.slash",
                 title: preferencesModel.inputState.preferredName ?? "Previously selected device",
                 detail: "Not connected — Preferred",
-                unavailable: true
+                unavailable: true,
+                interface: preferencesModel
             )
         }
     }
 
     private func inputDeviceButton(
-        uid: String?, icon: String, title: String, detail: String, unavailable: Bool
+        uid: String?,
+        icon: String,
+        title: String,
+        detail: String,
+        unavailable: Bool,
+        interface preferencesModel: PreferencesPaneInterface
     ) -> some View {
         let selected = preferencesModel.inputState.preferredUID == uid
         return Button {
             guard !unavailable else { return }
-            preferencesModel.onSelectInputDevice?(uid)
+            preferencesModel.selectInputDevice(uid)
         } label: {
             HStack(spacing: 0) {
                 EmberIngress(color: selected ? Theme.accent : .clear)
@@ -1178,7 +1242,9 @@ struct SettingsView: View {
         .accessibilityHint(unavailable ? "\(detail). Unavailable." : detail)
     }
 
-    private var inputDeviceNotice: (
+    private func inputDeviceNotice(
+        _ preferencesModel: PreferencesPaneInterface
+    ) -> (
         kind: EmberStatusKind,
         title: String,
         detail: String
@@ -1213,8 +1279,8 @@ struct SettingsView: View {
         "Version \(AppInfo.version)"
     }
 
-    private var updateTrailing: some View {
-        Button("Check for Updates") { preferencesModel.onCheckUpdates?() }
+    private func updateTrailing(_ preferencesModel: PreferencesPaneInterface) -> some View {
+        Button("Check for Updates") { preferencesModel.checkForUpdates() }
             .buttonStyle(EmberButtonStyle(kind: .quiet))
             .disabled(!preferencesModel.canCheckForUpdates)
             .accessibilityIdentifier("settings.updates.check")
@@ -1233,9 +1299,13 @@ struct SettingsView: View {
         .help(help)
     }
 
-    private func shortcutChip(key: String, field: SettingsModel.RecordingField) -> some View {
+    private func shortcutChip(
+        key: String,
+        field: SettingsModel.RecordingField,
+        interface preferencesModel: PreferencesPaneInterface
+    ) -> some View {
         Button {
-            preferencesModel.onRecord?(field)
+            preferencesModel.record(field)
         } label: {
             HStack(spacing: 5) {
                 if preferencesModel.recordingField == field {
@@ -1244,10 +1314,12 @@ struct SettingsView: View {
                         .frame(width: 6, height: 6)
                         .accessibilityHidden(true)
                 }
-                Text(shortcutLabel(key: key, field: field))
+                Text(shortcutLabel(key: key, field: field, interface: preferencesModel))
                     .font(Theme.compactData)
             }
-            .foregroundStyle(shortcutColor(key: key, field: field))
+            .foregroundStyle(
+                shortcutColor(key: key, field: field, interface: preferencesModel)
+            )
             .padding(.horizontal, 9)
             .frame(minHeight: 28)
             .emberControlSurface()
@@ -1261,7 +1333,13 @@ struct SettingsView: View {
         }
         .buttonStyle(EmberPlainButtonStyle())
         .accessibilityLabel("\(field.command.title) shortcut")
-        .accessibilityValue(shortcutAccessibilityValue(key: key, field: field))
+        .accessibilityValue(
+            shortcutAccessibilityValue(
+                key: key,
+                field: field,
+                interface: preferencesModel
+            )
+        )
         .accessibilityHint(
             preferencesModel.recordingField == field
                 ? "Press a key to assign it. The captured key will not run a command."
@@ -1271,7 +1349,8 @@ struct SettingsView: View {
 
     private func shortcutLabel(
         key: String,
-        field: SettingsModel.RecordingField
+        field: SettingsModel.RecordingField,
+        interface preferencesModel: PreferencesPaneInterface
     ) -> String {
         if preferencesModel.recordingField == field {
             return "Press a key…"
@@ -1284,7 +1363,8 @@ struct SettingsView: View {
 
     private func shortcutColor(
         key: String,
-        field: SettingsModel.RecordingField
+        field: SettingsModel.RecordingField,
+        interface preferencesModel: PreferencesPaneInterface
     ) -> Color {
         if preferencesModel.recordingField == field {
             return Theme.accent
@@ -1295,7 +1375,8 @@ struct SettingsView: View {
     @ViewBuilder
     private func ownedFeedback(
         _ owner: SettingsFeedbackOwner,
-        identifier: String
+        identifier: String,
+        interface preferencesModel: PreferencesPaneInterface
     ) -> some View {
         if !preferencesModel.status.isEmpty, preferencesModel.statusOwner == owner {
             SignalLedgerFeedback(
@@ -1308,7 +1389,8 @@ struct SettingsView: View {
 
     private func shortcutAccessibilityValue(
         key: String,
-        field: SettingsModel.RecordingField
+        field: SettingsModel.RecordingField,
+        interface preferencesModel: PreferencesPaneInterface
     ) -> String {
         if preferencesModel.recordingField == field {
             return "Capturing"

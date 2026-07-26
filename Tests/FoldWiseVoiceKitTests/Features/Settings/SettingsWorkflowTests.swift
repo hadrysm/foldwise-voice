@@ -3621,17 +3621,21 @@ final class SettingsWorkflowTests: XCTestCase {
     }
 
     private func waitForASRState(
-        _ model: SettingsModel,
+        _: SettingsModel,
         matching predicate: @escaping @MainActor () -> Bool,
         file: StaticString = #filePath,
         line: UInt = #line
     ) async {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.async {
-                continuation.resume()
+        while !predicate() {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = predicate()
+                } onChange: {
+                    continuation.resume()
+                }
             }
         }
-        await waitUntil(predicate, file: file, line: line)
+        XCTAssertTrue(predicate(), file: file, line: line)
     }
 
     private func makeConfig(path: URL? = nil) -> Config {

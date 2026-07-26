@@ -165,28 +165,50 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(invalidations.value, 0)
     }
 
-    func testPaneInterfacesForwardDestinationCommands() {
+    func testHomePaneInterfaceForwardsCommands() {
         let model = SettingsModel()
-        let modeID = ModeID.random()
-        let entry = HistoryEntry(
-            id: UUID(),
-            createdAt: Date(timeIntervalSince1970: 1),
-            text: "Test",
-            rawText: "Test",
-            isPolished: false,
-            modeName: "Voice to Text",
-            modeID: nil,
-            wordCount: 1,
-            sourceApp: nil,
-            durationMs: 100,
-            flagged: false,
-            flagReason: nil
-        )
         var events: [String] = []
         model.onCommit = { events.append("commit:\($0)") }
         model.onOpenPermissionRecovery = { events.append("permission") }
         model.onHistoryCommand = { _, command in events.append("history:\(command)") }
+
+        let home = model.homePaneInterface
+        home.openPermissionRecovery()
+        home.performHistoryCommand(makeHistoryEntry(), .copyDisplayed)
+        home.selectPane(.history)
+
+        XCTAssertEqual(events, ["permission", "history:copyDisplayed"])
+    }
+
+    func testHistoryPaneInterfaceForwardsCommands() {
+        let model = SettingsModel()
+        var events: [String] = []
+        model.onCommit = { events.append("commit:\($0)") }
+        model.onHistoryCommand = { _, command in events.append("history:\(command)") }
         model.onClearHistory = { events.append("clear-history") }
+
+        let history = model.historyPaneInterface
+        history.setSaveHistory(false)
+        history.setRetention(.forever)
+        history.performHistoryCommand(makeHistoryEntry(), .delete)
+        history.clearHistory()
+
+        XCTAssertEqual(
+            events,
+            ["commit:global", "commit:global", "history:delete", "clear-history"]
+        )
+    }
+
+    func testStatsPaneInterfaceForwardsCommands() {
+        let model = SettingsModel()
+        model.statsPaneInterface.openHistory()
+
+        XCTAssertEqual(model.pane, .history)
+    }
+
+    func testModelsPaneInterfaceForwardsCommands() {
+        let model = SettingsModel()
+        var events: [String] = []
         model.onCancelASROperation = { events.append("cancel-asr") }
         model.onSelectASRModel = { events.append("select-asr:\($0)") }
         model.onDownloadASRModel = { events.append("download-asr:\($0)") }
@@ -196,27 +218,7 @@ final class SettingsModelTests: XCTestCase {
         model.onRefreshModels = { events.append("refresh-polish") }
         model.onDeleteASRModel = { events.append("delete-asr:\($0)") }
         model.onDeleteModel = { events.append("delete-polish:\($0)") }
-        model.onSelectMode = { events.append("select-mode:\($0)") }
-        model.onAddMode = { events.append("add-mode") }
-        model.onEditMode = { events.append("edit-mode:\($0)") }
-        model.onDuplicateMode = { events.append("duplicate-mode:\($0)") }
-        model.onMoveMode = { events.append("move-mode:\($0):\($1)") }
-        model.onRequestModeDeletion = { events.append("delete-mode:\($0)") }
-        model.onOpenShortcutPermissions = { events.append("shortcut-permission") }
-        model.onSelectInputDevice = { events.append("input:\($0 ?? "default")") }
-        model.onCheckUpdates = { events.append("updates") }
-        model.onRecord = { events.append("record:\($0)") }
 
-        let home = model.homePaneInterface
-        home.openPermissionRecovery()
-        home.performHistoryCommand(entry, .copyDisplayed)
-        home.selectPane(.history)
-        let history = model.historyPaneInterface
-        history.setSaveHistory(false)
-        history.setRetention(.forever)
-        history.performHistoryCommand(entry, .delete)
-        history.clearHistory()
-        model.statsPaneInterface.openHistory()
         let models = model.modelsPaneInterface
         models.cancelASROperation()
         models.selectASRModel("asr")
@@ -227,31 +229,10 @@ final class SettingsModelTests: XCTestCase {
         models.refreshPolishModels()
         models.deleteASRModel("old-asr")
         models.deletePolishModel("old-polish")
-        let modes = model.modesPaneInterface
-        modes.onSelectMode?(.voiceToText)
-        modes.onAddMode?()
-        modes.onEditMode?(modeID)
-        modes.onDuplicateMode?(modeID)
-        modes.onMoveMode?(modeID, .up)
-        modes.onRequestModeDeletion?(modeID)
-        modes.selectPane(.models)
-        let preferences = model.preferencesPaneInterface
-        preferences.onOpenPermissionRecovery?()
-        preferences.onOpenShortcutPermissions?()
-        preferences.onCommit?(.appearance)
-        preferences.onSelectInputDevice?(nil)
-        preferences.onCheckUpdates?()
-        preferences.onRecord?(.ptt)
 
         XCTAssertEqual(
             events,
             [
-                "permission",
-                "history:copyDisplayed",
-                "commit:global",
-                "commit:global",
-                "history:delete",
-                "clear-history",
                 "cancel-asr",
                 "select-asr:asr",
                 "download-asr:download",
@@ -261,12 +242,65 @@ final class SettingsModelTests: XCTestCase {
                 "refresh-polish",
                 "delete-asr:old-asr",
                 "delete-polish:old-polish",
+            ]
+        )
+    }
+
+    func testModesPaneInterfaceForwardsCommands() {
+        let model = SettingsModel()
+        let modeID = ModeID.random()
+        var events: [String] = []
+        model.onCommit = { events.append("commit:\($0)") }
+        model.onSelectMode = { events.append("select-mode:\($0)") }
+        model.onAddMode = { events.append("add-mode") }
+        model.onEditMode = { events.append("edit-mode:\($0)") }
+        model.onDuplicateMode = { events.append("duplicate-mode:\($0)") }
+        model.onMoveMode = { events.append("move-mode:\($0):\($1)") }
+        model.onRequestModeDeletion = { events.append("delete-mode:\($0)") }
+
+        let modes = model.modesPaneInterface
+        modes.selectMode(.voiceToText)
+        modes.addMode()
+        modes.editMode(modeID)
+        modes.duplicateMode(modeID)
+        modes.moveMode(modeID, .up)
+        modes.requestModeDeletion(modeID)
+        modes.selectPane(.models)
+
+        XCTAssertEqual(
+            events,
+            [
                 "select-mode:voiceToText",
                 "add-mode",
                 "edit-mode:\(modeID)",
                 "duplicate-mode:\(modeID)",
                 "move-mode:\(modeID):up",
                 "delete-mode:\(modeID)",
+            ]
+        )
+    }
+
+    func testPreferencesPaneInterfaceForwardsCommands() {
+        let model = SettingsModel()
+        var events: [String] = []
+        model.onOpenPermissionRecovery = { events.append("permission") }
+        model.onOpenShortcutPermissions = { events.append("shortcut-permission") }
+        model.onCommit = { events.append("commit:\($0)") }
+        model.onSelectInputDevice = { events.append("input:\($0 ?? "default")") }
+        model.onCheckUpdates = { events.append("updates") }
+        model.onRecord = { events.append("record:\($0)") }
+
+        let preferences = model.preferencesPaneInterface
+        preferences.openPermissionRecovery()
+        preferences.openShortcutPermissions()
+        preferences.commit(.appearance)
+        preferences.selectInputDevice(nil)
+        preferences.checkForUpdates()
+        preferences.record(.ptt)
+
+        XCTAssertEqual(
+            events,
+            [
                 "permission",
                 "shortcut-permission",
                 "commit:appearance",
@@ -277,17 +311,31 @@ final class SettingsModelTests: XCTestCase {
         )
     }
 
-    func testPaneInterfacesApplyDestinationEdits() {
+    func testHistoryPaneInterfaceAppliesEdits() {
         let model = SettingsModel()
         let history = model.historyPaneInterface
-        let models = model.modelsPaneInterface
-        let preferences = model.preferencesPaneInterface
 
         history.setSaveHistory(false)
         history.setRetention(.forever)
+
+        XCTAssertEqual([String(model.saveHistory), String(model.retention.rawValue)], ["false", "0"])
+    }
+
+    func testModelsPaneInterfaceAppliesEdits() {
+        let model = SettingsModel()
+        let models = model.modelsPaneInterface
+
         models.setCustomModel("custom:model")
         model.requestedPolishInspection = "polish:model"
         model.modelsPaneInterface.clearRequestedPolishInspection()
+
+        XCTAssertEqual([model.customModel, model.requestedPolishInspection ?? "none"], ["custom:model", "none"])
+    }
+
+    func testPreferencesPaneInterfaceAppliesEdits() {
+        let model = SettingsModel()
+        let preferences = model.preferencesPaneInterface
+
         preferences.pttKey = "f18"
         preferences.toggleKey = "f19"
         preferences.cycleKey = "f20"
@@ -296,17 +344,13 @@ final class SettingsModelTests: XCTestCase {
 
         XCTAssertEqual(
             [
-                String(model.saveHistory),
-                String(model.retention.rawValue),
-                model.customModel,
-                model.requestedPolishInspection ?? "none",
                 model.pttKey,
                 model.toggleKey,
                 model.cycleKey,
                 String(model.pauseAudio),
                 model.appearance.rawValue,
             ],
-            ["false", "0", "custom:model", "none", "f18", "f19", "f20", "false", "dark"]
+            ["f18", "f19", "f20", "false", "dark"]
         )
     }
 
@@ -511,6 +555,23 @@ final class SettingsModelTests: XCTestCase {
 
     private func installed(_ name: String) -> OllamaClient.InstalledModel {
         OllamaClient.InstalledModel(name: name, sizeBytes: 1)
+    }
+
+    private func makeHistoryEntry() -> HistoryEntry {
+        HistoryEntry(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1),
+            text: "Test",
+            rawText: "Test",
+            isPolished: false,
+            modeName: "Voice to Text",
+            modeID: nil,
+            wordCount: 1,
+            sourceApp: nil,
+            durationMs: 100,
+            flagged: false,
+            flagReason: nil
+        )
     }
 }
 
