@@ -8,12 +8,8 @@ struct HomePaneInterface {
         self.model = model
     }
 
-    var projectionInput: HomeProjection.Input {
-        HomeProjection.Input(entries: model.historyEntries, modes: model.modes)
-    }
-
-    var currentStreak: Int? {
-        model.currentStreak
+    var projectionRevision: PaneProjectionStore.Revision {
+        model.homeProjectionRevision
     }
 
     var pushToTalkKey: String {
@@ -40,6 +36,12 @@ struct HomePaneInterface {
         model.panePerformance
     }
 
+    func projection(
+        in environment: PaneProjectionStore.Environment
+    ) -> PaneProjectionStore.Completed<PaneProjectionStore.HomeValue> {
+        model.paneProjections.home(in: environment)
+    }
+
     func selectPane(_ pane: SettingsModel.Pane) {
         model.selectPane(pane)
     }
@@ -61,12 +63,19 @@ struct HistoryPaneInterface {
         self.model = model
     }
 
-    var entries: [HistoryEntry] {
-        model.historyEntries
+    var hasEntries: Bool {
+        !model.historyEntries.isEmpty
     }
 
-    var modes: [Mode] {
-        model.modes
+    var polishModes: [DictationRowPolishMode] {
+        model.modes.compactMap { mode in
+            guard mode.usesLLM, let id = mode.id else { return nil }
+            return DictationRowPolishMode(id: id, name: mode.name)
+        }
+    }
+
+    var projectionRevision: PaneProjectionStore.Revision {
+        model.historyProjectionRevision
     }
 
     var saveHistory: Bool {
@@ -79,6 +88,18 @@ struct HistoryPaneInterface {
 
     var performance: PaneNavigationPerformance {
         model.panePerformance
+    }
+
+    func projection(
+        search: String,
+        flaggedOnly: Bool,
+        in environment: PaneProjectionStore.Environment
+    ) -> PaneProjectionStore.Completed<HistoryProjection> {
+        model.paneProjections.history(
+            search: search,
+            flaggedOnly: flaggedOnly,
+            in: environment
+        )
     }
 
     func setSaveHistory(_ isEnabled: Bool) {
@@ -108,16 +129,18 @@ struct StatsPaneInterface {
         self.model = model
     }
 
-    var input: StatsProjection.Input {
-        StatsProjection.Input(
-            entries: model.historyEntries,
-            currentStreak: model.currentStreak,
-            savingEnabled: model.saveHistory
-        )
+    var projectionRevision: PaneProjectionStore.Revision {
+        model.statsProjectionRevision
     }
 
     var performance: PaneNavigationPerformance {
         model.panePerformance
+    }
+
+    func projection(
+        in environment: PaneProjectionStore.Environment
+    ) -> PaneProjectionStore.Completed<StatsProjection> {
+        model.paneProjections.stats(in: environment)
     }
 
     func openHistory() {

@@ -25,13 +25,24 @@ enum SettingsAppearanceLayout: Equatable {
 @Observable
 final class SettingsModel {
     let panePerformance: PaneNavigationPerformance
+    let paneProjections: PaneProjectionStore
 
     init() {
         panePerformance = PaneNavigationPerformance()
+        paneProjections = PaneProjectionStore()
     }
 
     init(panePerformance: PaneNavigationPerformance) {
         self.panePerformance = panePerformance
+        paneProjections = PaneProjectionStore()
+    }
+
+    init(
+        panePerformance: PaneNavigationPerformance,
+        paneProjections: PaneProjectionStore
+    ) {
+        self.panePerformance = panePerformance
+        self.paneProjections = paneProjections
     }
 
     /// The six destinations of the redesigned sidebar (PRD #103). The old
@@ -109,7 +120,14 @@ final class SettingsModel {
         status: .unavailable(message: "No input device is available.")
     )
     /// Master "Save dictation history" switch, surfaced in the History pane.
-    var saveHistory = true
+    var saveHistory = true {
+        didSet {
+            applyProjectionInvalidation(
+                paneProjections.setSavingEnabled(saveHistory)
+            )
+        }
+    }
+
     /// Auto-delete window for history, a control distinct from `saveHistory`.
     var retention = RetentionWindow.default
     /// Sidebar rendering rule: seeded from Config's persisted preference when
@@ -131,6 +149,20 @@ final class SettingsModel {
         guard destination != pane else { return }
         panePerformance.beginNavigation(to: destination)
         pane = destination
+    }
+
+    private func applyProjectionInvalidation(
+        _ invalidation: PaneProjectionStore.Invalidation
+    ) {
+        if invalidation.contains(.home) {
+            homeProjectionRevision.advance()
+        }
+        if invalidation.contains(.history) {
+            historyProjectionRevision.advance()
+        }
+        if invalidation.contains(.stats) {
+            statsProjectionRevision.advance()
+        }
     }
 
     func isPaneAvailable(_ pane: Pane) -> Bool {
@@ -272,18 +304,40 @@ final class SettingsModel {
     var modeSelection = ModePresentationFactory.projection(
         modes: [], selection: .voiceToText
     )
-    var modes: [Mode] = []
+    var modes: [Mode] = [] {
+        didSet {
+            applyProjectionInvalidation(paneProjections.setModes(modes))
+        }
+    }
+
     var modeEditor: ModeEditorState?
     var modePendingDeletion: ModeDeletionState?
     /// Loaded from the HistoryStore when the window opens and re-read after a
     /// delete or clear-all, so the History pane reflects the store live.
-    var historyEntries: [HistoryEntry] = []
+    var historyEntries: [HistoryEntry] = [] {
+        didSet {
+            applyProjectionInvalidation(
+                paneProjections.setHistoryEntries(historyEntries)
+            )
+        }
+    }
+
     /// The lifetime streak to show, computed by the controller from the StatsStore
     /// through `StreakRules.display`: the run's length while it is alive (last
     /// active today or yesterday), `nil` — rendered "No active streak" — when it
     /// has lapsed or never started. Refreshed on window open and as new dictations
     /// append.
-    var currentStreak: Int?
+    var currentStreak: Int? {
+        didSet {
+            applyProjectionInvalidation(
+                paneProjections.setCurrentStreak(currentStreak)
+            )
+        }
+    }
+
+    private(set) var homeProjectionRevision = PaneProjectionStore.Revision()
+    private(set) var historyProjectionRevision = PaneProjectionStore.Revision()
+    private(set) var statsProjectionRevision = PaneProjectionStore.Revision()
 
     // wired by SettingsController
     @ObservationIgnored var onCommit: ((SettingsFeedbackOwner) -> Void)?

@@ -6,6 +6,8 @@ import Combine
 import SwiftUI
 
 struct HomeView: View {
+    @Environment(\.locale) private var environmentLocale
+
     private struct Metric: Identifiable {
         let identifier: String
         let symbolName: String
@@ -20,33 +22,24 @@ struct HomeView: View {
 
     let interface: HomePaneInterface
     private let now: () -> Date
-    private let calendar: Calendar
-    private let locale: Locale
+    private let calendar: () -> Calendar
+    private let locale: Locale?
     private let notificationCenter: NotificationCenter
-    private let project: (HomeProjection.Input, Date, Calendar, Locale) -> HomeProjection
 
-    /// Both projections are memoized off their semantic inputs so unrelated
-    /// settings changes cannot put a whole-history scan on the render path.
-    @State private var stats = UsageStats.empty
-    @State private var projection = HomeProjection(sections: [])
-    @State private var projectionIsReady = false
+    @State private var completed: PaneProjectionStore.Completed<PaneProjectionStore.HomeValue>?
 
     init(
         interface: HomePaneInterface,
         now: @escaping () -> Date = Date.init,
-        calendar: Calendar = .current,
-        locale: Locale = .current,
-        notificationCenter: NotificationCenter = .default,
-        project: @escaping (HomeProjection.Input, Date, Calendar, Locale) -> HomeProjection = {
-            HomeProjection.project($0, now: $1, calendar: $2, locale: $3)
-        }
+        calendar: @escaping () -> Calendar = { .autoupdatingCurrent },
+        locale: Locale? = nil,
+        notificationCenter: NotificationCenter = .default
     ) {
         self.interface = interface
         self.now = now
         self.calendar = calendar
         self.locale = locale
         self.notificationCenter = notificationCenter
-        self.project = project
     }
 
     var body: some View {
@@ -54,28 +47,40 @@ struct HomeView: View {
             .paneFirstMeaningfulFrame(
                 .home,
                 performance: interface.performance,
-                isReady: projectionIsReady
+                isReady: completed != nil
             )
-            .onChange(of: projectionInput, initial: true) { _, input in
-                stats = UsageStatsAggregator.aggregate(input.entries)
-                refreshProjection(input)
-                projectionIsReady = true
+            .onChange(of: interface.projectionRevision, initial: true) { _, _ in
+                refreshProjection()
             }
             .onReceive(notificationCenter.publisher(for: .NSCalendarDayChanged)) { _ in
-                refreshProjection(projectionInput)
+                refreshProjection()
+            }
+            .onReceive(notificationCenter.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
+                refreshProjection()
+            }
+            .onChange(of: environmentLocale) { _, _ in
+                refreshProjection()
             }
     }
 
-    private var projectionInput: HomeProjection.Input {
-        interface.projectionInput
+    private var projection: HomeProjection {
+        completed?.value.recent ?? HomeProjection(sections: [])
+    }
+
+    private var stats: UsageStats {
+        completed?.value.usage ?? .empty
     }
 
     private var overviewLayout: HomeOverviewLayout {
         HomeOverviewLayout.forWindowWidth(interface.windowWidth)
     }
 
-    private func refreshProjection(_ input: HomeProjection.Input) {
-        projection = project(input, now(), calendar, locale)
+    private func refreshProjection() {
+        completed = interface.projection(in: .init(
+            now: now(),
+            calendar: calendar(),
+            locale: locale ?? environmentLocale
+        ))
     }
 
     // MARK: - main column
@@ -253,12 +258,12 @@ struct HomeView: View {
     }
 
     private var streakText: String? {
-        guard let days = interface.currentStreak else { return nil }
+        guard let days = completed?.value.currentStreak else { return nil }
         return "\(days)"
     }
 
     private var streakUnit: String {
-        interface.currentStreak == 1 ? "day" : "days"
+        completed?.value.currentStreak == 1 ? "day" : "days"
     }
 
     private var timeSavedText: String? {

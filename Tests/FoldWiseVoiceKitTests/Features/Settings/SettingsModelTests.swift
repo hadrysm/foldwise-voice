@@ -10,8 +10,7 @@ final class SettingsModelTests: XCTestCase {
         let invalidations = ObservationInvalidationCounter()
 
         withObservationTracking {
-            _ = interface.projectionInput
-            _ = interface.currentStreak
+            _ = interface.projectionRevision
             _ = interface.pushToTalkKey
             _ = interface.permissionSnapshot
             _ = interface.effectiveASRModelName
@@ -32,8 +31,7 @@ final class SettingsModelTests: XCTestCase {
         let invalidations = ObservationInvalidationCounter()
 
         withObservationTracking {
-            _ = interface.projectionInput
-            _ = interface.currentStreak
+            _ = interface.projectionRevision
             _ = interface.pushToTalkKey
             _ = interface.permissionSnapshot
             _ = interface.effectiveASRModelName
@@ -55,8 +53,9 @@ final class SettingsModelTests: XCTestCase {
         let invalidations = ObservationInvalidationCounter()
 
         withObservationTracking {
-            _ = interface.entries
-            _ = interface.modes
+            _ = interface.hasEntries
+            _ = interface.polishModes
+            _ = interface.projectionRevision
             _ = interface.saveHistory
             _ = interface.retention
         } onChange: {

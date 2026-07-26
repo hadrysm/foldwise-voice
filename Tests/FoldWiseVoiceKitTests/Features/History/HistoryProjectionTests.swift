@@ -1,6 +1,7 @@
 import XCTest
 @testable import FoldWiseVoiceKit
 
+@MainActor
 final class HistoryProjectionTests: XCTestCase {
     private var calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
@@ -109,64 +110,71 @@ final class HistoryProjectionTests: XCTestCase {
         XCTAssertTrue(project([]).isEmpty)
     }
 
-    func testCacheExecutesOnlyWhenEntriesFiltersOrModesChange() {
+    func testStoreExecutesOnlyWhenEntriesFiltersOrModesChange() {
         let source = entry(
             text: "one", rawText: "one", minutesAgo: 1, flagged: false
         )
         let added = entry(
             text: "two", rawText: "two", minutesAgo: 2, flagged: true
         )
-        var executionCount = 0
-        let cache = HistoryProjectionCache { input in
-            executionCount += 1
-            return HistoryProjection.project(
-                input,
-                now: self.now,
-                calendar: self.calendar,
-                locale: Locale(identifier: "en_US")
-            )
-        }
-        let initial = HistoryProjection.Input(
-            entries: [source], search: "", flaggedOnly: false
+        let store = PaneProjectionStore()
+        let locale = Locale(identifier: "en_US")
+        let environment = PaneProjectionStore.Environment(
+            now: now,
+            calendar: calendar,
+            locale: locale
         )
 
-        _ = cache.resolve(initial)
-        _ = cache.resolve(initial)
-        _ = cache.resolve(.init(entries: [source, added], search: "", flaggedOnly: false))
-        _ = cache.resolve(.init(entries: [source, added], search: "two", flaggedOnly: false))
-        _ = cache.resolve(.init(entries: [source, added], search: "two", flaggedOnly: true))
-        _ = cache.resolve(.init(
-            entries: [source, added], search: "two", flaggedOnly: true,
-            modes: [Mode(
-                id: .random(), name: "Current", icon: "pencil",
-                asrModel: ASRModelCatalog.defaultID, llmModel: "qwen2.5:3b",
-                transformation: .inPlace, systemPrompt: "Prompt", vocabulary: []
-            )]
-        ))
+        store.setHistoryEntries([source])
+        let initial = store.history(search: "", flaggedOnly: false, in: environment)
+        let unchanged = store.history(search: "", flaggedOnly: false, in: environment)
+        store.setHistoryEntries([source, added])
+        let entriesChanged = store.history(search: "", flaggedOnly: false, in: environment)
+        let searchChanged = store.history(search: "two", flaggedOnly: false, in: environment)
+        let filterChanged = store.history(search: "two", flaggedOnly: true, in: environment)
+        store.setModes([Mode(
+            id: .random(), name: "Current", icon: "pencil",
+            asrModel: ASRModelCatalog.defaultID, llmModel: "qwen2.5:3b",
+            transformation: .inPlace, systemPrompt: "Prompt", vocabulary: []
+        )])
+        let modesChanged = store.history(search: "two", flaggedOnly: true, in: environment)
 
-        XCTAssertEqual(executionCount, 5)
+        XCTAssertEqual(initial.generation, unchanged.generation)
+        XCTAssertEqual(
+            Set([
+                initial.generation,
+                entriesChanged.generation,
+                searchChanged.generation,
+                filterChanged.generation,
+                modesChanged.generation,
+            ]).count,
+            5
+        )
     }
 
-    func testCacheInvalidatesWhenTheCalendarDayChanges() throws {
+    func testStoreInvalidatesWhenTheCalendarDayChanges() throws {
         var currentNow = now
         let source = entry(
             text: "one", rawText: "one", minutesAgo: 60, flagged: false
         )
-        let input = HistoryProjection.Input(
-            entries: [source], search: "", flaggedOnly: false
-        )
-        let cache = HistoryProjectionCache(
-            now: { currentNow },
-            calendar: calendar,
-            locale: Locale(identifier: "en_US")
-        )
+        let store = PaneProjectionStore()
+        store.setHistoryEntries([source])
+        let locale = Locale(identifier: "en_US")
 
-        let beforeMidnight = cache.resolve(input)
+        let beforeMidnight = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: .init(now: currentNow, calendar: calendar, locale: locale)
+        )
         currentNow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: currentNow))
-        let afterMidnight = cache.resolve(input)
+        let afterMidnight = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: .init(now: currentNow, calendar: calendar, locale: locale)
+        )
 
-        XCTAssertEqual(beforeMidnight.sections.map(\.header), ["Today"])
-        XCTAssertEqual(afterMidnight.sections.map(\.header), ["Yesterday"])
+        XCTAssertEqual(beforeMidnight.value.sections.map(\.header), ["Today"])
+        XCTAssertEqual(afterMidnight.value.sections.map(\.header), ["Yesterday"])
     }
 
     private func project(

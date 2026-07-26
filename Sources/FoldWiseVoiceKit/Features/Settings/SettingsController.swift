@@ -18,7 +18,10 @@ final class SettingsController {
     private let calendar: Calendar
     private let notificationCenter: NotificationCenter
     private let permissionRecovery: PermissionRecoveryCoordinator
-    let model = SettingsModel()
+    // The controller deliberately owns completed projections for the window's
+    // lifetime; disposable pane views reach this same instance through model.
+    private let paneProjections: PaneProjectionStore
+    let model: SettingsModel
     private lazy var workflow = SettingsWorkflow(
         config: config,
         model: model,
@@ -56,6 +59,12 @@ final class SettingsController {
         notificationCenter: NotificationCenter = .default,
         permissionRecoveryEnvironment: PermissionRecoveryEnvironment? = nil
     ) {
+        let paneProjections = PaneProjectionStore()
+        self.paneProjections = paneProjections
+        model = SettingsModel(
+            panePerformance: PaneNavigationPerformance(),
+            paneProjections: paneProjections
+        )
         self.config = config
         self.historyStore = historyStore
         self.statsStore = statsStore

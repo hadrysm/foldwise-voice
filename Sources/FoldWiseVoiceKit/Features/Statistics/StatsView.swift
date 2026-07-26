@@ -12,9 +12,9 @@ struct StatsPane: View {
     @Environment(\.locale) private var environmentLocale
     @Environment(\.accessibilityReduceMotion) private var environmentReduceMotion
     @Environment(\.colorSchemeContrast) private var environmentContrast
-    @State private var projection: StatsProjection?
-    @State private var projectionCache: StatsProjectionCache
+    @State private var completed: PaneProjectionStore.Completed<StatsProjection>?
 
+    private let now: () -> Date
     private let calendar: () -> Calendar
     private let locale: Locale?
     private let notificationCenter: NotificationCenter
@@ -22,14 +22,14 @@ struct StatsPane: View {
 
     init(
         interface: StatsPaneInterface,
-        projectionCache: StatsProjectionCache = StatsProjectionCache(),
+        now: @escaping () -> Date = Date.init,
         calendar: @escaping () -> Calendar = { .autoupdatingCurrent },
         locale: Locale? = nil,
         notificationCenter: NotificationCenter = .default,
         environmentOverride: StatsEnvironmentAdaptations? = nil
     ) {
         self.interface = interface
-        _projectionCache = State(initialValue: projectionCache)
+        self.now = now
         self.calendar = calendar
         self.locale = locale
         self.notificationCenter = notificationCenter
@@ -42,7 +42,7 @@ struct StatsPane: View {
                 .font(Theme.body)
                 .foregroundStyle(Theme.textSecondary)
 
-            if let projection {
+            if let projection = completed?.value {
                 notice(projection.notice)
                 StatsMetricStrip(metrics: projection.metrics)
                 MonthlyActivityCalendar(
@@ -54,24 +54,20 @@ struct StatsPane: View {
         .paneFirstMeaningfulFrame(
             .stats,
             performance: interface.performance,
-            isReady: projection != nil
+            isReady: completed != nil
         )
-        .onChange(of: input, initial: true) { _, input in
-            refresh(input)
+        .onChange(of: interface.projectionRevision, initial: true) { _, _ in
+            refresh()
         }
         .onChange(of: environmentLocale) { _, _ in
-            refresh(input)
+            refresh()
         }
         .onReceive(notificationCenter.publisher(for: .NSCalendarDayChanged)) { _ in
-            refresh(input)
+            refresh()
         }
         .onReceive(notificationCenter.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
-            refresh(input)
+            refresh()
         }
-    }
-
-    private var input: StatsProjection.Input {
-        interface.input
     }
 
     private var resolvedEnvironment: StatsEnvironmentAdaptations {
@@ -81,12 +77,12 @@ struct StatsPane: View {
         )
     }
 
-    private func refresh(_ input: StatsProjection.Input) {
-        projection = projectionCache.resolve(
-            input,
+    private func refresh() {
+        completed = interface.projection(in: .init(
+            now: now(),
             calendar: calendar(),
             locale: locale ?? environmentLocale
-        )
+        ))
     }
 
     @ViewBuilder

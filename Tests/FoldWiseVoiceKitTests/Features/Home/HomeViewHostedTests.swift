@@ -34,36 +34,37 @@ final class HomeViewHostedTests: XCTestCase {
     func testHostedHomeRefreshesRelativeHeadersWhenTheCalendarDayChanges() throws {
         let calendar = try utcCalendar()
         var currentNow = Date(timeIntervalSince1970: 1_783_512_000)
-        let model = SettingsModel()
+        let store = PaneProjectionStore()
+        let model = SettingsModel(
+            panePerformance: PaneNavigationPerformance(),
+            paneProjections: store
+        )
         model.historyEntries = [entry(createdAt: currentNow.addingTimeInterval(-60 * 60))]
         let notificationCenter = NotificationCenter()
-        var projectedHeaders: [[String]] = []
         let hosting = NSHostingView(rootView: HomeView(
             interface: model.homePaneInterface,
             now: { currentNow },
-            calendar: calendar,
+            calendar: { calendar },
             locale: Locale(identifier: "en_US"),
-            notificationCenter: notificationCenter,
-            project: { input, now, calendar, locale in
-                let projection = HomeProjection.project(
-                    input,
-                    now: now,
-                    calendar: calendar,
-                    locale: locale
-                )
-                projectedHeaders.append(projection.sections.map(\.header))
-                return projection
-            }
+            notificationCenter: notificationCenter
         ))
         hosting.frame = NSRect(x: 0, y: 0, width: 900, height: 640)
         hosting.layoutSubtreeIfNeeded()
+        let initial = try XCTUnwrap(store.completedHome)
 
         currentNow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: currentNow))
         notificationCenter.post(name: .NSCalendarDayChanged, object: nil)
         hosting.needsLayout = true
         hosting.layoutSubtreeIfNeeded()
+        let refreshed = try XCTUnwrap(store.completedHome)
 
-        XCTAssertEqual(projectedHeaders, [["Today"], ["Yesterday"]])
+        XCTAssertEqual(
+            [
+                initial.value.recent.sections.map(\.header),
+                refreshed.value.recent.sections.map(\.header),
+            ],
+            [["Today"], ["Yesterday"]]
+        )
     }
 
     private func entry(createdAt: Date) -> HistoryEntry {

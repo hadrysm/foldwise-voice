@@ -36,24 +36,23 @@ final class StatsPaneHostedTests: XCTestCase {
     }
 
     func testHostedStatsReusesProjectionForUnrelatedSettingsPublication() {
-        let model = SettingsModel()
-        var executionCount = 0
         let calendar = utcCalendar()
-        let cache = StatsProjectionCache(project: { input, now, calendar, locale in
-            executionCount += 1
-            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
-        })
+        let store = PaneProjectionStore()
+        let model = SettingsModel(
+            panePerformance: PaneNavigationPerformance(),
+            paneProjections: store
+        )
         let hosting = host(StatsPane(
             interface: model.statsPaneInterface,
-            projectionCache: cache,
             calendar: { calendar },
             locale: Locale(identifier: "en_US")
         ))
+        let initialGeneration = store.completedStats?.generation
 
         model.customModel = "unrelated publication"
         render(hosting)
 
-        XCTAssertEqual(executionCount, 1)
+        XCTAssertEqual(store.completedStats?.generation, initialGeneration)
     }
 
     func testHostedStatsRefreshesProjectionWhenSavedHistoryChanges() throws {
@@ -79,52 +78,67 @@ final class StatsPaneHostedTests: XCTestCase {
     }
 
     func testHostedStatsRefreshesProjectionForDayAndTimeZoneNotifications() {
-        let model = SettingsModel()
         let notifications = NotificationCenter()
         var currentNow = Date(timeIntervalSince1970: 1_783_512_000)
         var currentCalendar = utcCalendar()
-        var executionCount = 0
-        let cache = StatsProjectionCache(now: { currentNow }, project: { input, now, calendar, locale in
-            executionCount += 1
-            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
-        })
+        let store = PaneProjectionStore()
+        let model = SettingsModel(
+            panePerformance: PaneNavigationPerformance(),
+            paneProjections: store
+        )
         let hosting = host(StatsPane(
             interface: model.statsPaneInterface,
-            projectionCache: cache,
+            now: { currentNow },
             calendar: { currentCalendar },
             locale: Locale(identifier: "en_US"),
             notificationCenter: notifications
         ))
+        let initialGeneration = store.completedStats?.generation
 
         currentNow = currentNow.addingTimeInterval(86400)
         notifications.post(name: .NSCalendarDayChanged, object: nil)
+        render(hosting)
+        let dayGeneration = store.completedStats?.generation
         currentCalendar.timeZone = TimeZone(identifier: "Europe/Warsaw") ?? currentCalendar.timeZone
         notifications.post(name: .NSSystemTimeZoneDidChange, object: nil)
         render(hosting)
 
-        XCTAssertEqual(executionCount, 3)
+        XCTAssertEqual(
+            [
+                initialGeneration != dayGeneration,
+                dayGeneration != store.completedStats?.generation,
+            ],
+            [true, true]
+        )
     }
 
     func testHostedStatsRefreshesProjectionForLocaleEnvironmentChanges() {
-        let model = SettingsModel()
         let calendar = utcCalendar()
-        var projectedLocales: [String] = []
-        let cache = StatsProjectionCache(project: { input, now, calendar, locale in
-            projectedLocales.append(locale.identifier)
-            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
-        })
+        let now = calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 22, hour: 12
+        )) ?? .distantPast
+        let store = PaneProjectionStore()
+        let model = SettingsModel(
+            panePerformance: PaneNavigationPerformance(),
+            paneProjections: store
+        )
         let pane = StatsPane(
             interface: model.statsPaneInterface,
-            projectionCache: cache,
+            now: { now },
             calendar: { calendar }
         )
         let hosting = host(pane.environment(\.locale, Locale(identifier: "en_US")))
         render(hosting)
+        let english = store.completedStats
 
         hosting.rootView = pane.environment(\.locale, Locale(identifier: "pl_PL"))
         render(hosting)
+        let polish = store.completedStats
 
-        XCTAssertEqual(projectedLocales, ["en_US", "pl_PL"])
+        XCTAssertEqual(
+            [english?.value.month.title, polish?.value.month.title],
+            ["July 2026", "lipiec 2026"]
+        )
     }
 
     func testHostedMetricTilesRemainOneRowAtRequiredWindowSizes() throws {
@@ -468,7 +482,7 @@ final class StatsPaneHostedTests: XCTestCase {
         )) ?? .distantPast
         let pane = StatsPane(
             interface: model.statsPaneInterface,
-            projectionCache: StatsProjectionCache(now: { currentNow }),
+            now: { currentNow },
             calendar: { calendar },
             locale: Locale(identifier: "en_US"),
             notificationCenter: notifications
@@ -537,11 +551,11 @@ final class StatsPaneHostedTests: XCTestCase {
         let calendar = utcCalendar()
         return StatsPane(
             interface: model.statsPaneInterface,
-            projectionCache: StatsProjectionCache(now: {
+            now: {
                 calendar.date(from: DateComponents(
                     year: 2026, month: 7, day: 22, hour: 12
                 )) ?? .distantPast
-            }),
+            },
             calendar: { calendar },
             locale: Locale(identifier: "en_US"),
             environmentOverride: environment
