@@ -42,11 +42,31 @@ Text is usable with built-in runtime defaults until an explicit reset backs up
 and replaces the file.
 _Avoid_: safe mode, fallback configuration
 
+**Permission recovery guide** — The dismissible app surface shown when
+Microphone or Accessibility access is missing. It reports live grant status,
+guides the user back to full Dictation capability, and remains reachable until
+both permissions are restored. Input Monitoring is offered only as the narrower
+global-shortcut fallback when Accessibility is declined.
+_Avoid_: migration wizard, permission onboarding
+
 **Monthly activity calendar** — The Stats view of the current calendar month,
 where each day reflects the total spoken words in saved Dictation sessions for
 that day. Day details may also describe session count, speaking time, and the
 time-saved estimate, but the spoken-word total is the activity measure.
 _Avoid_: contribution graph, yearly heatmap
+
+## App distribution
+
+**Update origin** — The permanent, project-controlled HTTPS origin from which
+installed copies of FoldWise retrieve the signed update feed and immutable
+release archives. Its ownership and renewal commitment belong to FoldWise
+distribution even when the parent domain also serves another project.
+_Avoid_: website, download mirror, temporary host
+
+**Forward repair** — A newly versioned FoldWise release that restores users
+from an already-installed bad release without downgrading. It advances update
+version ordering even when it rebuilds the last-known-good behavior.
+_Avoid_: rollback, downgrade, republished release
 
 ## Dictation pipeline
 

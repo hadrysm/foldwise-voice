@@ -4,8 +4,11 @@
 // pasted into the focused app.
 
 import AppKit
+import Carbon
+import Darwin
 import Foundation
 import os
+import Sparkle
 
 final class LiveLLMModelManager: LLMModelManaging {
     func list() async -> [OllamaClient.InstalledModel] {
@@ -20,16 +23,6 @@ final class LiveLLMModelManager: LLMModelManaging {
 
     func delete(_ name: String) async -> String? {
         await OllamaClient.delete(model: name)
-    }
-}
-
-final class LiveSettingsUpdateChecker: SettingsUpdateChecking {
-    var isAvailable: Bool {
-        UpdateChecker.currentVersion() != nil
-    }
-
-    func check() async -> UpdateChecker.CheckResult {
-        await UpdateChecker.checkNow()
     }
 }
 
@@ -57,7 +50,7 @@ private func acquireInstanceLock(port: UInt16) -> Bool {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     let configPath: String?
     let showSettingsOnLaunch: Bool
 
@@ -74,10 +67,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeys: HotkeyBindingCoordinator!
     private var dictationCommands: DictationCommandQueue!
     private var modeCycleCommand: ModeCycleCommand!
-    private var updateChecker: UpdateChecker!
     private let asrBadgePresentation = ASRBadgePresentation()
     private let shortcutCaptureGate = ShortcutCaptureGate()
     // swiftlint:enable implicitly_unwrapped_optional
+    private var lifecycleCoordinator: DictationLifecycleCoordinator?
+    private var updaterController: SPUStandardUpdaterController?
+    private var updaterAvailabilityObservation: NSKeyValueObservation?
+    #if FOLDWISE_UPDATE_ACCEPTANCE
+        private var updateRuntimeAcceptance: UpdateRuntimeAcceptanceController?
+    #endif
 
     init(configPath: String?, showSettingsOnLaunch: Bool) {
         self.configPath = configPath
@@ -85,6 +83,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if FOLDWISE_UPDATE_ACCEPTANCE
+            if let updateRuntimeAcceptance = UpdateRuntimeAcceptanceController() {
+                self.updateRuntimeAcceptance = updateRuntimeAcceptance
+                updateRuntimeAcceptance.start()
+                return
+            }
+        #endif
+
         let acquiredInstanceLock = acquireInstanceLock(port: lockPort)
         let url = Config.resolvePath(cliPath: configPath)
         config = Config.loadOrCreate(at: url)
@@ -195,18 +201,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             inputDevices: recorder, hotkeys: hotkeys, captureGate: shortcutCaptureGate,
             asrLifecycle: asrLifecycle
         )
+        lifecycleCoordinator = DictationLifecycleCoordinator { [weak self] in
+            self?.tearDownForTermination()
+        }
+        if Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil {
+            updaterController = SPUStandardUpdaterController(
+                startingUpdater: true,
+                updaterDelegate: self,
+                userDriverDelegate: nil
+            )
+        }
+        let canCheckForUpdates = updaterController?.updater.canCheckForUpdates ?? false
+        let checkForUpdates: () -> Void = { [weak self] in
+            self?.updaterController?.checkForUpdates(nil)
+        }
+        settings.configureUpdates(
+            canCheckForUpdates: canCheckForUpdates,
+            checkForUpdates: checkForUpdates
+        )
         menuBar = MenuBarController(
             config: config,
             onSettings: { [weak self] in self?.settings.show() },
-            onCheckForUpdates: { [weak self] in self?.checkForUpdatesManually() },
+            onCheckForUpdates: checkForUpdates,
+            canCheckForUpdates: canCheckForUpdates,
             onModeSelectionError: { [weak self] in self?.badge.showModeSelectionError() },
             onQuit: { [weak self] in self?.quit() }
         )
-        settings.onUpdateAvailable = { [weak self] version in
-            self?.menuBar.showUpdateAvailable(version)
+        updaterAvailabilityObservation = updaterController?.updater.observe(
+            \.canCheckForUpdates,
+            options: [.new]
+        ) { [weak self] updater, _ in
+            Task { @MainActor [weak self] in
+                self?.applyUpdaterAvailability(updater.canCheckForUpdates)
+            }
         }
         pipeline.onState = { [weak self] state in
             Task { @MainActor in self?.apply(state) }
+        }
+        pipeline.onSessionEvent = ApplicationRunLoop.handler { [weak self] event in
+            self?.lifecycleCoordinator?.sessionDidChange(event)
         }
         Task { [weak self] in
             for await snapshot in await asrLifecycle.snapshots() {
@@ -215,12 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        updateChecker = UpdateChecker { [weak self] version in
-            self?.menuBar.showUpdateAvailable(version)
-        }
-        updateChecker.start()
-
-        Permissions.requestAtLaunch()
+        settings.beginPermissionRecovery()
 
         do {
             try hotkeys.start()
@@ -239,41 +267,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// "Check for Updates…" from the menu bar: check immediately and always
-    /// report the outcome in an alert, unlike the silent passive check.
-    private func checkForUpdatesManually() {
-        Task { @MainActor in
-            let result = await UpdateChecker.checkNow()
-            NSApp.activate(ignoringOtherApps: true)
-            let alert = NSAlert()
-            switch result {
-            case let .upToDate(current):
-                alert.messageText = "You're up to date"
-                alert.informativeText =
-                    "FoldWise Voice \(current) is the latest version."
-                alert.runModal()
-            case let .updateAvailable(version, downloadURL):
-                menuBar.showUpdateAvailable(version)
-                alert.messageText = "Update available"
-                alert.informativeText =
-                    "FoldWise Voice v\(version) is available — you have "
-                        + "\(UpdateChecker.currentVersion() ?? "an older version"). "
-                        + "The download opens in your browser; drag the new app "
-                        + "into Applications to update."
-                alert.addButton(withTitle: "Download")
-                alert.addButton(withTitle: "Later")
-                if alert.runModal() == .alertFirstButtonReturn {
-                    NSWorkspace.shared.open(downloadURL ?? UpdateChecker.releasesPage)
-                }
-            case .failed:
-                alert.messageText = "Couldn't check for updates"
-                alert.informativeText = UpdateChecker.currentVersion() == nil
-                    ? "This build has no version number (dev run), so there's "
-                        + "nothing to compare against."
-                    : "GitHub couldn't be reached. Check your connection and try again."
-                alert.runModal()
-            }
-        }
+    private func applyUpdaterAvailability(_ canCheckForUpdates: Bool) {
+        settings.setCanCheckForUpdates(canCheckForUpdates)
+        menuBar.setCanCheckForUpdates(canCheckForUpdates)
     }
 
     private func apply(_ state: PipelineState) {
@@ -303,10 +299,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
+    private func tearDownForTermination() {
         hotkeys.stop()
         pipeline.shutdown()
         badge.hide()
-        NSApp.terminate(nil)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        #if FOLDWISE_UPDATE_ACCEPTANCE
+            if let updateRuntimeAcceptance {
+                return updateRuntimeAcceptance.applicationShouldTerminate(sender)
+            }
+        #endif
+        guard let lifecycleCoordinator else { return .terminateNow }
+        let decision = lifecycleCoordinator.applicationShouldTerminate {
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        switch decision {
+        case .terminateNow:
+            return .terminateNow
+        case .terminateLater:
+            return .terminateLater
+        }
+    }
+
+    func updater(
+        _ updater: SPUUpdater,
+        shouldPostponeRelaunchForUpdate item: SUAppcastItem,
+        untilInvokingBlock installHandler: @escaping () -> Void
+    ) -> Bool {
+        #if FOLDWISE_UPDATE_ACCEPTANCE
+            if let updateRuntimeAcceptance {
+                return updateRuntimeAcceptance.shouldPostponeRelaunch(
+                    untilInvoking: installHandler
+                )
+            }
+        #endif
+        return lifecycleCoordinator?.shouldPostponeRelaunch(
+            untilInvoking: installHandler
+        ) ?? false
     }
 
     private func buildMainMenu() -> NSMenu {
@@ -361,6 +395,435 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return main
     }
 }
+
+#if FOLDWISE_UPDATE_ACCEPTANCE
+    @MainActor
+    final class UpdateRuntimeAcceptanceController: NSObject, SPUUpdaterDelegate {
+        private enum Role: String {
+            case source
+            case target
+        }
+
+        private final class AcceptanceGlobalHotkeyListener: HotkeyListening {
+            var onHealthChange: ((ShortcutListenerHealth) -> Void)?
+            private var hotkey: EventHotKeyRef?
+
+            func start() throws {
+                let identifier = EventHotKeyID(signature: 0x4657_5541, id: 1)
+                let status = RegisterEventHotKey(
+                    UInt32(kVK_F19),
+                    UInt32(controlKey | optionKey),
+                    identifier,
+                    GetApplicationEventTarget(),
+                    0,
+                    &hotkey
+                )
+                guard status == noErr, hotkey != nil else {
+                    throw AcceptanceError.contract(
+                        "global hotkey registration failed with OSStatus \(status)"
+                    )
+                }
+                onHealthChange?(.global)
+            }
+
+            func stop() {
+                guard let hotkey else { return }
+                let status = UnregisterEventHotKey(hotkey)
+                if status != noErr {
+                    Log.hotkey.error(
+                        "Acceptance hotkey cleanup failed with OSStatus \(status)"
+                    )
+                }
+                self.hotkey = nil
+            }
+        }
+
+        private final class AcceptanceRecorder: AudioRecording {
+            var onFailure: ((AudioCaptureError) -> Void)?
+
+            func start() throws {}
+
+            func stop() -> [Float] {
+                [Float](
+                    repeating: 0.1,
+                    count: Int(AudioRecorder.sampleRate)
+                )
+            }
+
+            func close() {}
+        }
+
+        private final class AcceptanceASRSessionProvider: ASRSessionHandleProviding {
+            var isDictationBlocked: Bool {
+                false
+            }
+
+            func captureSession() throws -> any ASRSessionHandle {
+                AcceptanceASRSession()
+            }
+        }
+
+        private final class AcceptanceASRSession: ASRSessionHandle {
+            func transcribe(_: [Float]) async throws -> String {
+                "FoldWise runtime acceptance transcript"
+            }
+
+            func release() {}
+        }
+
+        private final class AcceptanceAudioDucker: AudioDucking {
+            func duck() {}
+            func restore() {}
+        }
+
+        private let directory: URL
+        private let role: Role
+        private let version: String
+        private let config: Config
+        private let insertionGate = UpdateRuntimeAcceptanceInsertionGate()
+        private var badge: BadgeController?
+        private var hotkeys: HotkeyBindingCoordinator?
+        private var pipeline: Pipeline?
+        private var hotkeyHealth: ShortcutListenerHealth?
+        private var updaterController: SPUStandardUpdaterController?
+        private var signalMonitor: UpdateRuntimeAcceptanceSignalMonitor?
+        private var didRecordTerminationDeferral = false
+        private let relaunchDriver = UpdateRuntimeAcceptanceRelaunchDriver()
+        private lazy var lifecycleCoordinator = DictationLifecycleCoordinator { [weak self] in
+            self?.tearDown()
+        }
+
+        init?(environment: [String: String] = ProcessInfo.processInfo.environment) {
+            guard let directoryPath = environment["FOLDWISE_UPDATE_ACCEPTANCE_DIRECTORY"],
+                  let roleValue = Bundle.main.object(
+                      forInfoDictionaryKey: "FoldWiseUpdateAcceptanceRole"
+                  ) as? String,
+                  let role = Role(rawValue: roleValue),
+                  let version = Bundle.main.object(
+                      forInfoDictionaryKey: "CFBundleVersion"
+                  ) as? String
+            else {
+                return nil
+            }
+
+            directory = URL(fileURLWithPath: directoryPath, isDirectory: true)
+            self.role = role
+            self.version = version
+            config = Config.defaultConfig(
+                path: directory.appendingPathComponent("config.json")
+            )
+        }
+
+        func start() {
+            do {
+                try FileManager.default.createDirectory(
+                    at: directory,
+                    withIntermediateDirectories: true
+                )
+                try watchForHarnessSignals()
+                if role == .target {
+                    try record(
+                        "target-started",
+                        details: ["bundlePath": Bundle.main.bundleURL.path]
+                    )
+                }
+                try startLaunchServices()
+                switch role {
+                case .source:
+                    try startSourceUpdate()
+                case .target:
+                    try record(
+                        "target-ready",
+                        details: readinessDetails()
+                    )
+                }
+            } catch {
+                fail("acceptance startup failed: \(error.localizedDescription)")
+            }
+        }
+
+        func applicationShouldTerminate(
+            _ sender: NSApplication
+        ) -> NSApplication.TerminateReply {
+            let decision = lifecycleCoordinator.applicationShouldTerminate {
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+            switch decision {
+            case .terminateNow:
+                return .terminateNow
+            case .terminateLater:
+                if !didRecordTerminationDeferral {
+                    didRecordTerminationDeferral = true
+                    do {
+                        try record("termination-deferred")
+                    } catch {
+                        fail("could not record deferred termination: \(error.localizedDescription)")
+                    }
+                }
+                return .terminateLater
+            }
+        }
+
+        func shouldPostponeRelaunch(
+            untilInvoking installHandler: @escaping () -> Void
+        ) -> Bool {
+            let postponed = lifecycleCoordinator.shouldPostponeRelaunch(
+                untilInvoking: installHandler
+            )
+            if postponed {
+                relaunchDriver.requestTerminationOnce {
+                    DispatchQueue.main.async {
+                        NSApp.terminate(nil)
+                    }
+                }
+            }
+            return postponed
+        }
+
+        func updater(
+            _ updater: SPUUpdater,
+            willInstallUpdateOnQuit item: SUAppcastItem,
+            immediateInstallationBlock: @escaping () -> Void
+        ) -> Bool {
+            do {
+                return try relaunchDriver.beginImmediateInstallation(
+                    prepare: {
+                        try record(
+                            "update-prepared",
+                            details: ["targetVersion": item.versionString]
+                        )
+                    },
+                    install: immediateInstallationBlock
+                )
+            } catch {
+                fail("could not record prepared update: \(error.localizedDescription)")
+                return false
+            }
+        }
+
+        func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+            fail("Sparkle aborted: \(error.localizedDescription)")
+        }
+
+        private func startLaunchServices() throws {
+            let badge = BadgeController(config: config) {}
+            let hotkeys = HotkeyBindingCoordinator(
+                config: config,
+                callbacks: HotkeyCallbacks(
+                    isSuspended: { false },
+                    onPress: {},
+                    onRelease: {},
+                    onToggle: {},
+                    onCycle: {},
+                    onHealthChange: { [weak self] health in
+                        self?.hotkeyHealth = health
+                    }
+                ),
+                prepare: { _, callbacks in
+                    let listener = AcceptanceGlobalHotkeyListener()
+                    listener.onHealthChange = callbacks.onHealthChange
+                    return listener
+                }
+            )
+            try hotkeys.start()
+            badge.show()
+            self.hotkeys = hotkeys
+            self.badge = badge
+
+            guard hotkeyHealth == .global else {
+                throw AcceptanceError.contract("global hotkey registration did not succeed")
+            }
+            guard isBadgeVisible else {
+                throw AcceptanceError.contract("Badge did not become visible")
+            }
+        }
+
+        private func startSourceUpdate() throws {
+            try record("source-ready", details: readinessDetails())
+            // Keep this as an actor method reference. An inline async closure
+            // created by this @MainActor controller cannot return while AppKit
+            // is waiting in its deferred-termination run-loop mode.
+            let pipeline = Pipeline(
+                config: config,
+                recorder: AcceptanceRecorder(),
+                sessionProvider: AcceptanceASRSessionProvider(),
+                ducker: AcceptanceAudioDucker(),
+                insert: insertionGate.insert,
+                record: { _ in },
+                frontmostApp: { nil }
+            )
+            pipeline.onSessionEvent = ApplicationRunLoop.handler { [weak self] event in
+                self?.receiveSessionEvent(event)
+            }
+            self.pipeline = pipeline
+            pipeline.startRecording()
+            pipeline.stopRecording()
+        }
+
+        private func startUpdater() {
+            guard updaterController == nil else { return }
+            let updaterController = SPUStandardUpdaterController(
+                startingUpdater: true,
+                updaterDelegate: self,
+                userDriverDelegate: nil
+            )
+            self.updaterController = updaterController
+            updaterController.updater.automaticallyChecksForUpdates = true
+            updaterController.updater.automaticallyDownloadsUpdates = true
+            DispatchQueue.main.async {
+                updaterController.updater.checkForUpdatesInBackground()
+            }
+        }
+
+        private func watchForHarnessSignals() throws {
+            let signalName = role == .source ? "finish-dictation" : "terminate-target"
+            let role = role
+            let insertionGate = insertionGate
+            let monitor = UpdateRuntimeAcceptanceSignalMonitor(
+                directory: directory,
+                signalName: signalName
+            ) {
+                switch role {
+                case .source:
+                    Task { await insertionGate.open() }
+                case .target:
+                    DispatchQueue.main.async {
+                        NSApp.terminate(nil)
+                    }
+                }
+            }
+            monitor.start()
+            signalMonitor = monitor
+        }
+
+        private func receiveSessionEvent(_ event: DictationSessionEvent) {
+            do {
+                switch event {
+                case .started:
+                    try record("dictation-started")
+                    lifecycleCoordinator.sessionDidChange(event)
+                    startUpdater()
+                case .finished:
+                    try record(
+                        "dictation-finished",
+                        details: [
+                            "installedVersionAtCompletion": try installedBundleVersion(),
+                        ]
+                    )
+                    lifecycleCoordinator.sessionDidChange(event)
+                }
+            } catch {
+                fail("could not record Dictation lifecycle: \(error.localizedDescription)")
+            }
+        }
+
+        private var isBadgeVisible: Bool {
+            NSApp.windows.contains { window in
+                window is BadgePanel && window.isVisible
+            }
+        }
+
+        private func installedBundleVersion() throws -> String {
+            let infoURL = Bundle.main.bundleURL.appendingPathComponent(
+                "Contents/Info.plist"
+            )
+            let data = try Data(contentsOf: infoURL)
+            guard let info = try PropertyListSerialization.propertyList(
+                from: data,
+                format: nil
+            ) as? [String: Any],
+                let version = info["CFBundleVersion"] as? String
+            else {
+                throw AcceptanceError.contract(
+                    "installed bundle version could not be read at Dictation completion"
+                )
+            }
+            return version
+        }
+
+        private func readinessDetails() -> [String: Any] {
+            [
+                "bundlePath": Bundle.main.bundleURL.path,
+                "badgeVisible": isBadgeVisible,
+                "hotkeyHealth": hotkeyHealth == .global ? "global" : "unavailable",
+            ]
+        }
+
+        private func tearDown() {
+            hotkeys?.stop()
+            pipeline?.shutdown()
+            badge?.hide()
+            signalMonitor?.stop()
+            signalMonitor = nil
+        }
+
+        private func record(
+            _ event: String,
+            details: [String: Any] = [:]
+        ) throws {
+            var payload = details
+            payload["event"] = event
+            payload["version"] = version
+            payload["pid"] = ProcessInfo.processInfo.processIdentifier
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            let eventURL = directory.appendingPathComponent("events.jsonl")
+            if !FileManager.default.fileExists(atPath: eventURL.path) {
+                FileManager.default.createFile(atPath: eventURL.path, contents: nil)
+            }
+            let handle = try FileHandle(forWritingTo: eventURL)
+            defer {
+                do {
+                    try handle.close()
+                } catch {
+                    Log.app.error(
+                        "Acceptance event log close failed: \(error.localizedDescription)"
+                    )
+                }
+            }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+            try handle.write(contentsOf: Data("\n".utf8))
+            try handle.synchronize()
+        }
+
+        private func fail(_ message: String) {
+            let payload: [String: Any] = [
+                "bundlePath": Bundle.main.bundleURL.path,
+                "message": message,
+                "pid": ProcessInfo.processInfo.processIdentifier,
+                "role": role.rawValue,
+                "version": version,
+            ]
+            do {
+                let data = try JSONSerialization.data(
+                    withJSONObject: payload,
+                    options: [.prettyPrinted, .sortedKeys]
+                )
+                try data.write(
+                    to: directory.appendingPathComponent("application-failure.json"),
+                    options: .atomic
+                )
+            } catch {
+                Log.app.error(
+                    "Could not preserve acceptance failure: \(error.localizedDescription)"
+                )
+            }
+            pipeline?.shutdown()
+            NSApp.terminate(nil)
+        }
+
+        private enum AcceptanceError: LocalizedError {
+            case contract(String)
+
+            var errorDescription: String? {
+                switch self {
+                case let .contract(message):
+                    message
+                }
+            }
+        }
+    }
+#endif
 
 public enum FoldWiseVoiceApp {
     public static func main() {

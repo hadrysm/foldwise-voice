@@ -9,12 +9,14 @@ With --dmg it instead builds a distributable disk image: a self-contained
 config.json in ~/Library/Application Support/FoldWise Voice/ on first launch)
 inside a drag-to-Applications .dmg.
 
-By default the bundle is ad-hoc signed. To sign the .dmg build with a real
+By default the bundle is ad-hoc signed. To sign the app and .dmg with a real
 Developer ID (required for notarization), set CODESIGN_IDENTITY, e.g.
 CODESIGN_IDENTITY="Developer ID Application: Jane Doe (TEAMID)".
 
 Usage:  python3 scripts/build_swift_app.py         # build + install locally
         python3 scripts/build_swift_app.py --dmg   # build dist/FoldWise-Voice-<version>.dmg
+        python3 scripts/build_swift_app.py --bundle-only
+        python3 scripts/build_swift_app.py --development-bundle-only
 """
 
 from __future__ import annotations
@@ -34,6 +36,8 @@ BUNDLE_ID = "com.foldwise.voice.native"
 DIST = REPO / "dist"
 SWIFT_DIR = REPO
 VERSION = (REPO / "version.txt").read_text().strip()
+SPARKLE_FEED_URL = "https://updates.guarcode.com/appcast.xml"
+SPARKLE_PUBLIC_ED_KEY = "SlFqUaKJUBpdIqg+oWEI7b2j1pCLSecVuwzp5O/PRWc="
 
 
 def render_assets() -> tuple[Path, Path]:
@@ -53,19 +57,67 @@ def render_assets() -> tuple[Path, Path]:
     return out / "icon.icns", out / "dmg-background.png"
 
 
-def build_binary() -> Path:
-    subprocess.run(
-        ["swift", "build", "-c", "release", "--package-path", str(SWIFT_DIR)],
-        check=True,
-    )
+def build_binary(swift_defines: tuple[str, ...] = ()) -> Path:
+    command = [
+        "swift", "build", "-c", "release", "--package-path", str(SWIFT_DIR),
+    ]
+    for define in swift_defines:
+        command += ["-Xswiftc", f"-D{define}"]
+    subprocess.run(command, check=True)
     binary = SWIFT_DIR / ".build" / "release" / "FoldWiseVoice"
     if not binary.exists():
         sys.exit("Release binary not found — did the build fail?")
     return binary
 
 
-def build_bundle(binary: Path, dest: Path, name: str, icon: Path,
-                 share_repo_config: bool) -> Path:
+def sparkle_framework_source() -> Path:
+    xcframework = (
+        REPO / ".build" / "artifacts" / "sparkle" / "Sparkle"
+        / "Sparkle.xcframework"
+    )
+    candidates = list(xcframework.glob("macos-*/Sparkle.framework"))
+    if len(candidates) != 1:
+        sys.exit(
+            "Expected one resolved macOS Sparkle.framework; "
+            f"found {len(candidates)} under {xcframework}"
+        )
+    return candidates[0]
+
+
+def remove_bundle_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.exists():
+        shutil.rmtree(path)
+
+
+def embed_sparkle_framework(app: Path) -> Path:
+    frameworks = app / "Contents" / "Frameworks"
+    frameworks.mkdir()
+    framework = frameworks / "Sparkle.framework"
+    shutil.copytree(sparkle_framework_source(), framework, symlinks=True)
+
+    # FoldWise is not sandboxed, so neither of Sparkle's sandbox-only XPC
+    # services is enabled or shipped. Autoupdate and Updater.app remain.
+    remove_bundle_path(framework / "Versions" / "B" / "XPCServices")
+    remove_bundle_path(framework / "XPCServices")
+    return framework
+
+
+def build_bundle(
+    binary: Path,
+    dest: Path,
+    name: str,
+    icon: Path,
+    share_repo_config: bool,
+    *,
+    version: str = VERSION,
+    update_feed_url: str = SPARKLE_FEED_URL,
+    update_public_ed_key: str = SPARKLE_PUBLIC_ED_KEY,
+    launch_environment: dict[str, str] | None = None,
+    extra_info: dict[str, object] | None = None,
+    timestamp_signatures: bool = True,
+) -> Path:
     app = dest / f"{name}.app"
     shutil.rmtree(app, ignore_errors=True)
     macos = app / "Contents" / "MacOS"
@@ -79,9 +131,9 @@ def build_bundle(binary: Path, dest: Path, name: str, icon: Path,
         "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleExecutable": "FoldWiseVoice",
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": VERSION,
-        "CFBundleVersion": VERSION,
-        "LSMinimumSystemVersion": "14.0",
+        "CFBundleShortVersionString": version,
+        "CFBundleVersion": version,
+        "LSMinimumSystemVersion": "14.0.0",
         "LSUIElement": True,  # menu-bar app: no Dock icon
         "NSHighResolutionCapable": True,
         "NSMicrophoneUsageDescription": (
@@ -99,6 +151,20 @@ def build_bundle(binary: Path, dest: Path, name: str, icon: Path,
             "FOLDWISE_CONFIG": str(REPO / "config.json"),
             "FOLDWISE_SHOW_SETTINGS": "1",
         }
+    else:
+        plist.update({
+            "SUFeedURL": update_feed_url,
+            "SUPublicEDKey": update_public_ed_key,
+            "SURequireSignedFeed": True,
+            "SUVerifyUpdateBeforeExtraction": True,
+            "SUEnableAutomaticChecks": True,
+            "SUAutomaticallyUpdate": True,
+            "SUScheduledCheckInterval": 24 * 60 * 60,
+        })
+    if launch_environment is not None:
+        plist["LSEnvironment"] = launch_environment
+    if extra_info is not None:
+        plist.update(extra_info)
     shutil.copy2(icon, resources / "icon.icns")
     plist["CFBundleIconFile"] = "icon"
 
@@ -106,26 +172,66 @@ def build_bundle(binary: Path, dest: Path, name: str, icon: Path,
         plistlib.dump(plist, f)
 
     shutil.copy2(binary, macos / "FoldWiseVoice")
-    sign(app)
+    embed_sparkle_framework(app)
+    sign_app(app, timestamp=timestamp_signatures)
     return app
 
 
-def sign(app: Path) -> None:
-    # Ad-hoc signature gives the bundle a stable identity for TCC grants.
-    # A real Developer ID (CODESIGN_IDENTITY) additionally enables the
-    # hardened runtime, which notarization requires.
-    # Empty (e.g. an unset CI secret) means ad-hoc, same as unset.
+def sign_code(
+    path: Path,
+    entitlements: Path | None = None,
+    *,
+    timestamp: bool = True,
+) -> None:
+    # Empty (e.g. an unset local environment variable) means ad-hoc.
     identity = os.environ.get("CODESIGN_IDENTITY") or "-"
-    cmd = ["codesign", "--force", "--deep", "-s", identity]
-    entitlements = DIST / "entitlements.plist"
+    cmd = ["codesign", "--force", "--sign", identity]
     if identity != "-":
-        with open(entitlements, "wb") as f:
-            plistlib.dump({"com.apple.security.device.audio-input": True}, f)
-        cmd += ["--options", "runtime", "--entitlements", str(entitlements)]
+        cmd += ["--options", "runtime"]
+        if timestamp:
+            cmd.append("--timestamp")
+    if entitlements is not None:
+        cmd += ["--entitlements", str(entitlements)]
+    subprocess.run(cmd + [str(path)], check=True)
+
+
+def sign_app(app: Path, *, timestamp: bool = True) -> None:
+    # An ad-hoc signature's designated requirement is tied to that exact code
+    # version, so it does not provide a stable identity across releases. A real
+    # Developer ID does, and additionally enables the hardened runtime and
+    # secure timestamp required for notarization.
+    #
+    # Do not use `codesign --deep`: embedded code is signed inside-out before
+    # the outer app, and FoldWise entitlements apply only to that outer app.
+    framework = app / "Contents" / "Frameworks" / "Sparkle.framework"
+    sign_code(framework / "Versions" / "B" / "Autoupdate", timestamp=timestamp)
+    sign_code(framework / "Versions" / "B" / "Updater.app", timestamp=timestamp)
+    sign_code(framework, timestamp=timestamp)
+
+    entitlements = DIST / "entitlements.plist"
     try:
-        subprocess.run(cmd + [str(app)], check=True)
+        if os.environ.get("CODESIGN_IDENTITY"):
+            with open(entitlements, "wb") as f:
+                plistlib.dump({"com.apple.security.device.audio-input": True}, f)
+            sign_code(app, entitlements, timestamp=timestamp)
+        else:
+            sign_code(app, timestamp=timestamp)
     finally:
         entitlements.unlink(missing_ok=True)
+
+
+def sign_dmg(dmg: Path) -> None:
+    """Sign a disk image when a Developer ID identity was requested."""
+    identity = os.environ.get("CODESIGN_IDENTITY")
+    if not identity:
+        return
+    subprocess.run(
+        [
+            "codesign", "--force", "--timestamp",
+            "--sign", identity, str(dmg),
+        ],
+        check=True,
+    )
 
 
 DMG_LAYOUT_SCRIPT = """
@@ -219,6 +325,7 @@ def build_dmg(app: Path, background: Path, icon: Path) -> Path:
         check=True,
     )
     rw_dmg.unlink()
+    sign_dmg(dmg)
     return dmg
 
 
@@ -243,10 +350,43 @@ def main() -> None:
         "--dmg", action="store_true",
         help="build a distributable .dmg instead of installing locally",
     )
+    parser.add_argument(
+        "--bundle-only", action="store_true",
+        help="build a production app bundle without creating a DMG",
+    )
+    parser.add_argument(
+        "--development-bundle-only", action="store_true",
+        help="build an updater-disabled development app bundle without installing it",
+    )
     args = parser.parse_args()
+    selected_outputs = sum([
+        args.dmg,
+        args.bundle_only,
+        args.development_bundle_only,
+    ])
+    if selected_outputs > 1:
+        parser.error("choose only one output mode")
 
     binary = build_binary()
     icon, background = render_assets()
+
+    if args.bundle_only or args.development_bundle_only:
+        if args.bundle_only:
+            destination = DIST / "bundle"
+            name = "FoldWise Voice"
+            share_repo_config = False
+        else:
+            destination = DIST / "development-bundle"
+            name = APP_NAME
+            share_repo_config = True
+        shutil.rmtree(destination, ignore_errors=True)
+        destination.mkdir(parents=True)
+        app = build_bundle(
+            binary, destination, name, icon,
+            share_repo_config=share_repo_config
+        )
+        print(f"Built: {app}")
+        return
 
     if args.dmg:
         staging = DIST / "dmg"
@@ -257,7 +397,8 @@ def main() -> None:
         dmg = build_dmg(app, background, icon)
         print(f"Built: {dmg}")
         if os.environ.get("CODESIGN_IDENTITY"):
-            print("Signed with your Developer ID. To pass Gatekeeper on download,")
+            print("App and DMG signed with your Developer ID.")
+            print("To pass Gatekeeper on download,")
             print("notarize it:  xcrun notarytool submit <dmg> --keychain-profile <p> --wait")
             print("then:         xcrun stapler staple <dmg>")
         else:

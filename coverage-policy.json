@@ -96,10 +96,6 @@
       "reason": "Real FluidAudio model-loading and inference adapter"
     },
     {
-      "path": "Sources/FoldWiseVoiceKit/SystemIntegrations/Updates/UpdateCheckEnvironment.swift",
-      "reason": "Thin application-bundle, URLSession, and recurring-timer configuration adapter"
-    },
-    {
       "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Transcribe/WhisperTranscriber.swift",
       "reason": "Real WhisperKit model-loading and inference adapter"
     },

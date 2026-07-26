@@ -22,17 +22,29 @@ Download the latest `.dmg` from
 [GitHub Releases](https://github.com/hadrysm/foldwise-voice/releases), open it,
 and drag **FoldWise Voice** into Applications.
 
-Release builds are currently ad-hoc signed. The first time you open one, macOS
-may say that Apple could not verify it. Click **Done**, then open **System
-Settings → Privacy & Security** and choose **Open Anyway**. This is required
-only once for that installation.
+Release builds are Developer ID signed and notarized, so macOS opens them
+without the **Open Anyway** workaround.
+
+### Existing users: one manual update and permission refresh
+
+This is the first Developer ID-signed and notarized FoldWise Voice release.
+Download the DMG, replace FoldWise Voice in Applications, and open it. Because
+macOS treats this build as a new app identity, you’ll need to allow Microphone
+and Accessibility again. FoldWise Voice’s Permission recovery guide will walk
+you through it.
+
+This is a one-time transition—future signed updates retain the same identity
+and permissions. If System Settings shows an enabled FoldWise Voice entry but
+the guide still reports missing access, follow the guide to remove the old entry
+and add the installed app again. You do not need to run `tccutil`.
 
 On first launch:
 
 1. Allow **Microphone** access so the app can record while you dictate.
 2. Allow **Accessibility** so it can paste the result into other apps.
-3. Allow **Input Monitoring** so shortcuts work while another app is focused.
-   Accessibility also satisfies the global-shortcut requirement.
+3. If you choose not to grant Accessibility, you can allow **Input Monitoring**
+   as a narrower fallback: global shortcuts work, but completed text stays on
+   the clipboard for manual pasting.
 4. Wait for the default Parakeet TDT v3 speech model (about 600 MB) to finish
    downloading and loading.
 
@@ -100,9 +112,11 @@ temporarily.
 ### Home
 
 Home is the at-a-glance view. It shows the configured Push to Talk shortcut,
-recent Dictations, speech and Polish status, Accessibility status, and summary
-figures for words, speaking speed, streak, and estimated time saved. Recent
-rows can be copied or flagged, and the full list opens in History.
+recent Dictations, speech and Polish status, permission status, and summary
+figures for words, speaking speed, streak, and estimated time saved. Its
+Permissions action reopens the Permission recovery guide while access is
+missing. Recent rows can be copied or flagged, and the full list opens in
+History.
 
 ### Modes
 
@@ -168,6 +182,7 @@ Settings changes save immediately.
 
 | Area | Control | Default and behavior |
 |---|---|---|
+| Permissions | Open guide | Shows live Microphone, Accessibility, and optional Input Monitoring status |
 | Keyboard shortcuts | Push to Talk | **right Option**; hold to record and release to finish |
 | Keyboard shortcuts | Toggle Recording | Unassigned; one press starts and the next stops |
 | Keyboard shortcuts | Cycle Modes | Unassigned; advances through custom Modes and wraps |
@@ -213,9 +228,11 @@ deleting the repository breaks that installed bundle until it is rebuilt.
   & Security → Microphone**. Confirm that the selected input device is
   connected, or switch Input back to System Default.
 - **The shortcut works only while FoldWise Voice is focused:** Enable either
-  Input Monitoring or Accessibility. If an enabled entry belongs to an older
-  build, remove it, add the current app again, and retry; the listener can
-  recover without relaunching.
+  Accessibility for full Dictation capability or Input Monitoring for the
+  clipboard-only fallback. Reopen the Permission recovery guide from Home or
+  Settings. If a live check still fails after opening System Settings, the
+  guide explains how to remove an old enabled-looking row and add the installed
+  app again; the listener can recover without relaunching.
 - **The shortcut does nothing anywhere:** Check for a shortcut collision and
   verify the app is still running in the menu bar. Function keys such as `F19`
   are useful dedicated bindings.
@@ -232,9 +249,10 @@ deleting the repository breaks that installed bundle until it is rebuilt.
   Model files are downloaded only once and used locally afterward.
 - **The menu-bar icon is missing:** On a notched MacBook it may be hidden behind
   the notch or crowded icons. Command-drag other items to make room.
-- **macOS blocks the downloaded app:** Click Done in the warning, then use
-  **System Settings → Privacy & Security → Open Anyway**. Alternatively run
-  `xattr -dr com.apple.quarantine "/Applications/FoldWise Voice.app"`.
+- **macOS blocks the downloaded app:** Delete that copy and download the current
+  notarized DMG from GitHub Releases again. A current release should open
+  without a Gatekeeper workaround; report the release URL and macOS version if
+  it does not.
 - **The app says it is already running:** Use the existing menu-bar instance or
   quit it before launching another build.
 
@@ -317,14 +335,15 @@ python3 scripts/build_swift_app.py --dmg
 ```
 
 The result is `dist/FoldWise-Voice-<version>.dmg`, containing a self-contained
-**FoldWise Voice.app** with no repository paths. Builds are ad-hoc signed unless
-`CODESIGN_IDENTITY` is set to a Developer ID Application identity. A signed
-release still needs notarization and stapling before Gatekeeper accepts it
-without the Open Anyway step:
+**FoldWise Voice.app** with no repository paths. A local build without
+`CODESIGN_IDENTITY` is ad-hoc signed and is only for development. Publishable
+artifacts come from the release workflow, which requires the Developer ID
+identity, signs the app and DMG, submits the DMG to Apple, staples the ticket,
+and fails unless Gatekeeper accepts both artifacts.
 
 ```sh
-xcrun notarytool submit dist/FoldWise-Voice-<version>.dmg --keychain-profile <profile> --wait
-xcrun stapler staple dist/FoldWise-Voice-<version>.dmg
+CODESIGN_IDENTITY="Developer ID Application: Name (TEAMID)" \
+  python3 scripts/build_swift_app.py --dmg
 ```
 
 GitHub releases are managed by release-please. Conventional Commit subjects on

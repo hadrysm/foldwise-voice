@@ -49,6 +49,8 @@ jobs:
             ~/Library/Caches/org.swift.swiftpm
           key: spm-${{ runner.os }}-${{ steps.swift.outputs.hash }}-${{ hashFiles('Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-${{ steps.swift.outputs.hash }}-
+      - name: Test release automation
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - name: Test and enforce coverage policy
         env:
           COVERAGE_BASE_REF: ${{ github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || '' }}

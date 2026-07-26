@@ -69,18 +69,8 @@ final class SettingsModel: ObservableObject {
         }
     }
 
-    enum UpdateState {
-        case idle
-        case checking
-        case upToDate
-        case available(version: String, downloadURL: URL?)
-        case failed
-        /// Dev builds (`swift run`) have no bundle version to compare.
-        case unavailable
-    }
-
     @Published var pane: Pane = .home
-    @Published var updateState: UpdateState = .idle
+    @Published var canCheckForUpdates = false
     @Published var selectedModel = ""
     /// The lifecycle is the single source of ASR truth. Presentation properties
     /// below derive from one immutable value so Settings cannot expose mixed
@@ -117,13 +107,13 @@ final class SettingsModel: ObservableObject {
     @Published var windowWidth: Double = 980
     /// The rail tile currently under the pointer, driving its tooltip chip.
     @Published var hoveredRailPane: Pane?
-    @Published var axTrusted = false
     @Published var status = ""
     @Published var statusIsError = false
     @Published var statusOwner = SettingsFeedbackOwner.global
     @Published var recordingField: RecordingField?
     @Published var shortcutListenerHealth: ShortcutListenerHealth = .global
     @Published var configurationRecoveryMessage: String?
+    @Published var permissionRecovery = PermissionRecoveryWorkflow.State()
 
     func isPaneAvailable(_ pane: Pane) -> Bool {
         configurationRecoveryMessage == nil || pane.isAvailableInConfigurationRecovery
@@ -282,6 +272,11 @@ final class SettingsModel: ObservableObject {
     var onSelectInputDevice: ((String?) -> Void)?
     var onRecord: ((RecordingField) -> Void)?
     var onOpenShortcutPermissions: (() -> Void)?
+    var onOpenPermissionRecovery: (() -> Void)?
+    var onDismissPermissionRecovery: (() -> Void)?
+    var onRevealShortcutFallback: (() -> Void)?
+    var onRequestPermission: ((PermissionKind) -> Void)?
+    var onOpenPermissionSettings: ((PermissionKind) -> Void)?
     var onSelectMode: ((DictationSelection) -> Void)?
     var onAddMode: (() -> Void)?
     var onEditMode: ((ModeID) -> Void)?

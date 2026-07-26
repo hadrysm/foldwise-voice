@@ -51,8 +51,14 @@ enum PipelineState: Equatable {
     case error(String)
 }
 
+enum DictationSessionEvent: Equatable {
+    case started(UUID)
+    case finished(UUID)
+}
+
 final class Pipeline {
     private struct RecordingContext {
+        let dictationSessionID: UUID
         let mode: Mode
         let asrSession: any ASRSessionHandle
     }
@@ -77,6 +83,9 @@ final class Pipeline {
 
     /// May fire from any thread — UIs must hop to the main thread themselves.
     var onState: ((PipelineState) -> Void)?
+    /// Paired identity events for lifecycle policy; unlike presentation states,
+    /// an unmatched startup error cannot finish another queued session.
+    var onSessionEvent: ((DictationSessionEvent) -> Void)?
 
     /// Owned here rather than read back through the record seam, so the
     /// start/stop guards are self-contained and fakes needn't track it.
@@ -178,7 +187,11 @@ final class Pipeline {
             let mode = config.mode
             let id = UUID()
             recordingStartID = id
-            recordingContext = RecordingContext(mode: mode, asrSession: asrSession)
+            recordingContext = RecordingContext(
+                dictationSessionID: id,
+                mode: mode,
+                asrSession: asrSession
+            )
             return (id, mode.name)
         }
         guard let start else { return }
@@ -200,6 +213,7 @@ final class Pipeline {
         let shouldStop = withStateLock {
             guard !isShutDown, recording, recordingStartID == start.id else { return true }
             recordingStartID = nil
+            deliverSessionEvent(.started(start.id))
             emit(.listening(mode: start.modeName))
             return false
         }
@@ -225,6 +239,7 @@ final class Pipeline {
             let asrSession = context.asrSession
             guard emit(.transcribing) else {
                 asrSession.release()
+                deliverSessionEvent(.finished(context.dictationSessionID))
                 return
             }
             // Unlike the start-time Mode snapshot, whether this session is saved is
@@ -232,6 +247,7 @@ final class Pipeline {
             let saveHistory = config.saveHistory
             let previous = lastJob
             lastJob = Task {
+                defer { self.finishDictationSession(context.dictationSessionID) }
                 await withTaskCancellationHandler {
                     await previous?.value
                     guard !Task.isCancelled else {
@@ -271,12 +287,18 @@ final class Pipeline {
         let shouldClose: Bool = withStateLock {
             guard !isShutDown else { return false }
             isShutDown = true
+            let activeRecordingSessionID = recordingStartID == nil
+                ? recordingContext?.dictationSessionID
+                : nil
             recording = false
             recordingStartID = nil
             releaseRecordingContext()
             lastJob?.cancel()
             ducker.restore()
             deliver(.idle)
+            if let activeRecordingSessionID {
+                deliverSessionEvent(.finished(activeRecordingSessionID))
+            }
             return true
         }
         if shouldClose {
@@ -287,17 +309,33 @@ final class Pipeline {
     private func recordingFailed(_ error: AudioCaptureError) {
         withStateLock {
             guard !isShutDown, recording else { return }
+            let activeRecordingSessionID = recordingStartID == nil
+                ? recordingContext?.dictationSessionID
+                : nil
             recording = false
             recordingStartID = nil
             releaseRecordingContext()
             ducker.restore()
             emit(.error(error.localizedDescription))
+            if let activeRecordingSessionID {
+                deliverSessionEvent(.finished(activeRecordingSessionID))
+            }
         }
     }
 
     private func releaseRecordingContext() {
         recordingContext?.asrSession.release()
         recordingContext = nil
+    }
+
+    private func finishDictationSession(_ id: UUID) {
+        withStateLock {
+            deliverSessionEvent(.finished(id))
+        }
+    }
+
+    private func deliverSessionEvent(_ event: DictationSessionEvent) {
+        onSessionEvent?(event)
     }
 
     // MARK: - worker

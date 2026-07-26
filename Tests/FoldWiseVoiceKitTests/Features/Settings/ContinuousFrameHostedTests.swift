@@ -222,6 +222,20 @@ final class ContinuousFrameHostedTests: XCTestCase {
         )
     }
 
+    func testHostedCheckForUpdatesFollowsUpdaterAvailability() throws {
+        let model = SettingsModel()
+        model.pane = .settings
+        let window = host(model)
+        defer { window.orderOut(nil) }
+        let unavailable = try node("settings.updates.check", in: window).isEnabled
+
+        model.canCheckForUpdates = true
+        window.contentView?.layoutSubtreeIfNeeded()
+        let available = try node("settings.updates.check", in: window).isEnabled
+
+        XCTAssertEqual([unavailable, available], [false, true])
+    }
+
     func testHostedRecoveryButtonsAcceptKeyboardFocus() throws {
         let model = SettingsModel()
         model.configurationRecoveryMessage = "The configuration file is invalid."

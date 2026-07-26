@@ -151,6 +151,39 @@ final class SettingsControllerWiringTests: XCTestCase {
         XCTAssertEqual(config.hotkey, "F8")
     }
 
+    func testUpdaterConfigurationReachesSettingsCommand() {
+        let controller = SettingsController(
+            config: makeConfig(),
+            historyStore: JSONLHistoryStore(
+                url: dir.appendingPathComponent("updater-configuration-history.jsonl")
+            ),
+            statsStore: WiringStatsStore()
+        )
+        var checkCount = 0
+
+        controller.configureUpdates(canCheckForUpdates: true) {
+            checkCount += 1
+        }
+        controller.model.onCheckUpdates?()
+
+        XCTAssertEqual(checkCount, 1)
+    }
+
+    func testUpdaterAvailabilityReachesSettingsModel() {
+        let controller = SettingsController(
+            config: makeConfig(),
+            historyStore: JSONLHistoryStore(
+                url: dir.appendingPathComponent("updater-availability-history.jsonl")
+            ),
+            statsStore: WiringStatsStore()
+        )
+
+        controller.configureUpdates(canCheckForUpdates: true, checkForUpdates: {})
+        controller.setCanCheckForUpdates(false)
+
+        XCTAssertFalse(controller.model.canCheckForUpdates)
+    }
+
     func testModeEditorCallbacksReachAtomicWorkflow() throws {
         let store = JSONLHistoryStore(url: dir.appendingPathComponent("mode-editor-history.jsonl"))
         let config = makeConfig()
