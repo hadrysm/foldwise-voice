@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.2](https://github.com/hadrysm/foldwise-voice/compare/v0.18.1...v0.18.2) (2026-07-26)
+
+
+### Bug Fixes
+
+* **releases:** avoid priming cached archive misses ([#316](https://github.com/hadrysm/foldwise-voice/issues/316)) ([e07f87c](https://github.com/hadrysm/foldwise-voice/commit/e07f87cee815e2adb00d196c6b9de8936fd05f35))
+
 ## [0.18.1](https://github.com/hadrysm/foldwise-voice/compare/v0.18.0...v0.18.1) (2026-07-26)
 
 
