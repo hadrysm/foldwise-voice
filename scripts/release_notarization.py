@@ -603,6 +603,7 @@ def main() -> None:
     finalize.add_argument("--record", type=Path, required=True)
     finalize.add_argument("--log", type=Path, required=True)
     finalize.add_argument("--repository", required=True)
+    finalize.add_argument("--release-source-root", type=Path, required=True)
     finalize.add_argument("--forward-repair-bad-version")
     finalize.add_argument("--forward-repair-validation-reference")
     finalize.add_argument("--confirm-forward-repair")
@@ -651,7 +652,7 @@ def main() -> None:
         raise RuntimeError(
             "Missing required publication environment: " + ", ".join(missing),
         )
-    repository_root = Path(__file__).resolve().parents[1]
+    repository_root = args.release_source_root.resolve()
     github = GitHubReleasePublisher(
         runner,
         repository=args.repository,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import subprocess
 import tempfile
@@ -9,9 +10,113 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).parents[2]
 FINALIZER = REPOSITORY_ROOT / "scripts" / "finalize_release.sh"
+TOOL_STAGER = REPOSITORY_ROOT / "scripts" / "stage_release_tools.sh"
 
 
 class ReleaseFinalizerShellTests(unittest.TestCase):
+    def stage_release_tools(self, destination: Path) -> None:
+        result = subprocess.run(
+            ["/bin/bash", str(TOOL_STAGER), str(destination)],
+            cwd=REPOSITORY_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.strip(),
+            str(destination / FINALIZER.name),
+        )
+
+    def testStageReleaseToolsPreservesCompleteCurrentToolchain(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "release-tools"
+
+            self.stage_release_tools(destination)
+
+            self.assertEqual(
+                {path.name for path in destination.iterdir()},
+                {
+                    "finalize_release.sh",
+                    "release_notarization.py",
+                    "release_publication.py",
+                },
+            )
+
+    def testStagedNotarizationImportsCurrentPublisherFromHistoricalCheckout(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            current_tools = root / "current-tools"
+            self.stage_release_tools(current_tools)
+            historical_checkout = root / "historical-checkout"
+            (historical_checkout / "scripts").mkdir(parents=True)
+            (
+                historical_checkout / "scripts" / "release_publication.py"
+            ).write_text('raise RuntimeError("historical publisher loaded")\n')
+            artifact_directory = historical_checkout / "dist" / "notarization"
+            artifact_directory.mkdir(parents=True)
+            record = artifact_directory / "submission.json"
+            record.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "tag": "v0.18.0",
+                        "filename": "FoldWise-Voice-0.18.0.dmg",
+                        "sha256": "0" * 64,
+                        "source_run_id": "30178724003",
+                        "commit": "release-commit",
+                        "submission_filename": "submitted.dmg",
+                        "submission_id": "submission-id",
+                    }
+                )
+            )
+            environment = {
+                **os.environ,
+                "NOTARY_KEY_PATH": str(root / "notary-key.p8"),
+                "NOTARY_API_KEY_ID": "key-id",
+                "NOTARY_API_ISSUER_ID": "issuer-id",
+            }
+            for name in (
+                "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY",
+                "SPARKLE_ED_PRIVATE_KEY",
+                "UPDATE_R2_ACCOUNT_ID",
+                "UPDATE_R2_BUCKET",
+            ):
+                environment.pop(name, None)
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(current_tools / "release_notarization.py"),
+                    "finalize",
+                    "--artifact-directory",
+                    "dist/notarization",
+                    "--record",
+                    "dist/notarization/submission.json",
+                    "--log",
+                    "dist/notarization/notarization-log.json",
+                    "--repository",
+                    "hadrysm/foldwise-voice",
+                    "--release-source-root",
+                    str(historical_checkout),
+                ],
+                cwd=historical_checkout,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "Missing required publication environment",
+                result.stderr,
+            )
+            self.assertNotIn("historical publisher loaded", result.stderr)
+
     def finalizer_environment(
         self,
         root: Path,
@@ -49,15 +154,54 @@ class ReleaseFinalizerShellTests(unittest.TestCase):
     def run_finalizer(
         self,
         environment: dict[str, str],
+        *,
+        finalizer: Path = FINALIZER,
+        working_directory: Path = REPOSITORY_ROOT,
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["/bin/bash", str(FINALIZER)],
-            cwd=REPOSITORY_ROOT,
+            ["/bin/bash", str(finalizer)],
+            cwd=working_directory,
             env=environment,
             capture_output=True,
             text=True,
             check=False,
         )
+
+    def testCopiedFinalizerUsesCurrentToolsFromHistoricalCheckout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            environment, arguments, _ = self.finalizer_environment(root)
+            current_tools = root / "current-tools"
+            self.stage_release_tools(current_tools)
+            copied_finalizer = current_tools / FINALIZER.name
+            historical_checkout = root / "historical-checkout"
+            (historical_checkout / "scripts").mkdir(parents=True)
+            (historical_checkout / "scripts" / "release_notarization.py").touch()
+
+            result = self.run_finalizer(
+                environment,
+                finalizer=copied_finalizer,
+                working_directory=historical_checkout,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                arguments.read_text().splitlines(),
+                [
+                    str(current_tools / "release_notarization.py"),
+                    "finalize",
+                    "--artifact-directory",
+                    "dist/notarization",
+                    "--record",
+                    "dist/notarization/submission.json",
+                    "--log",
+                    "dist/notarization/notarization-log.json",
+                    "--repository",
+                    "hadrysm/foldwise-voice",
+                    "--release-source-root",
+                    str(historical_checkout.resolve()),
+                ],
+            )
 
     def testRoutinePublicationInvokesFinalizerWithoutRepairArguments(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -71,7 +215,7 @@ class ReleaseFinalizerShellTests(unittest.TestCase):
             self.assertEqual(
                 arguments.read_text().splitlines(),
                 [
-                    "scripts/release_notarization.py",
+                    str(REPOSITORY_ROOT / "scripts" / "release_notarization.py"),
                     "finalize",
                     "--artifact-directory",
                     "dist/notarization",
@@ -81,6 +225,8 @@ class ReleaseFinalizerShellTests(unittest.TestCase):
                     "dist/notarization/notarization-log.json",
                     "--repository",
                     "hadrysm/foldwise-voice",
+                    "--release-source-root",
+                    str(REPOSITORY_ROOT),
                 ],
             )
             self.assertFalse(

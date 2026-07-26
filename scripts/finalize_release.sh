@@ -9,6 +9,11 @@ set -euo pipefail
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 
+FINALIZER_DIRECTORY=$(
+  CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd
+)
+RELEASE_SOURCE_ROOT=$(pwd)
+
 case "$PUBLICATION_MODE" in
   routine)
     ;;
@@ -37,12 +42,13 @@ printf '%s' "$NOTARY_API_PRIVATE_KEY_BASE64" \
   | base64 --decode > "$NOTARY_KEY_PATH"
 
 FINALIZE_ARGS=(
-  scripts/release_notarization.py
+  "$FINALIZER_DIRECTORY/release_notarization.py"
   finalize
   --artifact-directory dist/notarization
   --record dist/notarization/submission.json
   --log dist/notarization/notarization-log.json
   --repository "$GITHUB_REPOSITORY"
+  --release-source-root "$RELEASE_SOURCE_ROOT"
 )
 if [[ "$PUBLICATION_MODE" == "forward-repair" ]]; then
   FINALIZE_ARGS+=(
