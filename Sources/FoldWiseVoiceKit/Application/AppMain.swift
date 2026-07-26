@@ -476,29 +476,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             func restore() {}
         }
 
-        private actor InsertionGate {
-            private var isOpen = false
-            private var waiters: [CheckedContinuation<Void, Never>] = []
-
-            func wait() async {
-                guard !isOpen else { return }
-                await withCheckedContinuation { waiters.append($0) }
-            }
-
-            func open() {
-                isOpen = true
-                for waiter in waiters {
-                    waiter.resume()
-                }
-                waiters.removeAll()
-            }
-        }
-
         private let directory: URL
         private let role: Role
         private let version: String
         private let config: Config
-        private let insertionGate = InsertionGate()
+        private let insertionGate = UpdateRuntimeAcceptanceInsertionGate()
         private var badge: BadgeController?
         private var hotkeys: HotkeyBindingCoordinator?
         private var pipeline: Pipeline?
@@ -649,15 +631,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
 
         private func startSourceUpdate() throws {
             try record("source-ready", details: readinessDetails())
+            // Keep this as an actor method reference. An inline async closure
+            // created by this @MainActor controller cannot return while AppKit
+            // is waiting in its deferred-termination run-loop mode.
             let pipeline = Pipeline(
                 config: config,
                 recorder: AcceptanceRecorder(),
                 sessionProvider: AcceptanceASRSessionProvider(),
                 ducker: AcceptanceAudioDucker(),
-                insert: { [insertionGate] _ in
-                    await insertionGate.wait()
-                    return true
-                },
+                insert: insertionGate.insert,
                 record: { _ in },
                 frontmostApp: { nil }
             )
