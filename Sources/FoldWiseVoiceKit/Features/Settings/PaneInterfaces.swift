@@ -36,10 +36,14 @@ struct HomePaneInterface {
         model.panePerformance
     }
 
-    func projection(
+    var projection: PaneProjectionStore.Projection<PaneProjectionStore.HomeValue> {
+        model.paneProjections.homeProjection
+    }
+
+    func prepareProjection(
         in environment: PaneProjectionStore.Environment
-    ) -> PaneProjectionStore.Completed<PaneProjectionStore.HomeValue> {
-        model.paneProjections.home(in: environment)
+    ) {
+        model.paneProjections.prepareHome(in: environment)
     }
 
     func selectPane(_ pane: SettingsModel.Pane) {
@@ -90,12 +94,16 @@ struct HistoryPaneInterface {
         model.panePerformance
     }
 
-    func projection(
+    var projection: PaneProjectionStore.Projection<HistoryProjection> {
+        model.paneProjections.historyProjection
+    }
+
+    func prepareProjection(
         search: String,
         flaggedOnly: Bool,
         in environment: PaneProjectionStore.Environment
-    ) -> PaneProjectionStore.Completed<HistoryProjection> {
-        model.paneProjections.history(
+    ) {
+        model.paneProjections.prepareHistory(
             search: search,
             flaggedOnly: flaggedOnly,
             in: environment
@@ -137,10 +145,14 @@ struct StatsPaneInterface {
         model.panePerformance
     }
 
-    func projection(
+    var projection: PaneProjectionStore.Projection<StatsProjection> {
+        model.paneProjections.statsProjection
+    }
+
+    func prepareProjection(
         in environment: PaneProjectionStore.Environment
-    ) -> PaneProjectionStore.Completed<StatsProjection> {
-        model.paneProjections.stats(in: environment)
+    ) {
+        model.paneProjections.prepareStats(in: environment)
     }
 
     func openHistory() {

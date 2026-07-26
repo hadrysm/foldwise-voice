@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 import XCTest
 @testable import FoldWiseVoiceKit
@@ -31,7 +32,7 @@ final class HomeViewHostedTests: XCTestCase {
         XCTAssertEqual(try metricNodes(in: window).count, 4)
     }
 
-    func testHostedHomeRefreshesRelativeHeadersWhenTheCalendarDayChanges() throws {
+    func testHostedHomeRefreshesRelativeHeadersWhenTheCalendarDayChanges() async throws {
         let calendar = try utcCalendar()
         var currentNow = Date(timeIntervalSince1970: 1_783_512_000)
         let store = PaneProjectionStore()
@@ -40,6 +41,12 @@ final class HomeViewHostedTests: XCTestCase {
             paneProjections: store
         )
         model.historyEntries = [entry(createdAt: currentNow.addingTimeInterval(-60 * 60))]
+        let environment = PaneProjectionStore.Environment(
+            now: currentNow,
+            calendar: calendar,
+            locale: Locale(identifier: "en_US")
+        )
+        _ = store.home(in: environment)
         let notificationCenter = NotificationCenter()
         let hosting = NSHostingView(rootView: HomeView(
             interface: model.homePaneInterface,
@@ -54,6 +61,10 @@ final class HomeViewHostedTests: XCTestCase {
 
         currentNow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: currentNow))
         notificationCenter.post(name: .NSCalendarDayChanged, object: nil)
+        await waitUntil {
+            store.homeProjection.isCurrent
+                && store.completedHome?.generation != initial.generation
+        }
         hosting.needsLayout = true
         hosting.layoutSubtreeIfNeeded()
         let refreshed = try XCTUnwrap(store.completedHome)
@@ -92,6 +103,11 @@ final class HomeViewHostedTests: XCTestCase {
     private func hostHome(width: CGFloat) -> NSWindow {
         let model = SettingsModel()
         model.windowWidth = width
+        _ = model.paneProjections.home(in: .init(
+            now: Date(),
+            calendar: .autoupdatingCurrent,
+            locale: .autoupdatingCurrent
+        ))
         let hosting = NSHostingView(
             rootView: HomeView(interface: model.homePaneInterface)
         )
@@ -109,6 +125,20 @@ final class HomeViewHostedTests: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         hosting.layoutSubtreeIfNeeded()
         return window
+    }
+
+    private func waitUntil(
+        _ condition: @escaping @MainActor () -> Bool
+    ) async {
+        while !condition() {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = condition()
+                } onChange: {
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     private func metricRowCount(in window: NSWindow) throws -> Int {

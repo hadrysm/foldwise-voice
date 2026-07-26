@@ -5,6 +5,12 @@
 import AppKit
 import SwiftUI
 
+private extension Notification.Name {
+    static let localeCurrentDidChange = Notification.Name(
+        "kCFLocaleCurrentLocaleDidChangeNotification"
+    )
+}
+
 @MainActor
 final class SettingsController {
     private let config: Config
@@ -123,6 +129,7 @@ final class SettingsController {
             build()
         }
         populate()
+        refreshPaneProjections()
         // Accessory apps never own the menu bar; become a regular app while
         // settings is open so the menu bar shows FoldWise Voice, not whatever
         // app was frontmost before.
@@ -191,7 +198,11 @@ final class SettingsController {
     }
 
     private func observeBoundaryNotifications() {
-        for name in [Notification.Name.NSCalendarDayChanged, .NSSystemTimeZoneDidChange] {
+        for name in [
+            Notification.Name.NSCalendarDayChanged,
+            .NSSystemTimeZoneDidChange,
+            .localeCurrentDidChange,
+        ] {
             boundaryObservers.append(notificationCenter.addObserver(
                 forName: name,
                 object: nil,
@@ -199,6 +210,7 @@ final class SettingsController {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     self?.workflow.refreshStreak()
+                    self?.refreshPaneProjections()
                 }
             })
         }
@@ -261,6 +273,14 @@ final class SettingsController {
         }
         workflow.populateHistory()
         workflow.refreshLLMModels()
+    }
+
+    private func refreshPaneProjections() {
+        paneProjections.prepareAll(in: .init(
+            now: now(),
+            calendar: calendar,
+            locale: .autoupdatingCurrent
+        ))
     }
 
     private func resetConfiguration() {

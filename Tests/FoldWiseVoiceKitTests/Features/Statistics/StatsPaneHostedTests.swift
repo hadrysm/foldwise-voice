@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 import XCTest
 @testable import FoldWiseVoiceKit
@@ -42,6 +43,11 @@ final class StatsPaneHostedTests: XCTestCase {
             panePerformance: PaneNavigationPerformance(),
             paneProjections: store
         )
+        _ = store.stats(in: .init(
+            now: Date(),
+            calendar: calendar,
+            locale: Locale(identifier: "en_US")
+        ))
         let hosting = host(StatsPane(
             interface: model.statsPaneInterface,
             calendar: { calendar },
@@ -61,6 +67,7 @@ final class StatsPaneHostedTests: XCTestCase {
         defer { window.orderOut(nil) }
 
         model.historyEntries = [entry(rawText: "saved words", day: 1)]
+        waitUntilStatsCurrent(model)
         render(hosting)
 
         XCTAssertEqual(try node(identifier: "stats.calendar", in: window).value, "2 spoken words, 1 active day")
@@ -72,6 +79,7 @@ final class StatsPaneHostedTests: XCTestCase {
         defer { window.orderOut(nil) }
 
         model.saveHistory = false
+        waitUntilStatsCurrent(model)
         render(hosting)
 
         XCTAssertEqual(try noticeIdentifiers(in: window), ["stats.notice.savingOff"])
@@ -86,6 +94,11 @@ final class StatsPaneHostedTests: XCTestCase {
             panePerformance: PaneNavigationPerformance(),
             paneProjections: store
         )
+        _ = store.stats(in: .init(
+            now: currentNow,
+            calendar: currentCalendar,
+            locale: Locale(identifier: "en_US")
+        ))
         let hosting = host(StatsPane(
             interface: model.statsPaneInterface,
             now: { currentNow },
@@ -97,10 +110,12 @@ final class StatsPaneHostedTests: XCTestCase {
 
         currentNow = currentNow.addingTimeInterval(86400)
         notifications.post(name: .NSCalendarDayChanged, object: nil)
+        waitUntilStatsCurrent(model, after: initialGeneration)
         render(hosting)
         let dayGeneration = store.completedStats?.generation
         currentCalendar.timeZone = TimeZone(identifier: "Europe/Warsaw") ?? currentCalendar.timeZone
         notifications.post(name: .NSSystemTimeZoneDidChange, object: nil)
+        waitUntilStatsCurrent(model, after: dayGeneration)
         render(hosting)
 
         XCTAssertEqual(
@@ -127,11 +142,18 @@ final class StatsPaneHostedTests: XCTestCase {
             now: { now },
             calendar: { calendar }
         )
+        _ = store.stats(in: .init(
+            now: now,
+            calendar: calendar,
+            locale: Locale(identifier: "en_US")
+        ))
         let hosting = host(pane.environment(\.locale, Locale(identifier: "en_US")))
         render(hosting)
         let english = store.completedStats
 
         hosting.rootView = pane.environment(\.locale, Locale(identifier: "pl_PL"))
+        render(hosting)
+        waitUntilStatsCurrent(model, after: english?.generation)
         render(hosting)
         let polish = store.completedStats
 
@@ -232,6 +254,7 @@ final class StatsPaneHostedTests: XCTestCase {
         let initialAccentCount = try renderedTokenCount(Theme.accent, in: hosting)
 
         model.historyEntries = [entry(rawText: "two words", day: 1)]
+        waitUntilStatsCurrent(model)
         render(hosting)
 
         XCTAssertGreaterThan(
@@ -487,6 +510,11 @@ final class StatsPaneHostedTests: XCTestCase {
             locale: Locale(identifier: "en_US"),
             notificationCenter: notifications
         )
+        _ = model.paneProjections.stats(in: .init(
+            now: currentNow,
+            calendar: calendar,
+            locale: Locale(identifier: "en_US")
+        ))
         let hosting = host(pane)
         let window = hostInWindow(hosting)
         defer { window.orderOut(nil) }
@@ -495,7 +523,9 @@ final class StatsPaneHostedTests: XCTestCase {
         currentNow = calendar.date(from: DateComponents(
             year: 2026, month: 8, day: 1, hour: 12
         )) ?? .distantPast
+        let julyGeneration = model.paneProjections.completedStats?.generation
         notifications.post(name: .NSCalendarDayChanged, object: nil)
+        waitUntilStatsCurrent(model, after: julyGeneration)
         render(hosting)
 
         XCTAssertEqual(try focusedDayIdentifier(in: window), "stats.day.1")
@@ -505,6 +535,11 @@ final class StatsPaneHostedTests: XCTestCase {
         let model = SettingsModel()
         model.saveHistory = false
         model.pane = .stats
+        _ = model.paneProjections.stats(in: .init(
+            now: Date(),
+            calendar: .autoupdatingCurrent,
+            locale: .autoupdatingCurrent
+        ))
         let hosting = host(StatsPane(interface: model.statsPaneInterface))
 
         let button = try XCTUnwrap(Self.button(named: "Open History", in: hosting))
@@ -549,13 +584,17 @@ final class StatsPaneHostedTests: XCTestCase {
         environment: StatsEnvironmentAdaptations? = nil
     ) -> StatsPane {
         let calendar = utcCalendar()
+        let now = calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 22, hour: 12
+        )) ?? .distantPast
+        _ = model.paneProjections.stats(in: .init(
+            now: now,
+            calendar: calendar,
+            locale: Locale(identifier: "en_US")
+        ))
         return StatsPane(
             interface: model.statsPaneInterface,
-            now: {
-                calendar.date(from: DateComponents(
-                    year: 2026, month: 7, day: 22, hour: 12
-                )) ?? .distantPast
-            },
+            now: { now },
             calendar: { calendar },
             locale: Locale(identifier: "en_US"),
             environmentOverride: environment
@@ -578,10 +617,43 @@ final class StatsPaneHostedTests: XCTestCase {
     ) -> (NSHostingView<SettingsView>, NSWindow) {
         let model = model ?? SettingsModel()
         model.pane = .stats
+        _ = model.paneProjections.stats(in: .init(
+            now: Date(),
+            calendar: .autoupdatingCurrent,
+            locale: .autoupdatingCurrent
+        ))
         let hosting = host(SettingsView(model: model), width: width, height: height)
         let window = hostInWindow(hosting)
         render(hosting)
         return (hosting, window)
+    }
+
+    private func waitUntilStatsCurrent(
+        _ model: SettingsModel,
+        after generation: PaneProjectionStore.Generation? = nil
+    ) {
+        let isReady: @MainActor () -> Bool = {
+            model.paneProjections.statsProjection.isCurrent
+                && (generation == nil
+                    || model.paneProjections.completedStats?.generation != generation)
+        }
+        guard !isReady() else { return }
+        let published = expectation(description: "Stats projection published")
+        func observeUntilReady() {
+            guard !isReady() else {
+                published.fulfill()
+                return
+            }
+            withObservationTracking {
+                _ = isReady()
+            } onChange: {
+                Task { @MainActor in
+                    observeUntilReady()
+                }
+            }
+        }
+        observeUntilReady()
+        wait(for: [published], timeout: 1)
     }
 
     private func dataStateModels() -> [SettingsModel] {

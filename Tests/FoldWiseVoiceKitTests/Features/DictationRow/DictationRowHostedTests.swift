@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 import XCTest
 @testable import FoldWiseVoiceKit
@@ -58,6 +59,15 @@ final class DictationRowHostedTests: XCTestCase {
             paneProjections: store
         )
         model.historyEntries = [entry()]
+        _ = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: .init(
+                now: Date(),
+                calendar: .autoupdatingCurrent,
+                locale: .autoupdatingCurrent
+            )
+        )
         let hosting = NSHostingView(
             rootView: HistoryPane(
                 interface: model.historyPaneInterface
@@ -77,7 +87,7 @@ final class DictationRowHostedTests: XCTestCase {
         )
     }
 
-    func testHostedHistoryRefreshesRelativeHeadersWhenTheCalendarDayChanges() throws {
+    func testHostedHistoryRefreshesRelativeHeadersWhenTheCalendarDayChanges() async throws {
         let notificationCenter = NotificationCenter()
         let calendar = utcCalendar()
         var currentNow = Date(timeIntervalSince1970: 1_783_512_000)
@@ -87,6 +97,15 @@ final class DictationRowHostedTests: XCTestCase {
             paneProjections: store
         )
         model.historyEntries = [entry()]
+        _ = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: .init(
+                now: currentNow,
+                calendar: calendar,
+                locale: Locale(identifier: "en_US")
+            )
+        )
         let hosting = NSHostingView(
             rootView: HistoryPane(
                 interface: model.historyPaneInterface,
@@ -104,6 +123,7 @@ final class DictationRowHostedTests: XCTestCase {
         notificationCenter.post(name: .NSCalendarDayChanged, object: nil)
         hosting.needsLayout = true
         hosting.layoutSubtreeIfNeeded()
+        await waitUntilDefaultHistoryCurrent(store, after: initial.generation)
         let refreshed = try XCTUnwrap(store.completedDefaultHistory)
 
         XCTAssertEqual(
@@ -113,6 +133,25 @@ final class DictationRowHostedTests: XCTestCase {
             ],
             [["Today"], ["Yesterday"]]
         )
+    }
+
+    private func waitUntilDefaultHistoryCurrent(
+        _ store: PaneProjectionStore,
+        after generation: PaneProjectionStore.Generation
+    ) async {
+        let isReady: @MainActor () -> Bool = {
+            store.historyProjection.isCurrent
+                && store.completedDefaultHistory?.generation != generation
+        }
+        while !isReady() {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = isReady()
+                } onChange: {
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     func testHostedHomeRowKeyboardTraversalReachesCopyAndFlag() {

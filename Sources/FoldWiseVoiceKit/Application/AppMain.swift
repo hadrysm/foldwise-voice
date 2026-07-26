@@ -636,6 +636,11 @@ private final class PanePerformanceApplication {
         model.installed = []
         model.historyEntries = entries
         model.currentStreak = entries.isEmpty ? nil : 14
+        model.paneProjections.prepareAll(in: .init(
+            now: Date(),
+            calendar: .autoupdatingCurrent,
+            locale: .autoupdatingCurrent
+        ))
         return model
     }
 

@@ -342,6 +342,7 @@ final class ContinuousFrameHostedTests: XCTestCase {
     }
 
     private func host(_ model: SettingsModel, width: CGFloat = 980) -> NSWindow {
+        prepareCurrentPaneSynchronously(model)
         let hosting = NSHostingView(rootView: SettingsView(model: model))
         hosting.frame = NSRect(x: 0, y: 0, width: width, height: 720)
         let window = NSWindow(
@@ -357,6 +358,28 @@ final class ContinuousFrameHostedTests: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         hosting.layoutSubtreeIfNeeded()
         return window
+    }
+
+    private func prepareCurrentPaneSynchronously(_ model: SettingsModel) {
+        let environment = PaneProjectionStore.Environment(
+            now: Date(),
+            calendar: .autoupdatingCurrent,
+            locale: .autoupdatingCurrent
+        )
+        switch model.pane {
+        case .home:
+            _ = model.paneProjections.home(in: environment)
+        case .history:
+            _ = model.paneProjections.history(
+                search: "",
+                flaggedOnly: false,
+                in: environment
+            )
+        case .stats:
+            _ = model.paneProjections.stats(in: environment)
+        case .modes, .models, .settings:
+            break
+        }
     }
 
     private func node(_ identifier: String, in window: NSWindow) throws -> HostedNode {

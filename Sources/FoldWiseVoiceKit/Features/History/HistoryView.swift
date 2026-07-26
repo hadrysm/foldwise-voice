@@ -9,7 +9,6 @@ struct HistoryPane: View {
     @Environment(\.locale) private var environmentLocale
 
     private struct ProjectionRequest: Equatable {
-        let revision: PaneProjectionStore.Revision
         let search: String
         let flaggedOnly: Bool
     }
@@ -19,7 +18,6 @@ struct HistoryPane: View {
     @State private var confirmingDeleteOnOff = false
     @State private var search = ""
     @State private var flaggedOnly = false
-    @State private var completed: PaneProjectionStore.Completed<HistoryProjection>?
     @FocusState private var searchFocused: Bool
     @FocusState private var clearSearchFocused: Bool
     private let now: () -> Date
@@ -42,25 +40,34 @@ struct HistoryPane: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Saved locally on this Mac. Audio is never retained.")
-                .font(Theme.body)
-                .foregroundStyle(Theme.textSecondary)
-                .accessibilityIdentifier("history.assurance")
-            preferences
-            if !interface.saveHistory, interface.hasEntries {
-                savingOffNotice
-            }
-            if !interface.hasEntries {
-                emptyState
+        Group {
+            if projectionState.completed == nil {
+                PaneProjectionLoading(paneName: "History")
             } else {
-                populated
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Saved locally on this Mac. Audio is never retained.")
+                        .font(Theme.body)
+                        .foregroundStyle(Theme.textSecondary)
+                        .accessibilityIdentifier("history.assurance")
+                    preferences
+                    if !interface.saveHistory, interface.hasEntries {
+                        savingOffNotice
+                    }
+                    if !projection.hasSourceEntries {
+                        emptyState
+                    } else {
+                        populated
+                    }
+                }
             }
+        }
+        .overlay(alignment: .topTrailing) {
+            PaneProjectionUpdating(isVisible: projectionState.phase == .updating)
         }
         .paneFirstMeaningfulFrame(
             .history,
             performance: interface.performance,
-            isReady: completed != nil
+            isReady: projectionState.isCurrent
         )
         .alert("Clear all dictation history?", isPresented: $confirmingClearAll) {
             Button("Clear All", role: .destructive) { interface.clearHistory() }
@@ -226,14 +233,17 @@ struct HistoryPane: View {
 
     private var projectionRequest: ProjectionRequest {
         ProjectionRequest(
-            revision: interface.projectionRevision,
             search: search,
             flaggedOnly: flaggedOnly
         )
     }
 
+    private var projectionState: PaneProjectionStore.Projection<HistoryProjection> {
+        interface.projection
+    }
+
     private var projection: HistoryProjection {
-        completed?.value ?? .empty
+        projectionState.completed?.value ?? .empty
     }
 
     private var polishModes: [DictationRowPolishMode] {
@@ -241,7 +251,7 @@ struct HistoryPane: View {
     }
 
     private func refreshProjection() {
-        completed = interface.projection(
+        interface.prepareProjection(
             search: search,
             flaggedOnly: flaggedOnly,
             in: .init(

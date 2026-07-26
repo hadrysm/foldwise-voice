@@ -26,8 +26,6 @@ struct HomeView: View {
     private let locale: Locale?
     private let notificationCenter: NotificationCenter
 
-    @State private var completed: PaneProjectionStore.Completed<PaneProjectionStore.HomeValue>?
-
     init(
         interface: HomePaneInterface,
         now: @escaping () -> Date = Date.init,
@@ -43,32 +41,46 @@ struct HomeView: View {
     }
 
     var body: some View {
-        main
-            .paneFirstMeaningfulFrame(
-                .home,
-                performance: interface.performance,
-                isReady: completed != nil
-            )
-            .onChange(of: interface.projectionRevision, initial: true) { _, _ in
-                refreshProjection()
+        Group {
+            if projectionState.completed == nil {
+                PaneProjectionLoading(paneName: "Home")
+            } else {
+                main
             }
-            .onReceive(notificationCenter.publisher(for: .NSCalendarDayChanged)) { _ in
-                refreshProjection()
-            }
-            .onReceive(notificationCenter.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
-                refreshProjection()
-            }
-            .onChange(of: environmentLocale) { _, _ in
-                refreshProjection()
-            }
+        }
+        .overlay(alignment: .topTrailing) {
+            PaneProjectionUpdating(isVisible: projectionState.phase == .updating)
+        }
+        .paneFirstMeaningfulFrame(
+            .home,
+            performance: interface.performance,
+            isReady: projectionState.isCurrent
+        )
+        .onAppear {
+            refreshProjection()
+        }
+        .onReceive(notificationCenter.publisher(for: .NSCalendarDayChanged)) { _ in
+            refreshProjection()
+        }
+        .onReceive(notificationCenter.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
+            refreshProjection()
+        }
+        .onChange(of: environmentLocale) { _, _ in
+            refreshProjection()
+        }
+    }
+
+    private var projectionState:
+        PaneProjectionStore.Projection<PaneProjectionStore.HomeValue> {
+        interface.projection
     }
 
     private var projection: HomeProjection {
-        completed?.value.recent ?? HomeProjection(sections: [])
+        projectionState.completed?.value.recent ?? HomeProjection(sections: [])
     }
 
     private var stats: UsageStats {
-        completed?.value.usage ?? .empty
+        projectionState.completed?.value.usage ?? .empty
     }
 
     private var overviewLayout: HomeOverviewLayout {
@@ -76,7 +88,7 @@ struct HomeView: View {
     }
 
     private func refreshProjection() {
-        completed = interface.projection(in: .init(
+        interface.prepareProjection(in: .init(
             now: now(),
             calendar: calendar(),
             locale: locale ?? environmentLocale
@@ -258,12 +270,12 @@ struct HomeView: View {
     }
 
     private var streakText: String? {
-        guard let days = completed?.value.currentStreak else { return nil }
+        guard let days = projectionState.completed?.value.currentStreak else { return nil }
         return "\(days)"
     }
 
     private var streakUnit: String {
-        completed?.value.currentStreak == 1 ? "day" : "days"
+        projectionState.completed?.value.currentStreak == 1 ? "day" : "days"
     }
 
     private var timeSavedText: String? {

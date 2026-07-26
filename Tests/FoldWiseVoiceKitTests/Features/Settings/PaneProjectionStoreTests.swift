@@ -1,8 +1,223 @@
+import Observation
 import XCTest
 @testable import FoldWiseVoiceKit
 
 @MainActor
 final class PaneProjectionStoreTests: XCTestCase {
+    func testHomePreparationPublishesCurrentContentAfterLoading() async {
+        let scheduling = ProjectionPreparationScheduling()
+        let store = PaneProjectionStore(
+            beforePreparation: { pane in
+                await scheduling.checkpoint(pane)
+            }
+        )
+
+        store.prepareHome(in: makeEnvironment())
+        let loading = store.homeProjection
+        await scheduling.waitUntilStarted(.home)
+        await scheduling.resume(.home)
+        await waitUntil { store.homeProjection.isCurrent }
+
+        XCTAssertEqual(
+            [loading.phase, store.homeProjection.phase],
+            [.loading, .current]
+        )
+    }
+
+    func testSemanticChangeKeepsCompletedHomeVisibleWhileUpdating() async {
+        let scheduling = ProjectionPreparationScheduling()
+        let store = PaneProjectionStore(
+            beforePreparation: { pane in
+                await scheduling.checkpoint(pane)
+            }
+        )
+        store.prepareHome(in: makeEnvironment())
+        await scheduling.waitUntilStarted(.home, count: 1)
+        await scheduling.resume(.home)
+        await waitUntil { store.homeProjection.isCurrent }
+        let initial = store.homeProjection.completed
+
+        store.setHistoryEntries([makeEntry(text: "Current", rawText: "Current")])
+        let updating = store.homeProjection
+        guard updating.phase == .updating else {
+            XCTFail("Expected completed Home content to remain visible while updating")
+            return
+        }
+        await scheduling.waitUntilStarted(.home, count: 2)
+        await scheduling.resume(.home)
+        await waitUntil {
+            store.homeProjection.isCurrent
+                && store.homeProjection.completed != initial
+        }
+
+        XCTAssertEqual(
+            updating,
+            PaneProjectionStore.Projection(
+                completed: initial,
+                phase: .updating
+            )
+        )
+    }
+
+    func testPrepareAllPublishesEveryPaneAsCurrent() async {
+        let scheduling = ProjectionPreparationScheduling()
+        let store = PaneProjectionStore(
+            beforePreparation: { pane in
+                await scheduling.checkpoint(pane)
+            }
+        )
+
+        store.prepareAll(in: makeEnvironment())
+        for pane in [
+            PaneProjectionStore.Pane.home,
+            .history,
+            .stats,
+        ] {
+            await scheduling.waitUntilStarted(pane)
+            await scheduling.resume(pane)
+        }
+        await waitUntil {
+            store.homeProjection.isCurrent
+                && store.historyProjection.isCurrent
+                && store.statsProjection.isCurrent
+        }
+
+        XCTAssertEqual(
+            [
+                store.homeProjection.phase,
+                store.historyProjection.phase,
+                store.statsProjection.phase,
+            ],
+            [.current, .current, .current]
+        )
+    }
+
+    func testRapidHistoryChangesPublishOnlyLatestCurrentProjection() async {
+        let scheduling = ProjectionPreparationScheduling()
+        let store = PaneProjectionStore(
+            beforePreparation: { pane in
+                await scheduling.checkpoint(pane)
+            }
+        )
+        let environment = makeEnvironment()
+        store.prepareHistory(search: "", flaggedOnly: false, in: environment)
+        await scheduling.waitUntilStarted(.history, count: 1)
+        await scheduling.resume(.history)
+        await waitUntil { store.historyProjection.isCurrent }
+
+        store.setHistoryEntries([makeEntry(text: "Obsolete", rawText: "Obsolete")])
+        await scheduling.waitUntilStarted(.history, count: 2)
+        store.setHistoryEntries([makeEntry(text: "Latest", rawText: "Latest")])
+        await scheduling.waitUntilStarted(.history, count: 3)
+        await scheduling.waitUntilCancelled(.history)
+        await scheduling.resume(.history)
+        await scheduling.resume(.history)
+        await waitUntil { store.historyProjection.isCurrent }
+
+        XCTAssertEqual(
+            store.historyProjection.completed?.value.sections
+                .flatMap(\.rows).first?.entry.text,
+            "Latest"
+        )
+    }
+
+    func testReturningToCachedStatsEnvironmentRejectsObsoletePreparation() async {
+        let scheduling = ProjectionPreparationScheduling()
+        let store = PaneProjectionStore(
+            beforePreparation: { pane in
+                await scheduling.checkpoint(pane)
+            }
+        )
+        let currentEnvironment = makeEnvironment()
+        let current = store.stats(in: currentEnvironment)
+        let obsoleteEnvironment = PaneProjectionStore.Environment(
+            now: currentEnvironment.now.addingTimeInterval(24 * 60 * 60),
+            calendar: currentEnvironment.calendar,
+            locale: Locale(identifier: "pl_PL")
+        )
+
+        guard let obsoleteTask = store.prepareStats(in: obsoleteEnvironment) else {
+            XCTFail("Expected obsolete Stats preparation task")
+            return
+        }
+        await scheduling.waitUntilStarted(.stats)
+        store.prepareStats(in: currentEnvironment)
+        await scheduling.waitUntilCancelled(.stats)
+        await scheduling.resume(.stats)
+        await obsoleteTask.value
+
+        XCTAssertEqual(
+            [
+                store.statsProjection.completed == current,
+                store.statsProjection.isCurrent,
+            ],
+            [true, true]
+        )
+    }
+
+    func testFilteredHistoryKeepsDefaultNavigationProjectionPrepared() async {
+        let store = PaneProjectionStore()
+        let environment = makeEnvironment()
+        store.prepareHistory(search: "Current", flaggedOnly: false, in: environment)
+        await waitUntil { store.historyProjection.isCurrent }
+
+        store.setHistoryEntries([makeEntry(text: "Current", rawText: "Current")])
+        await waitUntil {
+            store.historyProjection.isCurrent
+                && store.completedDefaultHistory != nil
+        }
+        store.prepareHistory(search: "", flaggedOnly: false, in: environment)
+
+        XCTAssertTrue(store.historyProjection.isCurrent)
+    }
+
+    func testPrepareAllPreservesActiveFilteredHistoryRequest() async {
+        let store = PaneProjectionStore()
+        let environment = makeEnvironment()
+        store.setHistoryEntries([
+            makeEntry(text: "Current", rawText: "Current"),
+        ])
+        store.prepareHistory(
+            search: "Current",
+            flaggedOnly: false,
+            in: environment
+        )
+        await waitUntil { store.historyProjection.isCurrent }
+        let filtered = store.historyProjection.completed
+
+        store.prepareAll(in: environment)
+
+        XCTAssertEqual(store.historyProjection.completed, filtered)
+    }
+
+    func testHistoryKeepsCompletedSourceStateWhileRefreshing() {
+        let store = PaneProjectionStore()
+        let environment = makeEnvironment()
+        store.setHistoryEntries([
+            makeEntry(text: "Current", rawText: "Current"),
+        ])
+        _ = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: environment
+        )
+        store.prepareHistory(
+            search: "",
+            flaggedOnly: false,
+            in: environment
+        )
+
+        store.setHistoryEntries([])
+
+        XCTAssertEqual(
+            [
+                store.historyProjection.phase == .updating,
+                store.historyProjection.completed?.value.hasSourceEntries == true,
+            ],
+            [true, true]
+        )
+    }
+
     func testUnchangedRevisitReusesEveryCompletedProjection() {
         let store = PaneProjectionStore()
         let environment = makeEnvironment()
@@ -306,5 +521,77 @@ final class PaneProjectionStoreTests: XCTestCase {
 
     private func changed(_ before: [PaneResult], _ after: [PaneResult]) -> [Bool] {
         zip(before, after).map { $0.generation != $1.generation }
+    }
+
+    private func waitUntil(
+        _ condition: @escaping @MainActor () -> Bool
+    ) async {
+        while !condition() {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = condition()
+                } onChange: {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+}
+
+private actor ProjectionPreparationScheduling {
+    private var started: [PaneProjectionStore.Pane: Int] = [:]
+    private var startWaiters:
+        [PaneProjectionStore.Pane: [CheckedContinuation<Void, Never>]] = [:]
+    private var releases: [PaneProjectionStore.Pane: [CheckedContinuation<Void, Never>]] = [:]
+    private var cancellations: [PaneProjectionStore.Pane: Int] = [:]
+    private var cancellationWaiters:
+        [PaneProjectionStore.Pane: [CheckedContinuation<Void, Never>]] = [:]
+
+    func checkpoint(_ pane: PaneProjectionStore.Pane) async {
+        started[pane, default: 0] += 1
+        for waiter in startWaiters.removeValue(forKey: pane) ?? [] {
+            waiter.resume()
+        }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                releases[pane, default: []].append(continuation)
+            }
+        } onCancel: {
+            Task {
+                await self.recordCancellation(of: pane)
+            }
+        }
+    }
+
+    func waitUntilStarted(
+        _ pane: PaneProjectionStore.Pane,
+        count: Int = 1
+    ) async {
+        if started[pane, default: 0] >= count {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            startWaiters[pane, default: []].append(continuation)
+        }
+    }
+
+    func resume(_ pane: PaneProjectionStore.Pane) {
+        releases[pane, default: []].removeFirst().resume()
+    }
+
+    func waitUntilCancelled(_ pane: PaneProjectionStore.Pane) async {
+        if cancellations[pane, default: 0] > 0 {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            cancellationWaiters[pane, default: []].append(continuation)
+        }
+    }
+
+    private func recordCancellation(of pane: PaneProjectionStore.Pane) {
+        cancellations[pane, default: 0] += 1
+        for waiter in cancellationWaiters.removeValue(forKey: pane) ?? [] {
+            waiter.resume()
+        }
     }
 }

@@ -38,12 +38,16 @@ struct HistoryProjection: Equatable {
     }
 
     let sections: [Section]
+    let hasSourceEntries: Bool
 
     var isEmpty: Bool {
         sections.isEmpty
     }
 
-    static let empty = HistoryProjection(sections: [])
+    static let empty = HistoryProjection(
+        sections: [],
+        hasSourceEntries: false
+    )
 
     static func project(
         _ input: Input,
@@ -81,12 +85,15 @@ struct HistoryProjection: Equatable {
         }
 
         let formatter = dayFormatter(calendar: calendar, locale: locale)
-        return HistoryProjection(sections: dayOrder.map { day in
-            Section(
-                header: header(for: day, now: now, calendar: calendar, formatter: formatter),
-                rows: buckets[day] ?? []
-            )
-        })
+        return HistoryProjection(
+            sections: dayOrder.map { day in
+                Section(
+                    header: header(for: day, now: now, calendar: calendar, formatter: formatter),
+                    rows: buckets[day] ?? []
+                )
+            },
+            hasSourceEntries: !input.entries.isEmpty
+        )
     }
 
     private static func header(

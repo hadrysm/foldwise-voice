@@ -12,7 +12,6 @@ struct StatsPane: View {
     @Environment(\.locale) private var environmentLocale
     @Environment(\.accessibilityReduceMotion) private var environmentReduceMotion
     @Environment(\.colorSchemeContrast) private var environmentContrast
-    @State private var completed: PaneProjectionStore.Completed<StatsProjection>?
 
     private let now: () -> Date
     private let calendar: () -> Calendar
@@ -37,26 +36,32 @@ struct StatsPane: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("A look at how you dictate, drawn from the History you already keep.")
-                .font(Theme.body)
-                .foregroundStyle(Theme.textSecondary)
-
-            if let projection = completed?.value {
-                notice(projection.notice)
-                StatsMetricStrip(metrics: projection.metrics)
-                MonthlyActivityCalendar(
-                    month: projection.month,
-                    environment: resolvedEnvironment
-                )
+        Group {
+            if let projection = projectionState.completed?.value {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("A look at how you dictate, drawn from the History you already keep.")
+                        .font(Theme.body)
+                        .foregroundStyle(Theme.textSecondary)
+                    notice(projection.notice)
+                    StatsMetricStrip(metrics: projection.metrics)
+                    MonthlyActivityCalendar(
+                        month: projection.month,
+                        environment: resolvedEnvironment
+                    )
+                }
+            } else {
+                PaneProjectionLoading(paneName: "Stats")
             }
+        }
+        .overlay(alignment: .topTrailing) {
+            PaneProjectionUpdating(isVisible: projectionState.phase == .updating)
         }
         .paneFirstMeaningfulFrame(
             .stats,
             performance: interface.performance,
-            isReady: completed != nil
+            isReady: projectionState.isCurrent
         )
-        .onChange(of: interface.projectionRevision, initial: true) { _, _ in
+        .onAppear {
             refresh()
         }
         .onChange(of: environmentLocale) { _, _ in
@@ -70,6 +75,10 @@ struct StatsPane: View {
         }
     }
 
+    private var projectionState: PaneProjectionStore.Projection<StatsProjection> {
+        interface.projection
+    }
+
     private var resolvedEnvironment: StatsEnvironmentAdaptations {
         environmentOverride ?? StatsEnvironmentAdaptations(
             reduceMotion: environmentReduceMotion,
@@ -78,7 +87,7 @@ struct StatsPane: View {
     }
 
     private func refresh() {
-        completed = interface.projection(in: .init(
+        interface.prepareProjection(in: .init(
             now: now(),
             calendar: calendar(),
             locale: locale ?? environmentLocale
