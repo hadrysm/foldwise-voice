@@ -502,6 +502,161 @@ final class PaneProjectionStoreTests: XCTestCase {
         )
     }
 
+    func testTenThousandSessionModeRenameUpdatesAttributedRows() throws {
+        let (store, fixture) = try makeTenThousandStore()
+        let environment = makeEnvironment()
+        let performanceModeID = try XCTUnwrap(fixture.entries.first?.modeID)
+        store.setModes([
+            makeMode(
+                id: performanceModeID,
+                name: "Renamed Performance",
+                icon: "bolt"
+            ),
+        ])
+
+        let history = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: environment
+        ).value
+        let row = try XCTUnwrap(history.sections.first?.rows.first)
+
+        XCTAssertEqual(
+            [
+                history.presentation(for: row).fullModeName,
+                history.presentation(for: row).modeIcon,
+            ],
+            ["Renamed Performance", "bolt"]
+        )
+    }
+
+    func testTenThousandSessionModeDeletionKeepsRecordedAttribution() throws {
+        let (store, _) = try makeTenThousandStore()
+        let environment = makeEnvironment()
+
+        store.setModes([])
+        let history = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: environment
+        ).value
+        let row = try XCTUnwrap(history.sections.first?.rows.first)
+        let presentation = history.presentation(for: row)
+
+        XCTAssertEqual(
+            [
+                presentation.fullModeName,
+                String(presentation.isDeletedMode),
+            ],
+            ["Performance Mode", "true"]
+        )
+    }
+
+    func testTenThousandSessionAppendDeltaUpdatesEveryHistoryBackedPane() throws {
+        let (store, fixture) = try makeTenThousandStore()
+        let environment = makeEnvironment()
+        let initialStats = store.stats(in: environment)
+        let appended = makeEntry(
+            id: try XCTUnwrap(UUID(
+                uuidString: "ffffffff-ffff-4fff-8fff-ffffffffffff"
+            )),
+            createdAt: try XCTUnwrap(
+                fixture.entries.first?.createdAt.addingTimeInterval(60)
+            ),
+            text: "Newest appended words",
+            rawText: "Newest appended words"
+        )
+
+        store.applyHistoryMutation(.append(appended))
+        let home = store.home(in: environment)
+        let history = store.history(
+            search: "Newest appended words",
+            flaggedOnly: false,
+            in: environment
+        )
+        let stats = store.stats(in: environment)
+
+        XCTAssertEqual(
+            [
+                home.value.recent.sections.flatMap(\.rows).first?.entry.id,
+                history.value.sections.flatMap(\.rows).first?.id,
+                stats.value.lifetime.totalWords
+                    == initialStats.value.lifetime.totalWords + 3
+                    ? appended.id
+                    : nil,
+            ],
+            [appended.id, appended.id, appended.id]
+        )
+    }
+
+    func testTenThousandSessionUpdateDeltaRefreshesSearchAndFlagFiltering() throws {
+        let (store, fixture) = try makeTenThousandStore()
+        let environment = makeEnvironment()
+        var reprocessed = try XCTUnwrap(fixture.entries.last)
+        reprocessed.text = "Unique reprocessed result"
+        reprocessed.flagged = true
+
+        store.applyHistoryMutation(.update(reprocessed))
+        let result = store.history(
+            search: "Unique reprocessed result",
+            flaggedOnly: true,
+            in: environment
+        )
+
+        XCTAssertEqual(
+            result.value.sections.flatMap(\.rows)
+                .map { result.value.entry(for: $0) },
+            [reprocessed]
+        )
+    }
+
+    func testTenThousandSessionDeleteDeltaRemovesExactSourceIdentity() throws {
+        let (store, fixture) = try makeTenThousandStore()
+        let environment = makeEnvironment()
+        let deleted = try XCTUnwrap(fixture.entries.first)
+
+        store.applyHistoryMutation(.delete(deleted.id))
+        let history = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: environment
+        )
+
+        XCTAssertEqual(
+            [
+                history.value.sections.flatMap(\.rows).contains {
+                    $0.id == deleted.id
+                },
+                history.value.sections.flatMap(\.rows).count
+                    == fixture.entries.count - 1,
+            ],
+            [false, true]
+        )
+    }
+
+    func testTenThousandSessionClearDeltaEmptiesEveryHistoryBackedPane() throws {
+        let (store, _) = try makeTenThousandStore()
+        let environment = makeEnvironment()
+
+        store.applyHistoryMutation(.clear)
+        let home = store.home(in: environment)
+        let history = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: environment
+        )
+        let stats = store.stats(in: environment)
+
+        XCTAssertEqual(
+            [
+                home.value.recent.sections.isEmpty,
+                history.value.hasSourceEntries == false,
+                stats.value.lifetime == .empty,
+            ],
+            [true, true, true]
+        )
+    }
+
     func testModeChangeInvalidatesHomeAndHistoryButKeepsStats() {
         let store = PaneProjectionStore()
         let environment = makeEnvironment()

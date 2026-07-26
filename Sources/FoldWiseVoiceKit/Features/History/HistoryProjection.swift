@@ -295,6 +295,33 @@ struct HistoryIndex {
             }
         }
 
+        fileprivate mutating func replace(_ record: Record) {
+            let day = calendar.startOfDay(for: record.entry.createdAt)
+            guard let groupIndex = groups.firstIndex(where: { $0.day == day }),
+                  let recordIndex = groups[groupIndex].records.firstIndex(
+                      where: { $0.entry.id == record.entry.id }
+                  ) else { return }
+            groups[groupIndex].records[recordIndex] = record
+        }
+
+        fileprivate mutating func remove(_ record: Record) {
+            let day = calendar.startOfDay(for: record.entry.createdAt)
+            guard let groupIndex = groups.firstIndex(where: { $0.day == day }),
+                  let recordIndex = groups[groupIndex].records.firstIndex(
+                      where: { $0.entry.id == record.entry.id }
+                  ) else { return }
+            groups[groupIndex].records.remove(at: recordIndex)
+            if groups[groupIndex].records.isEmpty {
+                groups.remove(at: groupIndex)
+            }
+            sourceCount -= 1
+        }
+
+        fileprivate mutating func removeAll() {
+            groups.removeAll(keepingCapacity: true)
+            sourceCount = 0
+        }
+
         private mutating func insert(_ record: Record) {
             let day = calendar.startOfDay(for: record.entry.createdAt)
             if let groupIndex = groups.firstIndex(where: { $0.day == day }) {
@@ -329,7 +356,6 @@ struct HistoryIndex {
     }
 
     private var recordsByID: [UUID: Record] = [:]
-    private var orderedIDs: [UUID] = []
     private var entryIDsByModeID: [ModeID: Set<UUID>] = [:]
     private var modesByID: [ModeID: ModeValue] = [:]
     private var cachedSnapshot: (key: CalendarKey, value: Snapshot)?
@@ -368,18 +394,13 @@ struct HistoryIndex {
 
         let removedIDs = Set(recordsByID.keys).subtracting(incomingByID.keys)
         var changedIDs = Set<UUID>()
-        var reorderedIDs = removedIDs
         for id in incomingIDs {
             guard let entry = incomingByID[id] else { continue }
             if let existing = recordsByID[id] {
                 guard existing.entry != entry else { continue }
                 changedIDs.insert(id)
-                if existing.entry.createdAt != entry.createdAt {
-                    reorderedIDs.insert(id)
-                }
             } else {
                 changedIDs.insert(id)
-                reorderedIDs.insert(id)
             }
         }
         guard !removedIDs.isEmpty || !changedIDs.isEmpty else { return }
@@ -396,27 +417,8 @@ struct HistoryIndex {
             addModeMembership(for: entry)
         }
 
-        let rebuildOrdering = orderedIDs.isEmpty
-            || reorderedIDs.count > Self.incrementalUpdateLimit
-        if rebuildOrdering {
-            orderedIDs = recordsByID.values
-                .sorted { Self.isNewer($0, than: $1) }
-                .map(\.entry.id)
-        } else {
-            orderedIDs.removeAll { reorderedIDs.contains($0) }
-            let recordsToInsert = reorderedIDs.compactMap { recordsByID[$0] }
-                .sorted { Self.isNewer($0, than: $1) }
-            for record in recordsToInsert {
-                let insertionIndex = orderedIDs.firstIndex {
-                    guard let existing = recordsByID[$0] else { return false }
-                    return Self.isNewer(record, than: existing)
-                } ?? orderedIDs.endIndex
-                orderedIDs.insert(record.entry.id, at: insertionIndex)
-            }
-        }
-
         let replacedIDs = removedIDs.union(changedIDs)
-        if rebuildOrdering || replacedIDs.count > Self.incrementalUpdateLimit {
+        if replacedIDs.count > Self.incrementalUpdateLimit {
             cachedSnapshot = nil
         } else {
             let replacements = changedIDs.compactMap { recordsByID[$0] }
@@ -426,6 +428,59 @@ struct HistoryIndex {
             )
             cachedSnapshot?.value.sourceCount = recordsByID.count
         }
+    }
+
+    @discardableResult
+    mutating func append(_ entry: HistoryEntry) -> Bool {
+        guard recordsByID[entry.id] == nil else { return false }
+        let newRecord = record(for: entry)
+        recordsByID[entry.id] = newRecord
+        addModeMembership(for: entry)
+        cachedSnapshot?.value.apply(
+            removing: [],
+            inserting: [newRecord]
+        )
+        cachedSnapshot?.value.sourceCount = recordsByID.count
+        return true
+    }
+
+    @discardableResult
+    mutating func update(_ entry: HistoryEntry) -> Bool {
+        guard let existing = recordsByID[entry.id],
+              existing.entry != entry else { return false }
+        removeModeMembership(for: existing.entry)
+        let replacement = record(for: entry)
+        recordsByID[entry.id] = replacement
+        addModeMembership(for: entry)
+        if existing.entry.createdAt == entry.createdAt {
+            cachedSnapshot?.value.replace(replacement)
+            return true
+        }
+
+        cachedSnapshot?.value.apply(
+            removing: [entry.id],
+            inserting: [replacement]
+        )
+        return true
+    }
+
+    @discardableResult
+    mutating func delete(id: UUID) -> Bool {
+        guard let removed = recordsByID.removeValue(forKey: id) else {
+            return false
+        }
+        removeModeMembership(for: removed.entry)
+        cachedSnapshot?.value.remove(removed)
+        return true
+    }
+
+    @discardableResult
+    mutating func clear() -> Bool {
+        guard !recordsByID.isEmpty else { return false }
+        recordsByID.removeAll(keepingCapacity: true)
+        entryIDsByModeID.removeAll(keepingCapacity: true)
+        cachedSnapshot?.value.removeAll()
+        return true
     }
 
     mutating func snapshot(calendar: Calendar) -> Snapshot {
@@ -438,8 +493,8 @@ struct HistoryIndex {
         }
 
         var groups: [Group] = []
-        for id in orderedIDs {
-            guard let record = recordsByID[id] else { continue }
+        let orderedRecords = recordsByID.values.sorted(by: Self.isNewer)
+        for record in orderedRecords {
             let day = calendar.startOfDay(for: record.entry.createdAt)
             if groups.last?.day == day {
                 groups[groups.endIndex - 1].records.append(record)

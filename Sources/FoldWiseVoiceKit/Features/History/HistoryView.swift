@@ -5,6 +5,14 @@
 import Combine
 import SwiftUI
 
+struct HistorySectionWindow: Equatable {
+    private(set) var renderedCount = 1
+
+    mutating func loadNext(totalCount: Int) {
+        renderedCount = min(renderedCount + 1, totalCount)
+    }
+}
+
 struct HistoryPane: View {
     @Environment(\.locale) private var environmentLocale
 
@@ -64,11 +72,6 @@ struct HistoryPane: View {
         .overlay(alignment: .topTrailing) {
             PaneProjectionUpdating(isVisible: projectionState.phase == .updating)
         }
-        .paneFirstMeaningfulFrame(
-            .history,
-            performance: interface.performance,
-            isReady: projectionState.isCurrent
-        )
         .alert("Clear all dictation history?", isPresented: $confirmingClearAll) {
             Button("Clear All", role: .destructive) { interface.clearHistory() }
             Button("Cancel", role: .cancel) {}
@@ -194,6 +197,11 @@ struct HistoryPane: View {
                 : "Turn on History when you want new Dictation sessions saved."
         )
         .accessibilityIdentifier("history.empty.first-run")
+        .paneFirstMeaningfulFrame(
+            .history,
+            performance: interface.performance,
+            isReady: projectionState.isCurrent
+        )
     }
 
     private var savingOffNotice: some View {
@@ -215,6 +223,8 @@ struct HistoryPane: View {
                 HistoryCollection(
                     projection: projection,
                     polishModes: polishModes,
+                    performance: interface.performance,
+                    isCurrent: projectionState.isCurrent,
                     onCommand: { entry, command in
                         interface.performHistoryCommand(entry, command)
                     }
@@ -347,6 +357,11 @@ struct HistoryPane: View {
             detail: presentation.detail
         )
         .accessibilityIdentifier(presentation.accessibilityIdentifier)
+        .paneFirstMeaningfulFrame(
+            .history,
+            performance: interface.performance,
+            isReady: projectionState.isCurrent
+        )
     }
 }
 
@@ -355,11 +370,31 @@ struct HistoryPane: View {
 private struct HistoryCollection: View {
     let projection: HistoryProjection
     let polishModes: [DictationRowPolishMode]
+    let performance: PaneNavigationPerformance
+    let isCurrent: Bool
     let onCommand: (HistoryEntry, DictationRowCommand) -> Void
+    @State private var sectionWindow = HistorySectionWindow()
+    @State private var interactionsReady = false
 
     var body: some View {
+        Group {
+            if interactionsReady {
+                interactiveCollection
+            } else {
+                firstFrame
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("history.collection")
+        .onChange(of: projectionIdentity, initial: true) {
+            sectionWindow = HistorySectionWindow()
+            interactionsReady = false
+        }
+    }
+
+    private var interactiveCollection: some View {
         LazyVStack(alignment: .leading, spacing: 14) {
-            ForEach(projection.sections, id: \.header) { section in
+            ForEach(renderedSections, id: \.header) { section in
                 EmberSectionLabel(section.header, symbolName: "calendar")
                 EmberSurface {
                     LazyVStack(alignment: .leading, spacing: 0) {
@@ -382,8 +417,49 @@ private struct HistoryCollection: View {
                     }
                 }
             }
+            if sectionWindow.renderedCount < projection.sections.count {
+                Color.clear
+                    .frame(height: 1)
+                    .id(sectionWindow.renderedCount)
+                    .onAppear {
+                        sectionWindow.loadNext(
+                            totalCount: projection.sections.count
+                        )
+                    }
+            }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("history.collection")
+    }
+
+    @ViewBuilder
+    private var firstFrame: some View {
+        if let section = projection.sections.first,
+           let row = section.rows.first {
+            VStack(alignment: .leading, spacing: 14) {
+                EmberSectionLabel(section.header, symbolName: "calendar")
+                EmberSurface {
+                    DictationRowPreview(
+                        presentation: projection.presentation(for: row)
+                    )
+                }
+            }
+            .paneFirstMeaningfulFrame(
+                .history,
+                performance: performance,
+                isReady: isCurrent,
+                onDraw: completeFirstFrame
+            )
+        }
+    }
+
+    private var projectionIdentity: ObjectIdentifier {
+        ObjectIdentifier(projection)
+    }
+
+    private var renderedSections: ArraySlice<HistoryProjection.Section> {
+        projection.sections.prefix(sectionWindow.renderedCount)
+    }
+
+    private func completeFirstFrame() {
+        interactionsReady = true
     }
 }

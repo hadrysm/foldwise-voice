@@ -91,9 +91,58 @@ final class SettingsWorkflowTests: XCTestCase {
             entries
         }
 
-        func update(_: HistoryEntry) {}
-        func delete(id _: UUID) {}
-        func clearAll() {}
+        func update(_: HistoryEntry) -> Bool {
+            false
+        }
+
+        func delete(id _: UUID) -> Bool {
+            false
+        }
+
+        func clearAll() -> Bool {
+            false
+        }
+
+        func sweep(retention _: RetentionWindow, now _: Date) {}
+        func onAppend(_: @escaping (HistoryEntry) -> Void) {}
+    }
+
+    private final class RecordingHistoryStore: HistoryStore {
+        let entries: [HistoryEntry]
+        private(set) var loadCount = 0
+        private(set) var appendedEntries: [HistoryEntry] = []
+        private(set) var updatedEntries: [HistoryEntry] = []
+        private(set) var deletedIDs: [UUID] = []
+        private(set) var clearCount = 0
+
+        init(entries: [HistoryEntry]) {
+            self.entries = entries
+        }
+
+        func append(_ entry: HistoryEntry) {
+            appendedEntries.append(entry)
+        }
+
+        func load() -> [HistoryEntry] {
+            loadCount += 1
+            return entries
+        }
+
+        func update(_ entry: HistoryEntry) -> Bool {
+            updatedEntries.append(entry)
+            return true
+        }
+
+        func delete(id: UUID) -> Bool {
+            deletedIDs.append(id)
+            return true
+        }
+
+        func clearAll() -> Bool {
+            clearCount += 1
+            return true
+        }
+
         func sweep(retention _: RetentionWindow, now _: Date) {}
         func onAppend(_: @escaping (HistoryEntry) -> Void) {}
     }
@@ -2279,6 +2328,26 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(model.historyEntries.map(\.flagged), [true])
     }
 
+    func testFlagHistoryPublishesDeltaWithoutReloadingHistory() {
+        let row = entry(createdAt: Date(), text: "remember this")
+        let store = RecordingHistoryStore(entries: [row])
+        let config = makeConfig()
+        let model = SettingsModel()
+        model.historyEntries = [row]
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store
+        )
+
+        workflow.flagHistory(row)
+
+        XCTAssertEqual(
+            [store.loadCount, model.historyEntries.first?.flagged == true ? 1 : 0],
+            [0, 1]
+        )
+    }
+
     func testFlagHistoryPublishesStoredEntryWhenPersistenceFails() {
         let row = entry(createdAt: Date(), text: "unchanged")
         let store = NonPersistingHistoryStore(entries: [row])
@@ -2378,6 +2447,30 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(
             model.historyEntries.first?.text,
             "Hey, can you send the quarterly numbers over to the finance team when you get a chance?"
+        )
+    }
+
+    func testRerunPolishPublishesDeltaWithoutReloadingHistory() async throws {
+        var row = entry(createdAt: Date(), text: "earlier words")
+        row.rawText = "send the quarterly numbers to the finance team"
+        let store = RecordingHistoryStore(entries: [row])
+        let config = makeConfig()
+        let model = SettingsModel()
+        model.historyEntries = [row]
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store,
+            polish: { _, _ in "Send the quarterly numbers to the finance team." }
+        )
+        let modeID = try XCTUnwrap(config.orderedModes.first?.id)
+
+        await workflow.rerunPolish(row, modeID: modeID)
+
+        XCTAssertEqual(store.loadCount, 0)
+        XCTAssertEqual(
+            model.historyEntries.first?.text,
+            "Send the quarterly numbers to the finance team."
         )
     }
 
@@ -2561,6 +2654,25 @@ final class SettingsWorkflowTests: XCTestCase {
         XCTAssertEqual(model.historyEntries.map(\.text), ["keep me"])
     }
 
+    func testDeleteHistoryPublishesDeltaWithoutReloadingHistory() {
+        let removed = entry(createdAt: Date(), text: "remove me")
+        let kept = entry(createdAt: Date(), text: "keep me")
+        let store = RecordingHistoryStore(entries: [removed, kept])
+        let config = makeConfig()
+        let model = SettingsModel()
+        model.historyEntries = [removed, kept]
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store
+        )
+
+        workflow.deleteHistory(removed)
+
+        XCTAssertEqual(store.loadCount, 0)
+        XCTAssertEqual(model.historyEntries, [kept])
+    }
+
     func testDeletingMissingHistoryEntryKeepsPersistedEntries() {
         let store = JSONLHistoryStore(url: dir.appendingPathComponent("missing-history.jsonl"))
         let kept = entry(createdAt: Date(), text: "keep me")
@@ -2618,6 +2730,24 @@ final class SettingsWorkflowTests: XCTestCase {
         workflow.clearHistory()
 
         XCTAssertEqual([model.historyEntries.count, model.currentStreak ?? 0], [0, 0])
+    }
+
+    func testClearHistoryPublishesDeltaWithoutReloadingHistory() {
+        let row = entry(createdAt: Date(), text: "erase me")
+        let store = RecordingHistoryStore(entries: [row])
+        let config = makeConfig()
+        let model = SettingsModel()
+        model.historyEntries = [row]
+        let workflow = makeWorkflow(
+            config: config,
+            model: model,
+            historyStore: store
+        )
+
+        workflow.clearHistory()
+
+        XCTAssertEqual(store.loadCount, 0)
+        XCTAssertTrue(model.historyEntries.isEmpty)
     }
 
     func testPopulateHistoryLoadsEntriesAndCurrentStreak() {

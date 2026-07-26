@@ -5,13 +5,16 @@ import SwiftUI
 final class PaneFirstMeaningfulFrameView: NSView {
     var pane: SettingsModel.Pane
     var performance: PaneNavigationPerformance
+    var onDraw: @MainActor () -> Void
 
     init(
         pane: SettingsModel.Pane,
-        performance: PaneNavigationPerformance
+        performance: PaneNavigationPerformance,
+        onDraw: @escaping @MainActor () -> Void = {}
     ) {
         self.pane = pane
         self.performance = performance
+        self.onDraw = onDraw
         super.init(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
     }
 
@@ -23,20 +26,30 @@ final class PaneFirstMeaningfulFrameView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         performance.firstMeaningfulFrame(for: pane)
+        let onDraw = onDraw
+        DispatchQueue.main.async {
+            onDraw()
+        }
     }
 }
 
 private struct PaneFirstMeaningfulFrameMarker: NSViewRepresentable {
     let pane: SettingsModel.Pane
     let performance: PaneNavigationPerformance
+    let onDraw: @MainActor () -> Void
 
     func makeNSView(context: Context) -> PaneFirstMeaningfulFrameView {
-        PaneFirstMeaningfulFrameView(pane: pane, performance: performance)
+        PaneFirstMeaningfulFrameView(
+            pane: pane,
+            performance: performance,
+            onDraw: onDraw
+        )
     }
 
     func updateNSView(_ view: PaneFirstMeaningfulFrameView, context: Context) {
         view.pane = pane
         view.performance = performance
+        view.onDraw = onDraw
         view.needsDisplay = true
     }
 }
@@ -45,13 +58,15 @@ extension View {
     func paneFirstMeaningfulFrame(
         _ pane: SettingsModel.Pane,
         performance: PaneNavigationPerformance,
-        isReady: Bool = true
+        isReady: Bool = true,
+        onDraw: @escaping @MainActor () -> Void = {}
     ) -> some View {
         overlay(alignment: .topLeading) {
             if isReady {
                 PaneFirstMeaningfulFrameMarker(
                     pane: pane,
-                    performance: performance
+                    performance: performance,
+                    onDraw: onDraw
                 )
                 .frame(width: 1, height: 1)
                 .allowsHitTesting(false)

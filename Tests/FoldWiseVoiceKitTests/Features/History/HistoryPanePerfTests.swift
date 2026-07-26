@@ -136,6 +136,23 @@ final class HistoryPanePerfTests: XCTestCase {
             "one model publish must re-layout only the visible rows"
         )
     }
+
+    func testSectionWindowLoadsOneDayGroupPerDemand() {
+        var window = HistorySectionWindow()
+
+        window.loadNext(totalCount: 10000)
+
+        XCTAssertEqual(window.renderedCount, 2)
+    }
+
+    func testSectionWindowStopsAtAvailableDayGroups() {
+        var window = HistorySectionWindow()
+
+        window.loadNext(totalCount: 2)
+        window.loadNext(totalCount: 2)
+
+        XCTAssertEqual(window.renderedCount, 2)
+    }
 }
 
 private extension Duration {

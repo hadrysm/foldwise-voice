@@ -314,12 +314,24 @@ final class SettingsModel {
     var modePendingDeletion: ModeDeletionState?
     /// Loaded from the HistoryStore when the window opens and re-read after a
     /// delete or clear-all, so the History pane reflects the store live.
-    var historyEntries: [HistoryEntry] = [] {
-        didSet {
+    var historyEntries: [HistoryEntry] {
+        get {
+            paneProjections.historyEntries
+        }
+        set {
             applyProjectionInvalidation(
-                paneProjections.setHistoryEntries(historyEntries)
+                paneProjections.setHistoryEntries(newValue)
             )
         }
+    }
+
+    @discardableResult
+    func applyHistoryMutation(
+        _ mutation: PaneProjectionStore.HistoryMutation
+    ) -> Bool {
+        let invalidation = paneProjections.applyHistoryMutation(mutation)
+        applyProjectionInvalidation(invalidation)
+        return !invalidation.isEmpty
     }
 
     /// The lifetime streak to show, computed by the controller from the StatsStore

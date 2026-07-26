@@ -4,6 +4,13 @@ import Observation
 @MainActor
 @Observable
 final class PaneProjectionStore {
+    enum HistoryMutation {
+        case append(HistoryEntry)
+        case update(HistoryEntry)
+        case delete(UUID)
+        case clear
+    }
+
     enum Pane: Hashable {
         case home
         case history
@@ -151,7 +158,9 @@ final class PaneProjectionStore {
 
     @ObservationIgnored private let beforePreparation:
         @Sendable (Pane) async -> Void
-    @ObservationIgnored private var historyEntries: [HistoryEntry] = []
+    @ObservationIgnored private var historyEntrySlots: [HistoryEntry?] = []
+    @ObservationIgnored private var cachedHistoryEntries: [HistoryEntry]? = []
+    @ObservationIgnored private var historyEntryOffsets: [UUID: Int] = [:]
     @ObservationIgnored private var historyIndex = HistoryIndex()
     @ObservationIgnored private var statsEntriesKey: [StatsEntryKey: Int] = [:]
     @ObservationIgnored private var historyDerivationCache: (
@@ -215,6 +224,15 @@ final class PaneProjectionStore {
         statsCache?.completed
     }
 
+    var historyEntries: [HistoryEntry] {
+        if let cachedHistoryEntries {
+            return cachedHistoryEntries
+        }
+        let entries = historyEntrySlots.compactMap { $0 }
+        cachedHistoryEntries = entries
+        return entries
+    }
+
     @discardableResult
     func setModes(_ modes: [Mode]) -> Invalidation {
         let previousKey = self.modes.map(RowModeKey.init)
@@ -238,11 +256,17 @@ final class PaneProjectionStore {
     @discardableResult
     func setHistoryEntries(_ entries: [HistoryEntry]) -> Invalidation {
         let previousEntries = historyEntries
+        guard previousEntries != entries else { return [] }
         let nextStatsKey = entries.reduce(into: [:]) { counts, entry in
             counts[StatsEntryKey(entry), default: 0] += 1
         }
-        historyEntries = entries
-        guard previousEntries != entries else { return [] }
+        historyEntrySlots = entries.map(Optional.some)
+        cachedHistoryEntries = entries
+        historyEntryOffsets.removeAll(keepingCapacity: true)
+        for (offset, entry) in entries.enumerated()
+            where historyEntryOffsets[entry.id] == nil {
+            historyEntryOffsets[entry.id] = offset
+        }
         historyIndex.setEntries(entries)
         invalidateHomeAndHistory()
         var invalidation: Invalidation = [.home, .history]
@@ -266,6 +290,79 @@ final class PaneProjectionStore {
             prepareStats(in: statsEnvironment)
         }
         return invalidation
+    }
+
+    @discardableResult
+    func applyHistoryMutation(_ mutation: HistoryMutation) -> Invalidation {
+        let statsChanged: Bool
+        switch mutation {
+        case let .append(entry):
+            guard historyIndex.append(entry) else { return [] }
+            historyEntryOffsets[entry.id] = historyEntrySlots.endIndex
+            historyEntrySlots.append(entry)
+            cachedHistoryEntries = nil
+            statsEntriesKey[StatsEntryKey(entry), default: 0] += 1
+            statsChanged = true
+        case let .update(entry):
+            guard let offset = historyEntryOffsets[entry.id],
+                  let existing = historyEntrySlots[offset] else { return [] }
+            guard historyIndex.update(entry) else { return [] }
+            historyEntrySlots[offset] = entry
+            cachedHistoryEntries = nil
+            let previousStatsKey = StatsEntryKey(existing)
+            let nextStatsKey = StatsEntryKey(entry)
+            statsChanged = previousStatsKey != nextStatsKey
+            if statsChanged {
+                decrementStatsEntryCount(for: previousStatsKey)
+                statsEntriesKey[nextStatsKey, default: 0] += 1
+            }
+        case let .delete(id):
+            guard let offset = historyEntryOffsets[id],
+                  let removed = historyEntrySlots[offset],
+                  historyIndex.delete(id: id) else { return [] }
+            historyEntrySlots[offset] = nil
+            cachedHistoryEntries = nil
+            historyEntryOffsets[id] = nil
+            decrementStatsEntryCount(for: StatsEntryKey(removed))
+            statsChanged = true
+        case .clear:
+            guard historyIndex.clear() else { return [] }
+            historyEntrySlots.removeAll(keepingCapacity: true)
+            cachedHistoryEntries = []
+            historyEntryOffsets.removeAll(keepingCapacity: true)
+            statsEntriesKey.removeAll(keepingCapacity: true)
+            statsChanged = true
+        }
+        if statsChanged {
+            historyDerivationCache = nil
+            statsCache = nil
+        }
+        invalidateHomeAndHistory()
+        if let homeEnvironment {
+            prepareHome(in: homeEnvironment)
+        }
+        if let historyRequest {
+            prepareHistory(
+                search: historyRequest.search,
+                flaggedOnly: historyRequest.flaggedOnly,
+                in: historyRequest.environment
+            )
+        }
+        if statsChanged, let statsEnvironment {
+            prepareStats(in: statsEnvironment)
+        }
+        return statsChanged
+            ? [.home, .history, .stats]
+            : [.home, .history]
+    }
+
+    private func decrementStatsEntryCount(for key: StatsEntryKey) {
+        guard let count = statsEntriesKey[key] else { return }
+        if count == 1 {
+            statsEntriesKey[key] = nil
+        } else {
+            statsEntriesKey[key] = count - 1
+        }
     }
 
     @discardableResult
@@ -340,7 +437,7 @@ final class PaneProjectionStore {
 
         homePreparationRevision &+= 1
         let revision = homePreparationRevision
-        let entries = historyEntries
+        let entrySlots = historyEntrySlots
         let modes = modes
         let currentStreak = currentStreak
         let beforePreparation = beforePreparation
@@ -349,6 +446,7 @@ final class PaneProjectionStore {
         homeTask = Task.detached(priority: .userInitiated) { [weak self] in
             await beforePreparation(.home)
             guard !Task.isCancelled else { return }
+            let entries = entrySlots.compactMap { $0 }
             let value = HomeValue(
                 recent: HomeProjection.project(
                     HomeProjection.Input(entries: entries, modes: modes),
@@ -564,7 +662,7 @@ final class PaneProjectionStore {
 
         statsPreparationRevision &+= 1
         let revision = statsPreparationRevision
-        let entries = historyEntries
+        let entrySlots = historyEntrySlots
         let currentStreak = currentStreak
         let savingEnabled = savingEnabled
         let beforePreparation = beforePreparation
@@ -573,6 +671,7 @@ final class PaneProjectionStore {
         let task = Task.detached(priority: .userInitiated) { [weak self] in
             await beforePreparation(.stats)
             guard !Task.isCancelled else { return }
+            let entries = entrySlots.compactMap { $0 }
             let projection = StatsProjection.project(
                 StatsProjection.Input(
                     entries: entries,

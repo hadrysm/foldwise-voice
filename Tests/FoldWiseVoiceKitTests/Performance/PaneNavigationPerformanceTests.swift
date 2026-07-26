@@ -100,6 +100,28 @@ final class PaneNavigationPerformanceTests: XCTestCase {
 
         XCTAssertEqual(samples.map(\.destination), [.models])
     }
+
+    func testDrawMarkerDefersPostFrameWorkUntilAfterDrawing() async {
+        let performance = PaneNavigationPerformance(
+            signposts: RecordingPanePerformanceSignposts()
+        )
+        var callbackRan = false
+        let callback = expectation(description: "post-frame callback")
+        let marker = PaneFirstMeaningfulFrameView(
+            pane: .history,
+            performance: performance,
+            onDraw: {
+                callbackRan = true
+                callback.fulfill()
+            }
+        )
+
+        marker.draw(NSRect(x: 0, y: 0, width: 1, height: 1))
+        XCTAssertFalse(callbackRan)
+        await fulfillment(of: [callback])
+
+        XCTAssertTrue(callbackRan)
+    }
 }
 
 @MainActor

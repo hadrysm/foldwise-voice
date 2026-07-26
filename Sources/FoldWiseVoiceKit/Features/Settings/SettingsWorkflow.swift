@@ -433,8 +433,11 @@ final class SettingsWorkflow {
     func flagHistory(_ entry: HistoryEntry) {
         var toggled = entry
         toggled.flagged.toggle()
-        historyStore.update(toggled)
-        model.historyEntries = historyStore.load()
+        guard historyStore.update(toggled) else {
+            model.historyEntries = historyStore.load()
+            return
+        }
+        publishUpdatedHistoryEntry(toggled)
     }
 
     func rerunPolish(_ entry: HistoryEntry, modeID: ModeID) async {
@@ -442,25 +445,41 @@ final class SettingsWorkflow {
             setStatus("⚠️ Mode is no longer available. Choose another Mode.", isError: true)
             return
         }
-        await reprocessor.rerunPolish(entry, mode: mode)
-        model.historyEntries = historyStore.load()
+        guard let updated = await reprocessor.rerunPolish(
+            entry,
+            mode: mode
+        ) else {
+            model.historyEntries = historyStore.load()
+            return
+        }
+        publishUpdatedHistoryEntry(updated)
     }
 
     func deleteHistory(_ entry: HistoryEntry) {
-        historyStore.delete(id: entry.id)
-        model.historyEntries = historyStore.load()
+        guard historyStore.delete(id: entry.id) else {
+            model.historyEntries = historyStore.load()
+            return
+        }
+        if !model.applyHistoryMutation(.delete(entry.id)) {
+            model.historyEntries = historyStore.load()
+        }
     }
 
     func clearHistory() {
-        historyStore.clearAll()
+        guard historyStore.clearAll() else { return }
         statsStore.reset()
-        model.historyEntries = historyStore.load()
+        model.applyHistoryMutation(.clear)
         refreshStreak()
     }
 
     private func prependHistory(_ entry: HistoryEntry) {
-        guard !model.historyEntries.contains(where: { $0.id == entry.id }) else { return }
-        model.historyEntries.insert(entry, at: 0)
+        model.applyHistoryMutation(.append(entry))
+    }
+
+    private func publishUpdatedHistoryEntry(_ entry: HistoryEntry) {
+        if !model.applyHistoryMutation(.update(entry)) {
+            model.historyEntries = historyStore.load()
+        }
     }
 
     func refreshStreak() {
