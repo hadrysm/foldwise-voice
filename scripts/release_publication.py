@@ -9,9 +9,11 @@ import json
 import re
 import shutil
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -101,6 +103,9 @@ def _version_components(version: str) -> tuple[int, int, int]:
 
 
 class InputCommandRunner(Protocol):
+    def run_json(self, command: list[str]) -> dict[str, object]:
+        """Run a command and return its JSON object output."""
+
     def run_input(self, command: list[str], value: str | None) -> None:
         """Run a command while keeping optional sensitive input off argv."""
 
@@ -458,12 +463,22 @@ class R2UpdateOrigin:
         bucket: str,
         endpoint: str,
         public_base_url: str = UPDATE_ORIGIN,
+        verification_delays: tuple[float, ...] = (
+            2.0,
+            4.0,
+            8.0,
+            16.0,
+            30.0,
+        ),
+        sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self.runner = runner
         self.fetcher = fetcher
         self.bucket = bucket
         self.endpoint = endpoint
         self.public_base_url = public_base_url.rstrip("/")
+        self.verification_delays = verification_delays
+        self.sleeper = sleeper
 
     def assert_publication_allowed(self, policy: PublicationPolicy) -> None:
         freeze = self.fetcher.fetch(
@@ -509,6 +524,31 @@ class R2UpdateOrigin:
                 raise ArtifactMismatch(
                     "The immutable archive URL already contains other bytes.",
                 )
+
+        key = f"releases/{dmg.name}"
+        if self._object_exists(key):
+            self._verify_object(
+                key,
+                sha256=sha256,
+                content_length=dmg.stat().st_size,
+            )
+            if current is not None:
+                return
+            published = self._fetch_until(
+                url,
+                lambda value: (
+                    value is not None
+                    and hashlib.sha256(value).hexdigest() == sha256
+                ),
+            )
+            if (
+                published is None
+                or hashlib.sha256(published).hexdigest() != sha256
+            ):
+                raise ArtifactMismatch(
+                    "The existing R2 archive is not publicly serving "
+                    "the verified DMG.",
+                )
             return
 
         self.runner.run_input(
@@ -521,7 +561,7 @@ class R2UpdateOrigin:
                 "--bucket",
                 self.bucket,
                 "--key",
-                f"releases/{dmg.name}",
+                key,
                 "--body",
                 str(dmg),
                 "--content-type",
@@ -530,12 +570,20 @@ class R2UpdateOrigin:
                 f'attachment; filename="{dmg.name}"',
                 "--cache-control",
                 "public, max-age=31536000, immutable",
+                "--if-none-match",
+                "*",
                 "--metadata",
                 f"sha256={sha256}",
             ],
             None,
         )
-        published = self.fetcher.fetch(url)
+        published = self._fetch_until(
+            url,
+            lambda value: (
+                value is not None
+                and hashlib.sha256(value).hexdigest() == sha256
+            ),
+        )
         if published is None or hashlib.sha256(published).hexdigest() != sha256:
             raise ArtifactMismatch(
                 "The public archive bytes do not match the verified DMG.",
@@ -563,13 +611,90 @@ class R2UpdateOrigin:
             ],
             None,
         )
-        published = self.fetcher.fetch(
+        published = self._fetch_until(
             f"{self.public_base_url}/appcast.xml",
+            lambda value: value == expected,
         )
         if published != expected:
             raise ArtifactMismatch(
                 "The public appcast does not match the signed feed.",
             )
+
+    def _object_exists(self, key: str) -> bool:
+        response = self.runner.run_json(
+            [
+                "aws",
+                "--endpoint-url",
+                self.endpoint,
+                "s3api",
+                "list-objects-v2",
+                "--bucket",
+                self.bucket,
+                "--prefix",
+                key,
+                "--max-keys",
+                "2",
+                "--output",
+                "json",
+            ]
+        )
+        contents = response.get("Contents", [])
+        if not isinstance(contents, list):
+            raise PublicationError("R2 returned an invalid object listing.")
+        keys: list[str] = []
+        for item in contents:
+            listed_key = item.get("Key") if isinstance(item, dict) else None
+            if not isinstance(listed_key, str):
+                raise PublicationError("R2 returned an invalid object listing.")
+            keys.append(listed_key)
+        return key in keys
+
+    def _verify_object(
+        self,
+        key: str,
+        *,
+        sha256: str,
+        content_length: int,
+    ) -> None:
+        response = self.runner.run_json(
+            [
+                "aws",
+                "--endpoint-url",
+                self.endpoint,
+                "s3api",
+                "head-object",
+                "--bucket",
+                self.bucket,
+                "--key",
+                key,
+                "--output",
+                "json",
+            ]
+        )
+        metadata = response.get("Metadata")
+        stored_length = response.get("ContentLength")
+        if (
+            not isinstance(metadata, dict)
+            or metadata.get("sha256") != sha256
+            or stored_length != content_length
+        ):
+            raise ArtifactMismatch(
+                "The existing R2 archive metadata does not match "
+                "the verified DMG.",
+            )
+
+    def _fetch_until(
+        self,
+        url: str,
+        matches: Callable[[bytes | None], bool],
+    ) -> bytes | None:
+        published = self.fetcher.fetch(url)
+        for delay in self.verification_delays:
+            if matches(published):
+                return published
+            self.sleeper(delay)
+            published = self.fetcher.fetch(url)
+        return published
 
 
 class AuthenticatedUpdatePublisher:

@@ -130,13 +130,28 @@ class GitHubReleasePublisher:
             )
 
     def _release(self, tag: str) -> dict[str, object]:
-        return self.runner.run_json(
+        response = self.runner.run_json(
             [
                 "gh",
-                "api",
-                f"repos/{self.repository}/releases/tags/{tag}",
+                "release",
+                "view",
+                tag,
+                "--repo",
+                self.repository,
+                "--json",
+                "isDraft,assets",
             ]
         )
+        draft = response.get("isDraft")
+        assets = response.get("assets")
+        if not isinstance(draft, bool) or not isinstance(assets, list):
+            raise CommandFailed(
+                "GitHub release response has invalid draft or asset state.",
+            )
+        return {
+            "draft": draft,
+            "assets": assets,
+        }
 
     @staticmethod
     def _asset(

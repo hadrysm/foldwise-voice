@@ -427,7 +427,7 @@ class ReleaseNotarizationTests(unittest.TestCase):
             runner = FakeRunner(
                 [
                     {
-                        "draft": True,
+                        "isDraft": True,
                         "assets": [
                             {
                                 "name": dmg.name,
@@ -436,7 +436,7 @@ class ReleaseNotarizationTests(unittest.TestCase):
                         ],
                     },
                     {
-                        "draft": True,
+                        "isDraft": True,
                         "assets": [
                             {
                                 "name": dmg.name,
@@ -460,6 +460,50 @@ class ReleaseNotarizationTests(unittest.TestCase):
             )
             self.assertNotIn("--clobber", " ".join(runner.events))
 
+    def testPublisherFindsDraftReleaseThroughReleaseView(self) -> None:
+        runner = FakeRunner([{"isDraft": True, "assets": []}])
+
+        release_notarization.GitHubReleasePublisher(
+            runner,
+            repository="hadrysm/foldwise-voice",
+        ).publish_draft("v0.18.0")
+
+        self.assertEqual(
+            runner.commands,
+            [
+                [
+                    "gh",
+                    "release",
+                    "view",
+                    "v0.18.0",
+                    "--repo",
+                    "hadrysm/foldwise-voice",
+                    "--json",
+                    "isDraft,assets",
+                ],
+                [
+                    "gh",
+                    "release",
+                    "edit",
+                    "v0.18.0",
+                    "--repo",
+                    "hadrysm/foldwise-voice",
+                    "--draft=false",
+                ],
+            ],
+        )
+
+    def testPublisherRejectsReleaseResponseWithoutDraftState(self) -> None:
+        runner = FakeRunner([{"assets": []}])
+
+        with self.assertRaises(release_notarization.CommandFailed):
+            release_notarization.GitHubReleasePublisher(
+                runner,
+                repository="hadrysm/foldwise-voice",
+            ).publish_draft("v0.18.0")
+
+        self.assertEqual(len(runner.commands), 1)
+
     def testPublisherStopsWhenExistingServerAssetDigestDiffers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             dmg = Path(directory) / "FoldWise-Voice-0.18.0.dmg"
@@ -468,7 +512,7 @@ class ReleaseNotarizationTests(unittest.TestCase):
             runner = FakeRunner(
                 [
                     {
-                        "draft": True,
+                        "isDraft": True,
                         "assets": [
                             {
                                 "name": dmg.name,
@@ -494,9 +538,9 @@ class ReleaseNotarizationTests(unittest.TestCase):
             digest = hashlib.sha256(dmg.read_bytes()).hexdigest()
             runner = FakeRunner(
                 [
-                    {"draft": True, "assets": []},
+                    {"isDraft": True, "assets": []},
                     {
-                        "draft": True,
+                        "isDraft": True,
                         "assets": [
                             {
                                 "name": dmg.name,
@@ -505,7 +549,7 @@ class ReleaseNotarizationTests(unittest.TestCase):
                         ],
                     },
                     {
-                        "draft": True,
+                        "isDraft": True,
                         "assets": [
                             {
                                 "name": dmg.name,
@@ -541,9 +585,9 @@ class ReleaseNotarizationTests(unittest.TestCase):
             digest = hashlib.sha256(dmg.read_bytes()).hexdigest()
             runner = FakeRunner(
                 [
-                    {"draft": True, "assets": []},
+                    {"isDraft": True, "assets": []},
                     {
-                        "draft": True,
+                        "isDraft": True,
                         "assets": [
                             {
                                 "name": dmg.name,
