@@ -20,6 +20,7 @@ SPARKLE_VERSION = "2.9.4"
 SPARKLE_NAMESPACE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 UPDATE_ORIGIN = "https://updates.guarcode.com"
 FULL_CHANGELOG_URL = "https://github.com/hadrysm/foldwise-voice/blob/main/CHANGELOG.md"
+PUBLIC_FETCH_USER_AGENT = "FoldWise-Release-Publisher/1.0"
 
 
 class PublicationError(RuntimeError):
@@ -426,16 +427,21 @@ class SystemPublicFetcher:
     def fetch(self, url: str) -> bytes | None:
         request = urllib.request.Request(
             url,
-            headers={"Cache-Control": "no-cache"},
+            headers={
+                "Cache-Control": "no-cache",
+                "User-Agent": PUBLIC_FETCH_USER_AGENT,
+            },
         )
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
                 return bytes(response.read())
         except urllib.error.HTTPError as error:
-            if error.code == 404:
+            status_code = error.code
+            error.close()
+            if status_code == 404:
                 return None
             raise PublicationError(
-                f"Public fetch failed for {url}: HTTP {error.code}.",
+                f"Public fetch failed for {url}: HTTP {status_code}.",
             ) from error
         except urllib.error.URLError as error:
             raise PublicationError(

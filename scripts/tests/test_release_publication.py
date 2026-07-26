@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import http.server
 import importlib.util
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -412,6 +414,41 @@ class SparkleAppcastGeneratorTests(unittest.TestCase):
                 )
 
             self.assertEqual(runner.commands, [])
+
+
+class SystemPublicFetcherTests(unittest.TestCase):
+    def testFetchUsesApplicationUserAgentAcceptedByCloudflare(self) -> None:
+        class CloudflareLikeHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                user_agent = self.headers.get("User-Agent", "")
+                status = (
+                    404
+                    if user_agent == "FoldWise-Release-Publisher/1.0"
+                    else 403
+                )
+                self.send_response(status)
+                self.end_headers()
+
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+        server = http.server.ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            CloudflareLikeHandler,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = release_publication.SystemPublicFetcher().fetch(
+                "http://127.0.0.1:"
+                f"{server.server_port}/controls/publication-frozen.json",
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+        self.assertIsNone(result)
 
 
 class R2UpdateOriginTests(unittest.TestCase):
