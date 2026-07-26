@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.18.1](https://github.com/hadrysm/foldwise-voice/compare/v0.18.0...v0.18.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* **ci:** restore routine release finalization ([#311](https://github.com/hadrysm/foldwise-voice/issues/311)) ([84c2898](https://github.com/hadrysm/foldwise-voice/commit/84c2898b16ce433034c7b0d066629baef6a5a428))
+* **releases:** harden recovery publication ([#315](https://github.com/hadrysm/foldwise-voice/issues/315)) ([a3a63ad](https://github.com/hadrysm/foldwise-voice/commit/a3a63ad8489b7b6e17d4fa7509e1ba061b919d53))
+* **releases:** identify public verification requests ([#313](https://github.com/hadrysm/foldwise-voice/issues/313)) ([3d63eff](https://github.com/hadrysm/foldwise-voice/commit/3d63eff0db1da2b706b7083f3e4bfc2ceef652ed))
+* **releases:** preserve recovery publication toolchain ([#314](https://github.com/hadrysm/foldwise-voice/issues/314)) ([f95b59f](https://github.com/hadrysm/foldwise-voice/commit/f95b59fcd00132c53241d48f330f0bc103ea36d5))
+
 ## [0.18.0](https://github.com/hadrysm/foldwise-voice/compare/v0.17.0...v0.18.0) (2026-07-25)
 
 
