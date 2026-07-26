@@ -2,21 +2,18 @@
 
 > **PROTOTYPE — throw this away after issue #333 is resolved.**
 
-## Question
+## Accepted direction
 
-How should Guided setup enter, hold, and release FoldWise's main window?
+**A — Shell takeover** is accepted. Guided setup is state above
+`SettingsModel.Pane`: the production titlebar remains while the sidebar and
+destination content are replaced. It is not a seventh Pane and does not reuse
+`isPaneAvailable`.
 
-This native SwiftUI wireframe compares three structural variants:
+The losing setup-rail and separate-root variants have been removed.
 
-- **A — Shell takeover:** Guided setup is state above the six-pane system. It
-  keeps the production titlebar but replaces the sidebar + destination area.
-- **B — Setup rail:** Guided setup replaces the app sidebar with a setup-only
-  progress rail. App destinations remain unreachable until release.
-- **C — Separate root:** the window swaps to a dedicated setup root and
-  restores `SettingsView` only on release.
+## Question still being resolved
 
-The variants deliberately stay visually rough. They answer an ownership and
-window-lifecycle question, not the map's still-open visual-design question.
+How should the accepted shell takeover hold and release the main window?
 
 Run from the repository root:
 
@@ -24,26 +21,30 @@ Run from the repository root:
 swift run --package-path Prototypes/GuidedSetupTakeoverPrototype
 ```
 
-Use the bottom switcher or the Left/Right arrow keys to compare variants. Drive
-these transitions in each:
+The prototype now makes every Setup step concrete:
 
-1. **Trigger permission-recovery request** while setup is active.
-2. **Close main window**, then reopen it.
-3. **Finish setup** and inspect the release destination.
-4. **Run setup again** from the simulated Home destination.
+1. **Accessibility** — choose automatic paste, a narrower global-shortcut
+   fallback, or Badge-only recording with clipboard delivery.
+2. **Speech model** — review the approximately 600 MB Parakeet download and
+   start it before continuing.
+3. **Microphone** — grant the only required permission and observe the hard
+   navigation gate.
+4. **Push-to-Talk shortcut** — keep Right Option or choose another valid key.
+5. **Polish** — keep complete Voice to Text or opt into Ollama and the
+   approximately 1.9 GB `qwen2.5:3b` model.
 
-The useful reactions are:
+No option is preselected. Back is absent from the first Setup step. Step changes
+move horizontally and crossfade; Reduce Motion removes the movement and uses an
+immediate state change.
 
-- Which representation has the right ownership boundary?
-- Should the Badge remain visible during the takeover?
-- Is closing the window an explicit Setup skipped outcome, or should the
-  takeover first ask for confirmation?
-- Is Home the right release destination, with no summary screen?
+Diagnostic actions now live in a visibly separate **Prototype controls** panel.
+Use them to trigger the permission-recovery interruption, preview Badge
+visibility, and compare direct close with close confirmation.
 
 ## Fixed constraints
 
-- The app promotes from `.accessory` to `.regular` whenever the main window is
-  shown, including automatic first-run entry.
+- Showing the main window promotes the app from `.accessory` to `.regular`;
+  closing returns it to `.accessory`.
 - The app's six-destination sidebar and its toggle are unreachable during the
   takeover.
 - A permission-recovery presentation request never opens a competing sheet
@@ -58,7 +59,9 @@ The useful reactions are:
 
 ## Deliberate boundaries
 
-- This prototype does not settle step copy or final visual design.
+- The prose is explanatory prototype copy, not final copy. The dedicated copy
+  ticket owns its exact wording and localization.
+- This prototype does not settle the map's final visual design.
 - It does not implement production state, persistence, permission polling, or
   window-controller behavior.
 - It does not make the Permission recovery guide part of first-run setup; that

@@ -1,14 +1,15 @@
 import AppKit
 import SwiftUI
 
-// Three variants of the Guided setup main-window takeover, switchable from
-// the fixed bottom prototype bar. PROTOTYPE — throw away after issue #333.
+// The accepted shell-takeover direction for Guided setup.
+// PROTOTYPE — throw away after issue #333.
 
 private enum Palette {
     static let canvas = Color(red: 7 / 255, green: 9 / 255, blue: 11 / 255)
     static let navigation = Color(red: 9 / 255, green: 11 / 255, blue: 14 / 255)
     static let surface = Color(red: 13 / 255, green: 16 / 255, blue: 19 / 255)
     static let raised = Color(red: 19 / 255, green: 23 / 255, blue: 27 / 255)
+    static let hover = Color(red: 26 / 255, green: 32 / 255, blue: 38 / 255)
     static let border = Color(red: 38 / 255, green: 44 / 255, blue: 50 / 255)
     static let primary = Color(red: 244 / 255, green: 245 / 255, blue: 246 / 255)
     static let secondary = Color(red: 164 / 255, green: 170 / 255, blue: 176 / 255)
@@ -18,56 +19,16 @@ private enum Palette {
     static let warning = Color(red: 240 / 255, green: 180 / 255, blue: 75 / 255)
 }
 
-private enum Variant: String, CaseIterable, Identifiable {
-    case shell
-    case rail
-    case root
-
-    var id: String {
-        rawValue
-    }
-
-    var key: String {
-        switch self {
-        case .shell: "A"
-        case .rail: "B"
-        case .root: "C"
-        }
-    }
-
-    var name: String {
-        switch self {
-        case .shell: "Shell takeover"
-        case .rail: "Setup rail"
-        case .root: "Separate root"
-        }
-    }
-
-    var representation: String {
-        switch self {
-        case .shell:
-            "A state above SettingsModel.Pane; SettingsView switches its root content."
-        case .rail:
-            "A setup-only navigation system beside the step; app panes stay intact but hidden."
-        case .root:
-            "SettingsController swaps the hosting controller to a dedicated GuidedSetupRoot."
-        }
-    }
-
-    var badgeVisibleDuringSetup: Bool {
-        switch self {
-        case .shell, .rail: true
-        case .root: false
-        }
-    }
-}
-
-private enum SetupStep: String, CaseIterable {
+private enum SetupStep: String, CaseIterable, Identifiable {
     case accessibility = "Accessibility"
     case speechModel = "Speech model"
     case microphone = "Microphone"
     case shortcut = "Push-to-Talk shortcut"
     case polish = "Polish"
+
+    var id: String {
+        rawValue
+    }
 
     var symbol: String {
         switch self {
@@ -78,6 +39,52 @@ private enum SetupStep: String, CaseIterable {
         case .polish: "sparkles"
         }
     }
+
+    var title: String {
+        switch self {
+        case .accessibility: "Choose how text reaches your apps"
+        case .speechModel: "Prepare on-device transcription"
+        case .microphone: "Let FoldWise hear you"
+        case .shortcut: "Choose how recording starts"
+        case .polish: "Choose whether FoldWise rewrites"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .accessibility:
+            "FoldWise can paste automatically, use a narrower shortcut permission, "
+                + "or work entirely from the Badge and clipboard."
+        case .speechModel:
+            "Speech stays on this Mac. FoldWise needs one local model before it "
+                + "can turn your voice into text."
+        case .microphone:
+            "Microphone access is the only required permission. Without it, "
+                + "FoldWise cannot record a Dictation session."
+        case .shortcut:
+            "Hold the shortcut while speaking, then release it to transcribe "
+                + "and insert the result."
+        case .polish:
+            "Voice to Text is complete without an LLM. Polish is an optional "
+                + "local rewrite for Modes such as Email and Bullets."
+        }
+    }
+}
+
+private enum InsertionChoice: String {
+    case automatic
+    case shortcutFallback
+    case badgeOnly
+}
+
+private enum ShortcutChoice: String {
+    case rightOption
+    case custom
+}
+
+private enum PolishChoice: String {
+    case voiceToText
+    case polish
 }
 
 private enum TakeoverOutcome: String {
@@ -88,12 +95,21 @@ private enum TakeoverOutcome: String {
 
 @MainActor
 private final class PrototypeModel: ObservableObject {
-    @Published var variant: Variant = .shell
     @Published var stepIndex = 0
     @Published var outcome: TakeoverOutcome = .active
     @Published var windowVisible = true
     @Published var recoveryRequestSuppressed = false
     @Published var permissionGuidePresented = false
+    @Published var insertionChoice: InsertionChoice?
+    @Published var speechDownloadStarted = false
+    @Published var speechDownloadProgress = 0.0
+    @Published var microphoneGranted = false
+    @Published var shortcutChoice: ShortcutChoice?
+    @Published var polishChoice: PolishChoice?
+    @Published var badgeVisibleDuringSetup = true
+    @Published var confirmsBeforeClose = true
+    @Published var closeConfirmationPresented = false
+    @Published var transitionDirection = 1
     @Published var event = "First launch opened Guided setup."
 
     var currentStep: SetupStep {
@@ -105,59 +121,85 @@ private final class PrototypeModel: ObservableObject {
     }
 
     var badgeVisible: Bool {
-        !setupActive || variant.badgeVisibleDuringSetup
+        !setupActive || badgeVisibleDuringSetup
     }
 
     var activationPolicy: String {
         windowVisible ? ".regular" : ".accessory"
     }
 
-    func select(_ newVariant: Variant) {
-        variant = newVariant
-        reset()
-        event = "Switched to \(newVariant.key) — \(newVariant.name)."
-    }
-
-    func cycle(_ offset: Int) {
-        let variants = Variant.allCases
-        guard let index = variants.firstIndex(of: variant) else { return }
-        let next = (index + offset + variants.count) % variants.count
-        select(variants[next])
-    }
-
-    func advance() {
-        guard setupActive else { return }
-        if stepIndex < SetupStep.allCases.count - 1 {
-            stepIndex += 1
-            event = "Advanced to \(currentStep.rawValue)."
-        } else {
-            finish()
+    var currentStepSatisfied: Bool {
+        switch currentStep {
+        case .accessibility: insertionChoice != nil
+        case .speechModel: speechDownloadStarted
+        case .microphone: microphoneGranted
+        case .shortcut: shortcutChoice != nil
+        case .polish: polishChoice != nil
         }
     }
 
-    func back() {
+    func advance(reduceMotion: Bool) {
+        guard setupActive, currentStepSatisfied else { return }
+        guard stepIndex < SetupStep.allCases.count - 1 else {
+            finish()
+            return
+        }
+        transitionDirection = 1
+        animate(reduceMotion: reduceMotion) {
+            self.stepIndex += 1
+        }
+        event = "Advanced to \(currentStep.rawValue)."
+    }
+
+    func back(reduceMotion: Bool) {
         guard setupActive, stepIndex > 0 else { return }
-        stepIndex -= 1
+        transitionDirection = -1
+        animate(reduceMotion: reduceMotion) {
+            self.stepIndex -= 1
+        }
         event = "Returned to \(currentStep.rawValue)."
+    }
+
+    func startSpeechDownload() {
+        speechDownloadStarted = true
+        speechDownloadProgress = 0.18
+        event = "Started the Parakeet download; it may continue behind later Setup steps."
+    }
+
+    func tickSpeechDownload() {
+        guard speechDownloadStarted else { return }
+        speechDownloadProgress = min(speechDownloadProgress + 0.21, 1)
+        event = speechDownloadProgress == 1
+            ? "Speech model is ready."
+            : "Speech-model progress updated in the window corner."
     }
 
     func triggerPermissionRecovery() {
         if setupActive {
             recoveryRequestSuppressed = true
             permissionGuidePresented = false
-            event = "Recovery show() was suppressed; Guided setup keeps ownership "
-                + "and refreshes permission state inline."
+            event = "Recovery presentation was suppressed; Guided setup refreshed permission state inline."
         } else {
             permissionGuidePresented = true
             event = "Returning-user Permission recovery guide presented."
         }
     }
 
-    func closeWindow() {
+    func requestClose() {
+        if setupActive, confirmsBeforeClose {
+            closeConfirmationPresented = true
+            event = "Close requested; confirmation keeps the outcome explicit."
+        } else {
+            commitClose()
+        }
+    }
+
+    func commitClose() {
+        closeConfirmationPresented = false
         windowVisible = false
         if setupActive {
             outcome = .skipped
-            event = "Window close committed the terminal Setup skipped outcome, then restored .accessory."
+            event = "Window close committed Setup skipped and restored .accessory."
         } else {
             event = "Window closed; app returned to menu-bar-only mode."
         }
@@ -165,21 +207,18 @@ private final class PrototypeModel: ObservableObject {
 
     func reopenWindow() {
         windowVisible = true
-        event = setupActive
-            ? "Main window reopened into Guided setup."
-            : "Main window reopened to Home."
+        event = setupActive ? "Reopened into Guided setup." : "Reopened to Home."
     }
 
     func finish() {
         outcome = .completed
-        stepIndex = SetupStep.allCases.count - 1
         recoveryRequestSuppressed = false
-        event = "Released the main window to Home; sidebar and its toggle are available again."
+        event = "Released the existing main-window shell to Home."
     }
 
     func runAgain() {
-        outcome = .active
         stepIndex = 0
+        outcome = .active
         windowVisible = true
         recoveryRequestSuppressed = false
         permissionGuidePresented = false
@@ -192,6 +231,22 @@ private final class PrototypeModel: ObservableObject {
         windowVisible = true
         recoveryRequestSuppressed = false
         permissionGuidePresented = false
+        insertionChoice = nil
+        speechDownloadStarted = false
+        speechDownloadProgress = 0
+        microphoneGranted = false
+        shortcutChoice = nil
+        polishChoice = nil
+        closeConfirmationPresented = false
+        event = "Prototype reset to a fresh first launch."
+    }
+
+    private func animate(reduceMotion: Bool, changes: @escaping () -> Void) {
+        if reduceMotion {
+            changes()
+        } else {
+            withAnimation(.easeInOut(duration: 0.28), changes)
+        }
     }
 }
 
@@ -212,35 +267,24 @@ private struct GuidedSetupTakeoverPrototypeApp: App {
 
 private struct PrototypeHost: View {
     @ObservedObject var model: PrototypeModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            Group {
-                if !model.windowVisible {
-                    ClosedWindowState(model: model)
-                } else if model.setupActive {
-                    switch model.variant {
-                    case .shell:
-                        ShellTakeover(model: model)
-                    case .rail:
-                        SetupRailTakeover(model: model)
-                    case .root:
-                        SeparateRootTakeover(model: model)
-                    }
-                } else {
-                    ReleasedHome(model: model)
-                }
+        ZStack {
+            if !model.windowVisible {
+                ClosedWindowState(model: model)
+            } else if model.setupActive {
+                ShellTakeover(model: model, reduceMotion: reduceMotion)
+            } else {
+                ReleasedHome(model: model)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            PrototypeSwitcher(model: model)
-                .padding(.bottom, 14)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Palette.canvas)
         .foregroundStyle(Palette.primary)
         .overlay(alignment: .topTrailing) {
-            StateInspector(model: model)
-                .padding(.top, 52)
+            PrototypeInspector(model: model)
+                .padding(.top, 64)
                 .padding(.trailing, 16)
         }
         .overlay(alignment: .topTrailing) {
@@ -249,14 +293,11 @@ private struct PrototypeHost: View {
                     .offset(x: -24, y: -31)
             }
         }
-        .focusable()
-        .onKeyPress(.leftArrow) {
-            model.cycle(-1)
-            return .handled
-        }
-        .onKeyPress(.rightArrow) {
-            model.cycle(1)
-            return .handled
+        .alert("Skip Guided setup?", isPresented: $model.closeConfirmationPresented) {
+            Button("Keep setting up", role: .cancel) {}
+            Button("Skip setup", role: .destructive) { model.commitClose() }
+        } message: {
+            Text("You can run setup again later from Settings.")
         }
     }
 }
@@ -292,217 +333,449 @@ private struct ProductionTitlebar: View {
 
 private struct ShellTakeover: View {
     @ObservedObject var model: PrototypeModel
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ProductionTitlebar(showsSidebarToggle: false)
-            ZStack {
-                Palette.canvas
-                VStack(alignment: .leading, spacing: 28) {
-                    SetupEyebrow(model: model, treatment: "WINDOW-ROOT STATE")
-                    StepHero(model: model)
-                        .frame(maxWidth: 560)
-                    SetupActions(model: model)
-                }
-                .frame(maxWidth: 640, alignment: .leading)
-                .padding(.horizontal, 64)
-                .padding(.vertical, 48)
-            }
-        }
-    }
-}
-
-private struct SetupRailTakeover: View {
-    @ObservedObject var model: PrototypeModel
+    let reduceMotion: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             ProductionTitlebar(showsSidebarToggle: false)
             HStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("GUIDED SETUP")
-                        .font(.system(size: 11, weight: .bold))
-                        .tracking(0.7)
-                        .foregroundStyle(Palette.secondary)
-                        .padding(.bottom, 8)
-                    ForEach(Array(SetupStep.allCases.enumerated()), id: \.offset) { index, step in
-                        HStack(spacing: 9) {
-                            Image(systemName: index < model.stepIndex ? "checkmark" : step.symbol)
-                                .frame(width: 18)
-                                .foregroundStyle(index == model.stepIndex ? Palette.accent : Palette.tertiary)
-                            Text(step.rawValue)
-                                .font(.system(size: 13, weight: index == model.stepIndex ? .semibold : .regular))
-                            Spacer()
-                        }
-                        .padding(.horizontal, 12)
-                        .frame(height: 36)
-                        .background(index == model.stepIndex ? Palette.raised : .clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                VStack(alignment: .leading, spacing: 24) {
+                    StepProgress(model: model)
+                    ZStack(alignment: .topLeading) {
+                        StepContent(model: model)
+                            .id(model.currentStep)
+                            .transition(stepTransition)
                     }
-                    Spacer()
-                    Text("App destinations return when setup releases the window.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Palette.tertiary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    StepNavigation(model: model, reduceMotion: reduceMotion)
                 }
-                .padding(16)
-                .frame(width: 220)
-                .background(Palette.navigation)
-                Rectangle().fill(Palette.border).frame(width: 1)
-                VStack(alignment: .leading, spacing: 28) {
-                    SetupEyebrow(model: model, treatment: "SETUP-ONLY NAVIGATION")
-                    StepHero(model: model)
-                        .frame(maxWidth: 560)
-                    SetupActions(model: model)
-                    Spacer()
-                }
-                .padding(.horizontal, 52)
-                .padding(.vertical, 48)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.canvas)
+                .padding(.leading, 56)
+                .padding(.trailing, 300)
+                .padding(.top, 34)
+                .padding(.bottom, 34)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-        }
-    }
-}
-
-private struct SeparateRootTakeover: View {
-    @ObservedObject var model: PrototypeModel
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Color.clear.frame(width: 70)
-                Text("GUIDED SETUP")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .tracking(1)
-                    .foregroundStyle(Palette.tertiary)
-                Spacer()
-                Text("\(model.stepIndex + 1) / \(SetupStep.allCases.count)")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Palette.secondary)
-                    .padding(.trailing, 18)
-            }
-            .frame(height: 52)
             .background(Palette.canvas)
-            ZStack {
-                Palette.canvas
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Palette.surface)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Palette.border, lineWidth: 1)
-                    }
-                    .frame(maxWidth: 680, maxHeight: 430)
-                VStack(alignment: .leading, spacing: 30) {
-                    HStack(spacing: 9) {
-                        Image(systemName: "waveform").foregroundStyle(Palette.accent)
-                        Text("FoldWise Voice")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    StepHero(model: model)
-                    SetupActions(model: model)
-                }
-                .frame(maxWidth: 560, alignment: .leading)
-                .padding(56)
-            }
         }
+    }
+
+    private var stepTransition: AnyTransition {
+        guard !reduceMotion else { return .identity }
+        let insertionEdge: Edge = model.transitionDirection > 0 ? .trailing : .leading
+        let removalEdge: Edge = model.transitionDirection > 0 ? .leading : .trailing
+        return .asymmetric(
+            insertion: .move(edge: insertionEdge).combined(with: .opacity),
+            removal: .move(edge: removalEdge).combined(with: .opacity)
+        )
     }
 }
 
-private struct SetupEyebrow: View {
+private struct StepProgress: View {
     @ObservedObject var model: PrototypeModel
-    let treatment: String
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(treatment)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .tracking(0.8)
-                .foregroundStyle(Palette.tertiary)
-            Rectangle().fill(Palette.border).frame(height: 1)
-            Text("\(model.stepIndex + 1) / \(SetupStep.allCases.count)")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundStyle(Palette.secondary)
-        }
-    }
-}
-
-private struct StepHero: View {
-    @ObservedObject var model: PrototypeModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Image(systemName: model.currentStep.symbol)
-                .font(.system(size: 26, weight: .medium))
-                .foregroundStyle(Palette.accent)
-            Text(model.currentStep.rawValue)
-                .font(.system(size: 30, weight: .semibold))
-            Text(stepDetail)
-                .font(.system(size: 14))
-                .foregroundStyle(Palette.secondary)
-                .lineSpacing(4)
-            if model.recoveryRequestSuppressed {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .foregroundStyle(Palette.warning)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Permission state refreshed here")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("The returning-user guide did not compete with Guided setup.")
-                            .font(.system(size: 12))
+            ForEach(Array(SetupStep.allCases.enumerated()), id: \.element.id) { index, step in
+                HStack(spacing: 7) {
+                    ZStack {
+                        Circle()
+                            .fill(index <= model.stepIndex ? Palette.accent : Palette.raised)
+                            .frame(width: 22, height: 22)
+                        if index < model.stepIndex {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(Color.black)
+                        } else {
+                            Text("\(index + 1)")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .foregroundStyle(index == model.stepIndex ? Color.black : Palette.tertiary)
+                        }
+                    }
+                    if index == model.stepIndex {
+                        Text(step.rawValue)
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(Palette.secondary)
                     }
                 }
-                .padding(14)
-                .background(Palette.surface)
-                .overlay(alignment: .leading) {
-                    Rectangle().fill(Palette.warning).frame(width: 3)
+                if index < SetupStep.allCases.count - 1 {
+                    Rectangle()
+                        .fill(index < model.stepIndex ? Palette.accent : Palette.border)
+                        .frame(maxWidth: 34)
+                        .frame(height: 1)
                 }
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: model.stepIndex)
+    }
+}
+
+private struct StepContent: View {
+    @ObservedObject var model: PrototypeModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(spacing: 10) {
+                Image(systemName: model.currentStep.symbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Palette.accent)
+                Text("SETUP STEP \(model.stepIndex + 1)")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .tracking(0.8)
+                    .foregroundStyle(Palette.tertiary)
+            }
+            Text(model.currentStep.title)
+                .font(.system(size: 30, weight: .semibold))
+            Text(model.currentStep.summary)
+                .font(.system(size: 14))
+                .foregroundStyle(Palette.secondary)
+                .lineSpacing(4)
+                .frame(maxWidth: 560, alignment: .leading)
+            detail
+                .frame(maxWidth: 590, alignment: .leading)
+            if model.recoveryRequestSuppressed {
+                StatusNotice(
+                    title: "Permission state refreshed here",
+                    detail: "The returning-user guide did not compete with Guided setup."
+                )
             }
         }
     }
 
-    private var stepDetail: String {
+    @ViewBuilder
+    private var detail: some View {
         switch model.currentStep {
         case .accessibility:
-            "Choose how completed text reaches other apps. Guided setup owns "
-                + "this permission state while the takeover is active."
+            AccessibilityDetail(model: model)
         case .speechModel:
-            "Prepare the on-device speech model. Progress can continue while you visit later Setup steps."
+            SpeechModelDetail(model: model)
         case .microphone:
-            "Allow FoldWise to hear you. This is the only hard gate in Guided setup."
+            MicrophoneDetail(model: model)
         case .shortcut:
-            "Keep Right Option or capture a different valid Push-to-Talk shortcut."
+            ShortcutDetail(model: model)
         case .polish:
-            "Keep complete Voice to Text, or opt into local rewriting through Ollama."
+            PolishDetail(model: model)
         }
     }
 }
 
-private struct SetupActions: View {
+private struct AccessibilityDetail: View {
     @ObservedObject var model: PrototypeModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 10) {
-                Button("Back") { model.back() }
-                    .buttonStyle(QuietButtonStyle())
-                    .disabled(model.stepIndex == 0)
-                Button(model.stepIndex == SetupStep.allCases.count - 1 ? "Finish" : "Continue") {
-                    model.advance()
-                }
-                .buttonStyle(PrimaryButtonStyle())
+        VStack(spacing: 10) {
+            ChoiceRow(
+                selected: model.insertionChoice == .automatic,
+                symbol: "arrow.down.doc",
+                title: "Paste automatically",
+                detail: "Accessibility lets FoldWise paste into the app you were using. "
+                    + "It also supports the global shortcut."
+            ) {
+                model.insertionChoice = .automatic
             }
-            HStack(spacing: 16) {
-                Button("Trigger permission-recovery request") {
-                    model.triggerPermissionRecovery()
-                }
-                Button("Close main window") {
-                    model.closeWindow()
-                }
+            ChoiceRow(
+                selected: model.insertionChoice == .shortcutFallback,
+                symbol: "keyboard",
+                title: "Use the narrower shortcut fallback",
+                detail: "Input Monitoring keeps the global shortcut; completed text "
+                    + "stays on the clipboard for you to paste."
+            ) {
+                model.insertionChoice = .shortcutFallback
             }
-            .buttonStyle(.link)
-            .font(.system(size: 12))
+            ChoiceRow(
+                selected: model.insertionChoice == .badgeOnly,
+                symbol: "capsule",
+                title: "Use the Badge and clipboard",
+                detail: "Decline both permissions. Start from the Badge and paste "
+                    + "completed text from the clipboard."
+            ) {
+                model.insertionChoice = .badgeOnly
+            }
         }
+    }
+}
+
+private struct SpeechModelDetail: View {
+    @ObservedObject var model: PrototypeModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            FactSurface(
+                facts: [
+                    ("MODEL", "Parakeet TDT v3"),
+                    ("DOWNLOAD", "About 600 MB"),
+                    ("RUNS ON", "Apple Neural Engine"),
+                    ("REQUIRED FOR", "Turning speech into text"),
+                ]
+            )
+            if model.speechDownloadStarted {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(model.speechDownloadProgress == 1 ? "Ready" : "Downloading in background")
+                        Spacer()
+                        Text("\(Int(model.speechDownloadProgress * 100))%")
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    }
+                    ProgressView(value: model.speechDownloadProgress)
+                        .tint(model.speechDownloadProgress == 1 ? Palette.success : Palette.accent)
+                    Text("You may continue. Dictation becomes ready only after the model is complete.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Palette.secondary)
+                }
+            } else {
+                Button("Start 600 MB download") { model.startSpeechDownload() }
+                    .buttonStyle(QuietButtonStyle())
+            }
+        }
+    }
+}
+
+private struct MicrophoneDetail: View {
+    @ObservedObject var model: PrototypeModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            FactSurface(
+                facts: [
+                    ("WHY", "Capture your voice for Dictation"),
+                    ("DATA", "Audio is processed on this Mac"),
+                    ("GATE", "Required before setup can continue"),
+                ]
+            )
+            Button(model.microphoneGranted ? "Microphone allowed" : "Allow microphone") {
+                model.microphoneGranted = true
+                model.event = "Microphone authorization observed; the hard gate is satisfied."
+            }
+            .buttonStyle(QuietButtonStyle())
+            .disabled(model.microphoneGranted)
+        }
+    }
+}
+
+private struct ShortcutDetail: View {
+    @ObservedObject var model: PrototypeModel
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ChoiceRow(
+                selected: model.shortcutChoice == .rightOption,
+                symbol: "option",
+                title: "Keep Right Option",
+                detail: "Hold Right Option while speaking and release it when finished. "
+                    + "This valid default works immediately."
+            ) {
+                model.shortcutChoice = .rightOption
+            }
+            ChoiceRow(
+                selected: model.shortcutChoice == .custom,
+                symbol: "keyboard.badge.ellipsis",
+                title: "Choose another shortcut",
+                detail: "Capture a different key that does not collide with Toggle "
+                    + "Recording or Mode cycle."
+            ) {
+                model.shortcutChoice = .custom
+            }
+        }
+    }
+}
+
+private struct PolishDetail: View {
+    @ObservedObject var model: PrototypeModel
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ChoiceRow(
+                selected: model.polishChoice == .voiceToText,
+                symbol: "text.quote",
+                title: "Keep Voice to Text",
+                detail: "Insert the raw transcript. No LLM, extra app, or additional "
+                    + "model download is required."
+            ) {
+                model.polishChoice = .voiceToText
+            }
+            ChoiceRow(
+                selected: model.polishChoice == .polish,
+                symbol: "sparkles",
+                title: "Set up Polish",
+                detail: "Install and start Ollama, then download qwen2.5:3b "
+                    + "(about 1.9 GB) for local Mode-based rewriting."
+            ) {
+                model.polishChoice = .polish
+            }
+        }
+    }
+}
+
+private struct StepNavigation: View {
+    @ObservedObject var model: PrototypeModel
+    let reduceMotion: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if model.stepIndex > 0 {
+                Button("Back") { model.back(reduceMotion: reduceMotion) }
+                    .buttonStyle(QuietButtonStyle())
+                    .transition(.opacity)
+            }
+            Button(model.stepIndex == SetupStep.allCases.count - 1 ? "Finish setup" : "Continue") {
+                model.advance(reduceMotion: reduceMotion)
+            }
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(!model.currentStepSatisfied)
+            Spacer()
+        }
+        .animation(.easeOut(duration: 0.16), value: model.stepIndex)
+    }
+}
+
+private struct ChoiceRow: View {
+    let selected: Bool
+    let symbol: String
+    let title: String
+    let detail: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 13) {
+                Image(systemName: symbol)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(selected ? Palette.accent : Palette.tertiary)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(Palette.primary)
+                    Text(detail)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.secondary)
+                        .lineSpacing(2)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer()
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selected ? Palette.accent : Palette.tertiary)
+            }
+            .padding(14)
+            .background(selected ? Palette.raised : Palette.surface)
+            .overlay(alignment: .leading) {
+                if selected {
+                    Rectangle().fill(Palette.accent).frame(width: 2)
+                }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 8).stroke(Palette.border, lineWidth: 1)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct FactSurface: View {
+    let facts: [(String, String)]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(facts.enumerated()), id: \.offset) { index, fact in
+                HStack {
+                    Text(fact.0)
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .tracking(0.6)
+                        .foregroundStyle(Palette.tertiary)
+                    Spacer()
+                    Text(fact.1)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Palette.primary)
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 34)
+                if index < facts.count - 1 {
+                    Rectangle().fill(Palette.border).frame(height: 1)
+                }
+            }
+        }
+        .background(Palette.surface)
+        .overlay {
+            RoundedRectangle(cornerRadius: 8).stroke(Palette.border, lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct StatusNotice: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .foregroundStyle(Palette.warning)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Palette.secondary)
+            }
+        }
+        .padding(14)
+        .background(Palette.surface)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(Palette.warning).frame(width: 3)
+        }
+    }
+}
+
+private struct PrototypeInspector: View {
+    @ObservedObject var model: PrototypeModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("PROTOTYPE CONTROLS")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .tracking(0.8)
+                .foregroundStyle(Palette.tertiary)
+            fact("Representation", "Shell takeover")
+            fact("Activation", model.activationPolicy)
+            fact("App sidebar", model.setupActive ? "unreachable" : "available")
+            fact("Outcome", model.outcome.rawValue)
+            Toggle("Show Badge during setup", isOn: $model.badgeVisibleDuringSetup)
+                .toggleStyle(.switch)
+                .font(.system(size: 11))
+            Toggle("Confirm before close", isOn: $model.confirmsBeforeClose)
+                .toggleStyle(.switch)
+                .font(.system(size: 11))
+            if model.speechDownloadStarted, model.speechDownloadProgress < 1 {
+                Button("Advance model download") { model.tickSpeechDownload() }
+                    .buttonStyle(InspectorButtonStyle())
+            }
+            Button("Trigger permission recovery") { model.triggerPermissionRecovery() }
+                .buttonStyle(InspectorButtonStyle())
+            Button("Simulate main-window close") { model.requestClose() }
+                .buttonStyle(InspectorButtonStyle())
+            Button("Reset prototype") { model.reset() }
+                .buttonStyle(InspectorButtonStyle())
+            Text(model.event)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(width: 260, alignment: .leading)
+        .background(Palette.surface.opacity(0.98))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8).stroke(Palette.border, lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func fact(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label).foregroundStyle(Palette.tertiary)
+            Spacer()
+            Text(value).foregroundStyle(Palette.primary)
+        }
+        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
     }
 }
 
@@ -537,40 +810,33 @@ private struct ReleasedHome: View {
                 .background(Palette.navigation)
                 Rectangle().fill(Palette.border).frame(width: 1)
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("Home")
-                        .font(.system(size: 30, weight: .semibold))
+                    Text("Home").font(.system(size: 30, weight: .semibold))
                     HStack(spacing: 10) {
                         Image(systemName: model.outcome == .completed ? "checkmark.circle" : "minus.circle")
                             .foregroundStyle(model.outcome == .completed ? Palette.success : Palette.warning)
                         Text(model.outcome.rawValue)
                             .font(.system(size: 14, weight: .semibold))
                     }
-                    Text(
-                        "Guided setup released the existing main-window shell. "
-                            + "There is no separate summary destination."
-                    )
-                    .font(.system(size: 14))
-                    .foregroundStyle(Palette.secondary)
+                    Text("Guided setup released the existing main-window shell.")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Palette.secondary)
                     Button("Run setup again") { model.runAgain() }
                         .buttonStyle(QuietButtonStyle())
-                    Button("Trigger returning-user permission recovery") {
+                    Button("Open Permission recovery guide") {
                         model.triggerPermissionRecovery()
                     }
-                    .buttonStyle(.link)
+                    .buttonStyle(QuietButtonStyle())
                     Spacer()
                 }
                 .padding(48)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .sheet(isPresented: Binding(
-            get: { model.permissionGuidePresented },
-            set: { model.permissionGuidePresented = $0 }
-        )) {
+        .sheet(isPresented: $model.permissionGuidePresented) {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Permission recovery guide")
                     .font(.system(size: 22, weight: .semibold))
-                Text("This sheet exists only after Guided setup has released the window.")
+                Text("This sheet exists only after Guided setup releases the window.")
                     .foregroundStyle(Palette.secondary)
                 Button("Done") { model.permissionGuidePresented = false }
                     .buttonStyle(PrimaryButtonStyle())
@@ -592,7 +858,7 @@ private struct ClosedWindowState: View {
                 .foregroundStyle(Palette.tertiary)
             Text("Main window is closed")
                 .font(.system(size: 24, weight: .semibold))
-            Text("The real app would now be menu-bar-only with activation policy .accessory.")
+            Text("The app is menu-bar-only again with activation policy .accessory.")
                 .foregroundStyle(Palette.secondary)
             Text(model.outcome.rawValue)
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -600,50 +866,6 @@ private struct ClosedWindowState: View {
             Button("Reopen main window") { model.reopenWindow() }
                 .buttonStyle(PrimaryButtonStyle())
         }
-    }
-}
-
-private struct StateInspector: View {
-    @ObservedObject var model: PrototypeModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("MECHANICS")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .tracking(0.8)
-                .foregroundStyle(Palette.tertiary)
-            fact("Representation", model.variant.name)
-            fact("Activation", model.activationPolicy)
-            fact("Window", model.windowVisible ? "shown" : "closed")
-            fact("App sidebar", model.setupActive ? "unreachable" : "available")
-            fact("Badge", model.badgeVisible ? "visible" : "hidden")
-            fact("Outcome", model.outcome.rawValue)
-            Divider().overlay(Palette.border)
-            Text(model.variant.representation)
-                .font(.system(size: 10))
-                .foregroundStyle(Palette.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(model.event)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Palette.primary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(12)
-        .frame(width: 250, alignment: .leading)
-        .background(Palette.surface.opacity(0.96))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8).stroke(Palette.border, lineWidth: 1)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func fact(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label).foregroundStyle(Palette.tertiary)
-            Spacer()
-            Text(value).foregroundStyle(Palette.primary)
-        }
-        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
     }
 }
 
@@ -666,54 +888,50 @@ private struct BadgePreview: View {
     }
 }
 
-private struct PrototypeSwitcher: View {
-    @ObservedObject var model: PrototypeModel
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Button { model.cycle(-1) } label: {
-                Image(systemName: "arrow.left")
-            }
-            Text("\(model.variant.key) — \(model.variant.name)")
-                .font(.system(size: 12, weight: .semibold))
-                .frame(minWidth: 150)
-            Button { model.cycle(1) } label: {
-                Image(systemName: "arrow.right")
-            }
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 14)
-        .frame(height: 38)
-        .background(Color.white)
-        .foregroundStyle(Color.black)
-        .clipShape(Capsule())
-        .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
-    }
-}
-
 private struct PrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
             .padding(.horizontal, 16)
             .frame(height: 34)
-            .background(configuration.isPressed ? Palette.accent.opacity(0.8) : Palette.accent)
-            .foregroundStyle(Color.black)
+            .background(isEnabled ? Palette.accent : Palette.raised)
+            .foregroundStyle(isEnabled ? Color.black : Palette.tertiary)
             .clipShape(RoundedRectangle(cornerRadius: 6))
+            .opacity(configuration.isPressed ? 0.82 : 1)
     }
 }
 
 private struct QuietButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
             .padding(.horizontal, 16)
             .frame(height: 34)
-            .background(configuration.isPressed ? Palette.raised : Palette.surface)
-            .foregroundStyle(Palette.primary)
+            .background(configuration.isPressed ? Palette.hover : Palette.surface)
+            .foregroundStyle(isEnabled ? Palette.primary : Palette.tertiary)
             .overlay {
                 RoundedRectangle(cornerRadius: 6).stroke(Palette.border, lineWidth: 1)
             }
             .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+private struct InspectorButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 10.5, weight: .medium))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(configuration.isPressed ? Palette.hover : Palette.raised)
+            .foregroundStyle(Palette.secondary)
+            .overlay {
+                RoundedRectangle(cornerRadius: 5).stroke(Palette.border, lineWidth: 1)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 5))
     }
 }
