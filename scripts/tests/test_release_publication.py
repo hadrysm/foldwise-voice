@@ -26,16 +26,20 @@ class FakeInputRunner:
         *,
         object_list: dict[str, object] | None = None,
         head_object: dict[str, object] | None = None,
+        events: list[str] | None = None,
     ) -> None:
         self.generated_appcast = generated_appcast
         self.object_list = object_list or {}
         self.head_object = head_object or {}
+        self.events = events
         self.commands: list[list[str]] = []
         self.json_commands: list[list[str]] = []
         self.standard_inputs: list[str | None] = []
 
     def run_json(self, command: list[str]) -> dict[str, object]:
         self.json_commands.append(command)
+        if self.events is not None:
+            self.events.append(command[command.index("s3api") + 1])
         if "head-object" in command:
             return self.head_object
         return self.object_list
@@ -43,6 +47,8 @@ class FakeInputRunner:
     def run_input(self, command: list[str], value: str | None) -> None:
         self.commands.append(command)
         self.standard_inputs.append(value)
+        if self.events is not None:
+            self.events.append(command[command.index("s3api") + 1])
         if self.generated_appcast is not None and "-o" in command:
             output = Path(command[command.index("-o") + 1])
             output.write_text(self.generated_appcast)
@@ -52,12 +58,17 @@ class FakeFetcher:
     def __init__(
         self,
         responses: dict[str, bytes | None | list[bytes | None]],
+        *,
+        events: list[str] | None = None,
     ) -> None:
         self.responses = responses
+        self.events = events
         self.requests: list[str] = []
 
     def fetch(self, url: str) -> bytes | None:
         self.requests.append(url)
+        if self.events is not None:
+            self.events.append("fetch")
         response = self.responses.get(url)
         if isinstance(response, list):
             return response.pop(0)
@@ -572,7 +583,7 @@ class R2UpdateOriginTests(unittest.TestCase):
             dmg.write_bytes(b"stapled DMG bytes")
             digest = hashlib.sha256(dmg.read_bytes()).hexdigest()
             url = f"https://updates.guarcode.com/releases/{dmg.name}"
-            fetcher = FakeFetcher({url: [None, dmg.read_bytes()]})
+            fetcher = FakeFetcher({url: dmg.read_bytes()})
             runner = FakeInputRunner()
             origin = release_publication.R2UpdateOrigin(
                 runner,
@@ -598,9 +609,9 @@ class R2UpdateOriginTests(unittest.TestCase):
                 command[command.index("--if-none-match") + 1],
                 "*",
             )
-            self.assertEqual(fetcher.requests, [url, url])
+            self.assertEqual(fetcher.requests, [url])
 
-    def testStageArchiveRefusesToOverwriteDifferentPublicBytes(self) -> None:
+    def testStageArchiveRejectsPersistentlyDifferentPublicBytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             dmg = Path(directory) / "FoldWise-Voice-0.18.0.dmg"
             dmg.write_bytes(b"stapled DMG bytes")
@@ -613,12 +624,17 @@ class R2UpdateOriginTests(unittest.TestCase):
                 bucket="foldwise-updates",
                 endpoint="https://account.r2.cloudflarestorage.com",
                 public_base_url="https://updates.guarcode.com",
+                verification_delays=(),
             )
 
             with self.assertRaises(release_publication.ArtifactMismatch):
                 origin.stage_archive(dmg, digest)
 
-            self.assertEqual(runner.commands, [])
+            command = runner.commands[0]
+            self.assertEqual(
+                command[command.index("--if-none-match") + 1],
+                "*",
+            )
 
     def testStageArchiveRetriesPublicVerificationAfterUpload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -629,7 +645,6 @@ class R2UpdateOriginTests(unittest.TestCase):
             fetcher = FakeFetcher(
                 {
                     url: [
-                        None,
                         b"temporarily stale public bytes",
                         dmg.read_bytes(),
                     ]
@@ -648,8 +663,34 @@ class R2UpdateOriginTests(unittest.TestCase):
 
             origin.stage_archive(dmg, digest)
 
-            self.assertEqual(fetcher.requests, [url, url, url])
+            self.assertEqual(fetcher.requests, [url, url])
             self.assertEqual(delays, [1.0])
+
+    def testStageArchiveDoesNotPrimeCached404BeforeUpload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dmg = Path(directory) / "FoldWise-Voice-0.18.1.dmg"
+            dmg.write_bytes(b"stapled DMG bytes")
+            digest = hashlib.sha256(dmg.read_bytes()).hexdigest()
+            url = f"https://updates.guarcode.com/releases/{dmg.name}"
+            events: list[str] = []
+            runner = FakeInputRunner(events=events)
+            fetcher = FakeFetcher({url: dmg.read_bytes()}, events=events)
+            origin = release_publication.R2UpdateOrigin(
+                runner,
+                fetcher=fetcher,
+                bucket="foldwise-updates",
+                endpoint="https://account.r2.cloudflarestorage.com",
+                public_base_url="https://updates.guarcode.com",
+                verification_delays=(),
+            )
+
+            origin.stage_archive(dmg, digest)
+
+            self.assertEqual(
+                events,
+                ["list-objects-v2", "put-object", "fetch"],
+            )
+            self.assertEqual(fetcher.requests, [url])
 
     def testStageArchiveWaitsWhenR2AlreadyHasHiddenObject(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
