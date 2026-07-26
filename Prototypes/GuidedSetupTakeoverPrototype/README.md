@@ -25,17 +25,21 @@ The prototype now makes every Setup step concrete:
 
 1. **Accessibility** — choose automatic paste, a narrower global-shortcut
    fallback, or Badge-only recording with clipboard delivery.
-2. **Speech model** — review the approximately 600 MB Parakeet download and
-   start it before continuing.
-3. **Microphone** — grant the only required permission and observe the hard
-   navigation gate.
-4. **Push-to-Talk shortcut** — keep Right Option or choose another valid key.
-5. **Polish** — keep complete Voice to Text or opt into Ollama and the
-   approximately 1.9 GB `qwen2.5:3b` model.
+2. **Speech model** — prepare Parakeet through a visual signal instrument that
+   makes its approximately 600 MB cost, 25-language reach, on-device execution,
+   and background progress legible.
+3. **Microphone** — grant the only required permission through a dedicated
+   permission instrument, then see the selected input become ready.
+4. **Push-to-Talk shortcut** — explicitly record the exact key or key
+   combination. There is no two-option choice and no preselected default.
+5. **Polish** — either confirm complete Voice to Text or follow the honest
+   Ollama path from issue #330: official macOS download/help, copyable Homebrew
+   commands, readiness recheck, and an in-app 1.9 GB `qwen2.5:3b` pull.
 
 No option is preselected. Back is absent from the first Setup step. Step changes
-move horizontally and crossfade; Reduce Motion removes the movement and uses an
-immediate state change.
+use a short spring choreography: the content travels only 34 points, softens,
+and crossfades while the active marker moves along the signal path. The progress
+rail and navigation stay anchored. Reduce Motion changes immediately.
 
 Diagnostic actions now live in a visibly separate **Prototype controls** panel.
 Use them to trigger the permission-recovery interruption, preview Badge
@@ -61,6 +65,8 @@ visibility, and compare direct close with close confirmation.
 
 - The prose is explanatory prototype copy, not final copy. The dedicated copy
   ticket owns its exact wording and localization.
+- Exact speech-model cancellation, failure, model-choice, and terminal-flow
+  behavior remain owned by “Decide the speech-model step's contract.”
 - This prototype does not settle the map's final visual design.
 - It does not implement production state, persistence, permission polling, or
   window-controller behavior.
