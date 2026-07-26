@@ -487,8 +487,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         private var hotkeyHealth: ShortcutListenerHealth?
         private var updaterController: SPUStandardUpdaterController?
         private var signalMonitor: UpdateRuntimeAcceptanceSignalMonitor?
-        private var didRequestTermination = false
         private var didRecordTerminationDeferral = false
+        private let relaunchDriver = UpdateRuntimeAcceptanceRelaunchDriver()
         private lazy var lifecycleCoordinator = DictationLifecycleCoordinator { [weak self] in
             self?.tearDown()
         }
@@ -567,7 +567,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         func shouldPostponeRelaunch(
             untilInvoking installHandler: @escaping () -> Void
         ) -> Bool {
-            lifecycleCoordinator.shouldPostponeRelaunch(untilInvoking: installHandler)
+            let postponed = lifecycleCoordinator.shouldPostponeRelaunch(
+                untilInvoking: installHandler
+            )
+            if postponed {
+                relaunchDriver.requestTerminationOnce {
+                    DispatchQueue.main.async {
+                        NSApp.terminate(nil)
+                    }
+                }
+            }
+            return postponed
         }
 
         func updater(
@@ -575,21 +585,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             willInstallUpdateOnQuit item: SUAppcastItem,
             immediateInstallationBlock: @escaping () -> Void
         ) -> Bool {
-            guard !didRequestTermination else { return false }
-            didRequestTermination = true
             do {
-                try record(
-                    "update-prepared",
-                    details: ["targetVersion": item.versionString]
+                return try relaunchDriver.beginImmediateInstallation(
+                    prepare: {
+                        try record(
+                            "update-prepared",
+                            details: ["targetVersion": item.versionString]
+                        )
+                    },
+                    install: immediateInstallationBlock
                 )
             } catch {
                 fail("could not record prepared update: \(error.localizedDescription)")
                 return false
             }
-            DispatchQueue.main.async {
-                NSApp.terminate(nil)
-            }
-            return false
         }
 
         func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
