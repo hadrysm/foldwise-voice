@@ -6,7 +6,7 @@ import Combine
 import SwiftUI
 
 struct HistoryPane: View {
-    @ObservedObject var model: SettingsModel
+    let interface: HistoryPaneInterface
     @State private var confirmingClearAll = false
     @State private var confirmingDeleteOnOff = false
     @State private var search = ""
@@ -19,13 +19,25 @@ struct HistoryPane: View {
     private let notificationCenter: NotificationCenter
 
     init(
+        interface: HistoryPaneInterface,
+        projectionCache: HistoryProjectionCache = HistoryProjectionCache(),
+        notificationCenter: NotificationCenter = .default
+    ) {
+        self.interface = interface
+        _projectionCache = State(initialValue: projectionCache)
+        self.notificationCenter = notificationCenter
+    }
+
+    init(
         model: SettingsModel,
         projectionCache: HistoryProjectionCache = HistoryProjectionCache(),
         notificationCenter: NotificationCenter = .default
     ) {
-        self.model = model
-        _projectionCache = State(initialValue: projectionCache)
-        self.notificationCenter = notificationCenter
+        self.init(
+            interface: model.historyPaneInterface,
+            projectionCache: projectionCache,
+            notificationCenter: notificationCenter
+        )
     }
 
     var body: some View {
@@ -35,10 +47,10 @@ struct HistoryPane: View {
                 .foregroundStyle(Theme.textSecondary)
                 .accessibilityIdentifier("history.assurance")
             preferences
-            if !model.saveHistory, !model.historyEntries.isEmpty {
+            if !interface.saveHistory, !interface.entries.isEmpty {
                 savingOffNotice
             }
-            if model.historyEntries.isEmpty {
+            if interface.entries.isEmpty {
                 emptyState
             } else {
                 populated
@@ -46,11 +58,11 @@ struct HistoryPane: View {
         }
         .paneFirstMeaningfulFrame(
             .history,
-            performance: model.panePerformance,
+            performance: interface.performance,
             isReady: projectionIsReady
         )
         .alert("Clear all dictation history?", isPresented: $confirmingClearAll) {
-            Button("Clear All", role: .destructive) { model.onClearHistory?() }
+            Button("Clear All", role: .destructive) { interface.clearHistory() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
@@ -59,7 +71,7 @@ struct HistoryPane: View {
             )
         }
         .alert("Delete saved dictations?", isPresented: $confirmingDeleteOnOff) {
-            Button("Delete", role: .destructive) { model.onClearHistory?() }
+            Button("Delete", role: .destructive) { interface.clearHistory() }
             Button("Keep", role: .cancel) {}
         } message: {
             Text(
@@ -81,18 +93,17 @@ struct HistoryPane: View {
             preferenceCell(
                 symbolName: "externaldrive",
                 title: "Save dictation history",
-                detail: model.saveHistory
+                detail: interface.saveHistory
                     ? "On · text only, on this Mac"
                     : "Off · new Dictation sessions are not saved"
             ) {
                 Toggle(
                     "",
                     isOn: Binding(
-                        get: { model.saveHistory },
+                        get: { interface.saveHistory },
                         set: { isOn in
-                            model.saveHistory = isOn
-                            model.onCommit?(.global)
-                            if !isOn, !model.historyEntries.isEmpty {
+                            interface.setSaveHistory(isOn)
+                            if !isOn, !interface.entries.isEmpty {
                                 confirmingDeleteOnOff = true
                             }
                         }
@@ -111,10 +122,9 @@ struct HistoryPane: View {
                 Picker(
                     "",
                     selection: Binding(
-                        get: { model.retention },
+                        get: { interface.retention },
                         set: { newValue in
-                            model.retention = newValue
-                            model.onCommit?(.global)
+                            interface.setRetention(newValue)
                         }
                     )
                 ) {
@@ -166,7 +176,7 @@ struct HistoryPane: View {
         EmberEmptyState(
             symbolName: "clock",
             title: "No saved Dictation sessions.",
-            detail: model.saveHistory
+            detail: interface.saveHistory
                 ? "Your saved text will appear here after you speak."
                 : "Turn on History when you want new Dictation sessions saved."
         )
@@ -193,7 +203,7 @@ struct HistoryPane: View {
                     projection: projection,
                     polishModes: polishModes,
                     onCommand: { entry, command in
-                        model.onHistoryCommand?(entry, command)
+                        interface.performHistoryCommand(entry, command)
                     }
                 )
             }
@@ -210,15 +220,15 @@ struct HistoryPane: View {
 
     private var projectionInput: HistoryProjection.Input {
         HistoryProjection.Input(
-            entries: model.historyEntries,
+            entries: interface.entries,
             search: search,
             flaggedOnly: flaggedOnly,
-            modes: model.modes
+            modes: interface.modes
         )
     }
 
     private var polishModes: [DictationRowPolishMode] {
-        model.modes.compactMap { mode in
+        interface.modes.compactMap { mode in
             guard mode.usesLLM, let id = mode.id else { return nil }
             return DictationRowPolishMode(id: id, name: mode.name)
         }

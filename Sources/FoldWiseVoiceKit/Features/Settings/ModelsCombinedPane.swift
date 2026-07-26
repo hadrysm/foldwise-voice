@@ -2,20 +2,28 @@ import AppKit
 import SwiftUI
 
 struct ModelsCombinedPane: View {
-    @ObservedObject var model: SettingsModel
+    let interface: ModelsPaneInterface
     @State private var inspectedID: ModelsRowID?
     @State private var pendingDestructiveAction: ModelsDestructiveAction?
     @State private var previousPolishRowIDs: [ModelsRowID] = []
     @FocusState private var focusedControl: ModelsFocusTarget?
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
+    init(interface: ModelsPaneInterface) {
+        self.interface = interface
+    }
+
+    init(model: SettingsModel) {
+        self.init(interface: model.modelsPaneInterface)
+    }
+
     private var projection: ModelsWorkspaceProjection {
         ModelsWorkspaceProjection.make(
-            asrSnapshot: model.asrSnapshot,
-            asrFailures: model.asrFailures,
-            polishState: model.polishModelsState,
-            modes: model.modes,
-            inspectedID: model.requestedPolishInspection.map(ModelsRowID.polish) ?? inspectedID,
+            asrSnapshot: interface.asrSnapshot,
+            asrFailures: interface.asrFailures,
+            polishState: interface.polishState,
+            modes: interface.modes,
+            inspectedID: interface.requestedPolishInspection.map(ModelsRowID.polish) ?? inspectedID,
             previousPolishRowIDs: previousPolishRowIDs
         )
     }
@@ -36,11 +44,11 @@ struct ModelsCombinedPane: View {
         .onChange(of: presentation) { _, updated in
             reconcileInspection(with: updated)
         }
-        .onChange(of: model.asrSnapshot) { previous, current in
+        .onChange(of: interface.asrSnapshot) { previous, current in
             applyASRFocusTransition(from: previous, to: current)
             announceASRTransition(from: previous, to: current)
         }
-        .onChange(of: model.polishModelsState) { previous, current in
+        .onChange(of: interface.polishState) { previous, current in
             applyPolishFocusTransition(from: previous, to: current)
             announce(
                 ModelsPolishAnnouncementTransition.resolve(from: previous, to: current)
@@ -84,7 +92,7 @@ struct ModelsCombinedPane: View {
     }
 
     private var destinationPadding: CGFloat {
-        ThemeLayoutPolicy.destinationPadding(windowWidth: model.windowWidth)
+        ThemeLayoutPolicy.destinationPadding(windowWidth: interface.windowWidth)
     }
 
     private func ledger(_ presentation: ModelsWorkspaceProjection) -> some View {
@@ -343,7 +351,7 @@ struct ModelsCombinedPane: View {
     private func ledgerState(_ row: ModelsRowPresentation) -> some View {
         if let progress = row.progress {
             if progress.allowsCancellation {
-                Button { model.onCancelASROperation?() } label: {
+                Button { interface.cancelASROperation() } label: {
                     VStack(alignment: .trailing, spacing: 2) {
                         if let fraction = progress.fraction {
                             ProgressView(value: fraction)
@@ -444,19 +452,25 @@ struct ModelsCombinedPane: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if presentation.showsInstallByNameForm {
-                    TextField("model:tag", text: $model.customModel)
-                        .font(Theme.data)
-                        .textFieldStyle(.plain)
-                        .padding(.horizontal, 8)
-                        .frame(height: 28)
-                        .emberControlSurface()
-                        .disabled(presentation.inputDisabledReason != nil)
-                        .help(
-                            presentation.inputDisabledReason
-                                ?? "Enter an Ollama model name in model:tag form"
+                    TextField(
+                        "model:tag",
+                        text: Binding(
+                            get: { interface.customModel },
+                            set: interface.setCustomModel
                         )
-                        .accessibilityLabel("Ollama model name")
-                        .accessibilityHint(presentation.inputDisabledReason ?? "")
+                    )
+                    .font(Theme.data)
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .emberControlSurface()
+                    .disabled(presentation.inputDisabledReason != nil)
+                    .help(
+                        presentation.inputDisabledReason
+                            ?? "Enter an Ollama model name in model:tag form"
+                    )
+                    .accessibilityLabel("Ollama model name")
+                    .accessibilityHint(presentation.inputDisabledReason ?? "")
                 }
                 if let error = presentation.errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -540,7 +554,7 @@ struct ModelsCombinedPane: View {
             .accessibilityLabel("\(progress.label), \(progress.status)")
             .accessibilityValue(progress.accessibilityValue)
             if progress.allowsCancellation, let id {
-                Button("Cancel") { model.onCancelASROperation?() }
+                Button("Cancel") { interface.cancelASROperation() }
                     .buttonStyle(EmberButtonStyle(kind: .quiet))
                     .focused($focusedControl, equals: .inspectorCancel(id))
                     .accessibilityLabel("Cancel \(progress.label.lowercased())")
@@ -577,23 +591,23 @@ struct ModelsCombinedPane: View {
                 modelID: modelID,
                 help: "Select this ASR model",
                 disabledReason: disabledReason
-            ) { model.onSelectASRModel?(modelID) }
+            ) { interface.selectASRModel(modelID) }
         case let .downloadASR(modelID):
             asrActionButton(
                 "Download",
                 modelID: modelID,
                 help: "Download this ASR model",
                 disabledReason: disabledReason
-            ) { model.onDownloadASRModel?(modelID) }
+            ) { interface.downloadASRModel(modelID) }
         case let .downloadAgainASR(modelID):
             asrActionButton(
                 "Download again",
                 modelID: modelID,
                 help: "Download this saved ASR model again",
                 disabledReason: disabledReason
-            ) { model.onDownloadASRModel?(modelID) }
+            ) { interface.downloadASRModel(modelID) }
         case .retryASRBootstrap:
-            Button("Retry") { model.onRetryASRBootstrap?() }
+            Button("Retry") { interface.retryASRBootstrap() }
                 .buttonStyle(EmberButtonStyle(kind: .primary))
                 .focused($focusedControl, equals: .inspectorPrimary(id))
         case .installed:
@@ -603,21 +617,21 @@ struct ModelsCombinedPane: View {
                 .focusable()
                 .focused($focusedControl, equals: .inspectorPrimary(id))
         case let .installPolish(name):
-            Button("Install") { model.onInstallModel?(name) }
+            Button("Install") { interface.installPolishModel(name) }
                 .buttonStyle(EmberButtonStyle(kind: .primary))
                 .disabled(disabledReason != nil)
                 .help(disabledReason ?? "Install \(name)")
                 .accessibilityHint(disabledReason ?? "")
                 .focused($focusedControl, equals: .inspectorPrimary(id))
         case .installCustomPolish:
-            Button("Install") { model.onInstallCustomModel?() }
+            Button("Install") { interface.installCustomPolishModel() }
                 .buttonStyle(EmberButtonStyle(kind: .primary))
                 .disabled(disabledReason != nil)
                 .help(disabledReason ?? "Install the entered Ollama model")
                 .accessibilityHint(disabledReason ?? "")
                 .focused($focusedControl, equals: .inspectorPrimary(id))
         case .retryPolish:
-            Button("Retry") { model.onRefreshModels?() }
+            Button("Retry") { interface.refreshPolishModels() }
                 .buttonStyle(EmberButtonStyle(kind: .primary))
                 .focused($focusedControl, equals: .inspectorPrimary(id))
         }
@@ -680,9 +694,9 @@ struct ModelsCombinedPane: View {
                 }
             }
         }
-        if let requested = model.requestedPolishInspection,
+        if let requested = interface.requestedPolishInspection,
            presentation.inspector?.id == .polish(requested) {
-            model.requestedPolishInspection = nil
+            interface.clearRequestedPolishInspection()
         }
         let currentPolishRowIDs = presentation.sections
             .first { $0.id == .polish }?.rows.map(\.id) ?? []
@@ -782,8 +796,8 @@ struct ModelsCombinedPane: View {
 
     private func perform(_ action: ModelsDestructiveAction) {
         switch action.command {
-        case let .deleteASR(id): model.onDeleteASRModel?(id)
-        case let .uninstallPolish(name): model.onDeleteModel?(name)
+        case let .deleteASR(id): interface.deleteASRModel(id)
+        case let .uninstallPolish(name): interface.deletePolishModel(name)
         }
     }
 

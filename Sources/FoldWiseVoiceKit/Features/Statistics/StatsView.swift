@@ -8,7 +8,7 @@ struct StatsEnvironmentAdaptations: Equatable {
 }
 
 struct StatsPane: View {
-    @ObservedObject var model: SettingsModel
+    let interface: StatsPaneInterface
     @Environment(\.locale) private var environmentLocale
     @Environment(\.accessibilityReduceMotion) private var environmentReduceMotion
     @Environment(\.colorSchemeContrast) private var environmentContrast
@@ -21,6 +21,22 @@ struct StatsPane: View {
     private let environmentOverride: StatsEnvironmentAdaptations?
 
     init(
+        interface: StatsPaneInterface,
+        projectionCache: StatsProjectionCache = StatsProjectionCache(),
+        calendar: @escaping () -> Calendar = { .autoupdatingCurrent },
+        locale: Locale? = nil,
+        notificationCenter: NotificationCenter = .default,
+        environmentOverride: StatsEnvironmentAdaptations? = nil
+    ) {
+        self.interface = interface
+        _projectionCache = State(initialValue: projectionCache)
+        self.calendar = calendar
+        self.locale = locale
+        self.notificationCenter = notificationCenter
+        self.environmentOverride = environmentOverride
+    }
+
+    init(
         model: SettingsModel,
         projectionCache: StatsProjectionCache = StatsProjectionCache(),
         calendar: @escaping () -> Calendar = { .autoupdatingCurrent },
@@ -28,12 +44,14 @@ struct StatsPane: View {
         notificationCenter: NotificationCenter = .default,
         environmentOverride: StatsEnvironmentAdaptations? = nil
     ) {
-        self.model = model
-        _projectionCache = State(initialValue: projectionCache)
-        self.calendar = calendar
-        self.locale = locale
-        self.notificationCenter = notificationCenter
-        self.environmentOverride = environmentOverride
+        self.init(
+            interface: model.statsPaneInterface,
+            projectionCache: projectionCache,
+            calendar: calendar,
+            locale: locale,
+            notificationCenter: notificationCenter,
+            environmentOverride: environmentOverride
+        )
     }
 
     var body: some View {
@@ -53,7 +71,7 @@ struct StatsPane: View {
         }
         .paneFirstMeaningfulFrame(
             .stats,
-            performance: model.panePerformance,
+            performance: interface.performance,
             isReady: projection != nil
         )
         .onChange(of: input, initial: true) { _, input in
@@ -71,11 +89,7 @@ struct StatsPane: View {
     }
 
     private var input: StatsProjection.Input {
-        StatsProjection.Input(
-            entries: model.historyEntries,
-            currentStreak: model.currentStreak,
-            savingEnabled: model.saveHistory
-        )
+        interface.input
     }
 
     private var resolvedEnvironment: StatsEnvironmentAdaptations {
@@ -119,7 +133,7 @@ struct StatsPane: View {
     }
 
     private func openHistory() {
-        model.selectPane(.history)
+        interface.openHistory()
     }
 }
 

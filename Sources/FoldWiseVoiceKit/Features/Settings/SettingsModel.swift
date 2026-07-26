@@ -1,6 +1,7 @@
 // Observable state for the settings window. SettingsController owns the
 // instance and wires the callbacks; SettingsView renders it.
 
+import Observation
 import SwiftUI
 
 enum SettingsFeedbackOwner: Equatable {
@@ -21,7 +22,8 @@ enum SettingsAppearanceLayout: Equatable {
 }
 
 @MainActor
-final class SettingsModel: ObservableObject {
+@Observable
+final class SettingsModel {
     let panePerformance: PaneNavigationPerformance
 
     init() {
@@ -79,51 +81,51 @@ final class SettingsModel: ObservableObject {
         }
     }
 
-    @Published var pane: Pane = .home
-    @Published var canCheckForUpdates = false
-    @Published var selectedModel = ""
+    var pane: Pane = .home
+    var canCheckForUpdates = false
+    var selectedModel = ""
     /// The lifecycle is the single source of ASR truth. Presentation properties
     /// below derive from one immutable value so Settings cannot expose mixed
     /// selected/available/operating states while snapshots change.
-    @Published private(set) var asrSnapshot: ASRModelLifecycleSnapshot?
+    private(set) var asrSnapshot: ASRModelLifecycleSnapshot?
     private(set) var asrFailures = ModelsASRFailures()
-    @Published var installed: [OllamaClient.InstalledModel]? // nil = checking, [] = Ollama down
-    @Published var pullingModel: String?
-    @Published var pullStatus = ""
-    @Published var pullFraction: Double?
-    @Published var pullFailures = ModelsOperationFailures()
-    @Published var deletingModel: String?
-    @Published var deleteFailures = ModelsOperationFailures()
-    @Published var customModel = ""
-    @Published var requestedPolishInspection: String?
-    @Published var pttKey = ""
-    @Published var toggleKey = ""
-    @Published var cycleKey = ""
-    @Published var pauseAudio = true
-    @Published var appearance: AppearancePreference = .system
-    @Published var inputState = AudioInputState(
+    var installed: [OllamaClient.InstalledModel]? // nil = checking, [] = Ollama down
+    var pullingModel: String?
+    var pullStatus = ""
+    var pullFraction: Double?
+    var pullFailures = ModelsOperationFailures()
+    var deletingModel: String?
+    var deleteFailures = ModelsOperationFailures()
+    var customModel = ""
+    var requestedPolishInspection: String?
+    var pttKey = ""
+    var toggleKey = ""
+    var cycleKey = ""
+    var pauseAudio = true
+    var appearance: AppearancePreference = .system
+    var inputState = AudioInputState(
         devices: [], systemDefault: nil, preferredUID: nil, preferredName: nil,
         effectiveDevice: nil, pendingDevice: nil,
         status: .unavailable(message: "No input device is available.")
     )
     /// Master "Save dictation history" switch, surfaced in the History pane.
-    @Published var saveHistory = true
+    var saveHistory = true
     /// Auto-delete window for history, a control distinct from `saveHistory`.
-    @Published var retention = RetentionWindow.default
+    var retention = RetentionWindow.default
     /// Sidebar rendering rule: seeded from Config's persisted preference when
     /// the window opens; explicit toggles mutate it and commit the preference.
-    @Published var sidebar = SidebarPresentation(prefersCollapsed: false)
+    var sidebar = SidebarPresentation(prefersCollapsed: false)
     /// Live window width, feeding the sidebar's auto-collapse rule.
-    @Published var windowWidth: Double = 980
+    var windowWidth: Double = 980
     /// The rail tile currently under the pointer, driving its tooltip chip.
-    @Published var hoveredRailPane: Pane?
-    @Published var status = ""
-    @Published var statusIsError = false
-    @Published var statusOwner = SettingsFeedbackOwner.global
-    @Published var recordingField: RecordingField?
-    @Published var shortcutListenerHealth: ShortcutListenerHealth = .global
-    @Published var configurationRecoveryMessage: String?
-    @Published var permissionRecovery = PermissionRecoveryWorkflow.State()
+    var hoveredRailPane: Pane?
+    var status = ""
+    var statusIsError = false
+    var statusOwner = SettingsFeedbackOwner.global
+    var recordingField: RecordingField?
+    var shortcutListenerHealth: ShortcutListenerHealth = .global
+    var configurationRecoveryMessage: String?
+    var permissionRecovery = PermissionRecoveryWorkflow.State()
 
     func selectPane(_ destination: Pane) {
         guard destination != pane else { return }
@@ -267,63 +269,63 @@ final class SettingsModel: ObservableObject {
         asrCatalog.first { $0.id == id }?.name ?? id
     }
 
-    @Published var modeSelection = ModePresentationFactory.projection(
+    var modeSelection = ModePresentationFactory.projection(
         modes: [], selection: .voiceToText
     )
-    @Published var modes: [Mode] = []
-    @Published var modeEditor: ModeEditorState?
-    @Published var modePendingDeletion: ModeDeletionState?
+    var modes: [Mode] = []
+    var modeEditor: ModeEditorState?
+    var modePendingDeletion: ModeDeletionState?
     /// Loaded from the HistoryStore when the window opens and re-read after a
     /// delete or clear-all, so the History pane reflects the store live.
-    @Published var historyEntries: [HistoryEntry] = []
+    var historyEntries: [HistoryEntry] = []
     /// The lifetime streak to show, computed by the controller from the StatsStore
     /// through `StreakRules.display`: the run's length while it is alive (last
     /// active today or yesterday), `nil` — rendered "No active streak" — when it
     /// has lapsed or never started. Refreshed on window open and as new dictations
     /// append.
-    @Published var currentStreak: Int?
+    var currentStreak: Int?
 
     // wired by SettingsController
-    var onCommit: ((SettingsFeedbackOwner) -> Void)?
-    var onSelectInputDevice: ((String?) -> Void)?
-    var onRecord: ((RecordingField) -> Void)?
-    var onOpenShortcutPermissions: (() -> Void)?
-    var onOpenPermissionRecovery: (() -> Void)?
-    var onDismissPermissionRecovery: (() -> Void)?
-    var onRevealShortcutFallback: (() -> Void)?
-    var onRequestPermission: ((PermissionKind) -> Void)?
-    var onOpenPermissionSettings: ((PermissionKind) -> Void)?
-    var onSelectMode: ((DictationSelection) -> Void)?
-    var onAddMode: (() -> Void)?
-    var onEditMode: ((ModeID) -> Void)?
-    var onDuplicateMode: ((ModeID) -> Void)?
-    var onMoveMode: ((ModeID, ModeMoveDirection) -> Void)?
-    var onRequestModeDeletion: ((ModeID) -> Void)?
-    var onConfirmModeDeletion: (() -> Void)?
-    var onCancelModeDeletion: (() -> Void)?
-    var onSaveModeEditor: (() -> Void)?
-    var onCancelModeEditor: (() -> Void)?
-    var onInstallModel: ((String) -> Void)?
-    var onInstallCustomModel: (() -> Void)?
-    var onDeleteModel: ((String) -> Void)?
-    var onRefreshModels: (() -> Void)?
+    @ObservationIgnored var onCommit: ((SettingsFeedbackOwner) -> Void)?
+    @ObservationIgnored var onSelectInputDevice: ((String?) -> Void)?
+    @ObservationIgnored var onRecord: ((RecordingField) -> Void)?
+    @ObservationIgnored var onOpenShortcutPermissions: (() -> Void)?
+    @ObservationIgnored var onOpenPermissionRecovery: (() -> Void)?
+    @ObservationIgnored var onDismissPermissionRecovery: (() -> Void)?
+    @ObservationIgnored var onRevealShortcutFallback: (() -> Void)?
+    @ObservationIgnored var onRequestPermission: ((PermissionKind) -> Void)?
+    @ObservationIgnored var onOpenPermissionSettings: ((PermissionKind) -> Void)?
+    @ObservationIgnored var onSelectMode: ((DictationSelection) -> Void)?
+    @ObservationIgnored var onAddMode: (() -> Void)?
+    @ObservationIgnored var onEditMode: ((ModeID) -> Void)?
+    @ObservationIgnored var onDuplicateMode: ((ModeID) -> Void)?
+    @ObservationIgnored var onMoveMode: ((ModeID, ModeMoveDirection) -> Void)?
+    @ObservationIgnored var onRequestModeDeletion: ((ModeID) -> Void)?
+    @ObservationIgnored var onConfirmModeDeletion: (() -> Void)?
+    @ObservationIgnored var onCancelModeDeletion: (() -> Void)?
+    @ObservationIgnored var onSaveModeEditor: (() -> Void)?
+    @ObservationIgnored var onCancelModeEditor: (() -> Void)?
+    @ObservationIgnored var onInstallModel: ((String) -> Void)?
+    @ObservationIgnored var onInstallCustomModel: (() -> Void)?
+    @ObservationIgnored var onDeleteModel: ((String) -> Void)?
+    @ObservationIgnored var onRefreshModels: (() -> Void)?
     /// Speech pane actions select an already-downloaded model as active or
     /// download an available model's weights.
-    var onSelectASRModel: ((String) -> Void)?
-    var onDownloadASRModel: ((String) -> Void)?
+    @ObservationIgnored var onSelectASRModel: ((String) -> Void)?
+    @ObservationIgnored var onDownloadASRModel: ((String) -> Void)?
     /// Abort an in-flight download/prepare and return the row to its pre-download
     /// state, so a slow or stalled fetch (or the post-100% compile) can be escaped.
-    var onCancelASROperation: (() -> Void)?
-    var onRetryASRBootstrap: (() -> Void)?
+    @ObservationIgnored var onCancelASROperation: (() -> Void)?
+    @ObservationIgnored var onRetryASRBootstrap: (() -> Void)?
     /// Delete a downloaded model's on-disk weights to reclaim space (#95). If it
     /// was selected, the lifecycle commits Parakeet before removing its data.
-    var onDeleteASRModel: ((String) -> Void)?
-    var onCheckUpdates: (() -> Void)?
+    @ObservationIgnored var onDeleteASRModel: ((String) -> Void)?
+    @ObservationIgnored var onCheckUpdates: (() -> Void)?
     /// One semantic row-action seam. Clear All remains collection-level.
-    var onHistoryCommand: ((HistoryEntry, DictationRowCommand) -> Void)?
-    var onClearHistory: (() -> Void)?
-    var onResetConfiguration: (() -> Void)?
-    var onQuitRecovery: (() -> Void)?
+    @ObservationIgnored var onHistoryCommand: ((HistoryEntry, DictationRowCommand) -> Void)?
+    @ObservationIgnored var onClearHistory: (() -> Void)?
+    @ObservationIgnored var onResetConfiguration: (() -> Void)?
+    @ObservationIgnored var onQuitRecovery: (() -> Void)?
 
     var configurationReadOnly: Bool {
         configurationRecoveryMessage != nil

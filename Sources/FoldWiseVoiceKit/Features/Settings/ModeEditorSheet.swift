@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ModeEditorSheet: View {
-    @ObservedObject var model: SettingsModel
+    var model: SettingsModel
     @State private var iconPickerPresented = false
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 

@@ -1,4 +1,3 @@
-import Combine
 import XCTest
 @testable import FoldWiseVoiceKit
 
@@ -313,17 +312,15 @@ final class SettingsControllerWiringTests: XCTestCase {
             status: .unavailable(message: "No input device is available.")
         )
 
-        let published = expectation(description: "Input state published to Settings")
-        var observation: AnyCancellable?
-        observation = controller.model.$inputState.dropFirst().sink { state in
-            if state == changed {
-                published.fulfill()
-            }
+        let invalidated = expectation(description: "Input state invalidated Settings")
+        withObservationTracking {
+            _ = controller.model.inputState
+        } onChange: {
+            invalidated.fulfill()
         }
 
         inputDevices.onInputStateChange?(changed)
-        await fulfillment(of: [published], timeout: 1)
-        withExtendedLifetime(observation) {}
+        await fulfillment(of: [invalidated], timeout: 1)
 
         XCTAssertEqual(controller.model.inputState, changed)
     }

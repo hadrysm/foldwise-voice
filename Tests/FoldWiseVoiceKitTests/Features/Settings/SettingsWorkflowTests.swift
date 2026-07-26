@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import XCTest
 @testable import FoldWiseVoiceKit
 
@@ -1628,6 +1627,7 @@ final class SettingsWorkflowTests: XCTestCase {
         workflow.retryASRBootstrap()
         await waitForASRState(model) {
             model.asrDownloaded.contains(ASRModelCatalog.defaultID)
+                && !model.hasActiveASRManagementOperation
         }
         let recovered = ASRBootstrapPresentationState(
             downloading: model.asrDownloading,
@@ -1686,7 +1686,10 @@ final class SettingsWorkflowTests: XCTestCase {
         )
 
         await lifecycle.start()
-        await waitForASRState(model) { model.asrDownloadError.contains("engine rejected") }
+        await waitForASRState(model) {
+            model.asrDownloadError.contains("engine rejected")
+                && model.canRetryASRBootstrap
+        }
         let failed = ASRBootstrapPresentationState(
             downloading: model.asrDownloading,
             fraction: model.asrDownloadFraction,
@@ -1698,7 +1701,11 @@ final class SettingsWorkflowTests: XCTestCase {
 
         effects.asrAdapter.setEnginePreparationError(nil)
         workflow.retryASRBootstrap()
-        await waitUntil { model.asrDownloadError.isEmpty }
+        await waitForASRState(model) {
+            model.asrDownloadError.isEmpty
+                && model.asrDownloaded.contains(ASRModelCatalog.defaultID)
+                && !model.hasActiveASRManagementOperation
+        }
         let recovered = ASRBootstrapPresentationState(
             downloading: model.asrDownloading,
             fraction: model.asrDownloadFraction,
@@ -2760,20 +2767,21 @@ final class SettingsWorkflowTests: XCTestCase {
             effects: makeModelEffects(pull: { _, _ in "connection refused" })
         )
         var failureWhenOperationEnded: String?
-        let operationSubscription = model.$pullingModel.dropFirst().sink { target in
-            if target == nil {
+
+        workflow.installLLMModel("llama3.2:3b")
+        withObservationTracking {
+            _ = model.pullingModel
+        } onChange: {
+            MainActor.assumeIsolated {
                 failureWhenOperationEnded = model.pullFailures.message(for: "llama3.2:3b")
             }
         }
-
-        workflow.installLLMModel("llama3.2:3b")
         await waitUntil { model.pullingModel == nil }
 
         XCTAssertEqual(
             failureWhenOperationEnded,
             "Couldn't install llama3.2:3b: connection refused"
         )
-        withExtendedLifetime(operationSubscription) {}
     }
 
     func testCustomLLMInstallTrimsOnlyOuterWhitespaceAndPreservesInputAfterFailure() async {
@@ -2913,17 +2921,18 @@ final class SettingsWorkflowTests: XCTestCase {
             effects: makeModelEffects(deleteLLM: { _ in "busy" })
         )
         var failureWhenOperationEnded: String?
-        let operationSubscription = model.$deletingModel.dropFirst().sink { target in
-            if target == nil {
+
+        workflow.deleteLLMModel("old:latest")
+        withObservationTracking {
+            _ = model.deletingModel
+        } onChange: {
+            MainActor.assumeIsolated {
                 failureWhenOperationEnded = model.deleteFailures.message(for: "old:latest")
             }
         }
-
-        workflow.deleteLLMModel("old:latest")
         await waitUntil { model.deletingModel == nil }
 
         XCTAssertEqual(failureWhenOperationEnded, "Couldn't uninstall old:latest: busy")
-        withExtendedLifetime(operationSubscription) {}
     }
 
     func testRetryingOneUninstallClearsOnlyThatModelsFailure() async {
@@ -3617,24 +3626,12 @@ final class SettingsWorkflowTests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) async {
-        let published = expectation(description: "ASR snapshot matches predicate")
-        let cancellable = model.$asrSnapshot
-            .receive(on: DispatchQueue.main)
-            .first { _ in predicate() }
-            .sink { _ in published.fulfill() }
-        await fulfillment(of: [published], timeout: 1)
-        withExtendedLifetime(cancellable) {}
-        XCTAssertTrue(predicate(), file: file, line: line)
-    }
-
-    private func waitForPublishedValue<Value>(
-        _ publisher: Published<Value>.Publisher,
-        matching predicate: @escaping (Value) -> Bool
-    ) async {
-        let published = expectation(description: "Published value matches predicate")
-        let cancellable = publisher.first(where: predicate).sink { _ in published.fulfill() }
-        await fulfillment(of: [published], timeout: 1)
-        withExtendedLifetime(cancellable) {}
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
+        await waitUntil(predicate, file: file, line: line)
     }
 
     private func makeConfig(path: URL? = nil) -> Config {

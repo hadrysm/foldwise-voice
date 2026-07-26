@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct PermissionRecoveryGuide: View {
-    @ObservedObject var model: SettingsModel
+    var model: SettingsModel
 
     private var state: PermissionRecoveryWorkflow.State {
         model.permissionRecovery

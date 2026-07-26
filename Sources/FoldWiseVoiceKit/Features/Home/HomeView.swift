@@ -18,7 +18,7 @@ struct HomeView: View {
         }
     }
 
-    @ObservedObject var model: SettingsModel
+    let interface: HomePaneInterface
     private let now: () -> Date
     private let calendar: Calendar
     private let locale: Locale
@@ -33,6 +33,24 @@ struct HomeView: View {
     @State private var projectionIsReady = false
 
     init(
+        interface: HomePaneInterface,
+        now: @escaping () -> Date = Date.init,
+        calendar: Calendar = .current,
+        locale: Locale = .current,
+        notificationCenter: NotificationCenter = .default,
+        project: @escaping (HomeProjection.Input, Date, Calendar, Locale) -> HomeProjection = {
+            HomeProjection.project($0, now: $1, calendar: $2, locale: $3)
+        }
+    ) {
+        self.interface = interface
+        self.now = now
+        self.calendar = calendar
+        self.locale = locale
+        self.notificationCenter = notificationCenter
+        self.project = project
+    }
+
+    init(
         model: SettingsModel,
         now: @escaping () -> Date = Date.init,
         calendar: Calendar = .current,
@@ -42,19 +60,21 @@ struct HomeView: View {
             HomeProjection.project($0, now: $1, calendar: $2, locale: $3)
         }
     ) {
-        self.model = model
-        self.now = now
-        self.calendar = calendar
-        self.locale = locale
-        self.notificationCenter = notificationCenter
-        self.project = project
+        self.init(
+            interface: model.homePaneInterface,
+            now: now,
+            calendar: calendar,
+            locale: locale,
+            notificationCenter: notificationCenter,
+            project: project
+        )
     }
 
     var body: some View {
         main
             .paneFirstMeaningfulFrame(
                 .home,
-                performance: model.panePerformance,
+                performance: interface.performance,
                 isReady: projectionIsReady
             )
             .onChange(of: projectionInput, initial: true) { _, input in
@@ -68,11 +88,11 @@ struct HomeView: View {
     }
 
     private var projectionInput: HomeProjection.Input {
-        HomeProjection.Input(entries: model.historyEntries, modes: model.modes)
+        interface.projectionInput
     }
 
     private var overviewLayout: HomeOverviewLayout {
-        HomeOverviewLayout.forWindowWidth(model.windowWidth)
+        HomeOverviewLayout.forWindowWidth(interface.windowWidth)
     }
 
     private func refreshProjection(_ input: HomeProjection.Input) {
@@ -101,7 +121,7 @@ struct HomeView: View {
                 } else {
                     dictationList
                     Button {
-                        model.selectPane(.history)
+                        interface.selectPane(.history)
                     } label: {
                         Text("All history →")
                     }
@@ -121,7 +141,7 @@ struct HomeView: View {
     private var hotkeyHint: some View {
         HStack(spacing: 6) {
             Text("Hold")
-            Keycap(text: keycapLabel(model.pttKey))
+            Keycap(text: keycapLabel(interface.pushToTalkKey))
             Text("and speak — release to insert at your cursor.")
         }
         .font(Theme.body)
@@ -143,7 +163,7 @@ struct HomeView: View {
                                 presentation: row.presentation,
                                 moreCapabilities: nil,
                                 onCommand: { command in
-                                    model.onHistoryCommand?(row.entry, command)
+                                    interface.performHistoryCommand(row.entry, command)
                                 }
                             )
                             if index < section.rows.count - 1 {
@@ -254,12 +274,12 @@ struct HomeView: View {
     }
 
     private var streakText: String? {
-        guard let days = model.currentStreak else { return nil }
+        guard let days = interface.currentStreak else { return nil }
         return "\(days)"
     }
 
     private var streakUnit: String {
-        model.currentStreak == 1 ? "day" : "days"
+        interface.currentStreak == 1 ? "day" : "days"
     }
 
     private var timeSavedText: String? {
@@ -270,7 +290,7 @@ struct HomeView: View {
     /// The at-a-glance system summary: active ASR model, Polish model,
     /// permissions, version — plus a link into Stats.
     private var systemStatusCard: some View {
-        let fullRecovery = model.permissionRecovery.snapshot.hasFullRecovery
+        let fullRecovery = interface.permissionSnapshot.hasFullRecovery
         return EmberSurface(level: .raised) {
             HStack(spacing: 12) {
                 EmberIngress(color: Theme.accent)
@@ -292,13 +312,13 @@ struct HomeView: View {
                 HStack(spacing: 8) {
                     if !fullRecovery {
                         Button("Permissions…") {
-                            model.onOpenPermissionRecovery?()
+                            interface.openPermissionRecovery()
                         }
                         .buttonStyle(EmberButtonStyle(kind: .quiet))
                         .accessibilityIdentifier("home.permission-recovery")
                     }
                     Button("Stats →") {
-                        model.selectPane(.stats)
+                        interface.selectPane(.stats)
                     }
                     .buttonStyle(EmberButtonStyle(kind: .quiet))
                 }
@@ -312,15 +332,17 @@ struct HomeView: View {
 
     private var summaryLine: String {
         [
-            model.effectiveASRModelName,
-            model.selectedModel.isEmpty ? "no polish model" : model.selectedModel,
+            interface.effectiveASRModelName,
+            interface.selectedPolishModel.isEmpty
+                ? "no polish model"
+                : interface.selectedPolishModel,
             permissionSummary,
             "v\(AppInfo.version)",
         ].joined(separator: " · ")
     }
 
     private var permissionSummary: String {
-        let snapshot = model.permissionRecovery.snapshot
+        let snapshot = interface.permissionSnapshot
         if snapshot.hasFullRecovery {
             return "permissions granted"
         }
