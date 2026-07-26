@@ -60,7 +60,7 @@ final class PanePerformanceReportTests: XCTestCase {
         )
         try JSONEncoder().encode(plan).write(to: url)
 
-        XCTAssertEqual(try PanePerformancePlan.load(from: url), plan)
+        XCTAssertEqual(try loadPlan(from: url), plan)
     }
 
     func testPlanRejectsAnEmptySampleSet() throws {
@@ -74,35 +74,47 @@ final class PanePerformanceReportTests: XCTestCase {
         )
         try JSONEncoder().encode(plan).write(to: url)
 
-        XCTAssertThrowsError(try PanePerformancePlan.load(from: url))
+        XCTAssertThrowsError(try loadPlan(from: url))
     }
 
     func testPlanRejectsTheLiveApplicationSupportProfile() throws {
         let url = directory.appendingPathComponent("plan.json")
+        let liveDataDirectory = directory.appendingPathComponent("live")
         let plan = PanePerformancePlan(
             profile: .empty,
             outputURL: directory.appendingPathComponent("result.json"),
-            dataDirectory: JSONLHistoryStore.defaultURL.deletingLastPathComponent(),
+            dataDirectory: liveDataDirectory,
             sampleCount: 20,
             destinations: [.home]
         )
         try JSONEncoder().encode(plan).write(to: url)
 
-        XCTAssertThrowsError(try PanePerformancePlan.load(from: url))
+        XCTAssertThrowsError(
+            try PanePerformancePlan.load(
+                from: url,
+                liveDataDirectory: liveDataDirectory
+            )
+        )
     }
 
     func testPlanRejectsAnOutputInLiveApplicationSupport() throws {
         let url = directory.appendingPathComponent("plan.json")
+        let liveDataDirectory = directory.appendingPathComponent("live")
         let plan = PanePerformancePlan(
             profile: .empty,
-            outputURL: JSONLHistoryStore.defaultURL,
+            outputURL: liveDataDirectory.appendingPathComponent("history.jsonl"),
             dataDirectory: directory.appendingPathComponent("profile"),
             sampleCount: 20,
             destinations: [.home]
         )
         try JSONEncoder().encode(plan).write(to: url)
 
-        XCTAssertThrowsError(try PanePerformancePlan.load(from: url))
+        XCTAssertThrowsError(
+            try PanePerformancePlan.load(
+                from: url,
+                liveDataDirectory: liveDataDirectory
+            )
+        )
     }
 
     func testRunReportWritesMachineReadableRawResults() throws {
@@ -129,6 +141,13 @@ final class PanePerformanceReportTests: XCTestCase {
                 from: Data(contentsOf: outputURL)
             ),
             report
+        )
+    }
+
+    private func loadPlan(from url: URL) throws -> PanePerformancePlan {
+        try PanePerformancePlan.load(
+            from: url,
+            liveDataDirectory: directory.appendingPathComponent("live")
         )
     }
 }

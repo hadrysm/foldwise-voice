@@ -7,7 +7,10 @@ struct PanePerformancePlan: Codable, Equatable {
     let sampleCount: Int
     let destinations: [SettingsModel.Pane]
 
-    static func load(from url: URL) throws -> PanePerformancePlan {
+    static func load(
+        from url: URL,
+        liveDataDirectory: URL = JSONLHistoryStore.defaultURL.deletingLastPathComponent()
+    ) throws -> PanePerformancePlan {
         let plan = try JSONDecoder().decode(
             PanePerformancePlan.self,
             from: Data(contentsOf: url)
@@ -23,8 +26,7 @@ struct PanePerformancePlan: Codable, Equatable {
         guard plan.outputURL.isFileURL, plan.dataDirectory.isFileURL else {
             throw PanePerformancePlanError.nonFileURL
         }
-        let liveDirectory = JSONLHistoryStore.defaultURL
-            .deletingLastPathComponent()
+        let liveDirectory = liveDataDirectory
             .standardizedFileURL
             .resolvingSymlinksInPath()
         let locations = [plan.outputURL, plan.dataDirectory].map {
