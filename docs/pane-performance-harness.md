@@ -49,6 +49,10 @@ cold sample installs a fresh `SettingsView` before navigating. A warm sample
 primes the destination, returns to the source in the same host, and then
 measures the revisit. This preserves disposable destination views and allows
 later controller-retained projection work to become observably warm.
+After every first-meaningful-frame marker, the driver waits 350 ms outside the
+measured interval. This returns control to the run loop, drains transient view
+work, and lets the 280 ms sidebar-selection animation finish before the next
+independent journey.
 
 `FirstWindowOpening` is a separate signposted interval from loading the
 profile's production JSONL History through settings-window construction to

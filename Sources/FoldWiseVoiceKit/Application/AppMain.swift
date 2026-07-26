@@ -556,6 +556,7 @@ private final class PanePerformanceApplication {
             )
             window?.displayIfNeeded()
         }
+        await settleAfterFrame()
         return model
     }
 
@@ -563,10 +564,20 @@ private final class PanePerformanceApplication {
         _ model: SettingsModel,
         to destination: SettingsModel.Pane
     ) async -> Double {
-        await withCheckedContinuation { continuation in
+        let duration = await withCheckedContinuation { continuation in
             navigationContinuation = (destination, continuation)
             model.selectPane(destination)
             window?.displayIfNeeded()
+        }
+        await settleAfterFrame()
+        return duration
+    }
+
+    private func settleAfterFrame() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(350)) {
+                continuation.resume()
+            }
         }
     }
 
