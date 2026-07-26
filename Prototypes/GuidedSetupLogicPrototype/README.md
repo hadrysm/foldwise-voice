@@ -6,18 +6,19 @@
 
 Does this five-step state model make the promises of Guided setup honest?
 
-1. Microphone
+1. Accessibility
 2. Speech model
-3. Accessibility
+3. Microphone
 4. Push-to-Talk shortcut
 5. Polish
 
-The proposal puts the speech model immediately after the only hard gate so its
-download can continue behind every later choice. It treats shortcut selection
-as a real Setup step, but as confirmation of the valid `alt_r` default rather
-than required reconfiguration. It also keeps **Setup completed** independent
-from **Dictation ready**: starting the speech-model download is enough to leave
-that Setup step, but only an observable ready model makes Dictation ready.
+The accepted order puts the optional insertion permission first, starts the
+speech-model download second so it can continue behind every later choice, and
+then reaches Microphone as the only hard gate. It treats shortcut selection as
+a real Setup step, but as confirmation of the valid `alt_r` default rather than
+required reconfiguration. It also keeps **Setup completed** independent from
+**Dictation ready**: starting the speech-model download is enough to leave that
+Setup step, but only an observable ready model makes Dictation ready.
 
 Run it from the repository root:
 

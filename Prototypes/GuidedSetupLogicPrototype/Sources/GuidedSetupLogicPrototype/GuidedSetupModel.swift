@@ -1,7 +1,7 @@
 enum SetupStep: String, CaseIterable, Hashable {
-    case microphone = "Microphone"
-    case speechModel = "Speech model"
     case accessibility = "Accessibility"
+    case speechModel = "Speech model"
+    case microphone = "Microphone"
     case shortcut = "Push-to-Talk shortcut"
     case polish = "Polish"
 
@@ -146,7 +146,7 @@ enum PolishChoice: String {
 
 struct GuidedSetupState {
     var status: SetupStatus = .active
-    var step: SetupStep = .microphone
+    var step: SetupStep = .accessibility
     var outcomes: [SetupStep: StepOutcome] = [:]
 
     var microphone: MicrophoneState = .notDetermined
@@ -328,7 +328,7 @@ enum GuidedSetupReducer {
 
         case .runSetupAgain:
             state.status = .active
-            state.step = .microphone
+            state.step = .accessibility
             state.outcomes = [:]
             state.notice = "Re-run started from live configuration; nothing was reset."
 
