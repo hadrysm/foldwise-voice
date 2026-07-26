@@ -111,7 +111,6 @@ private final class PrototypeModel: ObservableObject {
     @Published var polishChoice: PolishChoice?
     @Published var ollamaPhase = OllamaSetupPhase.notDetected
     @Published var polishPullProgress = 0.0
-    @Published var confirmsBeforeClose = true
     @Published var closeConfirmationPresented = false
     @Published var transitionDirection = 1
     @Published var event = "First launch opened Guided setup."
@@ -242,7 +241,7 @@ private final class PrototypeModel: ObservableObject {
     }
 
     func requestClose() {
-        if setupActive, confirmsBeforeClose {
+        if setupActive {
             closeConfirmationPresented = true
             event = "Close requested; confirmation keeps the outcome explicit."
         } else {
@@ -1475,9 +1474,6 @@ private struct PrototypeInspector: View {
             fact("Activation", model.activationPolicy)
             fact("App sidebar", model.setupActive ? "unreachable" : "available")
             fact("Outcome", model.outcome.rawValue)
-            Toggle("Confirm before close", isOn: $model.confirmsBeforeClose)
-                .toggleStyle(.switch)
-                .font(.system(size: 11))
             if model.speechDownloadStarted, model.speechDownloadProgress < 1 {
                 Button("Advance model download") { model.tickSpeechDownload() }
                     .buttonStyle(InspectorButtonStyle())

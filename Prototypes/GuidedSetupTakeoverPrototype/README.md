@@ -42,8 +42,8 @@ and crossfades while the active marker moves along the signal path. The progress
 rail and navigation stay anchored. Reduce Motion changes immediately.
 
 Diagnostic actions now live in a visibly separate **Prototype controls** panel.
-Use them to trigger the permission-recovery interruption and compare direct
-close with close confirmation.
+Use them to trigger the permission-recovery interruption and the settled
+close-confirmation path.
 
 ## Fixed constraints
 
@@ -53,6 +53,9 @@ close with close confirmation.
   takeover.
 - The live Badge is hidden throughout the takeover because Dictation may not be
   usable yet. It returns when Guided setup finishes, skips, or closes.
+- Closing during the takeover asks the person to **Keep setting up** or
+  explicitly **Skip setup**. Confirming Skip records the terminal Setup skipped
+  outcome, closes the window, restores `.accessory`, and returns the Badge.
 - A permission-recovery presentation request never opens a competing sheet
   during Guided setup; the active Setup step owns the same live permission
   state.
