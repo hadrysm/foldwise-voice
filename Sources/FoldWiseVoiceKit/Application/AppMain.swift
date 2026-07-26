@@ -238,8 +238,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         pipeline.onState = { [weak self] state in
             Task { @MainActor in self?.apply(state) }
         }
-        pipeline.onSessionEvent = { [weak self] event in
-            Task { @MainActor in self?.lifecycleCoordinator?.sessionDidChange(event) }
+        pipeline.onSessionEvent = ApplicationRunLoop.handler { [weak self] event in
+            self?.lifecycleCoordinator?.sessionDidChange(event)
         }
         Task { [weak self] in
             for await snapshot in await asrLifecycle.snapshots() {
@@ -661,10 +661,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
                 record: { _ in },
                 frontmostApp: { nil }
             )
-            pipeline.onSessionEvent = { [weak self] event in
-                Task { @MainActor in
-                    self?.receiveSessionEvent(event)
-                }
+            pipeline.onSessionEvent = ApplicationRunLoop.handler { [weak self] event in
+                self?.receiveSessionEvent(event)
             }
             self.pipeline = pipeline
             pipeline.startRecording()
