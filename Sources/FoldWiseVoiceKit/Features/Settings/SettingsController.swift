@@ -110,6 +110,7 @@ final class SettingsController {
 
     func show() {
         if window == nil {
+            model.panePerformance.beginFirstWindow()
             build()
         }
         populate()

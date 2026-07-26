@@ -1,6 +1,66 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+final class PaneFirstMeaningfulFrameView: NSView {
+    var pane: SettingsModel.Pane
+    var performance: PaneNavigationPerformance
+
+    init(
+        pane: SettingsModel.Pane,
+        performance: PaneNavigationPerformance
+    ) {
+        self.pane = pane
+        self.performance = performance
+        super.init(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        performance.firstMeaningfulFrame(for: pane)
+    }
+}
+
+private struct PaneFirstMeaningfulFrameMarker: NSViewRepresentable {
+    let pane: SettingsModel.Pane
+    let performance: PaneNavigationPerformance
+
+    func makeNSView(context: Context) -> PaneFirstMeaningfulFrameView {
+        PaneFirstMeaningfulFrameView(pane: pane, performance: performance)
+    }
+
+    func updateNSView(_ view: PaneFirstMeaningfulFrameView, context: Context) {
+        view.pane = pane
+        view.performance = performance
+        view.needsDisplay = true
+    }
+}
+
+extension View {
+    func paneFirstMeaningfulFrame(
+        _ pane: SettingsModel.Pane,
+        performance: PaneNavigationPerformance,
+        isReady: Bool = true
+    ) -> some View {
+        overlay(alignment: .topLeading) {
+            if isReady {
+                PaneFirstMeaningfulFrameMarker(
+                    pane: pane,
+                    performance: performance
+                )
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
+    }
+}
+
 /// App version shared by the sidebar footer, the Settings pane, and Home's
 /// system summary. Set in Info.plist by scripts/build_swift_app.py from
 /// version.txt; absent when running the bare binary (swift run).
@@ -288,7 +348,7 @@ struct SettingsView: View {
         let active = model.pane == pane
         let disabled = !model.isPaneAvailable(pane)
         return Button {
-            model.pane = pane
+            model.selectPane(pane)
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: pane.icon)
@@ -340,7 +400,7 @@ struct SettingsView: View {
         let active = model.pane == pane
         let disabled = !model.isPaneAvailable(pane)
         return Button {
-            model.pane = pane
+            model.selectPane(pane)
         } label: {
             Image(systemName: pane.icon)
                 .font(.system(size: 14, weight: .medium))
@@ -539,14 +599,17 @@ struct SettingsView: View {
             HomeView(model: model)
         case .modes:
             paneScroll("Modes") { modesPane }
+                .paneFirstMeaningfulFrame(.modes, performance: model.panePerformance)
         case .models:
             ModelsCombinedPane(model: model)
+                .paneFirstMeaningfulFrame(.models, performance: model.panePerformance)
         case .history:
             paneScroll("History") { HistoryPane(model: model) }
         case .stats:
             paneScroll("Stats") { StatsPane(model: model) }
         case .settings:
             paneScroll("Settings") { settingsPane }
+                .paneFirstMeaningfulFrame(.settings, performance: model.panePerformance)
         }
     }
 
@@ -820,7 +883,7 @@ struct SettingsView: View {
             detail: "Polish falls back to raw text.",
             actionTitle: "Open Models"
         ) {
-            model.pane = .models
+            model.selectPane(.models)
         }
         .padding(.vertical, 8)
         .accessibilityHint(

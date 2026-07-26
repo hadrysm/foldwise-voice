@@ -51,6 +51,11 @@ struct StatsPane: View {
                 )
             }
         }
+        .paneFirstMeaningfulFrame(
+            .stats,
+            performance: model.panePerformance,
+            isReady: projection != nil
+        )
         .onChange(of: input, initial: true) { _, input in
             refresh(input)
         }
@@ -114,7 +119,7 @@ struct StatsPane: View {
     }
 
     private func openHistory() {
-        model.pane = .history
+        model.selectPane(.history)
     }
 }
 

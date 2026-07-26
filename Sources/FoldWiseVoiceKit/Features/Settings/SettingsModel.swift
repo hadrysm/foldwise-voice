@@ -22,10 +22,20 @@ enum SettingsAppearanceLayout: Equatable {
 
 @MainActor
 final class SettingsModel: ObservableObject {
+    let panePerformance: PaneNavigationPerformance
+
+    init() {
+        panePerformance = PaneNavigationPerformance()
+    }
+
+    init(panePerformance: PaneNavigationPerformance) {
+        self.panePerformance = panePerformance
+    }
+
     /// The six destinations of the redesigned sidebar (PRD #103). The old
     /// Speech pane lives inside Models; Configuration and Sound merged into
     /// Settings.
-    enum Pane: String, CaseIterable, Identifiable {
+    enum Pane: String, CaseIterable, Codable, Identifiable {
         case home = "Home"
         case modes = "Modes"
         case models = "Models"
@@ -114,6 +124,12 @@ final class SettingsModel: ObservableObject {
     @Published var shortcutListenerHealth: ShortcutListenerHealth = .global
     @Published var configurationRecoveryMessage: String?
     @Published var permissionRecovery = PermissionRecoveryWorkflow.State()
+
+    func selectPane(_ destination: Pane) {
+        guard destination != pane else { return }
+        panePerformance.beginNavigation(to: destination)
+        pane = destination
+    }
 
     func isPaneAvailable(_ pane: Pane) -> Bool {
         configurationRecoveryMessage == nil || pane.isAvailableInConfigurationRecovery

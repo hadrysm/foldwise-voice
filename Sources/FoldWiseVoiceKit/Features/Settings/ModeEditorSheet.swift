@@ -251,7 +251,7 @@ struct ModeEditorSheet: View {
             Label(warning, systemImage: "exclamationmark.triangle.fill")
                 .font(Theme.ui(10.5))
                 .foregroundStyle(Theme.warning)
-            Button("Open Models") { model.pane = .models }
+            Button("Open Models") { model.selectPane(.models) }
                 .buttonStyle(.link)
                 .accessibilityHint("Shows Models after this sheet closes")
         }

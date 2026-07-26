@@ -13,6 +13,7 @@ struct HistoryPane: View {
     @State private var flaggedOnly = false
     @State private var projection = HistoryProjection.empty
     @State private var projectionCache: HistoryProjectionCache
+    @State private var projectionIsReady = false
     @FocusState private var searchFocused: Bool
     @FocusState private var clearSearchFocused: Bool
     private let notificationCenter: NotificationCenter
@@ -43,6 +44,11 @@ struct HistoryPane: View {
                 populated
             }
         }
+        .paneFirstMeaningfulFrame(
+            .history,
+            performance: model.panePerformance,
+            isReady: projectionIsReady
+        )
         .alert("Clear all dictation history?", isPresented: $confirmingClearAll) {
             Button("Clear All", role: .destructive) { model.onClearHistory?() }
             Button("Cancel", role: .cancel) {}
@@ -63,6 +69,7 @@ struct HistoryPane: View {
         }
         .onChange(of: projectionInput, initial: true) { _, input in
             projection = projectionCache.resolve(input)
+            projectionIsReady = true
         }
         .onReceive(notificationCenter.publisher(for: .NSCalendarDayChanged)) { _ in
             projection = projectionCache.resolve(projectionInput)

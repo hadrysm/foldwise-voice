@@ -30,6 +30,7 @@ struct HomeView: View {
     /// history scan on every publish would put it on the render path.
     @State private var stats = UsageStats.empty
     @State private var projection = HomeProjection(sections: [])
+    @State private var projectionIsReady = false
 
     init(
         model: SettingsModel,
@@ -51,9 +52,15 @@ struct HomeView: View {
 
     var body: some View {
         main
+            .paneFirstMeaningfulFrame(
+                .home,
+                performance: model.panePerformance,
+                isReady: projectionIsReady
+            )
             .onChange(of: projectionInput, initial: true) { _, input in
                 stats = UsageStatsAggregator.aggregate(input.entries)
                 refreshProjection(input)
+                projectionIsReady = true
             }
             .onReceive(notificationCenter.publisher(for: .NSCalendarDayChanged)) { _ in
                 refreshProjection(projectionInput)
@@ -94,7 +101,7 @@ struct HomeView: View {
                 } else {
                     dictationList
                     Button {
-                        model.pane = .history
+                        model.selectPane(.history)
                     } label: {
                         Text("All history →")
                     }
@@ -291,7 +298,7 @@ struct HomeView: View {
                         .accessibilityIdentifier("home.permission-recovery")
                     }
                     Button("Stats →") {
-                        model.pane = .stats
+                        model.selectPane(.stats)
                     }
                     .buttonStyle(EmberButtonStyle(kind: .quiet))
                 }
