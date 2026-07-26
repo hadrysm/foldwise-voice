@@ -49,26 +49,6 @@ struct HomeView: View {
         self.project = project
     }
 
-    init(
-        model: SettingsModel,
-        now: @escaping () -> Date = Date.init,
-        calendar: Calendar = .current,
-        locale: Locale = .current,
-        notificationCenter: NotificationCenter = .default,
-        project: @escaping (HomeProjection.Input, Date, Calendar, Locale) -> HomeProjection = {
-            HomeProjection.project($0, now: $1, calendar: $2, locale: $3)
-        }
-    ) {
-        self.init(
-            interface: model.homePaneInterface,
-            now: now,
-            calendar: calendar,
-            locale: locale,
-            notificationCenter: notificationCenter,
-            project: project
-        )
-    }
-
     var body: some View {
         main
             .paneFirstMeaningfulFrame(

@@ -1,14 +1,17 @@
 import AppKit
 import SwiftUI
 
-typealias ModelsWorkspaceProjector = (
-    ASRModelLifecycleSnapshot?,
-    ModelsASRFailures,
-    ModelsPolishState,
-    [Mode],
-    ModelsRowID?,
-    [ModelsRowID]
-) -> ModelsWorkspaceProjection
+struct ModelsWorkspaceProjectionInput {
+    let asrSnapshot: ASRModelLifecycleSnapshot?
+    let asrFailures: ModelsASRFailures
+    let polishState: ModelsPolishState
+    let modes: [Mode]
+    let inspectedID: ModelsRowID?
+    let previousPolishRowIDs: [ModelsRowID]
+}
+
+typealias ModelsWorkspaceProjector =
+    (ModelsWorkspaceProjectionInput) -> ModelsWorkspaceProjection
 
 struct ModelsCombinedPane: View {
     let interface: ModelsPaneInterface
@@ -21,14 +24,14 @@ struct ModelsCombinedPane: View {
 
     init(
         interface: ModelsPaneInterface,
-        project: @escaping ModelsWorkspaceProjector = {
+        project: @escaping ModelsWorkspaceProjector = { input in
             ModelsWorkspaceProjection.make(
-                asrSnapshot: $0,
-                asrFailures: $1,
-                polishState: $2,
-                modes: $3,
-                inspectedID: $4,
-                previousPolishRowIDs: $5
+                asrSnapshot: input.asrSnapshot,
+                asrFailures: input.asrFailures,
+                polishState: input.polishState,
+                modes: input.modes,
+                inspectedID: input.inspectedID,
+                previousPolishRowIDs: input.previousPolishRowIDs
             )
         }
     ) {
@@ -36,19 +39,16 @@ struct ModelsCombinedPane: View {
         self.project = project
     }
 
-    init(model: SettingsModel) {
-        self.init(interface: model.modelsPaneInterface)
-    }
-
     private var projection: ModelsWorkspaceProjection {
-        project(
-            interface.asrSnapshot,
-            interface.asrFailures,
-            interface.polishState,
-            interface.modes,
-            interface.requestedPolishInspection.map(ModelsRowID.polish) ?? inspectedID,
-            previousPolishRowIDs
-        )
+        project(ModelsWorkspaceProjectionInput(
+            asrSnapshot: interface.asrSnapshot,
+            asrFailures: interface.asrFailures,
+            polishState: interface.polishState,
+            modes: interface.modes,
+            inspectedID: interface.requestedPolishInspection.map(ModelsRowID.polish)
+                ?? inspectedID,
+            previousPolishRowIDs: previousPolishRowIDs
+        ))
     }
 
     var body: some View {

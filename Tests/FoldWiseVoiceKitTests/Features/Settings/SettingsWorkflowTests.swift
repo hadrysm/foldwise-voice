@@ -3628,9 +3628,12 @@ final class SettingsWorkflowTests: XCTestCase {
     ) async {
         while !predicate() {
             await withCheckedContinuation { continuation in
-                withObservationTracking {
-                    _ = predicate()
+                let alreadyMatches = withObservationTracking {
+                    predicate()
                 } onChange: {
+                    continuation.resume()
+                }
+                if alreadyMatches {
                     continuation.resume()
                 }
             }

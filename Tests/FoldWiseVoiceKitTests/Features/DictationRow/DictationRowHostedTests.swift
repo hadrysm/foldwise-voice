@@ -65,8 +65,11 @@ final class DictationRowHostedTests: XCTestCase {
             )
         }
         let hosting = NSHostingView(
-            rootView: HistoryPane(model: model, projectionCache: cache)
-                .frame(width: 800)
+            rootView: HistoryPane(
+                interface: model.historyPaneInterface,
+                projectionCache: cache
+            )
+            .frame(width: 800)
         )
         hosting.layoutSubtreeIfNeeded()
         let initialExecutions = executionCount
@@ -101,7 +104,7 @@ final class DictationRowHostedTests: XCTestCase {
         )
         let hosting = NSHostingView(
             rootView: HistoryPane(
-                model: model,
+                interface: model.historyPaneInterface,
                 projectionCache: cache,
                 notificationCenter: notificationCenter
             )

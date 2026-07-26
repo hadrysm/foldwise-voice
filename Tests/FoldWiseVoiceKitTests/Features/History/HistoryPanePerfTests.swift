@@ -67,7 +67,7 @@ final class HistoryPanePerfTests: XCTestCase {
         let root = AnyView(
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    HistoryPane(model: model)
+                    HistoryPane(interface: model.historyPaneInterface)
                 }
                 .padding(.horizontal, 28)
                 .frame(maxWidth: .infinity, alignment: .leading)

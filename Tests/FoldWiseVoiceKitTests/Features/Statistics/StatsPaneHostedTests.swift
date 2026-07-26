@@ -44,7 +44,7 @@ final class StatsPaneHostedTests: XCTestCase {
             return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
         })
         let hosting = host(StatsPane(
-            model: model,
+            interface: model.statsPaneInterface,
             projectionCache: cache,
             calendar: { calendar },
             locale: Locale(identifier: "en_US")
@@ -89,7 +89,7 @@ final class StatsPaneHostedTests: XCTestCase {
             return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
         })
         let hosting = host(StatsPane(
-            model: model,
+            interface: model.statsPaneInterface,
             projectionCache: cache,
             calendar: { currentCalendar },
             locale: Locale(identifier: "en_US"),
@@ -114,7 +114,7 @@ final class StatsPaneHostedTests: XCTestCase {
             return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
         })
         let pane = StatsPane(
-            model: model,
+            interface: model.statsPaneInterface,
             projectionCache: cache,
             calendar: { calendar }
         )
@@ -467,7 +467,7 @@ final class StatsPaneHostedTests: XCTestCase {
             year: 2026, month: 7, day: 22, hour: 12
         )) ?? .distantPast
         let pane = StatsPane(
-            model: model,
+            interface: model.statsPaneInterface,
             projectionCache: StatsProjectionCache(now: { currentNow }),
             calendar: { calendar },
             locale: Locale(identifier: "en_US"),
@@ -491,7 +491,7 @@ final class StatsPaneHostedTests: XCTestCase {
         let model = SettingsModel()
         model.saveHistory = false
         model.pane = .stats
-        let hosting = host(StatsPane(model: model))
+        let hosting = host(StatsPane(interface: model.statsPaneInterface))
 
         let button = try XCTUnwrap(Self.button(named: "Open History", in: hosting))
         button.performClick(nil)
@@ -536,7 +536,7 @@ final class StatsPaneHostedTests: XCTestCase {
     ) -> StatsPane {
         let calendar = utcCalendar()
         return StatsPane(
-            model: model,
+            interface: model.statsPaneInterface,
             projectionCache: StatsProjectionCache(now: {
                 calendar.date(from: DateComponents(
                     year: 2026, month: 7, day: 22, hour: 12

@@ -36,24 +36,6 @@ struct StatsPane: View {
         self.environmentOverride = environmentOverride
     }
 
-    init(
-        model: SettingsModel,
-        projectionCache: StatsProjectionCache = StatsProjectionCache(),
-        calendar: @escaping () -> Calendar = { .autoupdatingCurrent },
-        locale: Locale? = nil,
-        notificationCenter: NotificationCenter = .default,
-        environmentOverride: StatsEnvironmentAdaptations? = nil
-    ) {
-        self.init(
-            interface: model.statsPaneInterface,
-            projectionCache: projectionCache,
-            calendar: calendar,
-            locale: locale,
-            notificationCenter: notificationCenter,
-            environmentOverride: environmentOverride
-        )
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("A look at how you dictate, drawn from the History you already keep.")

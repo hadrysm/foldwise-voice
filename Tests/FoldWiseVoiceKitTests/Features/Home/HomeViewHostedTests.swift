@@ -39,7 +39,7 @@ final class HomeViewHostedTests: XCTestCase {
         let notificationCenter = NotificationCenter()
         var projectedHeaders: [[String]] = []
         let hosting = NSHostingView(rootView: HomeView(
-            model: model,
+            interface: model.homePaneInterface,
             now: { currentNow },
             calendar: calendar,
             locale: Locale(identifier: "en_US"),
@@ -91,7 +91,9 @@ final class HomeViewHostedTests: XCTestCase {
     private func hostHome(width: CGFloat) -> NSWindow {
         let model = SettingsModel()
         model.windowWidth = width
-        let hosting = NSHostingView(rootView: HomeView(model: model))
+        let hosting = NSHostingView(
+            rootView: HomeView(interface: model.homePaneInterface)
+        )
         hosting.frame = NSRect(x: 0, y: 0, width: width, height: 640)
         let window = NSWindow(
             contentRect: hosting.frame,

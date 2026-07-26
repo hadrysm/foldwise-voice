@@ -28,18 +28,6 @@ struct HistoryPane: View {
         self.notificationCenter = notificationCenter
     }
 
-    init(
-        model: SettingsModel,
-        projectionCache: HistoryProjectionCache = HistoryProjectionCache(),
-        notificationCenter: NotificationCenter = .default
-    ) {
-        self.init(
-            interface: model.historyPaneInterface,
-            projectionCache: projectionCache,
-            notificationCenter: notificationCenter
-        )
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Saved locally on this Mac. Audio is never retained.")

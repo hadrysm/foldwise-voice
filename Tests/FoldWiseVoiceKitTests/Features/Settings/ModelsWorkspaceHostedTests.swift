@@ -11,15 +11,15 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
         let controller = NSHostingController(
             rootView: ModelsCombinedPane(
                 interface: model.modelsPaneInterface,
-                project: {
+                project: { input in
                     projectionCount += 1
                     return ModelsWorkspaceProjection.make(
-                        asrSnapshot: $0,
-                        asrFailures: $1,
-                        polishState: $2,
-                        modes: $3,
-                        inspectedID: $4,
-                        previousPolishRowIDs: $5
+                        asrSnapshot: input.asrSnapshot,
+                        asrFailures: input.asrFailures,
+                        polishState: input.polishState,
+                        modes: input.modes,
+                        inspectedID: input.inspectedID,
+                        previousPolishRowIDs: input.previousPolishRowIDs
                     )
                 }
             )
@@ -176,7 +176,7 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
             OllamaClient.InstalledModel(name: "qwen2.5:3b", sizeBytes: 1_900_000_000),
         ]
         let controller = NSHostingController(
-            rootView: ModelsCombinedPane(model: model)
+            rootView: ModelsCombinedPane(interface: model.modelsPaneInterface)
                 .frame(width: 617, height: 780)
                 .environment(\.colorScheme, .light)
         )
@@ -228,7 +228,7 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
             isDictationBlocked: false
         ))
         let controller = NSHostingController(
-            rootView: ModelsCombinedPane(model: model)
+            rootView: ModelsCombinedPane(interface: model.modelsPaneInterface)
                 .frame(width: 900, height: 700)
                 .environment(\.colorScheme, .light)
                 .tint(Theme.accent)
