@@ -176,6 +176,10 @@ jobs:
       - name: Restore the release source and publication tools
         run: |
           set -euo pipefail
+          FINALIZER_PATH="$RUNNER_TEMP/foldwise-finalize-release.sh"
+          cp scripts/finalize_release.sh "$FINALIZER_PATH"
+          chmod +x "$FINALIZER_PATH"
+          echo "FINALIZER_PATH=$FINALIZER_PATH" >> "$GITHUB_ENV"
           RELEASE_COMMIT=$(jq -r '.commit' dist/notarization/submission.json)
           git checkout --detach "$RELEASE_COMMIT"
           swift package resolve
@@ -200,33 +204,7 @@ jobs:
           VALIDATION_REFERENCE: ${{ inputs.validation_reference }}
           FORWARD_REPAIR_CONFIRMATION: >-
             ${{ inputs.forward_repair_confirmation }}
-        run: |
-          set -euo pipefail
-          : "${NOTARY_API_PRIVATE_KEY_BASE64:?NOTARY_API_PRIVATE_KEY_BASE64 secret is required}"
-          : "${NOTARY_API_KEY_ID:?NOTARY_API_KEY_ID secret is required}"
-          : "${NOTARY_API_ISSUER_ID:?NOTARY_API_ISSUER_ID secret is required}"
-          NOTARY_KEY_PATH="$RUNNER_TEMP/foldwise-notary-key.p8"
-          export NOTARY_KEY_PATH
-          trap 'rm -f "$NOTARY_KEY_PATH"' EXIT
-          umask 077
-          printf '%s' "$NOTARY_API_PRIVATE_KEY_BASE64" \
-            | base64 --decode > "$NOTARY_KEY_PATH"
-
-          PUBLICATION_ARGS=()
-          if [[ "$PUBLICATION_MODE" == "forward-repair" ]]; then
-            PUBLICATION_ARGS=(
-              --forward-repair-bad-version "$BAD_VERSION"
-              --forward-repair-validation-reference "$VALIDATION_REFERENCE"
-              --confirm-forward-repair "$FORWARD_REPAIR_CONFIRMATION"
-            )
-          fi
-
-          python3 scripts/release_notarization.py finalize \
-            --artifact-directory dist/notarization \
-            --record dist/notarization/submission.json \
-            --log dist/notarization/notarization-log.json \
-            --repository "$GITHUB_REPOSITORY" \
-            "${PUBLICATION_ARGS[@]}"
+        run: "$FINALIZER_PATH"
       - name: Preserve release and recovery record
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

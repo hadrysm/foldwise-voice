@@ -238,8 +238,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         pipeline.onState = { [weak self] state in
             Task { @MainActor in self?.apply(state) }
         }
-        pipeline.onSessionEvent = { [weak self] event in
-            Task { @MainActor in self?.lifecycleCoordinator?.sessionDidChange(event) }
+        pipeline.onSessionEvent = ApplicationRunLoop.handler { [weak self] event in
+            self?.lifecycleCoordinator?.sessionDidChange(event)
         }
         Task { [weak self] in
             for await snapshot in await asrLifecycle.snapshots() {
@@ -476,37 +476,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             func restore() {}
         }
 
-        private actor InsertionGate {
-            private var isOpen = false
-            private var waiters: [CheckedContinuation<Void, Never>] = []
-
-            func wait() async {
-                guard !isOpen else { return }
-                await withCheckedContinuation { waiters.append($0) }
-            }
-
-            func open() {
-                isOpen = true
-                for waiter in waiters {
-                    waiter.resume()
-                }
-                waiters.removeAll()
-            }
-        }
-
         private let directory: URL
         private let role: Role
         private let version: String
         private let config: Config
-        private let insertionGate = InsertionGate()
+        private let insertionGate = UpdateRuntimeAcceptanceInsertionGate()
         private var badge: BadgeController?
         private var hotkeys: HotkeyBindingCoordinator?
         private var pipeline: Pipeline?
         private var hotkeyHealth: ShortcutListenerHealth?
         private var updaterController: SPUStandardUpdaterController?
         private var signalMonitor: UpdateRuntimeAcceptanceSignalMonitor?
-        private var didRequestTermination = false
         private var didRecordTerminationDeferral = false
+        private let relaunchDriver = UpdateRuntimeAcceptanceRelaunchDriver()
         private lazy var lifecycleCoordinator = DictationLifecycleCoordinator { [weak self] in
             self?.tearDown()
         }
@@ -585,7 +567,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         func shouldPostponeRelaunch(
             untilInvoking installHandler: @escaping () -> Void
         ) -> Bool {
-            lifecycleCoordinator.shouldPostponeRelaunch(untilInvoking: installHandler)
+            let postponed = lifecycleCoordinator.shouldPostponeRelaunch(
+                untilInvoking: installHandler
+            )
+            if postponed {
+                relaunchDriver.requestTerminationOnce {
+                    DispatchQueue.main.async {
+                        NSApp.terminate(nil)
+                    }
+                }
+            }
+            return postponed
         }
 
         func updater(
@@ -593,21 +585,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             willInstallUpdateOnQuit item: SUAppcastItem,
             immediateInstallationBlock: @escaping () -> Void
         ) -> Bool {
-            guard !didRequestTermination else { return false }
-            didRequestTermination = true
             do {
-                try record(
-                    "update-prepared",
-                    details: ["targetVersion": item.versionString]
+                return try relaunchDriver.beginImmediateInstallation(
+                    prepare: {
+                        try record(
+                            "update-prepared",
+                            details: ["targetVersion": item.versionString]
+                        )
+                    },
+                    install: immediateInstallationBlock
                 )
             } catch {
                 fail("could not record prepared update: \(error.localizedDescription)")
                 return false
             }
-            DispatchQueue.main.async {
-                NSApp.terminate(nil)
-            }
-            return false
         }
 
         func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
@@ -649,22 +640,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
 
         private func startSourceUpdate() throws {
             try record("source-ready", details: readinessDetails())
+            // Keep this as an actor method reference. An inline async closure
+            // created by this @MainActor controller cannot return while AppKit
+            // is waiting in its deferred-termination run-loop mode.
             let pipeline = Pipeline(
                 config: config,
                 recorder: AcceptanceRecorder(),
                 sessionProvider: AcceptanceASRSessionProvider(),
                 ducker: AcceptanceAudioDucker(),
-                insert: { [insertionGate] _ in
-                    await insertionGate.wait()
-                    return true
-                },
+                insert: insertionGate.insert,
                 record: { _ in },
                 frontmostApp: { nil }
             )
-            pipeline.onSessionEvent = { [weak self] event in
-                Task { @MainActor in
-                    self?.receiveSessionEvent(event)
-                }
+            pipeline.onSessionEvent = ApplicationRunLoop.handler { [weak self] event in
+                self?.receiveSessionEvent(event)
             }
             self.pipeline = pipeline
             pipeline.startRecording()
