@@ -20,10 +20,25 @@ SPEC.loader.exec_module(release_publication)
 
 
 class FakeInputRunner:
-    def __init__(self, generated_appcast: str | None = None) -> None:
+    def __init__(
+        self,
+        generated_appcast: str | None = None,
+        *,
+        object_list: dict[str, object] | None = None,
+        head_object: dict[str, object] | None = None,
+    ) -> None:
         self.generated_appcast = generated_appcast
+        self.object_list = object_list or {}
+        self.head_object = head_object or {}
         self.commands: list[list[str]] = []
+        self.json_commands: list[list[str]] = []
         self.standard_inputs: list[str | None] = []
+
+    def run_json(self, command: list[str]) -> dict[str, object]:
+        self.json_commands.append(command)
+        if "head-object" in command:
+            return self.head_object
+        return self.object_list
 
     def run_input(self, command: list[str], value: str | None) -> None:
         self.commands.append(command)
@@ -579,6 +594,10 @@ class R2UpdateOriginTests(unittest.TestCase):
                 command[command.index("--content-type") + 1],
                 "application/x-apple-diskimage",
             )
+            self.assertEqual(
+                command[command.index("--if-none-match") + 1],
+                "*",
+            )
             self.assertEqual(fetcher.requests, [url, url])
 
     def testStageArchiveRefusesToOverwriteDifferentPublicBytes(self) -> None:
@@ -600,6 +619,127 @@ class R2UpdateOriginTests(unittest.TestCase):
                 origin.stage_archive(dmg, digest)
 
             self.assertEqual(runner.commands, [])
+
+    def testStageArchiveRetriesPublicVerificationAfterUpload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dmg = Path(directory) / "FoldWise-Voice-0.18.0.dmg"
+            dmg.write_bytes(b"stapled DMG bytes")
+            digest = hashlib.sha256(dmg.read_bytes()).hexdigest()
+            url = f"https://updates.guarcode.com/releases/{dmg.name}"
+            fetcher = FakeFetcher(
+                {
+                    url: [
+                        None,
+                        b"temporarily stale public bytes",
+                        dmg.read_bytes(),
+                    ]
+                }
+            )
+            delays: list[float] = []
+            origin = release_publication.R2UpdateOrigin(
+                FakeInputRunner(),
+                fetcher=fetcher,
+                bucket="foldwise-updates",
+                endpoint="https://account.r2.cloudflarestorage.com",
+                public_base_url="https://updates.guarcode.com",
+                verification_delays=(1.0,),
+                sleeper=delays.append,
+            )
+
+            origin.stage_archive(dmg, digest)
+
+            self.assertEqual(fetcher.requests, [url, url, url])
+            self.assertEqual(delays, [1.0])
+
+    def testStageArchiveWaitsWhenR2AlreadyHasHiddenObject(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dmg = Path(directory) / "FoldWise-Voice-0.18.0.dmg"
+            dmg.write_bytes(b"stapled DMG bytes")
+            digest = hashlib.sha256(dmg.read_bytes()).hexdigest()
+            key = f"releases/{dmg.name}"
+            url = f"https://updates.guarcode.com/{key}"
+            fetcher = FakeFetcher({url: [None, None, dmg.read_bytes()]})
+            runner = FakeInputRunner(
+                object_list={"Contents": [{"Key": key}]},
+                head_object={
+                    "Metadata": {"sha256": digest},
+                    "ContentLength": dmg.stat().st_size,
+                },
+            )
+            delays: list[float] = []
+            origin = release_publication.R2UpdateOrigin(
+                runner,
+                fetcher=fetcher,
+                bucket="foldwise-updates",
+                endpoint="https://account.r2.cloudflarestorage.com",
+                public_base_url="https://updates.guarcode.com",
+                verification_delays=(1.0,),
+                sleeper=delays.append,
+            )
+
+            origin.stage_archive(dmg, digest)
+
+            self.assertEqual(runner.commands, [])
+            self.assertEqual(len(runner.json_commands), 2)
+            self.assertEqual(fetcher.requests, [url, url, url])
+            self.assertEqual(delays, [1.0])
+
+    def testStageArchiveRejectsDifferentAuthoritativeR2Object(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dmg = Path(directory) / "FoldWise-Voice-0.18.0.dmg"
+            dmg.write_bytes(b"stapled DMG bytes")
+            digest = hashlib.sha256(dmg.read_bytes()).hexdigest()
+            key = f"releases/{dmg.name}"
+            url = f"https://updates.guarcode.com/{key}"
+            runner = FakeInputRunner(
+                object_list={"Contents": [{"Key": key}]},
+                head_object={
+                    "Metadata": {"sha256": "b" * 64},
+                    "ContentLength": dmg.stat().st_size,
+                },
+            )
+            origin = release_publication.R2UpdateOrigin(
+                runner,
+                fetcher=FakeFetcher({url: None}),
+                bucket="foldwise-updates",
+                endpoint="https://account.r2.cloudflarestorage.com",
+                public_base_url="https://updates.guarcode.com",
+                verification_delays=(),
+            )
+
+            with self.assertRaises(release_publication.ArtifactMismatch):
+                origin.stage_archive(dmg, digest)
+
+            self.assertEqual(runner.commands, [])
+            self.assertEqual(len(runner.json_commands), 2)
+
+    def testStageArchiveChecksR2WhenCachedPublicBytesMatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dmg = Path(directory) / "FoldWise-Voice-0.18.0.dmg"
+            dmg.write_bytes(b"stapled DMG bytes")
+            digest = hashlib.sha256(dmg.read_bytes()).hexdigest()
+            key = f"releases/{dmg.name}"
+            url = f"https://updates.guarcode.com/{key}"
+            runner = FakeInputRunner(
+                object_list={"Contents": [{"Key": key}]},
+                head_object={
+                    "Metadata": {"sha256": "b" * 64},
+                    "ContentLength": dmg.stat().st_size,
+                },
+            )
+            origin = release_publication.R2UpdateOrigin(
+                runner,
+                fetcher=FakeFetcher({url: dmg.read_bytes()}),
+                bucket="foldwise-updates",
+                endpoint="https://account.r2.cloudflarestorage.com",
+                public_base_url="https://updates.guarcode.com",
+            )
+
+            with self.assertRaises(release_publication.ArtifactMismatch):
+                origin.stage_archive(dmg, digest)
+
+            self.assertEqual(runner.commands, [])
+            self.assertEqual(len(runner.json_commands), 2)
 
     def testPublishAppcastUsesCacheBypassMetadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -628,6 +768,35 @@ class R2UpdateOriginTests(unittest.TestCase):
                 "application/xml",
             )
             self.assertEqual(fetcher.requests, [url])
+
+    def testPublishAppcastRetriesPublicVerificationAfterUpload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            appcast = Path(directory) / "appcast.xml"
+            appcast.write_bytes(b"<rss>new signed appcast</rss>")
+            url = "https://updates.guarcode.com/appcast.xml"
+            fetcher = FakeFetcher(
+                {
+                    url: [
+                        b"<rss>previous appcast</rss>",
+                        appcast.read_bytes(),
+                    ]
+                }
+            )
+            delays: list[float] = []
+            origin = release_publication.R2UpdateOrigin(
+                FakeInputRunner(),
+                fetcher=fetcher,
+                bucket="foldwise-updates",
+                endpoint="https://account.r2.cloudflarestorage.com",
+                public_base_url="https://updates.guarcode.com",
+                verification_delays=(1.0,),
+                sleeper=delays.append,
+            )
+
+            origin.publish_appcast(appcast)
+
+            self.assertEqual(fetcher.requests, [url, url])
+            self.assertEqual(delays, [1.0])
 
 
 class AuthenticatedUpdatePublisherTests(unittest.TestCase):
