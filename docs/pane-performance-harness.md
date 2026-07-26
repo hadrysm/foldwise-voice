@@ -19,7 +19,9 @@ screenshots, sanitizers, or runtime diagnostics. It measures both deterministic
 profiles, all six destinations, and cold and warm visit classes. Every class
 discards one harness warm-up and records 20 samples.
 The packaged process holds a latency-critical activity to prevent App Nap and
-reasserts its key foreground window before each independent sample.
+keeps its foreground window ordered before each independent sample. The
+performance-only window never activates FoldWise or requests key-window status,
+so the harness can render while keyboard focus remains in another application.
 
 Use a non-authoritative smoke run while changing the harness:
 

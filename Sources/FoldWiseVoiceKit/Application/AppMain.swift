@@ -452,9 +452,7 @@ private final class PanePerformanceApplication {
             window.setContentSize(NSSize(width: 980, height: 720))
             window.center()
             self.window = window
-            NSApp.setActivationPolicy(.regular)
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKeyAndOrderFront(nil)
+            PanePerformanceWindowPresenter.present(window)
             Task { await run() }
         } catch {
             fail(error)
@@ -561,9 +559,9 @@ private final class PanePerformanceApplication {
             window?.contentViewController = NSHostingController(
                 rootView: SettingsView(model: model)
             )
-            NSApp.activate(ignoringOtherApps: true)
-            window?.makeKeyAndOrderFront(nil)
-            window?.displayIfNeeded()
+            if let window {
+                PanePerformanceWindowPresenter.present(window)
+            }
         }
         await settleAfterFrame()
         return model
