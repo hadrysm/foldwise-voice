@@ -114,9 +114,11 @@ final class PaneProjectionStoreTests: XCTestCase {
         await scheduling.resume(.history)
         await waitUntil { store.historyProjection.isCurrent }
 
+        let projection = store.historyProjection.completed?.value
+        let firstRow = projection?.sections.flatMap(\.rows).first
+
         XCTAssertEqual(
-            store.historyProjection.completed?.value.sections
-                .flatMap(\.rows).first?.entry.text,
+            firstRow.map { projection?.entry(for: $0).text },
             "Latest"
         )
     }
@@ -218,6 +220,199 @@ final class PaneProjectionStoreTests: XCTestCase {
         )
     }
 
+    func testAppendingHistoryPreservesNewestFirstOrdering() throws {
+        let store = PaneProjectionStore()
+        let environment = makeEnvironment()
+        let olderID = try XCTUnwrap(UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"))
+        let newerID = try XCTUnwrap(UUID(uuidString: "cccccccc-cccc-cccc-cccc-cccccccccccc"))
+        let older = makeEntry(
+            id: olderID,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            text: "Older",
+            rawText: "Older"
+        )
+        let newer = makeEntry(
+            id: newerID,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_100),
+            text: "Newer",
+            rawText: "Newer"
+        )
+        store.setHistoryEntries([older])
+        store.setHistoryEntries([older, newer])
+        let appended = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: environment
+        )
+
+        XCTAssertEqual(
+            appended.value.sections.flatMap(\.rows).map(\.id),
+            [newerID, olderID]
+        )
+    }
+
+    func testReplacingHistoryUpdatesProjectedEntry() throws {
+        let store = PaneProjectionStore()
+        let environment = makeEnvironment()
+        let older = makeEntry(
+            id: try XCTUnwrap(UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")),
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            text: "Older",
+            rawText: "Older"
+        )
+        var newer = makeEntry(
+            id: try XCTUnwrap(UUID(uuidString: "cccccccc-cccc-cccc-cccc-cccccccccccc")),
+            createdAt: Date(timeIntervalSince1970: 1_700_000_100),
+            text: "Newer",
+            rawText: "Newer"
+        )
+        store.setHistoryEntries([older, newer])
+        _ = store.history(search: "", flaggedOnly: false, in: environment)
+
+        newer.text = "Reprocessed"
+        store.setHistoryEntries([older, newer])
+        let result = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: environment
+        )
+
+        XCTAssertEqual(
+            result.value.sections.flatMap(\.rows)
+                .map { result.value.entry(for: $0).text },
+            ["Reprocessed", "Older"]
+        )
+    }
+
+    func testDeletingHistoryRemovesProjectedEntry() throws {
+        let store = PaneProjectionStore()
+        let environment = makeEnvironment()
+        let deleted = makeEntry(
+            id: try XCTUnwrap(UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")),
+            text: "Deleted",
+            rawText: "Deleted"
+        )
+        let retained = makeEntry(
+            id: try XCTUnwrap(UUID(uuidString: "cccccccc-cccc-cccc-cccc-cccccccccccc")),
+            text: "Retained",
+            rawText: "Retained"
+        )
+        store.setHistoryEntries([deleted, retained])
+        _ = store.history(search: "", flaggedOnly: false, in: environment)
+
+        store.setHistoryEntries([retained])
+        let result = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: environment
+        )
+
+        XCTAssertEqual(
+            result.value.sections.flatMap(\.rows).map(\.id),
+            [retained.id]
+        )
+    }
+
+    func testClearingHistoryRemovesSourceEntries() {
+        let store = PaneProjectionStore()
+        let environment = makeEnvironment()
+        store.setHistoryEntries([makeEntry(text: "Saved", rawText: "Saved")])
+        _ = store.history(search: "", flaggedOnly: false, in: environment)
+
+        store.setHistoryEntries([])
+        let result = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: environment
+        )
+
+        XCTAssertFalse(result.value.hasSourceEntries)
+    }
+
+    func testReprocessingUpdatesSearchAndFlagFiltering() {
+        let store = PaneProjectionStore()
+        let environment = makeEnvironment()
+        var entry = makeEntry(text: "Before", rawText: "Before")
+        store.setHistoryEntries([entry])
+        _ = store.history(
+            search: "After",
+            flaggedOnly: true,
+            in: environment
+        )
+
+        entry.text = "After"
+        entry.flagged = true
+        store.setHistoryEntries([entry])
+        let result = store.history(
+            search: "After",
+            flaggedOnly: true,
+            in: environment
+        )
+
+        XCTAssertEqual(
+            result.value.sections.flatMap(\.rows)
+                .map { result.value.entry(for: $0) },
+            [entry]
+        )
+    }
+
+    func testModeRenameUpdatesHistoryAttribution() {
+        let store = PaneProjectionStore()
+        let environment = makeEnvironment()
+        let modeID = ModeID.random()
+        var entry = makeEntry(text: "Saved", rawText: "Saved")
+        entry.modeID = modeID
+        entry.modeName = "Recorded"
+        let original = makeMode(id: modeID, name: "Original", icon: "pencil")
+        let renamed = makeMode(id: modeID, name: "Renamed", icon: "envelope")
+        store.setModes([original])
+        store.setHistoryEntries([entry])
+        _ = store.history(search: "", flaggedOnly: false, in: environment)
+        store.setModes([renamed])
+        let result = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: environment
+        ).value
+
+        let row = result.sections.flatMap(\.rows)[0]
+        let presentation = result.presentation(for: row)
+
+        XCTAssertEqual(
+            [presentation.fullModeName, presentation.modeIcon],
+            ["Renamed", "envelope"]
+        )
+    }
+
+    func testModeDeletionUsesRecordedHistoryAttribution() {
+        let store = PaneProjectionStore()
+        let environment = makeEnvironment()
+        let modeID = ModeID.random()
+        var entry = makeEntry(text: "Saved", rawText: "Saved")
+        entry.modeID = modeID
+        entry.modeName = "Recorded"
+        store.setModes([
+            makeMode(id: modeID, name: "Current", icon: "envelope"),
+        ])
+        store.setHistoryEntries([entry])
+        _ = store.history(search: "", flaggedOnly: false, in: environment)
+
+        store.setModes([])
+        let result = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: environment
+        ).value
+
+        let row = result.sections.flatMap(\.rows)[0]
+        let presentation = result.presentation(for: row)
+
+        XCTAssertEqual(
+            [presentation.fullModeName, String(presentation.isDeletedMode)],
+            ["Recorded", "true"]
+        )
+    }
+
     func testUnchangedRevisitReusesEveryCompletedProjection() {
         let store = PaneProjectionStore()
         let environment = makeEnvironment()
@@ -243,12 +438,13 @@ final class PaneProjectionStoreTests: XCTestCase {
         let environment = makeEnvironment()
         let home = store.home(in: environment)
         let history = store.history(search: "", flaggedOnly: false, in: environment)
+        let historyRows = history.value.sections.flatMap(\.rows)
 
         XCTAssertEqual(
             [
                 home.value.recent.sections.flatMap(\.rows).first?.entry.id,
-                history.value.sections.flatMap(\.rows).first?.entry.id,
-                history.value.sections.flatMap(\.rows).last?.entry.id,
+                historyRows.first.map { history.value.entry(for: $0).id },
+                historyRows.last.map { history.value.entry(for: $0).id },
             ],
             [fixture.entries.first?.id, fixture.entries.first?.id, fixture.entries.last?.id]
         )
@@ -299,9 +495,9 @@ final class PaneProjectionStoreTests: XCTestCase {
         )
 
         XCTAssertTrue(
-            history.value.sections
-                .flatMap(\.rows)[0]
-                .presentation.accessibilityDescription
+            history.value.presentation(
+                for: history.value.sections.flatMap(\.rows)[0]
+            ).accessibilityDescription
                 .contains("Mode Performance Mode")
         )
     }
@@ -457,10 +653,15 @@ final class PaneProjectionStoreTests: XCTestCase {
         )
     }
 
-    private func makeEntry(text: String, rawText: String) -> HistoryEntry {
+    private func makeEntry(
+        id: UUID = UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!,
+        createdAt: Date = Date(timeIntervalSince1970: 1_700_000_000),
+        text: String,
+        rawText: String
+    ) -> HistoryEntry {
         HistoryEntry(
-            id: UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!,
-            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            id: id,
+            createdAt: createdAt,
             text: text,
             rawText: rawText,
             isPolished: text != rawText,
@@ -471,6 +672,23 @@ final class PaneProjectionStoreTests: XCTestCase {
             durationMs: 2000,
             flagged: false,
             flagReason: nil
+        )
+    }
+
+    private func makeMode(
+        id: ModeID,
+        name: String,
+        icon: String
+    ) -> Mode {
+        Mode(
+            id: id,
+            name: name,
+            icon: icon,
+            asrModel: ASRModelCatalog.defaultID,
+            llmModel: "local",
+            transformation: .inPlace,
+            systemPrompt: "Prompt",
+            vocabulary: []
         )
     }
 

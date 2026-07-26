@@ -1,6 +1,6 @@
 // Performance lock for the History pane: opening it must stay O(visible rows),
 // not O(all history). The pane once built every row eagerly (plain VStack /
-// ForEach under paneScroll's ScrollView), so a 3000-entry history took ~5s to
+// ForEach under paneScroll's ScrollView), so a large history took seconds to
 // open and ~400ms to re-layout on every hover flip, keystroke, or unrelated
 // SettingsModel publish; the fix made both the day-group list and each group's
 // rows lazy, and gave rows row-local hover state. These tests host the pane
@@ -16,7 +16,7 @@ import XCTest
 @testable import FoldWiseVoiceKit
 
 final class HistoryPanePerfTests: XCTestCase {
-    private static let entryCount = 3000
+    private static let entryCount = 10000
     private static let openBudget = 0.75
     private static let republishBudget = 0.25
 
@@ -40,7 +40,7 @@ final class HistoryPanePerfTests: XCTestCase {
             let words = (0 ..< (10 + rand(50))).map { _ in vocab[rand(vocab.count)] }
             let text = words.joined(separator: " ")
             return HistoryEntry(
-                id: UUID(),
+                id: stableUUID(at: i),
                 createdAt: base.addingTimeInterval(-Double(i) * minutesApart * 60),
                 text: text,
                 rawText: text + " uh",
@@ -53,6 +53,22 @@ final class HistoryPanePerfTests: XCTestCase {
                 flagReason: nil
             )
         }
+    }
+
+    private static func stableUUID(at index: Int) -> UUID {
+        let value = UInt64(index)
+        return UUID(uuid: (
+            0, 0, 0, 0,
+            0, 0,
+            0x40, 0,
+            0x80, 0,
+            UInt8(truncatingIfNeeded: value >> 40),
+            UInt8(truncatingIfNeeded: value >> 32),
+            UInt8(truncatingIfNeeded: value >> 24),
+            UInt8(truncatingIfNeeded: value >> 16),
+            UInt8(truncatingIfNeeded: value >> 8),
+            UInt8(truncatingIfNeeded: value)
+        ))
     }
 
     /// Hosts the pane the way SettingsView.paneScroll does — ScrollView, padded

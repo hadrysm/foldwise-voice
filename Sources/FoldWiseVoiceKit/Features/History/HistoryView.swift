@@ -363,18 +363,19 @@ private struct HistoryCollection: View {
                 EmberSectionLabel(section.header, symbolName: "calendar")
                 EmberSurface {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
+                        ForEach(section.rows) { row in
+                            let entry = projection.entry(for: row)
                             DictationRow(
-                                presentation: row.presentation,
+                                presentation: projection.presentation(for: row),
                                 moreCapabilities: DictationRowMoreCapabilities(
-                                    canCopyRaw: row.entry.isPolished,
+                                    canCopyRaw: entry.isPolished,
                                     polishModes: polishModes
                                 ),
                                 onCommand: { command in
-                                    onCommand(row.entry, command)
+                                    onCommand(entry, command)
                                 }
                             )
-                            if index < section.rows.count - 1 {
+                            if row.id != section.rows.last?.id {
                                 EmberHairline(axis: .horizontal)
                             }
                         }

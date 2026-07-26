@@ -38,7 +38,7 @@ final class HistoryProjectionTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            projection.sections.flatMap(\.rows).map(\.entry),
+            projection.sections.flatMap(\.rows).map { projection.entry(for: $0) },
             [newest, olderMatch]
         )
     }
@@ -59,17 +59,54 @@ final class HistoryProjectionTests: XCTestCase {
         XCTAssertEqual(projection.sections.map(\.header), ["Today", "Yesterday", "Jul 5, 2026"])
     }
 
-    func testProjectionRetainsSharedPresentationBesideExactSource() {
+    func testProjectionCarriesExactSourceEntry() throws {
         let today = entry(
             text: "today", rawText: "today", minutesAgo: 60, flagged: false
         )
+        let projection = project([today])
+        let row = try XCTUnwrap(projection.sections.first?.rows.first)
 
-        let row = project([today]).sections.first?.rows.first
+        XCTAssertEqual(projection.entry(for: row), today)
+    }
 
-        XCTAssertEqual(row, HistoryProjection.Row(
-            entry: today,
-            presentation: DictationRowPresentation(entry: today, calendar: calendar)
-        ))
+    func testProjectionBuildsPresentationWhenRowIsRequested() throws {
+        let today = entry(
+            text: "today", rawText: "today", minutesAgo: 60, flagged: false
+        )
+        let projection = project([today])
+        let row = try XCTUnwrap(projection.sections.first?.rows.first)
+
+        XCTAssertEqual(projection.presentation(for: row).text, "today")
+    }
+
+    func testProjectionCancelsWithinDenseDayGroup() {
+        let indices: Range<Int> = 0 ..< 10000
+        let entries = indices.map { index in
+            entry(
+                text: "entry \(index)",
+                rawText: "entry \(index)",
+                minutesAgo: Double(index) / 1000,
+                flagged: false
+            )
+        }
+        var index = HistoryIndex()
+        index.setEntries(entries)
+        let snapshot = index.snapshot(calendar: calendar)
+        var cancellationChecks = 0
+
+        let projection = HistoryProjection.project(
+            snapshot,
+            search: "absent",
+            flaggedOnly: false,
+            now: now,
+            locale: Locale(identifier: "en_US"),
+            shouldCancel: {
+                cancellationChecks += 1
+                return cancellationChecks == 4
+            }
+        )
+
+        XCTAssertNil(projection)
     }
 
     func testProjectionResolvesModeAttributionFromCurrentLibrary() {
@@ -90,10 +127,12 @@ final class HistoryProjectionTests: XCTestCase {
             vocabulary: []
         )
 
-        let row = project([source], modes: [current]).sections.first?.rows.first
+        let projection = project([source], modes: [current])
+        let row = projection.sections.first?.rows.first
+        let presentation = row.map { projection.presentation(for: $0) }
 
         XCTAssertEqual(
-            [row?.presentation.fullModeName, row?.presentation.modeIcon],
+            [presentation?.fullModeName, presentation?.modeIcon],
             ["Current Name", "envelope"]
         )
     }
@@ -103,7 +142,12 @@ final class HistoryProjectionTests: XCTestCase {
             text: "one", rawText: "one", minutesAgo: 1, flagged: false
         )
 
-        XCTAssertEqual(project([source], search: "   ").sections.first?.rows.map(\.entry), [source])
+        let projection = project([source], search: "   ")
+
+        XCTAssertEqual(
+            projection.sections.first?.rows.map { projection.entry(for: $0) },
+            [source]
+        )
     }
 
     func testEmptyInputProjectsEmpty() {

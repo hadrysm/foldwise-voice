@@ -152,6 +152,7 @@ final class PaneProjectionStore {
     @ObservationIgnored private let beforePreparation:
         @Sendable (Pane) async -> Void
     @ObservationIgnored private var historyEntries: [HistoryEntry] = []
+    @ObservationIgnored private var historyIndex = HistoryIndex()
     @ObservationIgnored private var statsEntriesKey: [StatsEntryKey: Int] = [:]
     @ObservationIgnored private var historyDerivationCache: (
         key: HistoryDerivationKey,
@@ -219,6 +220,7 @@ final class PaneProjectionStore {
         let previousKey = self.modes.map(RowModeKey.init)
         self.modes = modes
         guard previousKey != modes.map(RowModeKey.init) else { return [] }
+        historyIndex.setModes(modes)
         invalidateHomeAndHistory()
         if let homeEnvironment {
             prepareHome(in: homeEnvironment)
@@ -241,6 +243,7 @@ final class PaneProjectionStore {
         }
         historyEntries = entries
         guard previousEntries != entries else { return [] }
+        historyIndex.setEntries(entries)
         invalidateHomeAndHistory()
         var invalidation: Invalidation = [.home, .history]
         if statsEntriesKey != nextStatsKey {
@@ -389,17 +392,14 @@ final class PaneProjectionStore {
             historyProjection = .current(filteredHistoryCache.completed)
             return filteredHistoryCache.completed
         }
+        let snapshot = historyIndex.snapshot(calendar: environment.calendar)
         let projection = HistoryProjection.project(
-            HistoryProjection.Input(
-                entries: historyEntries,
-                search: search,
-                flaggedOnly: flaggedOnly,
-                modes: modes
-            ),
+            snapshot,
+            search: search,
+            flaggedOnly: flaggedOnly,
             now: environment.now,
-            calendar: environment.calendar,
             locale: environment.locale
-        )
+        ) ?? .empty
         let completed = complete(projection)
         if isDefaultFilter {
             defaultHistoryCache = (key.environment, completed)
@@ -439,8 +439,7 @@ final class PaneProjectionStore {
 
         historyPreparationRevision &+= 1
         let revision = historyPreparationRevision
-        let entries = historyEntries
-        let modes = modes
+        let snapshot = historyIndex.snapshot(calendar: environment.calendar)
         let beforePreparation = beforePreparation
         historyTask?.cancel()
         historyProjection = .preparing(from: historyProjection.completed)
@@ -448,17 +447,14 @@ final class PaneProjectionStore {
             await beforePreparation(.history)
             guard !Task.isCancelled else { return }
             let projection = HistoryProjection.project(
-                HistoryProjection.Input(
-                    entries: entries,
-                    search: search,
-                    flaggedOnly: flaggedOnly,
-                    modes: modes
-                ),
+                snapshot,
+                search: search,
+                flaggedOnly: flaggedOnly,
                 now: environment.now,
-                calendar: environment.calendar,
-                locale: environment.locale
+                locale: environment.locale,
+                shouldCancel: { Task.isCancelled }
             )
-            guard !Task.isCancelled else { return }
+            guard let projection, !Task.isCancelled else { return }
             await self?.publishFilteredHistory(
                 projection,
                 key: key,
@@ -504,8 +500,7 @@ final class PaneProjectionStore {
 
         defaultHistoryPreparationRevision &+= 1
         let revision = defaultHistoryPreparationRevision
-        let entries = historyEntries
-        let modes = modes
+        let snapshot = historyIndex.snapshot(calendar: environment.calendar)
         let beforePreparation = beforePreparation
         defaultHistoryTask?.cancel()
         defaultHistoryPendingKey = key
@@ -518,17 +513,14 @@ final class PaneProjectionStore {
             await beforePreparation(.history)
             guard !Task.isCancelled else { return }
             let projection = HistoryProjection.project(
-                HistoryProjection.Input(
-                    entries: entries,
-                    search: "",
-                    flaggedOnly: false,
-                    modes: modes
-                ),
+                snapshot,
+                search: "",
+                flaggedOnly: false,
                 now: environment.now,
-                calendar: environment.calendar,
-                locale: environment.locale
+                locale: environment.locale,
+                shouldCancel: { Task.isCancelled }
             )
-            guard !Task.isCancelled else { return }
+            guard let projection, !Task.isCancelled else { return }
             await self?.publishDefaultHistory(
                 projection,
                 key: key,
