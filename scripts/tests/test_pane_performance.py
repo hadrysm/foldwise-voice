@@ -59,6 +59,54 @@ class PanePerformanceHarnessTests(unittest.TestCase):
             },
         )
 
+    def test_authority_requires_twenty_samples_and_hitch_evidence(self) -> None:
+        self.assertEqual(
+            [
+                run_pane_performance.is_authoritative(20, True),
+                run_pane_performance.is_authoritative(1, True),
+                run_pane_performance.is_authoritative(20, False),
+            ],
+            [True, False, False],
+        )
+
+    def test_comparison_calculates_post_sparkle_deltas(self) -> None:
+        runs = [
+            self.run_result("empty", {"Stats": 160.0}),
+            self.run_result(
+                "10000",
+                {"Home": 260.0, "History": 340.0, "Stats": 360.0},
+            ),
+        ]
+
+        comparison = run_pane_performance.baseline_comparison(runs)
+
+        self.assertEqual(
+            comparison["profile10000"]["Home"],
+            {
+                "preSparkleMedianMilliseconds": 257.702,
+                "postSparkleMedianMilliseconds": 260.0,
+                "deltaMilliseconds": 2.298,
+                "ratio": 1.008917,
+            },
+        )
+
+    @staticmethod
+    def run_result(
+        profile: str,
+        medians: dict[str, float],
+    ) -> dict[str, object]:
+        return {
+            "profile": profile,
+            "routes": [
+                {
+                    "destination": destination,
+                    "visit": "cold",
+                    "statistics": {"medianMilliseconds": median},
+                }
+                for destination, median in medians.items()
+            ],
+        }
+
 
 if __name__ == "__main__":
     unittest.main()

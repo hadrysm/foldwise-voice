@@ -28,15 +28,54 @@ final class PanePerformanceFixtureTests: XCTestCase {
         )
     }
 
-    func testTenThousandProfileHasStableBoundarySessions() {
+    func testTenThousandProfileHasStableBoundaryIdentifiers() {
         let fixture = PanePerformanceFixture(profile: .tenThousand)
 
         XCTAssertEqual(
-            [fixture.entries.first, fixture.entries.last].compactMap(\.self),
+            [fixture.entries.first?.id.uuidString, fixture.entries.last?.id.uuidString],
             [
-                PanePerformanceFixture.expectedEntry(at: 0),
-                PanePerformanceFixture.expectedEntry(at: 9999),
+                "00000000-0000-4000-8000-000000000000",
+                "00000000-0000-4000-8000-00000000270F",
             ]
+        )
+    }
+
+    func testTenThousandProfileHasStableBoundaryTimestamps() {
+        let fixture = PanePerformanceFixture(profile: .tenThousand)
+
+        XCTAssertEqual(
+            [
+                fixture.entries.first?.createdAt.timeIntervalSince1970,
+                fixture.entries.last?.createdAt.timeIntervalSince1970,
+            ],
+            [1_783_075_200, 1_760_877_420]
+        )
+    }
+
+    func testTenThousandProfileHasStableModeAttribution() {
+        let fixture = PanePerformanceFixture(profile: .tenThousand)
+
+        XCTAssertEqual(
+            [fixture.entries.first?.modeName, fixture.entries.last?.modeName],
+            ["Performance Mode", "Performance Mode"]
+        )
+    }
+
+    func testTenThousandProfileHasStableText() {
+        let fixture = PanePerformanceFixture(profile: .tenThousand)
+
+        XCTAssertEqual(
+            fixture.entries.first?.rawText,
+            "meeting history release notes calendar review follow dictation customer up session research"
+        )
+    }
+
+    func testTenThousandProfileHasStableFlags() {
+        let fixture = PanePerformanceFixture(profile: .tenThousand)
+
+        XCTAssertEqual(
+            [fixture.entries.first?.flagged, fixture.entries.last?.flagged],
+            [true, false]
         )
     }
 

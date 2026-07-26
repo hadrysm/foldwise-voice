@@ -23,6 +23,23 @@ struct PanePerformancePlan: Codable, Equatable {
         guard plan.outputURL.isFileURL, plan.dataDirectory.isFileURL else {
             throw PanePerformancePlanError.nonFileURL
         }
+        let liveDirectory = JSONLHistoryStore.defaultURL
+            .deletingLastPathComponent()
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let locations = [plan.outputURL, plan.dataDirectory].map {
+            $0.standardizedFileURL.resolvingSymlinksInPath()
+        }
+        guard locations.allSatisfy({
+            $0 != liveDirectory &&
+                !$0.path.hasPrefix(liveDirectory.path + "/")
+        }) else {
+            throw PanePerformancePlanError.liveProfile
+        }
+        let dataDirectory = locations[1]
+        guard !FileManager.default.fileExists(atPath: dataDirectory.path) else {
+            throw PanePerformancePlanError.existingDataDirectory
+        }
         return plan
     }
 }
@@ -31,6 +48,8 @@ enum PanePerformancePlanError: LocalizedError {
     case invalidSampleCount
     case invalidDestinations
     case nonFileURL
+    case liveProfile
+    case existingDataDirectory
 
     var errorDescription: String? {
         switch self {
@@ -40,6 +59,10 @@ enum PanePerformancePlanError: LocalizedError {
             "Pane performance destinations must be nonempty and unique."
         case .nonFileURL:
             "Pane performance output and data locations must be file URLs."
+        case .liveProfile:
+            "Pane performance data cannot use FoldWise's live Application Support profile."
+        case .existingDataDirectory:
+            "Pane performance data directory must not already exist."
         }
     }
 }
@@ -54,8 +77,10 @@ struct PanePerformanceStatistics: Codable, Equatable {
     let p95Milliseconds: Double
     let worstMilliseconds: Double
 
-    init(samplesMilliseconds: [Double]) {
-        precondition(!samplesMilliseconds.isEmpty)
+    init(samplesMilliseconds: [Double]) throws {
+        guard !samplesMilliseconds.isEmpty else {
+            throw PanePerformanceReportError.emptySamples
+        }
         let sorted = samplesMilliseconds.sorted()
         if sorted.count.isMultiple(of: 2) {
             let upper = sorted.count / 2
@@ -91,12 +116,20 @@ struct PanePerformanceRouteResult: Codable, Equatable {
         destination: SettingsModel.Pane,
         visit: PanePerformanceVisit,
         samplesMilliseconds: [Double]
-    ) {
+    ) throws {
         self.source = source
         self.destination = destination
         self.visit = visit
         self.samplesMilliseconds = samplesMilliseconds
-        statistics = PanePerformanceStatistics(samplesMilliseconds: samplesMilliseconds)
+        statistics = try PanePerformanceStatistics(samplesMilliseconds: samplesMilliseconds)
+    }
+}
+
+enum PanePerformanceReportError: LocalizedError {
+    case emptySamples
+
+    var errorDescription: String? {
+        "Pane performance route results require at least one sample."
     }
 }
 

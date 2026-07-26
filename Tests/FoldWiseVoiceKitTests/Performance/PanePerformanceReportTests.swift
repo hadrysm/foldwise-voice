@@ -17,8 +17,8 @@ final class PanePerformanceReportTests: XCTestCase {
         try FileManager.default.removeItem(at: directory)
     }
 
-    func testStatisticsUseObservedP95AndRetainWorstSample() {
-        let statistics = PanePerformanceStatistics(
+    func testStatisticsUseObservedP95AndRetainWorstSample() throws {
+        let statistics = try PanePerformanceStatistics(
             samplesMilliseconds: Array((1 ... 20).reversed()).map(Double.init)
         )
 
@@ -32,8 +32,8 @@ final class PanePerformanceReportTests: XCTestCase {
         )
     }
 
-    func testReportRetainsEveryRawSample() {
-        let route = PanePerformanceRouteResult(
+    func testReportRetainsEveryRawSample() throws {
+        let route = try PanePerformanceRouteResult(
             source: .home,
             destination: .stats,
             visit: .warm,
@@ -41,6 +41,12 @@ final class PanePerformanceReportTests: XCTestCase {
         )
 
         XCTAssertEqual(route.samplesMilliseconds, [80, 90, 100])
+    }
+
+    func testStatisticsRejectAnEmptySampleSet() {
+        XCTAssertThrowsError(
+            try PanePerformanceStatistics(samplesMilliseconds: [])
+        )
     }
 
     func testPlanLoadsAnExplicitComparableRunMatrix() throws {
@@ -71,9 +77,37 @@ final class PanePerformanceReportTests: XCTestCase {
         XCTAssertThrowsError(try PanePerformancePlan.load(from: url))
     }
 
+    func testPlanRejectsTheLiveApplicationSupportProfile() throws {
+        let url = directory.appendingPathComponent("plan.json")
+        let plan = PanePerformancePlan(
+            profile: .empty,
+            outputURL: directory.appendingPathComponent("result.json"),
+            dataDirectory: JSONLHistoryStore.defaultURL.deletingLastPathComponent(),
+            sampleCount: 20,
+            destinations: [.home]
+        )
+        try JSONEncoder().encode(plan).write(to: url)
+
+        XCTAssertThrowsError(try PanePerformancePlan.load(from: url))
+    }
+
+    func testPlanRejectsAnOutputInLiveApplicationSupport() throws {
+        let url = directory.appendingPathComponent("plan.json")
+        let plan = PanePerformancePlan(
+            profile: .empty,
+            outputURL: JSONLHistoryStore.defaultURL,
+            dataDirectory: directory.appendingPathComponent("profile"),
+            sampleCount: 20,
+            destinations: [.home]
+        )
+        try JSONEncoder().encode(plan).write(to: url)
+
+        XCTAssertThrowsError(try PanePerformancePlan.load(from: url))
+    }
+
     func testRunReportWritesMachineReadableRawResults() throws {
         let outputURL = directory.appendingPathComponent("result.json")
-        let route = PanePerformanceRouteResult(
+        let route = try PanePerformanceRouteResult(
             source: .settings,
             destination: .home,
             visit: .cold,

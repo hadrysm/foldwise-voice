@@ -24,11 +24,11 @@ struct PanePerformanceFixture {
         case .empty:
             entries = []
         case .tenThousand:
-            entries = (0 ..< 10000).map(Self.expectedEntry)
+            entries = (0 ..< 10000).map(Self.entry)
         }
     }
 
-    static func expectedEntry(at index: Int) -> HistoryEntry {
+    private static func entry(at index: Int) -> HistoryEntry {
         let vocabulary = [
             "meeting", "notes", "follow", "up", "team", "quarterly", "roadmap",
             "release", "review", "customer", "research", "design", "measure",
@@ -76,12 +76,18 @@ struct PanePerformanceFixture {
     )!
 
     private static func stableUUID(at index: Int) -> UUID {
-        let value = String(
-            format: "00000000-0000-4000-8000-%012lld",
-            Int64(index)
-        )
-        // The fixed prefix plus a twelve-digit nonnegative fixture index is
-        // UUID-shaped by construction.
-        return UUID(uuidString: value)!
+        let value = UInt64(index)
+        return UUID(uuid: (
+            0, 0, 0, 0,
+            0, 0,
+            0x40, 0,
+            0x80, 0,
+            UInt8(truncatingIfNeeded: value >> 40),
+            UInt8(truncatingIfNeeded: value >> 32),
+            UInt8(truncatingIfNeeded: value >> 24),
+            UInt8(truncatingIfNeeded: value >> 16),
+            UInt8(truncatingIfNeeded: value >> 8),
+            UInt8(truncatingIfNeeded: value)
+        ))
     }
 }

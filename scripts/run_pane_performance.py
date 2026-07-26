@@ -12,6 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 REPO = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPO / "scripts" / "build_swift_app.py"
@@ -20,6 +21,14 @@ EXECUTABLE = BUNDLE / "Contents" / "MacOS" / "FoldWiseVoice"
 PLAN_ENVIRONMENT_KEY = "FOLDWISE_PANE_PERFORMANCE_PLAN"
 PANES = ["Home", "Modes", "Models", "History", "Stats", "Settings"]
 PROFILES = ["empty", "10000"]
+PRE_SPARKLE_MEDIANS = {
+    "empty": {"Stats": 149.477},
+    "10000": {
+        "Home": 257.702,
+        "History": 343.608,
+        "Stats": 357.928,
+    },
+}
 
 
 def make_plan(
@@ -49,6 +58,35 @@ def measurement_configuration() -> dict[str, object]:
         "runtimeDiagnostics": False,
         "windowSizePoints": {"width": 980, "height": 720},
     }
+
+
+def is_authoritative(sample_count: int, hitch_evidence_recorded: bool) -> bool:
+    return sample_count == 20 and hitch_evidence_recorded
+
+
+def baseline_comparison(runs: list[dict[str, Any]]) -> dict[str, object]:
+    comparison: dict[str, object] = {}
+    for profile, baselines in PRE_SPARKLE_MEDIANS.items():
+        run = next(item for item in runs if item["profile"] == profile)
+        cold_routes = {
+            route["destination"]: route
+            for route in run["routes"]
+            if route["visit"] == "cold"
+        }
+        profile_result: dict[str, object] = {}
+        for destination, before in baselines.items():
+            after = cold_routes[destination]["statistics"]["medianMilliseconds"]
+            profile_result[destination] = {
+                "preSparkleMedianMilliseconds": before,
+                "postSparkleMedianMilliseconds": after,
+                "deltaMilliseconds": round(after - before, 6),
+                "ratio": round(after / before, 6),
+            }
+        comparison[
+            "profile10000" if profile == "10000" else "profileEmpty"
+        ] = profile_result
+    comparison["source"] = "docs/research/foldwise-pane-latency-baseline.md"
+    return comparison
 
 
 def run_text(command: list[str]) -> str:
@@ -119,7 +157,8 @@ def run_plan(plan: dict[str, object], plan_path: Path, timeout: int) -> dict[str
         check=True,
         timeout=timeout,
     )
-    output = Path(str(plan["outputURL"]).removeprefix("file://"))
+    output_url = urlparse(str(plan["outputURL"]))
+    output = Path(unquote(output_url.path))
     if not output.exists():
         failure = output.with_suffix(".failure.txt")
         detail = failure.read_text() if failure.exists() else "no failure artifact"
@@ -227,9 +266,16 @@ def main() -> None:
         }
     else:
         hitch_evidence = record_hitch_trace(output_directory, args.timeout)
+        if not hitch_evidence["recorded"]:
+            raise RuntimeError(
+                "Animation Hitches trace failed; see hitches/xctrace.stderr.txt"
+            )
 
     report = {
         "schemaVersion": 1,
+        "authoritative": is_authoritative(
+            args.samples, bool(hitch_evidence["recorded"])
+        ),
         "recordedAt": dt.datetime.now(dt.UTC).isoformat(),
         "measurementConfiguration": measurement_configuration(),
         "environment": environment_metadata(),
@@ -246,15 +292,7 @@ def main() -> None:
         },
         "runs": raw_runs,
         "hitchEvidence": hitch_evidence,
-        "preSparkleComparisonMilliseconds": {
-            "profile10000Medians": {
-                "Home": 257.702,
-                "History": 343.608,
-                "Stats": 357.928,
-            },
-            "emptyStatsMedian": 149.477,
-            "source": "docs/research/foldwise-pane-latency-baseline.md",
-        },
+        "preSparkleComparison": baseline_comparison(raw_runs),
     }
     report_path = output_directory / "pane-performance-report.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

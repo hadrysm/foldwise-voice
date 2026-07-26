@@ -436,9 +436,12 @@ private final class PanePerformanceApplication {
                 to: plan.dataDirectory.appendingPathComponent("history.jsonl")
             )
             configureCallbacks()
-            let model = makeModel(initialPane: .home)
-            currentModel = model
             performance.beginFirstWindow()
+            let entries = JSONLHistoryStore(
+                url: plan.dataDirectory.appendingPathComponent("history.jsonl")
+            ).load()
+            let model = makeModel(initialPane: .home, entries: entries)
+            currentModel = model
             let controller = NSHostingController(rootView: SettingsView(model: model))
             let window = SettingsController.makeMainWindow(contentViewController: controller)
             window.setContentSize(NSSize(width: 980, height: 720))
@@ -477,6 +480,14 @@ private final class PanePerformanceApplication {
     }
 
     private func run() async {
+        do {
+            try await performRun()
+        } catch {
+            fail(error)
+        }
+    }
+
+    private func performRun() async throws {
         let firstWindow = await waitForFirstWindow()
         var results: [PanePerformanceRouteResult] = []
         for destination in plan.destinations {
@@ -486,7 +497,7 @@ private final class PanePerformanceApplication {
                 destination: destination,
                 visit: .cold
             )
-            results.append(PanePerformanceRouteResult(
+            results.append(try PanePerformanceRouteResult(
                 source: source,
                 destination: destination,
                 visit: .cold,
@@ -497,14 +508,13 @@ private final class PanePerformanceApplication {
                 destination: destination,
                 visit: .warm
             )
-            results.append(PanePerformanceRouteResult(
+            results.append(try PanePerformanceRouteResult(
                 source: source,
                 destination: destination,
                 visit: .warm,
                 samplesMilliseconds: warm
             ))
         }
-
         let report = PanePerformanceRunReport(
             fixtureIdentity: fixture.identity,
             profile: plan.profile,
@@ -512,12 +522,8 @@ private final class PanePerformanceApplication {
             firstWindowMilliseconds: firstWindow,
             routes: results
         )
-        do {
-            try report.write(to: plan.outputURL)
-            NSApp.terminate(nil)
-        } catch {
-            fail(error)
-        }
+        try report.write(to: plan.outputURL)
+        NSApp.terminate(nil)
     }
 
     private func samples(
@@ -541,7 +547,7 @@ private final class PanePerformanceApplication {
     }
 
     private func installFreshHost(initialPane: SettingsModel.Pane) async -> SettingsModel {
-        let model = makeModel(initialPane: initialPane)
+        let model = makeModel(initialPane: initialPane, entries: fixture.entries)
         currentModel = model
         await withCheckedContinuation { continuation in
             frameContinuation = (initialPane, continuation)
@@ -573,7 +579,10 @@ private final class PanePerformanceApplication {
         }
     }
 
-    private func makeModel(initialPane: SettingsModel.Pane) -> SettingsModel {
+    private func makeModel(
+        initialPane: SettingsModel.Pane,
+        entries: [HistoryEntry]
+    ) -> SettingsModel {
         let model = SettingsModel(panePerformance: performance)
         let config = Config.loadOrCreate(
             at: plan.dataDirectory.appendingPathComponent("config.json")
@@ -595,8 +604,8 @@ private final class PanePerformanceApplication {
         model.modes = config.orderedModes
         model.selectedModel = config.mode.llmModel ?? ""
         model.installed = []
-        model.historyEntries = fixture.entries
-        model.currentStreak = fixture.entries.isEmpty ? nil : 14
+        model.historyEntries = entries
+        model.currentStreak = entries.isEmpty ? nil : 14
         return model
     }
 
@@ -604,11 +613,18 @@ private final class PanePerformanceApplication {
         let failureURL = plan.outputURL
             .deletingPathExtension()
             .appendingPathExtension("failure.txt")
-        try? error.localizedDescription.write(
-            to: failureURL,
-            atomically: true,
-            encoding: .utf8
-        )
+        do {
+            try error.localizedDescription.write(
+                to: failureURL,
+                atomically: true,
+                encoding: .utf8
+            )
+        } catch {
+            let detail = error.localizedDescription
+            Log.app.error(
+                "Pane performance failure artifact skipped: \(detail, privacy: .public)"
+            )
+        }
         NSApp.terminate(nil)
     }
 }

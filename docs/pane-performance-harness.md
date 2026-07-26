@@ -50,9 +50,10 @@ primes the destination, returns to the source in the same host, and then
 measures the revisit. This preserves disposable destination views and allows
 later controller-retained projection work to become observably warm.
 
-`FirstWindowOpening` is a separate signposted interval from settings-window
-construction to Home's first meaningful frame. It is reported but is never
-judged against the pane-navigation 100 ms target.
+`FirstWindowOpening` is a separate signposted interval from loading the
+profile's production JSONL History through settings-window construction to
+Home's first meaningful frame. It is reported but is never judged against the
+pane-navigation 100 ms target.
 
 ## Profile isolation
 
@@ -72,7 +73,8 @@ production `JSONLHistoryStore`.
 
 The output directory contains:
 
-- `pane-performance-report.json`: the combined authoritative report;
+- `pane-performance-report.json`: the combined report, with an explicit
+  `authoritative` flag;
 - `raw/<profile>/result.json`: every raw duration plus median, observed p95,
   and worst for each route and visit class;
 - each validated plan and its isolated profile data; and
@@ -82,8 +84,11 @@ The output directory contains:
 The combined report records the commit and app version, Mac model/chip/memory,
 macOS and Xcode versions, power and thermal state, display configuration,
 window size, Appearance, Reduce Motion, Increase Contrast, fixture identities,
-route matrix, and the pre-Sparkle comparison values.
+route matrix, and calculated pre-/post-Sparkle medians, deltas, and ratios.
 
 Run the authoritative 20-sample journey on the documented reference Mac with
 its normal display configuration and stable power/thermal conditions. A trace
 capture failure is evidence failure even if the duration matrix completed.
+Passing `--skip-trace` always produces a non-authoritative report; without that
+explicit smoke-run option, a trace failure fails the harness instead of
+publishing a combined report.
