@@ -26,8 +26,9 @@ duration strings as valid `keep_alive` values in its
 ## Method
 
 1. Unload the model with an empty request using `keep_alive: 0`.
-2. Send a representative non-streaming Polish request and record the native
-   Ollama timing fields from its response.
+2. Send a representative non-streaming Polish request with `keep_alive: 0`
+   and record the native Ollama timing fields from its response. This is the
+   cold result, and the same request unloads the model again when it completes.
 3. Send the empty warm-up request using `keep_alive: "10m"`.
 4. Repeat the same representative Polish request and record its timing fields.
 5. Confirm residency with `ollama ps`.
