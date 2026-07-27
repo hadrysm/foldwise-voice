@@ -13,6 +13,12 @@ idle ⇄ hover → recording → working → done/error and back; it never steal
 focus from the app being dictated into.
 _Avoid_: HUD, overlay, recording bar, floating window
 
+**Live transcript caption** — The transient, non-activating raw-transcript
+surface tethered to the Badge during a Dictation session. Tentative words may
+revise while listening; the caption locks while Polish runs and never inserts
+partial text into the focused app.
+_Avoid_: Caption, transcript Badge, live insertion
+
 **Dictation row** — The compact presentation of one saved Dictation session
 used in both Home's recent list and the full History list. The two surfaces may
 offer different secondary actions, but the row's identity and visual language
