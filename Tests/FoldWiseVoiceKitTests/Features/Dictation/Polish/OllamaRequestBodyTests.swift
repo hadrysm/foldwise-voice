@@ -26,6 +26,10 @@ final class OllamaRequestBodyTests: XCTestCase {
         XCTAssertEqual(options?["num_predict"] as? Int, 512)
     }
 
+    func testPolishKeepsTheModelResidentForTenMinutes() {
+        XCTAssertEqual(body()["keep_alive"] as? String, "10m")
+    }
+
     func testMessagesCarrySystemThenUser() {
         let messages = body()["messages"] as? [[String: String]]
         XCTAssertEqual(messages?.first?["role"], "system")

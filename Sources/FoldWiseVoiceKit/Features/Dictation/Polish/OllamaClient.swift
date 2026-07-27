@@ -19,6 +19,8 @@ struct OllamaPolishResult: Equatable {
 }
 
 final class OllamaClient {
+    static let keepAlive = "10m"
+
     private struct ChatResponse: Decodable {
         struct Message: Decodable {
             let content: String
@@ -64,6 +66,22 @@ final class OllamaClient {
     ) {
         self.transport = transport
         self.chatURL = chatURL
+    }
+
+    /// Best-effort preload for the next Polish request. An empty native chat
+    /// request asks Ollama to load the model without generating any text.
+    func warm(model: String) async {
+        let body: [String: Any] = [
+            "model": model,
+            "stream": false,
+            "keep_alive": Self.keepAlive,
+        ]
+        var request = URLRequest(url: chatURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 60
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        _ = try? await transport.data(for: request)
     }
 
     func polish(

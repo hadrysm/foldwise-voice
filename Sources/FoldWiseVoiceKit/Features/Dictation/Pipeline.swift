@@ -68,6 +68,7 @@ final class Pipeline {
     private let recorder: AudioRecording
     private let sessionProvider: ASRSessionHandleProviding
     private let ducker: AudioDucking
+    private let warm: (Mode) async -> Void
     private let polish: (String, Mode) async -> OllamaPolishResult
     private let insert: (String) async -> Bool
     /// Best-effort history sink (PRD #78): handed the assembled entry after
@@ -108,6 +109,7 @@ final class Pipeline {
         recorder: AudioRecording,
         sessionProvider: ASRSessionHandleProviding,
         ducker: AudioDucking = AudioDucker(),
+        warm: @escaping (Mode) async -> Void = Pipeline.warmPolishModel,
         polish: @escaping (String, Mode) async -> OllamaPolishResult =
             Pipeline.ollamaPolishWithTiming,
         insert: @escaping (String) async -> Bool = Pipeline.pasteboardInsert,
@@ -119,6 +121,7 @@ final class Pipeline {
         self.recorder = recorder
         self.sessionProvider = sessionProvider
         self.ducker = ducker
+        self.warm = warm
         self.polish = polish
         self.insert = insert
         self.record = record
@@ -136,6 +139,7 @@ final class Pipeline {
         recorder: AudioRecording,
         sessionProvider: ASRSessionHandleProviding,
         ducker: AudioDucking = AudioDucker(),
+        warm: @escaping (Mode) async -> Void = Pipeline.warmPolishModel,
         polish: @escaping (String, Mode) async -> String,
         insert: @escaping (String) async -> Bool = Pipeline.pasteboardInsert,
         record: @escaping (HistoryEntry) -> Void = Pipeline.recordToHistory,
@@ -147,6 +151,7 @@ final class Pipeline {
             recorder: recorder,
             sessionProvider: sessionProvider,
             ducker: ducker,
+            warm: warm,
             polish: { text, mode in
                 OllamaPolishResult(text: await polish(text, mode), timing: nil)
             },
@@ -158,6 +163,11 @@ final class Pipeline {
     }
 
     // MARK: - production stage defaults
+
+    static func warmPolishModel(_ mode: Mode) async {
+        guard let model = mode.llmModel, !model.isEmpty else { return }
+        await OllamaClient().warm(model: model)
+    }
 
     static func ollamaPolish(_ text: String, mode: Mode) async -> String {
         await ollamaPolishWithTiming(text, mode: mode).text
@@ -217,7 +227,7 @@ final class Pipeline {
     // MARK: - called from the hotkey listener (must be fast)
 
     func startRecording() {
-        let start: (id: UUID, modeName: String)? = withStateLock {
+        let start: (id: UUID, mode: Mode)? = withStateLock {
             guard !isShutDown, !recording, !sessionProvider.isDictationBlocked else {
                 return nil
             }
@@ -242,7 +252,7 @@ final class Pipeline {
                 mode: mode,
                 asrSession: asrSession
             )
-            return (id, mode.name)
+            return (id, mode)
         }
         guard let start else { return }
 
@@ -259,16 +269,22 @@ final class Pipeline {
             }
             return
         }
-
         let shouldStop = withStateLock {
             guard !isShutDown, recording, recordingStartID == start.id else { return true }
             recordingStartID = nil
             deliverSessionEvent(.started(start.id))
-            emit(.listening(mode: start.modeName))
+            emit(.listening(mode: start.mode.name))
             return false
         }
         if shouldStop {
             _ = recorder.stop()
+            return
+        }
+        if start.mode.usesLLM {
+            let warm = warm
+            Task(priority: .utility) {
+                await warm(start.mode)
+            }
         }
     }
 

@@ -75,6 +75,27 @@ final class OllamaClientHTTPBehaviorTests: XCTestCase {
         XCTAssertEqual(transport.lastDataRequest?.url, chatURL)
     }
 
+    func testWarmUsesEmptyNativeChatRequestAndTenMinuteResidency() async throws {
+        let transport = RecordingOllamaTransport(data: Data(), status: 200)
+        let chatURL = try XCTUnwrap(URL(string: "http://127.0.0.1:9999/custom-chat"))
+
+        await OllamaClient(transport: transport, chatURL: chatURL).warm(
+            model: "qwen2.5:3b"
+        )
+
+        let request = try XCTUnwrap(transport.lastDataRequest)
+        let bodyData = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: bodyData) as? [String: Any]
+        )
+        XCTAssertEqual(request.url, chatURL)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(body["model"] as? String, "qwen2.5:3b")
+        XCTAssertEqual(body["stream"] as? Bool, false)
+        XCTAssertEqual(body["keep_alive"] as? String, "10m")
+        XCTAssertNil(body["messages"])
+    }
+
     func testPolishReturnsRawTranscriptWhenTransportFails() async {
         let transport = FakeOllamaTransport(status: 200, dataError: .unreachable)
 

@@ -28,6 +28,7 @@ extension OllamaClient {
         [
             "model": model,
             "stream": false,
+            "keep_alive": keepAlive,
             "options": [
                 "temperature": 0,
                 "num_predict": maxTokens,
