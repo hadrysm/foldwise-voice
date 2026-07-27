@@ -18,7 +18,7 @@ struct OllamaPolishResult: Equatable {
     let timing: OllamaGenerationTiming?
 }
 
-final class OllamaClient {
+final class OllamaClient: Sendable {
     static let keepAlive = "10m"
 
     private struct ChatResponse: Decodable {
@@ -70,18 +70,32 @@ final class OllamaClient {
 
     /// Best-effort preload for the next Polish request. An empty native chat
     /// request asks Ollama to load the model without generating any text.
+    func scheduleWarm(model: String) {
+        Task(priority: .utility) {
+            await warm(model: model)
+        }
+    }
+
     func warm(model: String) async {
         let body: [String: Any] = [
             "model": model,
             "stream": false,
             "keep_alive": Self.keepAlive,
         ]
-        var request = URLRequest(url: chatURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 60
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        _ = try? await transport.data(for: request)
+        guard let request = makeChatRequest(body: body) else { return }
+        do {
+            let (_, response) = try await transport.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            if !(200 ..< 300).contains(status) {
+                Log.ollama.debug(
+                    "Polish model warm-up skipped after HTTP \(status, privacy: .public)"
+                )
+            }
+        } catch {
+            Log.ollama.debug(
+                "Polish model warm-up skipped: \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     func polish(
@@ -129,11 +143,9 @@ final class OllamaClient {
             model: model, system: system, user: text, maxTokens: maxTokens
         )
 
-        var request = URLRequest(url: chatURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 60
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        guard let request = makeChatRequest(body: body) else {
+            return OllamaPolishResult(text: text, timing: nil)
+        }
 
         do {
             let (data, response) = try await transport.data(for: request)
@@ -169,6 +181,19 @@ final class OllamaClient {
             """)
             return OllamaPolishResult(text: text, timing: nil)
         }
+    }
+
+    private func makeChatRequest(body: [String: Any]) -> URLRequest? {
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else {
+            Log.ollama.error("Ollama chat request encoding failed")
+            return nil
+        }
+        var request = URLRequest(url: chatURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 60
+        request.httpBody = data
+        return request
     }
 
     struct InstalledModel: Equatable, Identifiable {

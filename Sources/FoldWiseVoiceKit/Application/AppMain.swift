@@ -155,8 +155,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         historyStore.onAppend { entry in
             statsStore.advance(on: entry.createdAt, calendar: .current)
         }
+        let ollamaClient = OllamaClient()
         pipeline = Pipeline(
             config: config, recorder: recorder, sessionProvider: asrLifecycle,
+            warmPolishModel: { mode in
+                guard let model = mode.llmModel, !model.isEmpty else { return }
+                ollamaClient.scheduleWarm(model: model)
+            },
             record: { historyStore.append($0) }
         )
         dictationCommands = DictationCommandQueue(

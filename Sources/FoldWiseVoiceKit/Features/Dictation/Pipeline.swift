@@ -68,7 +68,7 @@ final class Pipeline {
     private let recorder: AudioRecording
     private let sessionProvider: ASRSessionHandleProviding
     private let ducker: AudioDucking
-    private let warm: (Mode) async -> Void
+    private let warmPolishModel: (Mode) -> Void
     private let polish: (String, Mode) async -> OllamaPolishResult
     private let insert: (String) async -> Bool
     /// Best-effort history sink (PRD #78): handed the assembled entry after
@@ -109,7 +109,7 @@ final class Pipeline {
         recorder: AudioRecording,
         sessionProvider: ASRSessionHandleProviding,
         ducker: AudioDucking = AudioDucker(),
-        warm: @escaping (Mode) async -> Void = Pipeline.warmPolishModel,
+        warmPolishModel: @escaping (Mode) -> Void = { _ in },
         polish: @escaping (String, Mode) async -> OllamaPolishResult =
             Pipeline.ollamaPolishWithTiming,
         insert: @escaping (String) async -> Bool = Pipeline.pasteboardInsert,
@@ -121,7 +121,7 @@ final class Pipeline {
         self.recorder = recorder
         self.sessionProvider = sessionProvider
         self.ducker = ducker
-        self.warm = warm
+        self.warmPolishModel = warmPolishModel
         self.polish = polish
         self.insert = insert
         self.record = record
@@ -139,7 +139,7 @@ final class Pipeline {
         recorder: AudioRecording,
         sessionProvider: ASRSessionHandleProviding,
         ducker: AudioDucking = AudioDucker(),
-        warm: @escaping (Mode) async -> Void = Pipeline.warmPolishModel,
+        warmPolishModel: @escaping (Mode) -> Void = { _ in },
         polish: @escaping (String, Mode) async -> String,
         insert: @escaping (String) async -> Bool = Pipeline.pasteboardInsert,
         record: @escaping (HistoryEntry) -> Void = Pipeline.recordToHistory,
@@ -151,7 +151,7 @@ final class Pipeline {
             recorder: recorder,
             sessionProvider: sessionProvider,
             ducker: ducker,
-            warm: warm,
+            warmPolishModel: warmPolishModel,
             polish: { text, mode in
                 OllamaPolishResult(text: await polish(text, mode), timing: nil)
             },
@@ -163,11 +163,6 @@ final class Pipeline {
     }
 
     // MARK: - production stage defaults
-
-    static func warmPolishModel(_ mode: Mode) async {
-        guard let model = mode.llmModel, !model.isEmpty else { return }
-        await OllamaClient().warm(model: model)
-    }
 
     static func ollamaPolish(_ text: String, mode: Mode) async -> String {
         await ollamaPolishWithTiming(text, mode: mode).text
@@ -281,10 +276,7 @@ final class Pipeline {
             return
         }
         if start.mode.usesLLM {
-            let warm = warm
-            Task(priority: .utility) {
-                await warm(start.mode)
-            }
+            warmPolishModel(start.mode)
         }
     }
 

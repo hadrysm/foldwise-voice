@@ -36,94 +36,48 @@ private final class BlockingStartRecorder: AudioRecording {
     func close() {}
 }
 
-private struct PipelineStart: @unchecked Sendable {
-    let pipeline: Pipeline
-
-    func callAsFunction() {
-        pipeline.startRecording()
-    }
-}
-
 final class PipelineSessionTests: XCTestCase {
-    func testStartWarmsCapturedPolishModeAfterAudioCaptureBegins() async {
-        let config = makeTestConfig(mode: Mode(
-            name: "Clean",
-            asrModel: "",
-            llmModel: "qwen2.5:3b",
-            systemPrompt: nil,
-            vocab: []
-        ))
+    private let polishMode = Mode(
+        name: "Clean",
+        asrModel: "",
+        llmModel: "qwen2.5:3b",
+        systemPrompt: nil,
+        vocab: []
+    )
+
+    func testStartWarmsCapturedPolishModeAfterAudioCaptureBegins() {
+        let config = makeTestConfig(mode: polishMode)
         let recorder = FakeRecorder()
-        let warmedMode = ModeCapture()
-        let recorderStartCounts = EventCollector<Int>()
-        let warmStarted = expectation(description: "warmup started")
+        let warmedModes = EventCollector<Mode>()
         let pipeline = Pipeline(
             config: config,
             recorder: recorder,
             sessionProvider: FakeTranscriberSessionProvider(FakeTranscriber()),
-            warm: { mode in
-                recorderStartCounts.append(recorder.startCount)
-                warmedMode.value = mode
-                warmStarted.fulfill()
-            },
+            warmPolishModel: { warmedModes.append($0) },
             record: { _ in },
             frontmostApp: { nil }
         )
-
-        pipeline.startRecording()
-        await fulfillment(of: [warmStarted])
-
-        XCTAssertEqual(recorderStartCounts.events, [1])
-        XCTAssertEqual(warmedMode.value, config.mode)
-    }
-
-    func testStartSkipsWarmForVoiceToText() async {
-        let warmCalled = expectation(description: "warmup skipped")
-        warmCalled.isInverted = true
-        let pipeline = Pipeline(
-            config: makeTestConfig(),
-            recorder: FakeRecorder(),
-            sessionProvider: FakeTranscriberSessionProvider(FakeTranscriber()),
-            warm: { _ in warmCalled.fulfill() },
-            record: { _ in },
-            frontmostApp: { nil }
-        )
-
-        pipeline.startRecording()
-
-        await fulfillment(of: [warmCalled], timeout: 0.05)
-    }
-
-    func testStartDoesNotWaitForPolishModelWarmup() async {
-        let warmStarted = expectation(description: "warmup started")
-        let finishWarm = Latch()
-        let recorder = FakeRecorder()
-        let pipeline = Pipeline(
-            config: makeTestConfig(mode: Mode(
-                name: "Clean",
-                asrModel: "",
-                llmModel: "qwen2.5:3b",
-                systemPrompt: nil,
-                vocab: []
-            )),
-            recorder: recorder,
-            sessionProvider: FakeTranscriberSessionProvider(FakeTranscriber()),
-            warm: { _ in
-                warmStarted.fulfill()
-                await finishWarm.wait()
-            },
-            record: { _ in },
-            frontmostApp: { nil }
-        )
-        let collector = StateCollector()
-        pipeline.onState = { collector.append($0) }
 
         pipeline.startRecording()
 
         XCTAssertEqual(recorder.startCount, 1)
-        XCTAssertEqual(collector.states, [.listening(mode: "Clean")])
-        await fulfillment(of: [warmStarted])
-        await finishWarm.open()
+        XCTAssertEqual(warmedModes.events, [config.mode])
+    }
+
+    func testStartSkipsWarmForVoiceToText() {
+        let warmedModes = EventCollector<Mode>()
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: FakeRecorder(),
+            sessionProvider: FakeTranscriberSessionProvider(FakeTranscriber()),
+            warmPolishModel: { warmedModes.append($0) },
+            record: { _ in },
+            frontmostApp: { nil }
+        )
+
+        pipeline.startRecording()
+
+        XCTAssertTrue(warmedModes.events.isEmpty)
     }
 
     func testShutdownReturnsWhileCaptureStartupIsBlocked() {
@@ -152,37 +106,29 @@ final class PipelineSessionTests: XCTestCase {
         XCTAssertEqual(result, .success)
     }
 
-    func testShutdownDuringCaptureStartupDoesNotWarmPolishModel() async {
+    func testShutdownDuringCaptureStartupDoesNotWarmPolishModel() {
         let recorder = BlockingStartRecorder()
-        let warmCalled = expectation(description: "warmup skipped")
-        warmCalled.isInverted = true
-        let startReturned = expectation(description: "capture startup returned")
+        let warmedModes = EventCollector<Mode>()
+        let startReturned = DispatchSemaphore(value: 0)
         let pipeline = Pipeline(
-            config: makeTestConfig(mode: Mode(
-                name: "Clean",
-                asrModel: "",
-                llmModel: "qwen2.5:3b",
-                systemPrompt: nil,
-                vocab: []
-            )),
+            config: makeTestConfig(mode: polishMode),
             recorder: recorder,
             sessionProvider: FakeTranscriberSessionProvider(FakeTranscriber()),
-            warm: { _ in warmCalled.fulfill() },
+            warmPolishModel: { warmedModes.append($0) },
             record: { _ in },
             frontmostApp: { nil }
         )
-        let start = PipelineStart(pipeline: pipeline)
 
         DispatchQueue.global().async {
-            start()
-            startReturned.fulfill()
+            pipeline.startRecording()
+            startReturned.signal()
         }
         XCTAssertEqual(recorder.startupEntered.wait(timeout: .now() + 0.2), .success)
         pipeline.shutdown()
         recorder.releaseStartup.signal()
 
-        await fulfillment(of: [startReturned])
-        await fulfillment(of: [warmCalled], timeout: 0.05)
+        XCTAssertEqual(startReturned.wait(timeout: .now() + 0.2), .success)
+        XCTAssertTrue(warmedModes.events.isEmpty)
     }
 
     func testSessionHandleReleasesAfterTranscriptionBeforePolishAndInsert() async {
@@ -424,22 +370,12 @@ final class PipelineSessionTests: XCTestCase {
         let ducker = FakeAudioDucker()
         let inserted = InsertSpy()
         let recorded = RecordSpy()
-        let warmCalled = expectation(description: "warmup skipped")
-        warmCalled.isInverted = true
+        let warmedModes = EventCollector<Mode>()
         let pipeline = Pipeline(
-            config: makeTestConfig(
-                mode: Mode(
-                    name: "Clean",
-                    asrModel: "",
-                    llmModel: "qwen2.5:3b",
-                    systemPrompt: nil,
-                    vocab: []
-                ),
-                pauseAudio: true
-            ),
+            config: makeTestConfig(mode: polishMode, pauseAudio: true),
             recorder: recorder,
             sessionProvider: FakeTranscriberSessionProvider(transcriber), ducker: ducker,
-            warm: { _ in warmCalled.fulfill() },
+            warmPolishModel: { warmedModes.append($0) },
             insert: { inserted.insert($0) }, record: { recorded.record($0) },
             frontmostApp: { nil }
         )
@@ -449,12 +385,12 @@ final class PipelineSessionTests: XCTestCase {
         pipeline.startRecording()
         pipeline.stopRecording()
         await pipeline.awaitPendingJob()
-        await fulfillment(of: [warmCalled], timeout: 0.05)
 
         XCTAssertEqual(
             collector.states,
             [.error(AudioCaptureError.bindFailed(device: "Studio Mic").localizedDescription)]
         )
+        XCTAssertTrue(warmedModes.events.isEmpty)
         XCTAssertEqual(ducker.events, [.duck, .restore])
         XCTAssertTrue(transcriber.received.isEmpty)
         XCTAssertTrue(inserted.texts.isEmpty)
