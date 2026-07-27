@@ -1,37 +1,11 @@
 #if BADGE_TRANSCRIPT_PROTOTYPE
 
     // PROTOTYPE — throw away after issue #346 answers the Badge preview question.
-    // Three live-transcript treatments are switchable from a non-activating
-    // companion control while the real Dictation pipeline drives Badge phases.
+    // The selected caption treatment stays separate from the Badge while the
+    // real Dictation pipeline drives both surfaces through their phases.
 
     import Combine
     import Foundation
-
-    enum BadgeTranscriptPrototypeVariant: String, CaseIterable {
-        case ticker = "A"
-        case caption = "B"
-        case stack = "C"
-
-        var name: String {
-            switch self {
-            case .ticker: "Ticker"
-            case .caption: "Caption"
-            case .stack: "Stack"
-            }
-        }
-
-        var next: Self {
-            let variants = Self.allCases
-            let index = variants.firstIndex(of: self) ?? 0
-            return variants[(index + 1) % variants.count]
-        }
-
-        var previous: Self {
-            let variants = Self.allCases
-            let index = variants.firstIndex(of: self) ?? 0
-            return variants[(index - 1 + variants.count) % variants.count]
-        }
-    }
 
     enum BadgeTranscriptPrototypePhase: Equatable {
         case idle
@@ -50,11 +24,11 @@
     }
 
     final class BadgeTranscriptPrototypeModel: ObservableObject {
-        @Published var variant: BadgeTranscriptPrototypeVariant = .ticker
         @Published private(set) var phase: BadgeTranscriptPrototypePhase = .idle
         @Published private(set) var confirmed = ""
         @Published private(set) var tentative = ""
         @Published private(set) var modeName = "Email"
+        @Published private(set) var captionTetherOffset: CGFloat = 0
 
         private struct Step {
             let time: TimeInterval
@@ -65,7 +39,7 @@
         /// Directional EOU 320 simulation: first non-empty text at ~1 second,
         /// lowercase/unpunctuated output, and trailing words that revise as right
         /// context arrives. The final step is deliberately long enough to exercise
-        /// each variant's overflow behaviour.
+        /// the caption's overflow behaviour.
         private static let steps = [
             Step(time: 1.0, confirmed: "", tentative: "hey sam"),
             Step(time: 1.7, confirmed: "hey sam i", tentative: "wanted to"),
@@ -151,6 +125,11 @@
             }
             confirmed = step.confirmed
             tentative = step.tentative
+        }
+
+        func setCaptionTetherOffset(_ offset: CGFloat) {
+            guard abs(captionTetherOffset - offset) >= 0.5 else { return }
+            captionTetherOffset = offset
         }
 
         private func settleTentative() {

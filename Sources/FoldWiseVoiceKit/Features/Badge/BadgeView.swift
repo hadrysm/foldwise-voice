@@ -124,26 +124,6 @@ struct BadgeView: View {
 
     @ViewBuilder
     private var content: some View {
-        #if BADGE_TRANSCRIPT_PROTOTYPE
-            if model.transcriptPrototype.phase.presentsPreview,
-               model.transcriptPrototype.variant != .caption,
-               model.state == .recording || model.state.isWorking {
-                BadgeTranscriptPrototypeContent(
-                    prototype: model.transcriptPrototype,
-                    recordingSeconds: model.recordingSeconds,
-                    amplitude: { model.amplitude },
-                    motion: motion
-                )
-            } else {
-                standardContent
-            }
-        #else
-            standardContent
-        #endif
-    }
-
-    @ViewBuilder
-    private var standardContent: some View {
         switch visualPresentation.cue {
         case .idleGlyph:
             BadgeIdleGlyph()
@@ -252,257 +232,119 @@ struct BadgeView: View {
     }
 }
 
-private extension BadgeState {
-    var isWorking: Bool {
-        if case .working = self {
-            return true
-        }
-        return false
-    }
-}
-
 #if BADGE_TRANSCRIPT_PROTOTYPE
-
-    private struct BadgeTranscriptPrototypeContent: View {
-        @ObservedObject var prototype: BadgeTranscriptPrototypeModel
-        let recordingSeconds: Int
-        let amplitude: () -> Double
-        let motion: BadgeMotionPresentation
-
-        var body: some View {
-            switch prototype.variant {
-            case .ticker:
-                ticker
-            case .stack:
-                stack
-            case .caption:
-                EmptyView()
-            }
-        }
-
-        private var ticker: some View {
-            HStack(spacing: 9) {
-                liveMark
-                    .frame(width: 46, height: 18)
-                transcriptLine(
-                    font: Theme.ui(12, .medium),
-                    tentativeOpacity: 0.62
-                )
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .lineLimit(1)
-                .truncationMode(.head)
-                Text(trailingStatus)
-                    .font(Theme.mono(10, .medium))
-                    .foregroundStyle(Theme.textTertiary)
-                    .fixedSize()
-            }
-            .padding(.horizontal, 13)
-        }
-
-        private var stack: some View {
-            VStack(spacing: 5) {
-                HStack(spacing: 8) {
-                    liveMark
-                        .frame(width: 42, height: 16)
-                    Text(stageLabel)
-                        .font(Theme.mono(10, .semibold))
-                        .foregroundStyle(Theme.textSecondary)
-                    Spacer(minLength: 4)
-                    Text(trailingStatus)
-                        .font(Theme.mono(10, .medium))
-                        .foregroundStyle(Theme.textTertiary)
-                }
-                transcriptLine(
-                    font: Theme.ui(12, .medium),
-                    tentativeOpacity: 0.48
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .lineLimit(2)
-                .truncationMode(.head)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-        }
-
-        @ViewBuilder
-        private var liveMark: some View {
-            if prototype.phase == .listening {
-                RibbonCanvas(live: true, amplitude: amplitude, motion: motion)
-            } else {
-                RibbonCanvas(live: false, amplitude: { 0.18 }, motion: motion)
-            }
-        }
-
-        @ViewBuilder
-        private func transcriptLine(
-            font: Font,
-            tentativeOpacity: Double
-        ) -> some View {
-            if prototype.phase == .polishing {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
-                    Text("shaping as \(prototype.modeName)…")
-                        .font(font)
-                        .foregroundStyle(Theme.textPrimary)
-                }
-            } else if prototype.fullTranscript.isEmpty {
-                Text("listening…")
-                    .font(font)
-                    .foregroundStyle(Theme.textTertiary)
-            } else {
-                (
-                    Text(prototype.confirmed)
-                        .foregroundStyle(Theme.textPrimary)
-                        + Text(prototype.confirmed.isEmpty || prototype.tentative.isEmpty ? "" : " ")
-                        + Text(prototype.tentative)
-                        .foregroundStyle(Theme.textPrimary.opacity(tentativeOpacity))
-                )
-                .font(font)
-            }
-        }
-
-        private var trailingStatus: String {
-            switch prototype.phase {
-            case .listening:
-                let minutes = recordingSeconds / 60
-                let seconds = recordingSeconds % 60
-                return "\(minutes):" + String(format: "%02d", seconds)
-            case .transcribing:
-                return "finishing…"
-            case .polishing:
-                return "Polish"
-            case .idle, .finished, .failed:
-                return ""
-            }
-        }
-
-        private var stageLabel: String {
-            switch prototype.phase {
-            case .listening:
-                "LIVE PREVIEW"
-            case .transcribing:
-                "FINALIZING"
-            case .polishing:
-                "RAW → \(prototype.modeName.uppercased())"
-            case .idle, .finished, .failed:
-                ""
-            }
-        }
-    }
 
     struct BadgeTranscriptPrototypeCaption: View {
         @ObservedObject var prototype: BadgeTranscriptPrototypeModel
 
         var body: some View {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(phaseColor)
+                            .frame(width: 5, height: 5)
+                        Text(captionLabel)
+                            .font(Theme.mono(9, .semibold))
+                            .tracking(0.8)
+                            .foregroundStyle(Theme.textTertiary)
+                        Spacer()
+                        if let handoffLabel {
+                            HStack(spacing: 4) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 8, weight: .semibold))
+                                Text(handoffLabel)
+                                    .font(Theme.ui(9.5, .semibold))
+                            }
+                            .foregroundStyle(Theme.accent)
+                            .lineLimit(1)
+                        }
+                    }
+                    captionText
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(2)
+                        .truncationMode(.head)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Theme.border, lineWidth: 1)
+                }
+
+                VStack(spacing: 0) {
+                    Rectangle()
+                        .fill(Theme.accent.opacity(0.58))
+                        .frame(width: 1, height: 7)
                     Circle()
                         .fill(Theme.accent)
-                        .frame(width: 5, height: 5)
-                    Text(captionLabel)
-                        .font(Theme.mono(9, .semibold))
-                        .tracking(0.8)
-                        .foregroundStyle(Theme.textTertiary)
-                    Spacer()
-                    if !prototype.tentative.isEmpty, prototype.phase != .polishing {
-                        Text("dim words may change")
-                            .font(Theme.ui(9, .medium))
-                            .foregroundStyle(Theme.textTertiary)
-                    }
+                        .frame(width: 4, height: 4)
                 }
-                captionText
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .lineLimit(2)
-                    .truncationMode(.head)
+                .frame(height: 11)
+                .offset(x: prototype.captionTetherOffset)
+                .accessibilityHidden(true)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Theme.border, lineWidth: 1)
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
 
         @ViewBuilder
         private var captionText: some View {
-            if prototype.phase == .polishing {
-                (
-                    Text(prototype.confirmed)
-                        .foregroundStyle(Theme.textSecondary)
-                        + Text("  ·  shaping as \(prototype.modeName)…")
-                        .foregroundStyle(Theme.accent)
-                )
-                .font(Theme.ui(12, .medium))
-            } else if prototype.fullTranscript.isEmpty {
-                Text("Words will appear after about one second")
-                    .font(Theme.ui(12, .medium))
+            if prototype.fullTranscript.isEmpty {
+                Text("Listening for words…")
+                    .font(Theme.ui(12.5, .medium))
                     .foregroundStyle(Theme.textTertiary)
             } else {
                 (
                     Text(prototype.confirmed)
-                        .foregroundStyle(Theme.textPrimary)
+                        .foregroundStyle(
+                            prototype.phase == .polishing
+                                ? Theme.textSecondary
+                                : Theme.textPrimary
+                        )
                         + Text(prototype.confirmed.isEmpty || prototype.tentative.isEmpty ? "" : " ")
                         + Text(prototype.tentative)
-                        .foregroundStyle(Theme.textTertiary)
+                        .foregroundStyle(Theme.textPrimary.opacity(0.48))
+                        + Text(prototype.tentative.isEmpty ? "" : "  •")
+                        .foregroundStyle(Theme.accent.opacity(0.72))
                 )
-                .font(Theme.ui(12, .medium))
+                .font(Theme.ui(12.5, .medium))
             }
         }
 
         private var captionLabel: String {
             switch prototype.phase {
             case .listening:
-                "RAW PREVIEW"
+                "RAW · LIVE"
             case .transcribing:
-                "FINALIZING RAW TRANSCRIPT"
+                "RAW · LOCKED"
             case .polishing:
-                "RAW PREVIEW · POLISHING"
+                "RAW · LOCKED"
             case .idle, .finished, .failed:
-                "RAW PREVIEW"
-            }
-        }
-    }
-
-    struct BadgeTranscriptPrototypeSwitcher: View {
-        @ObservedObject var prototype: BadgeTranscriptPrototypeModel
-        let selectPrevious: () -> Void
-        let selectNext: () -> Void
-
-        var body: some View {
-            HStack(spacing: 10) {
-                switchButton(symbol: "chevron.left", action: selectPrevious)
-                Text("\(prototype.variant.rawValue) — \(prototype.variant.name)")
-                    .font(Theme.mono(10, .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .frame(minWidth: 92)
-                switchButton(symbol: "chevron.right", action: selectNext)
-                Text("simulated ~1s ASR")
-                    .font(Theme.ui(9, .medium))
-                    .foregroundStyle(Theme.textTertiary)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .background(Theme.raised, in: Capsule())
-            .overlay {
-                Capsule().strokeBorder(Theme.borderStrong, lineWidth: 1)
+                "RAW"
             }
         }
 
-        private func switchButton(
-            symbol: String,
-            action: @escaping () -> Void
-        ) -> some View {
-            Button(action: action) {
-                Image(systemName: symbol)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .frame(width: 20, height: 20)
-                    .background(Theme.hover, in: Circle())
+        private var handoffLabel: String? {
+            switch prototype.phase {
+            case .transcribing:
+                "finalizing speech…"
+            case .polishing:
+                "shaping as \(prototype.modeName)…"
+            case .idle, .listening, .finished, .failed:
+                nil
             }
-            .buttonStyle(.plain)
+        }
+
+        private var phaseColor: Color {
+            switch prototype.phase {
+            case .polishing:
+                Theme.warning
+            case .failed:
+                Theme.error
+            case .idle, .listening, .transcribing, .finished:
+                Theme.accent
+            }
         }
     }
 

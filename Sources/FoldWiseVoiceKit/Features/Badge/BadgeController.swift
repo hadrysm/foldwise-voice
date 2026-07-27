@@ -43,7 +43,6 @@ final class BadgeController: NSObject {
     #if BADGE_TRANSCRIPT_PROTOTYPE
         private var transcriptPrototypeTimer: Timer?
         private var transcriptPrototypeStartedAt: Date?
-        private var transcriptPrototypeSwitcherPanel: BadgePanel?
         private var transcriptPrototypeCaptionPanel: BadgePanel?
     #endif
     private var unhoverWork: DispatchWorkItem?
@@ -259,7 +258,7 @@ final class BadgeController: NSObject {
         let wasRecording = model.state == .recording
         model.state = state
         setSize(
-            presentationSize(for: state),
+            CGSize(width: state.width, height: Theme.badgeHeight),
             animate: !reduceMotion
         )
         if state == .recording, !wasRecording {
@@ -328,22 +327,6 @@ final class BadgeController: NSObject {
             ensureTranscriptPrototypePanels()
         #endif
         setSize(rect.size, animate: false)
-    }
-
-    private func presentationSize(for state: BadgeState) -> CGSize {
-        #if BADGE_TRANSCRIPT_PROTOTYPE
-            if model.transcriptPrototype.phase.presentsPreview {
-                switch model.transcriptPrototype.variant {
-                case .ticker:
-                    return CGSize(width: 440, height: Theme.badgeHeight)
-                case .caption:
-                    return CGSize(width: state.width, height: Theme.badgeHeight)
-                case .stack:
-                    return CGSize(width: 390, height: 68)
-                }
-            }
-        #endif
-        return CGSize(width: state.width, height: Theme.badgeHeight)
     }
 
     private func applyReduceMotion(_ reduced: Bool) {
@@ -573,27 +556,10 @@ final class BadgeController: NSObject {
         }
 
         private func ensureTranscriptPrototypePanels() {
-            guard transcriptPrototypeSwitcherPanel == nil else { return }
-
-            let switcher = BadgePanel(
-                contentRect: NSRect(x: 0, y: 0, width: 246, height: 28),
-                styleMask: [.borderless, .nonactivatingPanel],
-                backing: .buffered,
-                defer: false
-            )
-            configurePrototypePanel(switcher)
-            switcher.hasShadow = true
-            switcher.contentView = NSHostingView(
-                rootView: BadgeTranscriptPrototypeSwitcher(
-                    prototype: model.transcriptPrototype,
-                    selectPrevious: { [weak self] in self?.cycleTranscriptPrototype(forward: false) },
-                    selectNext: { [weak self] in self?.cycleTranscriptPrototype(forward: true) }
-                )
-            )
-            transcriptPrototypeSwitcherPanel = switcher
+            guard transcriptPrototypeCaptionPanel == nil else { return }
 
             let caption = BadgePanel(
-                contentRect: NSRect(x: 0, y: 0, width: 390, height: 58),
+                contentRect: NSRect(x: 0, y: 0, width: 420, height: 82),
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
@@ -619,23 +585,30 @@ final class BadgeController: NSObject {
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         }
 
-        private func cycleTranscriptPrototype(forward: Bool) {
-            let prototype = model.transcriptPrototype
-            prototype.variant = forward ? prototype.variant.next : prototype.variant.previous
-            setSize(presentationSize(for: model.state), animate: !reduceMotion)
-            updateTranscriptPrototypePanels()
-        }
-
         private func updateTranscriptPrototypePanels() {
             guard let panel else { return }
-            transcriptPrototypeSwitcherPanel?.orderFrontRegardless()
-            if model.transcriptPrototype.variant == .caption,
-               model.transcriptPrototype.phase.presentsPreview {
-                transcriptPrototypeCaptionPanel?.orderFrontRegardless()
+            if model.transcriptPrototype.phase.presentsPreview {
+                showTranscriptPrototypeCaption()
             } else {
                 transcriptPrototypeCaptionPanel?.orderOut(nil)
             }
             updateTranscriptPrototypePanelFrames(relativeTo: panel.frame)
+        }
+
+        private func showTranscriptPrototypeCaption() {
+            guard let caption = transcriptPrototypeCaptionPanel else { return }
+            guard !caption.isVisible else { return }
+            if reduceMotion {
+                caption.alphaValue = 1
+                caption.orderFrontRegardless()
+                return
+            }
+            caption.alphaValue = 0
+            caption.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
+                caption.animator().alphaValue = 1
+            }
         }
 
         private func updateTranscriptPrototypePanelFrames() {
@@ -644,18 +617,19 @@ final class BadgeController: NSObject {
         }
 
         private func updateTranscriptPrototypePanelFrames(relativeTo badgeFrame: NSRect) {
-            if let switcher = transcriptPrototypeSwitcherPanel {
-                let origin = CGPoint(
-                    x: badgeFrame.midX - switcher.frame.width / 2,
-                    y: badgeFrame.minY - switcher.frame.height - 10
-                )
-                switcher.setFrameOrigin(origin)
-            }
             if let caption = transcriptPrototypeCaptionPanel {
-                let origin = CGPoint(
-                    x: badgeFrame.midX - caption.frame.width / 2,
-                    y: badgeFrame.maxY + 8
+                var x = badgeFrame.midX - caption.frame.width / 2
+                let badgeCenter = CGPoint(x: badgeFrame.midX, y: badgeFrame.midY)
+                if let screen = screenFrame(at: badgeCenter) {
+                    x = max(
+                        screen.minX + 4,
+                        min(x, screen.maxX - caption.frame.width - 4)
+                    )
+                }
+                model.transcriptPrototype.setCaptionTetherOffset(
+                    badgeFrame.midX - (x + caption.frame.width / 2)
                 )
+                let origin = CGPoint(x: x, y: badgeFrame.maxY + 2)
                 caption.setFrameOrigin(origin)
             }
         }

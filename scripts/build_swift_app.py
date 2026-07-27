@@ -442,8 +442,8 @@ def main() -> None:
         )
         time.sleep(1)
         subprocess.run(["open", "-n", str(installed)], check=True)
-        print("Launched Badge transcript prototype. Use its ←/→ switcher,")
-        print("then hold the normal Dictation shortcut to exercise each variant.")
+        print("Launched the refined Badge caption prototype.")
+        print("Hold the normal Dictation shortcut for at least 7 seconds.")
         return
     print("First launch: grant Microphone when prompted; add the app under")
     print("System Settings → Privacy & Security → Accessibility for auto-paste")
