@@ -167,6 +167,20 @@ If that fallback cannot load, there is no effective ASR model and Dictation
 remains blocked.
 _Avoid_: runtime selection, resolved engine
 
+**Streaming ASR model** — An ASR model that transcribes while you are still
+speaking and finalizes within a few tens of milliseconds of your last word, so
+its own result is the transcript that gets polished, recorded, and inserted.
+Streaming is a property of the model, surfaced in the catalog beside language
+coverage and size; ordinary ASR model selection picks one, and the default does
+not stream (ADR-0009).
+_Avoid_: live model, realtime model, preview model
+
+**Transcript snapshot** — What a Streaming ASR model publishes as you speak: an
+append-only *committed* prefix plus a *tentative* suffix that later audio may
+still rewrite. The unit the Live transcript caption renders, distinguishing the
+two spans.
+_Avoid_: partial, interim result, preview text
+
 ## Batch workflow
 
 **PRD** — a GitHub issue carrying the `prd` label that holds a product
