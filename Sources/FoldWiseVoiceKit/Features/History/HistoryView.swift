@@ -5,46 +5,75 @@
 import Combine
 import SwiftUI
 
+struct HistorySectionWindow: Equatable {
+    private(set) var renderedCount = 1
+
+    mutating func loadNext(totalCount: Int) {
+        renderedCount = min(renderedCount + 1, totalCount)
+    }
+}
+
 struct HistoryPane: View {
-    @ObservedObject var model: SettingsModel
+    @Environment(\.locale) private var environmentLocale
+
+    private struct ProjectionRequest: Equatable {
+        let search: String
+        let flaggedOnly: Bool
+    }
+
+    let interface: HistoryPaneInterface
     @State private var confirmingClearAll = false
     @State private var confirmingDeleteOnOff = false
     @State private var search = ""
     @State private var flaggedOnly = false
-    @State private var projection = HistoryProjection.empty
-    @State private var projectionCache: HistoryProjectionCache
     @FocusState private var searchFocused: Bool
     @FocusState private var clearSearchFocused: Bool
+    private let now: () -> Date
+    private let calendar: () -> Calendar
+    private let locale: Locale?
     private let notificationCenter: NotificationCenter
 
     init(
-        model: SettingsModel,
-        projectionCache: HistoryProjectionCache = HistoryProjectionCache(),
+        interface: HistoryPaneInterface,
+        now: @escaping () -> Date = Date.init,
+        calendar: @escaping () -> Calendar = { .autoupdatingCurrent },
+        locale: Locale? = nil,
         notificationCenter: NotificationCenter = .default
     ) {
-        self.model = model
-        _projectionCache = State(initialValue: projectionCache)
+        self.interface = interface
+        self.now = now
+        self.calendar = calendar
+        self.locale = locale
         self.notificationCenter = notificationCenter
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Saved locally on this Mac. Audio is never retained.")
-                .font(Theme.body)
-                .foregroundStyle(Theme.textSecondary)
-                .accessibilityIdentifier("history.assurance")
-            preferences
-            if !model.saveHistory, !model.historyEntries.isEmpty {
-                savingOffNotice
-            }
-            if model.historyEntries.isEmpty {
-                emptyState
+        Group {
+            if projectionState.completed == nil {
+                PaneProjectionLoading(paneName: "History")
             } else {
-                populated
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Saved locally on this Mac. Audio is never retained.")
+                        .font(Theme.body)
+                        .foregroundStyle(Theme.textSecondary)
+                        .accessibilityIdentifier("history.assurance")
+                    preferences
+                    if !interface.saveHistory, interface.hasEntries {
+                        savingOffNotice
+                    }
+                    if !projection.hasSourceEntries {
+                        emptyState
+                    } else {
+                        populated
+                    }
+                }
             }
         }
+        .overlay(alignment: .topTrailing) {
+            PaneProjectionUpdating(isVisible: projectionState.phase == .updating)
+        }
         .alert("Clear all dictation history?", isPresented: $confirmingClearAll) {
-            Button("Clear All", role: .destructive) { model.onClearHistory?() }
+            Button("Clear All", role: .destructive) { interface.clearHistory() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
@@ -53,7 +82,7 @@ struct HistoryPane: View {
             )
         }
         .alert("Delete saved dictations?", isPresented: $confirmingDeleteOnOff) {
-            Button("Delete", role: .destructive) { model.onClearHistory?() }
+            Button("Delete", role: .destructive) { interface.clearHistory() }
             Button("Keep", role: .cancel) {}
         } message: {
             Text(
@@ -61,11 +90,17 @@ struct HistoryPane: View {
                     + "Delete the dictations already saved on this Mac?"
             )
         }
-        .onChange(of: projectionInput, initial: true) { _, input in
-            projection = projectionCache.resolve(input)
+        .onChange(of: projectionRequest, initial: true) { _, _ in
+            refreshProjection()
         }
         .onReceive(notificationCenter.publisher(for: .NSCalendarDayChanged)) { _ in
-            projection = projectionCache.resolve(projectionInput)
+            refreshProjection()
+        }
+        .onReceive(notificationCenter.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
+            refreshProjection()
+        }
+        .onChange(of: environmentLocale) { _, _ in
+            refreshProjection()
         }
     }
 
@@ -74,18 +109,17 @@ struct HistoryPane: View {
             preferenceCell(
                 symbolName: "externaldrive",
                 title: "Save dictation history",
-                detail: model.saveHistory
+                detail: interface.saveHistory
                     ? "On · text only, on this Mac"
                     : "Off · new Dictation sessions are not saved"
             ) {
                 Toggle(
                     "",
                     isOn: Binding(
-                        get: { model.saveHistory },
+                        get: { interface.saveHistory },
                         set: { isOn in
-                            model.saveHistory = isOn
-                            model.onCommit?(.global)
-                            if !isOn, !model.historyEntries.isEmpty {
+                            interface.setSaveHistory(isOn)
+                            if !isOn, interface.hasEntries {
                                 confirmingDeleteOnOff = true
                             }
                         }
@@ -104,10 +138,9 @@ struct HistoryPane: View {
                 Picker(
                     "",
                     selection: Binding(
-                        get: { model.retention },
+                        get: { interface.retention },
                         set: { newValue in
-                            model.retention = newValue
-                            model.onCommit?(.global)
+                            interface.setRetention(newValue)
                         }
                     )
                 ) {
@@ -159,11 +192,16 @@ struct HistoryPane: View {
         EmberEmptyState(
             symbolName: "clock",
             title: "No saved Dictation sessions.",
-            detail: model.saveHistory
+            detail: interface.saveHistory
                 ? "Your saved text will appear here after you speak."
                 : "Turn on History when you want new Dictation sessions saved."
         )
         .accessibilityIdentifier("history.empty.first-run")
+        .paneFirstMeaningfulFrame(
+            .history,
+            performance: interface.performance,
+            isReady: projectionState.isCurrent
+        )
     }
 
     private var savingOffNotice: some View {
@@ -185,8 +223,10 @@ struct HistoryPane: View {
                 HistoryCollection(
                     projection: projection,
                     polishModes: polishModes,
+                    performance: interface.performance,
+                    isCurrent: projectionState.isCurrent,
                     onCommand: { entry, command in
-                        model.onHistoryCommand?(entry, command)
+                        interface.performHistoryCommand(entry, command)
                     }
                 )
             }
@@ -201,20 +241,35 @@ struct HistoryPane: View {
         }
     }
 
-    private var projectionInput: HistoryProjection.Input {
-        HistoryProjection.Input(
-            entries: model.historyEntries,
+    private var projectionRequest: ProjectionRequest {
+        ProjectionRequest(
             search: search,
-            flaggedOnly: flaggedOnly,
-            modes: model.modes
+            flaggedOnly: flaggedOnly
         )
     }
 
+    private var projectionState: PaneProjectionStore.Projection<HistoryProjection> {
+        interface.projection
+    }
+
+    private var projection: HistoryProjection {
+        projectionState.completed?.value ?? .empty
+    }
+
     private var polishModes: [DictationRowPolishMode] {
-        model.modes.compactMap { mode in
-            guard mode.usesLLM, let id = mode.id else { return nil }
-            return DictationRowPolishMode(id: id, name: mode.name)
-        }
+        interface.polishModes
+    }
+
+    private func refreshProjection() {
+        interface.prepareProjection(
+            search: search,
+            flaggedOnly: flaggedOnly,
+            in: .init(
+                now: now(),
+                calendar: calendar(),
+                locale: locale ?? environmentLocale
+            )
+        )
     }
 
     /// Live search over both the polished and raw text, plus a Flagged-only
@@ -302,6 +357,11 @@ struct HistoryPane: View {
             detail: presentation.detail
         )
         .accessibilityIdentifier(presentation.accessibilityIdentifier)
+        .paneFirstMeaningfulFrame(
+            .history,
+            performance: interface.performance,
+            isReady: projectionState.isCurrent
+        )
     }
 }
 
@@ -310,34 +370,96 @@ struct HistoryPane: View {
 private struct HistoryCollection: View {
     let projection: HistoryProjection
     let polishModes: [DictationRowPolishMode]
+    let performance: PaneNavigationPerformance
+    let isCurrent: Bool
     let onCommand: (HistoryEntry, DictationRowCommand) -> Void
+    @State private var sectionWindow = HistorySectionWindow()
+    @State private var interactionsReady = false
 
     var body: some View {
+        Group {
+            if interactionsReady {
+                interactiveCollection
+            } else {
+                firstFrame
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("history.collection")
+        .onChange(of: projectionIdentity, initial: true) {
+            sectionWindow = HistorySectionWindow()
+            interactionsReady = false
+        }
+    }
+
+    private var interactiveCollection: some View {
         LazyVStack(alignment: .leading, spacing: 14) {
-            ForEach(projection.sections, id: \.header) { section in
+            ForEach(renderedSections, id: \.header) { section in
                 EmberSectionLabel(section.header, symbolName: "calendar")
                 EmberSurface {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
+                        ForEach(section.rows) { row in
+                            let entry = projection.entry(for: row)
                             DictationRow(
-                                presentation: row.presentation,
+                                presentation: projection.presentation(for: row),
                                 moreCapabilities: DictationRowMoreCapabilities(
-                                    canCopyRaw: row.entry.isPolished,
+                                    canCopyRaw: entry.isPolished,
                                     polishModes: polishModes
                                 ),
                                 onCommand: { command in
-                                    onCommand(row.entry, command)
+                                    onCommand(entry, command)
                                 }
                             )
-                            if index < section.rows.count - 1 {
+                            if row.id != section.rows.last?.id {
                                 EmberHairline(axis: .horizontal)
                             }
                         }
                     }
                 }
             }
+            if sectionWindow.renderedCount < projection.sections.count {
+                Color.clear
+                    .frame(height: 1)
+                    .id(sectionWindow.renderedCount)
+                    .onAppear {
+                        sectionWindow.loadNext(
+                            totalCount: projection.sections.count
+                        )
+                    }
+            }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("history.collection")
+    }
+
+    @ViewBuilder
+    private var firstFrame: some View {
+        if let section = projection.sections.first,
+           let row = section.rows.first {
+            VStack(alignment: .leading, spacing: 14) {
+                EmberSectionLabel(section.header, symbolName: "calendar")
+                EmberSurface {
+                    DictationRowPreview(
+                        presentation: projection.presentation(for: row)
+                    )
+                }
+            }
+            .paneFirstMeaningfulFrame(
+                .history,
+                performance: performance,
+                isReady: isCurrent,
+                onDraw: completeFirstFrame
+            )
+        }
+    }
+
+    private var projectionIdentity: ObjectIdentifier {
+        ObjectIdentifier(projection)
+    }
+
+    private var renderedSections: ArraySlice<HistoryProjection.Section> {
+        projection.sections.prefix(sectionWindow.renderedCount)
+    }
+
+    private func completeFirstFrame() {
+        interactionsReady = true
     }
 }

@@ -104,11 +104,14 @@ protocol HistoryStore: AnyObject {
     /// Replaces the stored entry sharing `entry.id`, keeping the others and
     /// their order; a no-op if none matches. The persist path for toggling
     /// `flagged` and for Re-run Polish overwriting `text`/`isPolished`.
-    func update(_ entry: HistoryEntry)
+    @discardableResult
+    func update(_ entry: HistoryEntry) -> Bool
     /// Removes exactly the entry with `id`; a no-op if none matches.
-    func delete(id: UUID)
+    @discardableResult
+    func delete(id: UUID) -> Bool
     /// Empties the store, leaving no residue for the next append.
-    func clearAll()
+    @discardableResult
+    func clearAll() -> Bool
     /// Deletes entries older than `window` measured from `now`; a `.forever`
     /// window leaves the store untouched. Best-effort like the other mutations.
     func sweep(retention window: RetentionWindow, now: Date)
@@ -186,22 +189,27 @@ final class JSONLHistoryStore: HistoryStore {
     /// Replaces the matching row by rewriting the whole file. Rewriting
     /// everything (rather than editing in place) is acceptable at the volumes
     /// this feature targets and is what the eventual DB backend removes.
-    func update(_ entry: HistoryEntry) {
+    @discardableResult
+    func update(_ entry: HistoryEntry) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         let all = readEntries()
-        guard all.contains(where: { $0.id == entry.id }) else { return }
-        rewrite(all.map { $0.id == entry.id ? entry : $0 })
+        guard all.contains(where: { $0.id == entry.id }) else { return false }
+        return rewrite(all.map { $0.id == entry.id ? entry : $0 })
     }
 
     /// Deletes by rewriting the whole file without the target row.
-    func delete(id: UUID) {
+    @discardableResult
+    func delete(id: UUID) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        rewrite(readEntries().filter { $0.id != id })
+        let all = readEntries()
+        guard all.contains(where: { $0.id == id }) else { return false }
+        return rewrite(all.filter { $0.id != id })
     }
 
-    func clearAll() {
+    @discardableResult
+    func clearAll() -> Bool {
         lock.lock()
         defer { lock.unlock() }
         do {
@@ -209,10 +217,12 @@ final class JSONLHistoryStore: HistoryStore {
             if fm.fileExists(atPath: url.path) {
                 try fm.removeItem(at: url)
             }
+            return true
         } catch {
             Log.history.error(
                 "History clear-all skipped: \(error.localizedDescription, privacy: .public)"
             )
+            return false
         }
     }
 
@@ -224,7 +234,7 @@ final class JSONLHistoryStore: HistoryStore {
         let all = readEntries()
         let kept = all.filter { $0.createdAt >= cutoff }
         guard kept.count != all.count else { return } // nothing expired — no rewrite
-        rewrite(kept)
+        _ = rewrite(kept)
     }
 
     /// Writes one JSONL line for `entry`, returning whether it reached disk so
@@ -275,7 +285,7 @@ final class JSONLHistoryStore: HistoryStore {
     /// Best-effort whole-file replacement shared by the mutating operations: a
     /// failure is logged and swallowed rather than thrown, keeping the store's
     /// no-throw contract (PRD #78). Callers hold `lock`.
-    private func rewrite(_ entries: [HistoryEntry]) {
+    private func rewrite(_ entries: [HistoryEntry]) -> Bool {
         do {
             var data = Data()
             for entry in entries {
@@ -287,10 +297,12 @@ final class JSONLHistoryStore: HistoryStore {
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true
             )
             try data.write(to: url, options: .atomic)
+            return true
         } catch {
             Log.history.error(
                 "History rewrite skipped: \(error.localizedDescription, privacy: .public)"
             )
+            return false
         }
     }
 }

@@ -1,8 +1,377 @@
+import Observation
 import XCTest
 @testable import FoldWiseVoiceKit
 
 @MainActor
 final class SettingsModelTests: XCTestCase {
+    func testHomeObservationInvalidatesForCurrentStreakChange() {
+        let model = SettingsModel()
+        let interface = model.homePaneInterface
+        let invalidations = ObservationInvalidationCounter()
+
+        withObservationTracking {
+            _ = interface.projectionRevision
+            _ = interface.pushToTalkKey
+            _ = interface.permissionSnapshot
+            _ = interface.effectiveASRModelName
+            _ = interface.selectedPolishModel
+            _ = interface.windowWidth
+        } onChange: {
+            invalidations.increment()
+        }
+
+        model.currentStreak = 3
+
+        XCTAssertEqual(invalidations.value, 1)
+    }
+
+    func testHomeObservationIgnoresUnrelatedSoundChange() {
+        let model = SettingsModel()
+        let interface = model.homePaneInterface
+        let invalidations = ObservationInvalidationCounter()
+
+        withObservationTracking {
+            _ = interface.projectionRevision
+            _ = interface.pushToTalkKey
+            _ = interface.permissionSnapshot
+            _ = interface.effectiveASRModelName
+            _ = interface.selectedPolishModel
+            _ = interface.windowWidth
+        } onChange: {
+            invalidations.increment()
+        }
+
+        model.pauseAudio.toggle()
+
+        XCTAssertEqual(invalidations.value, 0)
+    }
+
+    func testOutgoingHistoryObservationIgnoresAcceptedPaneSelection() {
+        let model = SettingsModel()
+        model.pane = .history
+        let interface = model.historyPaneInterface
+        let invalidations = ObservationInvalidationCounter()
+
+        withObservationTracking {
+            _ = interface.hasEntries
+            _ = interface.polishModes
+            _ = interface.projectionRevision
+            _ = interface.saveHistory
+            _ = interface.retention
+        } onChange: {
+            invalidations.increment()
+        }
+
+        model.selectPane(.stats)
+
+        XCTAssertEqual(invalidations.value, 0)
+    }
+
+    func testModelsObservationIgnoresUnrelatedShortcutChange() {
+        let model = SettingsModel()
+        let interface = model.modelsPaneInterface
+        let invalidations = ObservationInvalidationCounter()
+
+        withObservationTracking {
+            _ = interface.asrSnapshot
+            _ = interface.asrFailures
+            _ = interface.polishState
+            _ = interface.modes
+            _ = interface.requestedPolishInspection
+            _ = interface.customModel
+            _ = interface.windowWidth
+        } onChange: {
+            invalidations.increment()
+        }
+
+        model.pttKey = "f18"
+
+        XCTAssertEqual(invalidations.value, 0)
+    }
+
+    func testModesObservationIgnoresUnrelatedHistoryChange() {
+        let model = SettingsModel()
+        let interface = model.modesPaneInterface
+        let invalidations = ObservationInvalidationCounter()
+
+        withObservationTracking {
+            _ = interface.modeSelection
+            _ = interface.modes
+            _ = interface.selectedEditableMode
+            _ = interface.selectedEditableModeItem
+            _ = interface.installed
+        } onChange: {
+            invalidations.increment()
+        }
+
+        model.historyEntries = [HistoryEntry(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1),
+            text: "Unrelated history",
+            rawText: "Unrelated history",
+            isPolished: false,
+            modeName: "Voice to Text",
+            modeID: nil,
+            wordCount: 2,
+            sourceApp: nil,
+            durationMs: 1000,
+            flagged: false,
+            flagReason: nil
+        )]
+
+        XCTAssertEqual(invalidations.value, 0)
+    }
+
+    func testPreferencesObservationIgnoresUnrelatedHistoryChange() {
+        let model = SettingsModel()
+        let interface = model.preferencesPaneInterface
+        let invalidations = ObservationInvalidationCounter()
+
+        withObservationTracking {
+            _ = interface.permissionRecovery
+            _ = interface.pttKey
+            _ = interface.toggleKey
+            _ = interface.cycleKey
+            _ = interface.pauseAudio
+            _ = interface.appearance
+            _ = interface.inputState
+            _ = interface.windowWidth
+            _ = interface.shortcutListenerHealth
+            _ = interface.canCheckForUpdates
+            _ = interface.recordingField
+            _ = interface.status
+            _ = interface.statusIsError
+            _ = interface.statusOwner
+        } onChange: {
+            invalidations.increment()
+        }
+
+        model.historyEntries = [HistoryEntry(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1),
+            text: "Unrelated history",
+            rawText: "Unrelated history",
+            isPolished: false,
+            modeName: "Voice to Text",
+            modeID: nil,
+            wordCount: 2,
+            sourceApp: nil,
+            durationMs: 1000,
+            flagged: false,
+            flagReason: nil
+        )]
+
+        XCTAssertEqual(invalidations.value, 0)
+    }
+
+    func testHomePaneInterfaceForwardsCommands() {
+        let model = SettingsModel()
+        var events: [String] = []
+        model.onCommit = { events.append("commit:\($0)") }
+        model.onOpenPermissionRecovery = { events.append("permission") }
+        model.onHistoryCommand = { _, command in events.append("history:\(command)") }
+
+        let home = model.homePaneInterface
+        home.openPermissionRecovery()
+        home.performHistoryCommand(makeHistoryEntry(), .copyDisplayed)
+        home.selectPane(.history)
+
+        XCTAssertEqual(events, ["permission", "history:copyDisplayed"])
+    }
+
+    func testHistoryPaneInterfaceForwardsCommands() {
+        let model = SettingsModel()
+        var events: [String] = []
+        model.onCommit = { events.append("commit:\($0)") }
+        model.onHistoryCommand = { _, command in events.append("history:\(command)") }
+        model.onClearHistory = { events.append("clear-history") }
+
+        let history = model.historyPaneInterface
+        history.setSaveHistory(false)
+        history.setRetention(.forever)
+        history.performHistoryCommand(makeHistoryEntry(), .delete)
+        history.clearHistory()
+
+        XCTAssertEqual(
+            events,
+            ["commit:global", "commit:global", "history:delete", "clear-history"]
+        )
+    }
+
+    func testStatsPaneInterfaceForwardsCommands() {
+        let model = SettingsModel()
+        model.statsPaneInterface.openHistory()
+
+        XCTAssertEqual(model.pane, .history)
+    }
+
+    func testModelsPaneInterfaceForwardsCommands() {
+        let model = SettingsModel()
+        var events: [String] = []
+        model.onCancelASROperation = { events.append("cancel-asr") }
+        model.onSelectASRModel = { events.append("select-asr:\($0)") }
+        model.onDownloadASRModel = { events.append("download-asr:\($0)") }
+        model.onRetryASRBootstrap = { events.append("retry-asr") }
+        model.onInstallModel = { events.append("install-polish:\($0)") }
+        model.onInstallCustomModel = { events.append("install-custom") }
+        model.onRefreshModels = { events.append("refresh-polish") }
+        model.onDeleteASRModel = { events.append("delete-asr:\($0)") }
+        model.onDeleteModel = { events.append("delete-polish:\($0)") }
+
+        let models = model.modelsPaneInterface
+        models.cancelASROperation()
+        models.selectASRModel("asr")
+        models.downloadASRModel("download")
+        models.retryASRBootstrap()
+        models.installPolishModel("polish")
+        models.installCustomPolishModel()
+        models.refreshPolishModels()
+        models.deleteASRModel("old-asr")
+        models.deletePolishModel("old-polish")
+
+        XCTAssertEqual(
+            events,
+            [
+                "cancel-asr",
+                "select-asr:asr",
+                "download-asr:download",
+                "retry-asr",
+                "install-polish:polish",
+                "install-custom",
+                "refresh-polish",
+                "delete-asr:old-asr",
+                "delete-polish:old-polish",
+            ]
+        )
+    }
+
+    func testModesPaneInterfaceForwardsCommands() {
+        let model = SettingsModel()
+        let modeID = ModeID.random()
+        var events: [String] = []
+        model.onCommit = { events.append("commit:\($0)") }
+        model.onSelectMode = { events.append("select-mode:\($0)") }
+        model.onAddMode = { events.append("add-mode") }
+        model.onEditMode = { events.append("edit-mode:\($0)") }
+        model.onDuplicateMode = { events.append("duplicate-mode:\($0)") }
+        model.onMoveMode = { events.append("move-mode:\($0):\($1)") }
+        model.onRequestModeDeletion = { events.append("delete-mode:\($0)") }
+
+        let modes = model.modesPaneInterface
+        modes.selectMode(.voiceToText)
+        modes.addMode()
+        modes.editMode(modeID)
+        modes.duplicateMode(modeID)
+        modes.moveMode(modeID, .up)
+        modes.requestModeDeletion(modeID)
+        modes.selectPane(.models)
+
+        XCTAssertEqual(
+            events,
+            [
+                "select-mode:voiceToText",
+                "add-mode",
+                "edit-mode:\(modeID)",
+                "duplicate-mode:\(modeID)",
+                "move-mode:\(modeID):up",
+                "delete-mode:\(modeID)",
+            ]
+        )
+    }
+
+    func testPreferencesPaneInterfaceForwardsCommands() {
+        let model = SettingsModel()
+        var events: [String] = []
+        model.onOpenPermissionRecovery = { events.append("permission") }
+        model.onOpenShortcutPermissions = { events.append("shortcut-permission") }
+        model.onCommit = { events.append("commit:\($0)") }
+        model.onSelectInputDevice = { events.append("input:\($0 ?? "default")") }
+        model.onCheckUpdates = { events.append("updates") }
+        model.onRecord = { events.append("record:\($0)") }
+
+        let preferences = model.preferencesPaneInterface
+        preferences.openPermissionRecovery()
+        preferences.openShortcutPermissions()
+        preferences.commit(.appearance)
+        preferences.selectInputDevice(nil)
+        preferences.checkForUpdates()
+        preferences.record(.ptt)
+
+        XCTAssertEqual(
+            events,
+            [
+                "permission",
+                "shortcut-permission",
+                "commit:appearance",
+                "input:default",
+                "updates",
+                "record:ptt",
+            ]
+        )
+    }
+
+    func testHistoryPaneInterfaceAppliesEdits() {
+        let model = SettingsModel()
+        let history = model.historyPaneInterface
+
+        history.setSaveHistory(false)
+        history.setRetention(.forever)
+
+        XCTAssertEqual([String(model.saveHistory), String(model.retention.rawValue)], ["false", "0"])
+    }
+
+    func testModelsPaneInterfaceAppliesEdits() {
+        let model = SettingsModel()
+        let models = model.modelsPaneInterface
+
+        models.setCustomModel("custom:model")
+        model.requestedPolishInspection = "polish:model"
+        model.modelsPaneInterface.clearRequestedPolishInspection()
+
+        XCTAssertEqual([model.customModel, model.requestedPolishInspection ?? "none"], ["custom:model", "none"])
+    }
+
+    func testPreferencesPaneInterfaceAppliesEdits() {
+        let model = SettingsModel()
+        let preferences = model.preferencesPaneInterface
+
+        preferences.pttKey = "f18"
+        preferences.toggleKey = "f19"
+        preferences.cycleKey = "f20"
+        preferences.pauseAudio = false
+        preferences.appearance = .dark
+
+        XCTAssertEqual(
+            [
+                model.pttKey,
+                model.toggleKey,
+                model.cycleKey,
+                String(model.pauseAudio),
+                model.appearance.rawValue,
+            ],
+            ["f18", "f19", "f20", "false", "dark"]
+        )
+    }
+
+    func testSidebarObservationIgnoresUnrelatedModelSelectionChange() {
+        let model = SettingsModel()
+        let invalidations = ObservationInvalidationCounter()
+
+        withObservationTracking {
+            _ = model.pane
+            _ = model.configurationRecoveryMessage
+            _ = model.sidebar
+            _ = model.windowWidth
+            _ = model.hoveredRailPane
+        } onChange: {
+            invalidations.increment()
+        }
+
+        model.selectedModel = "qwen2.5:3b"
+
+        XCTAssertEqual(invalidations.value, 0)
+    }
+
     func testASRPresentationDerivesCoherentStateFromOneLifecycleSnapshot() async {
         let lifecycle = ASRModelLifecycle(storedSelection: "whisper-small", adapters: [])
         let snapshot = await lifecycle.snapshot()
@@ -186,6 +555,23 @@ final class SettingsModelTests: XCTestCase {
     private func installed(_ name: String) -> OllamaClient.InstalledModel {
         OllamaClient.InstalledModel(name: name, sizeBytes: 1)
     }
+
+    private func makeHistoryEntry() -> HistoryEntry {
+        HistoryEntry(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1),
+            text: "Test",
+            rawText: "Test",
+            isPolished: false,
+            modeName: "Voice to Text",
+            modeID: nil,
+            wordCount: 1,
+            sourceApp: nil,
+            durationMs: 100,
+            flagged: false,
+            flagReason: nil
+        )
+    }
 }
 
 private struct ASRPresentationState: Equatable {
@@ -195,4 +581,19 @@ private struct ASRPresentationState: Equatable {
     let recovery: String?
     let effectiveModelName: String
     let actionsDisabled: Bool
+}
+
+private final class ObservationInvalidationCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.withLock { count }
+    }
+
+    func increment() {
+        lock.withLock {
+            count += 1
+        }
+    }
 }

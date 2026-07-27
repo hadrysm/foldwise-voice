@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 import XCTest
 @testable import FoldWiseVoiceKit
@@ -31,39 +32,50 @@ final class HomeViewHostedTests: XCTestCase {
         XCTAssertEqual(try metricNodes(in: window).count, 4)
     }
 
-    func testHostedHomeRefreshesRelativeHeadersWhenTheCalendarDayChanges() throws {
+    func testHostedHomeRefreshesRelativeHeadersWhenTheCalendarDayChanges() async throws {
         let calendar = try utcCalendar()
         var currentNow = Date(timeIntervalSince1970: 1_783_512_000)
-        let model = SettingsModel()
+        let store = PaneProjectionStore()
+        let model = SettingsModel(
+            panePerformance: PaneNavigationPerformance(),
+            paneProjections: store
+        )
         model.historyEntries = [entry(createdAt: currentNow.addingTimeInterval(-60 * 60))]
-        let notificationCenter = NotificationCenter()
-        var projectedHeaders: [[String]] = []
-        let hosting = NSHostingView(rootView: HomeView(
-            model: model,
-            now: { currentNow },
+        let environment = PaneProjectionStore.Environment(
+            now: currentNow,
             calendar: calendar,
+            locale: Locale(identifier: "en_US")
+        )
+        _ = store.home(in: environment)
+        let notificationCenter = NotificationCenter()
+        let hosting = NSHostingView(rootView: HomeView(
+            interface: model.homePaneInterface,
+            now: { currentNow },
+            calendar: { calendar },
             locale: Locale(identifier: "en_US"),
-            notificationCenter: notificationCenter,
-            project: { input, now, calendar, locale in
-                let projection = HomeProjection.project(
-                    input,
-                    now: now,
-                    calendar: calendar,
-                    locale: locale
-                )
-                projectedHeaders.append(projection.sections.map(\.header))
-                return projection
-            }
+            notificationCenter: notificationCenter
         ))
         hosting.frame = NSRect(x: 0, y: 0, width: 900, height: 640)
         hosting.layoutSubtreeIfNeeded()
+        let initial = try XCTUnwrap(store.completedHome)
 
         currentNow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: currentNow))
         notificationCenter.post(name: .NSCalendarDayChanged, object: nil)
+        await waitUntil {
+            store.homeProjection.isCurrent
+                && store.completedHome?.generation != initial.generation
+        }
         hosting.needsLayout = true
         hosting.layoutSubtreeIfNeeded()
+        let refreshed = try XCTUnwrap(store.completedHome)
 
-        XCTAssertEqual(projectedHeaders, [["Today"], ["Yesterday"]])
+        XCTAssertEqual(
+            [
+                initial.value.recent.sections.map(\.header),
+                refreshed.value.recent.sections.map(\.header),
+            ],
+            [["Today"], ["Yesterday"]]
+        )
     }
 
     private func entry(createdAt: Date) -> HistoryEntry {
@@ -91,7 +103,14 @@ final class HomeViewHostedTests: XCTestCase {
     private func hostHome(width: CGFloat) -> NSWindow {
         let model = SettingsModel()
         model.windowWidth = width
-        let hosting = NSHostingView(rootView: HomeView(model: model))
+        _ = model.paneProjections.home(in: .init(
+            now: Date(),
+            calendar: .autoupdatingCurrent,
+            locale: .autoupdatingCurrent
+        ))
+        let hosting = NSHostingView(
+            rootView: HomeView(interface: model.homePaneInterface)
+        )
         hosting.frame = NSRect(x: 0, y: 0, width: width, height: 640)
         let window = NSWindow(
             contentRect: hosting.frame,
@@ -106,6 +125,20 @@ final class HomeViewHostedTests: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         hosting.layoutSubtreeIfNeeded()
         return window
+    }
+
+    private func waitUntil(
+        _ condition: @escaping @MainActor () -> Bool
+    ) async {
+        while !condition() {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = condition()
+                } onChange: {
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     private func metricRowCount(in window: NSWindow) throws -> Int {

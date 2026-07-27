@@ -1,6 +1,83 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+final class PaneFirstMeaningfulFrameView: NSView {
+    var pane: SettingsModel.Pane
+    var performance: PaneNavigationPerformance
+    var onDraw: @MainActor () -> Void
+
+    init(
+        pane: SettingsModel.Pane,
+        performance: PaneNavigationPerformance,
+        onDraw: @escaping @MainActor () -> Void = {}
+    ) {
+        self.pane = pane
+        self.performance = performance
+        self.onDraw = onDraw
+        super.init(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let pane = pane
+        let performance = performance
+        let onDraw = onDraw
+        DispatchQueue.main.async {
+            performance.firstMeaningfulFrame(for: pane)
+            onDraw()
+        }
+    }
+}
+
+private struct PaneFirstMeaningfulFrameMarker: NSViewRepresentable {
+    let pane: SettingsModel.Pane
+    let performance: PaneNavigationPerformance
+    let onDraw: @MainActor () -> Void
+
+    func makeNSView(context: Context) -> PaneFirstMeaningfulFrameView {
+        PaneFirstMeaningfulFrameView(
+            pane: pane,
+            performance: performance,
+            onDraw: onDraw
+        )
+    }
+
+    func updateNSView(_ view: PaneFirstMeaningfulFrameView, context: Context) {
+        view.pane = pane
+        view.performance = performance
+        view.onDraw = onDraw
+        view.needsDisplay = true
+    }
+}
+
+extension View {
+    func paneFirstMeaningfulFrame(
+        _ pane: SettingsModel.Pane,
+        performance: PaneNavigationPerformance,
+        isReady: Bool = true,
+        onDraw: @escaping @MainActor () -> Void = {}
+    ) -> some View {
+        overlay(alignment: .topLeading) {
+            if isReady {
+                PaneFirstMeaningfulFrameMarker(
+                    pane: pane,
+                    performance: performance,
+                    onDraw: onDraw
+                )
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
+    }
+}
+
 /// App version shared by the sidebar footer, the Settings pane, and Home's
 /// system summary. Set in Info.plist by scripts/build_swift_app.py from
 /// version.txt; absent when running the bare binary (swift run).
@@ -83,8 +160,97 @@ private struct SidebarSelectionChrome: View {
     }
 }
 
+private struct SettingsContentObservationScope<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+    }
+}
+
+private struct SettingsDestinationObservationScope<Input, Content: View>: View {
+    let input: Input
+    @ViewBuilder let content: (Input) -> Content
+
+    var body: some View {
+        content(input)
+    }
+}
+
+private struct PaneScrollLayout: Layout {
+    func makeCache(subviews _: Subviews) -> ModeVerticalLayoutCache {
+        ModeVerticalLayoutCache()
+    }
+
+    func updateCache(
+        _ cache: inout ModeVerticalLayoutCache,
+        subviews _: Subviews
+    ) {
+        cache = ModeVerticalLayoutCache()
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) -> CGSize {
+        ModeVerticalLayout.size(
+            proposal: proposal,
+            subviews: subviews,
+            spacing: 16,
+            cache: &cache
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) {
+        ModeVerticalLayout.place(
+            in: bounds,
+            subviews: subviews,
+            spacing: 16,
+            cache: &cache
+        )
+    }
+}
+
+private struct RenderBoxPrewarm: View {
+    var body: some View {
+        Canvas { context, size in
+            let bounds = CGRect(origin: .zero, size: size)
+            context.fill(
+                Path(roundedRect: bounds, cornerRadius: 0.5),
+                with: .color(Theme.canvas)
+            )
+            context.draw(
+                Text("A")
+                    .font(Theme.ui(1))
+                    .foregroundStyle(Theme.canvas),
+                at: CGPoint(x: bounds.midX, y: bounds.midY)
+            )
+            if let symbol = context.resolveSymbol(id: "prewarm-symbol") {
+                context.draw(
+                    symbol,
+                    at: CGPoint(x: bounds.midX, y: bounds.midY)
+                )
+            }
+        } symbols: {
+            Image(systemName: "checkmark")
+                .font(.system(size: 1))
+                .foregroundStyle(Theme.canvas)
+                .tag("prewarm-symbol")
+        }
+        .frame(width: 1, height: 1)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 struct SettingsView: View {
-    @ObservedObject var model: SettingsModel
+    var model: SettingsModel
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var presentationResetGeneration = 0
     @FocusState private var focusedNavigationPane: SettingsModel.Pane?
@@ -104,9 +270,13 @@ struct SettingsView: View {
                 )
                 EmberHairline(axis: .horizontal)
                 HStack(spacing: 0) {
-                    sidebar
+                    SettingsContentObservationScope {
+                        sidebar
+                    }
                     EmberHairline(axis: .vertical)
-                    content
+                    SettingsContentObservationScope {
+                        content
+                    }
                 }
             }
             .background(Theme.canvas)
@@ -120,6 +290,9 @@ struct SettingsView: View {
             .onChange(of: geo.size.width) { _, width in
                 updateWindowWidth(width)
             }
+        }
+        .background(alignment: .topLeading) {
+            RenderBoxPrewarm()
         }
         .overlayPreferenceValue(RailTileBoundsKey.self) { anchors in
             railTooltip(anchors)
@@ -243,17 +416,14 @@ struct SettingsView: View {
     // MARK: - sidebar
 
     private var sidebar: some View {
-        ZStack(alignment: .topLeading) {
-            expandedSidebar
-                .frame(width: Theme.sidebarWidth)
-                .opacity(sidebarMode == .expanded ? 1 : 0)
-                .allowsHitTesting(sidebarMode == .expanded)
-                .accessibilityHidden(sidebarMode != .expanded)
-            railSidebar
-                .frame(width: Theme.railWidth)
-                .opacity(sidebarMode == .rail ? 1 : 0)
-                .allowsHitTesting(sidebarMode == .rail)
-                .accessibilityHidden(sidebarMode != .rail)
+        Group {
+            if sidebarMode == .expanded {
+                expandedSidebar
+                    .frame(width: Theme.sidebarWidth)
+            } else {
+                railSidebar
+                    .frame(width: Theme.railWidth)
+            }
         }
         .frame(
             width: sidebarMode == .expanded ? Theme.sidebarWidth : Theme.railWidth,
@@ -288,7 +458,7 @@ struct SettingsView: View {
         let active = model.pane == pane
         let disabled = !model.isPaneAvailable(pane)
         return Button {
-            model.pane = pane
+            model.selectPane(pane)
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: pane.icon)
@@ -340,7 +510,7 @@ struct SettingsView: View {
         let active = model.pane == pane
         let disabled = !model.isPaneAvailable(pane)
         return Button {
-            model.pane = pane
+            model.selectPane(pane)
         } label: {
             Image(systemName: pane.icon)
                 .font(.system(size: 14, weight: .medium))
@@ -499,22 +669,16 @@ struct SettingsView: View {
     // MARK: - content shell
 
     private var content: some View {
-        VStack(spacing: 0) {
+        Group {
             if let message = model.configurationRecoveryMessage {
-                recoveryBanner(message)
-                EmberHairline(axis: .horizontal)
+                VStack(spacing: 0) {
+                    recoveryBanner(message)
+                    EmberHairline(axis: .horizontal)
+                    destinationShell
+                }
+            } else {
+                destinationShell
             }
-            ZStack {
-                destination
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .disabled(configurationPaneIsReadOnly)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("continuous-frame.destination")
-            .accessibilityValue(
-                configurationPaneIsReadOnly ? "Read-only" : "Available"
-            )
-            .opacity(configurationPaneIsReadOnly ? 0.54 : 1)
         }
         .background(Theme.canvas)
         .overlay(alignment: .bottomTrailing) {
@@ -532,21 +696,44 @@ struct SettingsView: View {
         )
     }
 
+    private var destinationShell: some View {
+        destination
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .disabled(configurationPaneIsReadOnly)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("continuous-frame.destination")
+            .accessibilityValue(
+                configurationPaneIsReadOnly ? "Read-only" : "Available"
+            )
+            .opacity(configurationPaneIsReadOnly ? 0.54 : 1)
+    }
+
     @ViewBuilder
     private var destination: some View {
         switch model.pane {
         case .home:
-            HomeView(model: model)
+            HomeView(interface: model.homePaneInterface)
         case .modes:
-            paneScroll("Modes") { modesPane }
+            paneScroll("Modes") {
+                SettingsDestinationObservationScope(input: model.modesPaneInterface) {
+                    modesPane($0)
+                }
+            }
+            .paneFirstMeaningfulFrame(.modes, performance: model.panePerformance)
         case .models:
-            ModelsCombinedPane(model: model)
+            ModelsCombinedPane(interface: model.modelsPaneInterface)
+                .paneFirstMeaningfulFrame(.models, performance: model.panePerformance)
         case .history:
-            paneScroll("History") { HistoryPane(model: model) }
+            paneScroll("History") { HistoryPane(interface: model.historyPaneInterface) }
         case .stats:
-            paneScroll("Stats") { StatsPane(model: model) }
+            paneScroll("Stats") { StatsPane(interface: model.statsPaneInterface) }
         case .settings:
-            paneScroll("Settings") { settingsPane }
+            paneScroll("Settings") {
+                SettingsDestinationObservationScope(input: model.preferencesPaneInterface) {
+                    settingsPane($0)
+                }
+            }
+            .paneFirstMeaningfulFrame(.settings, performance: model.panePerformance)
         }
     }
 
@@ -592,7 +779,7 @@ struct SettingsView: View {
 
     private func paneScroll(_ title: String, @ViewBuilder body: () -> some View) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            PaneScrollLayout {
                 Text(title)
                     .font(Theme.display)
                     .tracking(Theme.displayTracking)
@@ -609,39 +796,32 @@ struct SettingsView: View {
 
     // MARK: - modes
 
-    private var modesPane: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline, spacing: 16) {
-                Text("Choose how the next Dictation session should shape your words.")
-                    .font(Theme.body)
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                Button("Add Mode", systemImage: "plus") { model.onAddMode?() }
-                    .buttonStyle(EmberButtonStyle(kind: .primary))
-                    .accessibilityHint("Opens a new unsaved Mode draft")
-            }
-            HStack(alignment: .top, spacing: 14) {
-                modeLibrary
-                    .frame(width: 310)
-                modeDetail
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
+    private func modesPane(_ modesModel: ModesPaneInterface) -> some View {
+        ModesPaneLayout {
+            Text("Choose how the next Dictation session should shape your words.")
+                .font(Theme.body)
+                .foregroundStyle(Theme.textSecondary)
+            Button("Add Mode", systemImage: "plus") { modesModel.addMode() }
+                .buttonStyle(EmberButtonStyle(kind: .primary))
+                .accessibilityHint("Opens a new unsaved Mode draft")
+            modeLibrary(modesModel)
+            modeDetail(modesModel)
         }
     }
 
-    private var modeLibrary: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private func modeLibrary(_ modesModel: ModesPaneInterface) -> some View {
+        ModeLibraryLayout {
             EmberSectionLabel("Dictation selection")
             EmberSurface {
                 CommandLedgerSelectionRow(
-                    item: model.modeSelection.systemItem
+                    item: modesModel.modeSelection.systemItem
                 ) {
-                    model.onSelectMode?(model.modeSelection.systemItem.id)
+                    modesModel.selectMode(modesModel.modeSelection.systemItem.id)
                 }
             }
             EmberSectionLabel("Your Modes · Cycle order")
                 .padding(.top, 4)
-            if model.modeSelection.editableItems.isEmpty {
+            if modesModel.modeSelection.editableItems.isEmpty {
                 EmberSurface {
                     VStack(alignment: .leading, spacing: 8) {
                         Image(systemName: "sparkles")
@@ -654,7 +834,7 @@ struct SettingsView: View {
                         Text("Voice to Text remains ready. Add a Mode when you want Polish.")
                             .font(Theme.ui(11))
                             .foregroundStyle(Theme.textSecondary)
-                        Button("Add Mode") { model.onAddMode?() }
+                        Button("Add Mode") { modesModel.addMode() }
                             .buttonStyle(EmberButtonStyle(kind: .quiet))
                             .padding(.top, 4)
                     }
@@ -664,9 +844,9 @@ struct SettingsView: View {
                 .accessibilityElement(children: .contain)
             } else {
                 EmberSurface {
-                    VStack(spacing: 0) {
+                    ModeLibraryRowsLayout {
                         ForEach(
-                            Array(model.modeSelection.editableItems.enumerated()),
+                            Array(modesModel.modeSelection.editableItems.enumerated()),
                             id: \.element.id
                         ) { index, item in
                             if index > 0 {
@@ -674,7 +854,7 @@ struct SettingsView: View {
                                     .padding(.leading, 14)
                             }
                             CommandLedgerSelectionRow(item: item) {
-                                model.onSelectMode?(item.id)
+                                modesModel.selectMode(item.id)
                             }
                         }
                     }
@@ -683,45 +863,37 @@ struct SettingsView: View {
         }
     }
 
-    private var modeDetail: some View {
+    private func modeDetail(_ modesModel: ModesPaneInterface) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             EmberSectionLabel("Mode details")
-            if let mode = model.selectedEditableMode,
-               let item = model.selectedEditableModeItem,
+            if let mode = modesModel.selectedEditableMode,
+               let item = modesModel.selectedEditableModeItem,
                let id = mode.id,
-               let modeIndex = model.modes.firstIndex(where: { $0.id == id }) {
+               let modeIndex = modesModel.modes.firstIndex(where: { $0.id == id }) {
                 let actions = ModeLibraryActionPresentation(
                     modeName: mode.name,
                     index: modeIndex,
-                    modeCount: model.modes.count
+                    modeCount: modesModel.modes.count
                 )
                 EmberSurface {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(spacing: 10) {
-                            Image(systemName: item.icon)
-                                .font(.system(size: 24, weight: .medium))
-                                .foregroundStyle(Theme.accent)
-                                .frame(width: 32)
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(mode.name)
-                                    .font(Theme.ui(20, .semibold))
-                                    .foregroundStyle(Theme.textPrimary)
-                                    .lineLimit(2)
-                                Text(mode.transformation == .inPlace ? "Keep wording" : "Reshape")
-                                    .font(Theme.body)
-                                    .foregroundStyle(Theme.textSecondary)
-                            }
-                            Spacer()
-                            HStack(spacing: 8) {
-                                Button("Edit") { model.onEditMode?(id) }
-                                    .buttonStyle(EmberButtonStyle(kind: .quiet))
-                                    .accessibilityLabel("Edit \(mode.name)")
-                                Button("Duplicate") { model.onDuplicateMode?(id) }
-                                    .buttonStyle(EmberButtonStyle(kind: .quiet))
-                                    .accessibilityLabel(actions.duplicateLabel)
-                            }
-                        }
+                    ModeDetailContentLayout {
+                        Image(systemName: item.icon)
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .accessibilityHidden(true)
+                        Text(mode.name)
+                            .font(Theme.ui(20, .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(2)
+                        Text(mode.transformation == .inPlace ? "Keep wording" : "Reshape")
+                            .font(Theme.body)
+                            .foregroundStyle(Theme.textSecondary)
+                        ModeDetailHeaderActions(
+                            editLabel: "Edit \(mode.name)",
+                            duplicateLabel: actions.duplicateLabel,
+                            onEdit: { modesModel.editMode(id) },
+                            onDuplicate: { modesModel.duplicateMode(id) }
+                        )
                         EmberHairline(axis: .horizontal)
                         modeDetailField(
                             "AI model",
@@ -734,35 +906,27 @@ struct SettingsView: View {
                             mode.vocab.isEmpty ? "None" : mode.vocab.joined(separator: " · "),
                             monospaced: true
                         )
-                        if let installed = model.installed,
-                           !installed.contains(where: { $0.name == mode.llmModel }) {
-                            unavailableModelNotice(mode.llmModel ?? "This model")
+                        ZStack(alignment: .topLeading) {
+                            if let installed = modesModel.installed,
+                               !installed.contains(where: { $0.name == mode.llmModel }) {
+                                unavailableModelNotice(
+                                    mode.llmModel ?? "This model",
+                                    interface: modesModel
+                                )
+                            }
                         }
-                        Spacer(minLength: 12)
                         EmberHairline(axis: .horizontal)
-                        HStack(spacing: 8) {
-                            Button("Move up", systemImage: "arrow.up") {
-                                model.onMoveMode?(id, .up)
+                        ModeDetailActions(presentation: actions) { action in
+                            switch action {
+                            case .moveUp:
+                                modesModel.moveMode(id, .up)
+                            case .moveDown:
+                                modesModel.moveMode(id, .down)
+                            case .delete:
+                                modesModel.requestModeDeletion(id)
                             }
-                            .buttonStyle(EmberButtonStyle(kind: .quiet))
-                            .disabled(!actions.canMoveUp)
-                            .accessibilityLabel(actions.moveUpLabel)
-                            .keyboardShortcut(.upArrow, modifiers: [.command, .option])
-                            Button("Move down", systemImage: "arrow.down") {
-                                model.onMoveMode?(id, .down)
-                            }
-                            .buttonStyle(EmberButtonStyle(kind: .quiet))
-                            .disabled(!actions.canMoveDown)
-                            .accessibilityLabel(actions.moveDownLabel)
-                            .keyboardShortcut(.downArrow, modifiers: [.command, .option])
-                            Spacer()
-                            Button("Delete", role: .destructive) {
-                                model.onRequestModeDeletion?(id)
-                            }
-                            .buttonStyle(EmberButtonStyle(kind: .destructive))
-                            .accessibilityLabel(actions.deleteLabel)
-                            .accessibilityHint(actions.deleteHint)
                         }
+                        .frame(height: 28)
                     }
                     .padding(16)
                     .frame(maxWidth: .infinity, minHeight: 370, alignment: .topLeading)
@@ -799,7 +963,7 @@ struct SettingsView: View {
         _ value: String,
         monospaced: Bool = false
     ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        ModeDetailFieldLayout {
             Text(label)
                 .font(Theme.sectionLabel)
                 .tracking(Theme.sectionTracking)
@@ -813,14 +977,17 @@ struct SettingsView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func unavailableModelNotice(_ name: String) -> some View {
+    private func unavailableModelNotice(
+        _ name: String,
+        interface modesModel: ModesPaneInterface
+    ) -> some View {
         EmberStatusNotice(
             kind: .warning,
             title: "\(name) is unavailable",
             detail: "Polish falls back to raw text.",
             actionTitle: "Open Models"
         ) {
-            model.pane = .models
+            modesModel.selectPane(.models)
         }
         .padding(.vertical, 8)
         .accessibilityHint(
@@ -830,20 +997,20 @@ struct SettingsView: View {
 
     // MARK: - settings (keyboard shortcuts + input + sound + appearance + updates)
 
-    private var settingsPane: some View {
+    private func settingsPane(_ preferencesModel: PreferencesPaneInterface) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             SignalLedgerSection(title: "Permissions", symbolName: "hand.raised") {
                 SignalLedgerRow(
                     title: "Microphone and Accessibility",
-                    detail: permissionSummary
+                    detail: permissionSummary(preferencesModel)
                 ) {
-                    if model.permissionRecovery.snapshot.hasFullRecovery {
+                    if preferencesModel.permissionRecovery.snapshot.hasFullRecovery {
                         Label("Granted", systemImage: "checkmark.circle.fill")
                             .font(Theme.compactData)
                             .foregroundStyle(Theme.success)
                     } else {
                         Button("Open guide…") {
-                            model.onOpenPermissionRecovery?()
+                            preferencesModel.openPermissionRecovery()
                         }
                         .buttonStyle(EmberButtonStyle(kind: .quiet))
                         .accessibilityIdentifier("settings.permission-recovery")
@@ -858,10 +1025,14 @@ struct SettingsView: View {
                 ) {
                     HStack(spacing: 8) {
                         resetButton(icon: "arrow.counterclockwise", help: "Reset to right ⌥") {
-                            model.pttKey = "alt_r"
-                            model.onCommit?(.shortcuts)
+                            preferencesModel.pttKey = "alt_r"
+                            preferencesModel.commit(.shortcuts)
                         }
-                        shortcutChip(key: model.pttKey, field: .ptt)
+                        shortcutChip(
+                            key: preferencesModel.pttKey,
+                            field: .ptt,
+                            interface: preferencesModel
+                        )
                     }
                 }
                 SignalLedgerDivider()
@@ -870,13 +1041,17 @@ struct SettingsView: View {
                     detail: "Starts and stops Dictation sessions"
                 ) {
                     HStack(spacing: 8) {
-                        if !model.toggleKey.isEmpty {
+                        if !preferencesModel.toggleKey.isEmpty {
                             resetButton(icon: "xmark", help: "Remove shortcut") {
-                                model.toggleKey = ""
-                                model.onCommit?(.shortcuts)
+                                preferencesModel.toggleKey = ""
+                                preferencesModel.commit(.shortcuts)
                             }
                         }
-                        shortcutChip(key: model.toggleKey, field: .toggle)
+                        shortcutChip(
+                            key: preferencesModel.toggleKey,
+                            field: .toggle,
+                            interface: preferencesModel
+                        )
                     }
                 }
                 SignalLedgerDivider()
@@ -885,13 +1060,17 @@ struct SettingsView: View {
                     detail: "Selects the next Mode for the next Dictation session"
                 ) {
                     HStack(spacing: 8) {
-                        if !model.cycleKey.isEmpty {
+                        if !preferencesModel.cycleKey.isEmpty {
                             resetButton(icon: "xmark", help: "Remove shortcut") {
-                                model.cycleKey = ""
-                                model.onCommit?(.shortcuts)
+                                preferencesModel.cycleKey = ""
+                                preferencesModel.commit(.shortcuts)
                             }
                         }
-                        shortcutChip(key: model.cycleKey, field: .cycle)
+                        shortcutChip(
+                            key: preferencesModel.cycleKey,
+                            field: .cycle,
+                            interface: preferencesModel
+                        )
                     }
                 }
                 Text(
@@ -902,22 +1081,26 @@ struct SettingsView: View {
                 .foregroundStyle(Theme.textTertiary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
-                if model.shortcutListenerHealth == .focusedAppOnly {
+                if preferencesModel.shortcutListenerHealth == .focusedAppOnly {
                     SignalLedgerFeedback(
                         kind: .warning,
                         title: "Global shortcuts need permission",
                         detail: "They currently work only while FoldWise is focused.",
                         actionTitle: "Open System Settings…",
-                        action: model.onOpenShortcutPermissions
+                        action: preferencesModel.openShortcutPermissions
                     )
                     .accessibilityIdentifier("settings.shortcuts.permission")
                 }
-                ownedFeedback(.shortcuts, identifier: "settings.shortcuts.feedback")
+                ownedFeedback(
+                    .shortcuts,
+                    identifier: "settings.shortcuts.feedback",
+                    interface: preferencesModel
+                )
             }
 
             SignalLedgerSection(title: "Input", symbolName: "mic") {
-                inputDeviceRoster
-                if let notice = inputDeviceNotice {
+                inputDeviceRoster(preferencesModel)
+                if let notice = inputDeviceNotice(preferencesModel) {
                     SignalLedgerFeedback(
                         kind: notice.kind,
                         title: notice.title,
@@ -925,7 +1108,11 @@ struct SettingsView: View {
                     )
                     .accessibilityIdentifier("settings.input.lifecycle")
                 }
-                ownedFeedback(.input, identifier: "settings.input.feedback")
+                ownedFeedback(
+                    .input,
+                    identifier: "settings.input.feedback",
+                    interface: preferencesModel
+                )
             }
 
             SignalLedgerSection(title: "Sound", symbolName: "speaker.wave.2") {
@@ -936,10 +1123,10 @@ struct SettingsView: View {
                     Toggle(
                         "",
                         isOn: Binding(
-                            get: { model.pauseAudio },
+                            get: { preferencesModel.pauseAudio },
                             set: {
-                                model.pauseAudio = $0
-                                model.onCommit?(.sound)
+                                preferencesModel.pauseAudio = $0
+                                preferencesModel.commit(.sound)
                             }
                         )
                     )
@@ -948,16 +1135,24 @@ struct SettingsView: View {
                     .tint(Theme.accent)
                     .labelsHidden()
                 }
-                ownedFeedback(.sound, identifier: "settings.sound.feedback")
+                ownedFeedback(
+                    .sound,
+                    identifier: "settings.sound.feedback",
+                    interface: preferencesModel
+                )
             }
 
             SignalLedgerSection(
                 title: "Appearance",
                 symbolName: "circle.lefthalf.filled"
             ) {
-                appearanceChoices
+                appearanceChoices(preferencesModel)
                     .padding(12)
-                ownedFeedback(.appearance, identifier: "settings.appearance.feedback")
+                ownedFeedback(
+                    .appearance,
+                    identifier: "settings.appearance.feedback",
+                    interface: preferencesModel
+                )
             }
 
             SignalLedgerSection(
@@ -965,52 +1160,63 @@ struct SettingsView: View {
                 symbolName: "arrow.triangle.2.circlepath"
             ) {
                 SignalLedgerRow(title: "FoldWise Voice", detail: updateSubtitle) {
-                    updateTrailing
+                    updateTrailing(preferencesModel)
                 }
             }
         }
     }
 
-    private var permissionSummary: String {
-        if model.permissionRecovery.snapshot.hasFullRecovery {
+    private func permissionSummary(_ preferencesModel: PreferencesPaneInterface) -> String {
+        if preferencesModel.permissionRecovery.snapshot.hasFullRecovery {
             return "Full Dictation capability is available"
         }
-        if model.permissionRecovery.snapshot.hasShortcutFallback {
+        if preferencesModel.permissionRecovery.snapshot.hasShortcutFallback {
             return "Text stays on the clipboard until Accessibility is restored"
         }
         return "Review the permissions needed for full Dictation capability"
     }
 
     @ViewBuilder
-    private var appearanceChoices: some View {
-        if SettingsAppearanceLayout.forContentWidth(settingsContentWidth) == .horizontal {
+    private func appearanceChoices(
+        _ preferencesModel: PreferencesPaneInterface
+    ) -> some View {
+        if SettingsAppearanceLayout.forContentWidth(
+            settingsContentWidth(preferencesModel)
+        ) == .horizontal {
             HStack(spacing: 8) {
-                appearanceChoiceButtons
+                appearanceChoiceButtons(preferencesModel)
             }
         } else {
             VStack(spacing: 8) {
-                appearanceChoiceButtons
+                appearanceChoiceButtons(preferencesModel)
             }
         }
     }
 
-    private var appearanceChoiceButtons: some View {
+    private func appearanceChoiceButtons(
+        _ preferencesModel: PreferencesPaneInterface
+    ) -> some View {
         ForEach(AppearanceTilePresentation.all) { tile in
             SignalLedgerAppearanceChoice(
                 presentation: tile,
-                isSelected: model.appearance == tile.preference
+                isSelected: preferencesModel.appearance == tile.preference
             ) {
-                model.appearance = tile.preference
-                model.onCommit?(.appearance)
+                preferencesModel.appearance = tile.preference
+                preferencesModel.commit(.appearance)
             }
         }
     }
 
-    private var settingsContentWidth: Double {
-        let sidebarWidth = sidebarMode == .expanded
+    private func settingsContentWidth(
+        _ preferencesModel: PreferencesPaneInterface
+    ) -> Double {
+        let sidebarWidth = preferencesModel.sidebarMode == .expanded
             ? Double(Theme.sidebarWidth)
             : Double(Theme.railWidth)
-        return model.windowWidth - sidebarWidth - 1 - Double(destinationPadding * 2)
+        let padding = ThemeLayoutPolicy.destinationPadding(
+            windowWidth: preferencesModel.windowWidth
+        )
+        return preferencesModel.windowWidth - sidebarWidth - 1 - Double(padding * 2)
     }
 
     private var destinationPadding: CGFloat {
@@ -1018,48 +1224,58 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var inputDeviceRoster: some View {
+    private func inputDeviceRoster(
+        _ preferencesModel: PreferencesPaneInterface
+    ) -> some View {
         inputDeviceButton(
             uid: nil,
             icon: "macbook",
             title: "System Default",
-            detail: model.inputState.systemDefault.map {
+            detail: preferencesModel.inputState.systemDefault.map {
                 "\($0.name) — follows macOS"
             } ?? "No macOS default input is available",
-            unavailable: false
+            unavailable: false,
+            interface: preferencesModel
         )
-        ForEach(model.inputState.devices) { device in
+        ForEach(preferencesModel.inputState.devices) { device in
             SignalLedgerDivider()
             inputDeviceButton(
                 uid: device.uid,
                 icon: "mic",
                 title: device.name,
-                detail: device.uid == model.inputState.effectiveDevice?.uid
+                detail: device.uid == preferencesModel.inputState.effectiveDevice?.uid
                     ? "Connected — in use"
                     : "Connected",
-                unavailable: false
+                unavailable: false,
+                interface: preferencesModel
             )
         }
-        if let preferredUID = model.inputState.preferredUID,
-           !model.inputState.devices.contains(where: { $0.uid == preferredUID }) {
+        if let preferredUID = preferencesModel.inputState.preferredUID,
+           !preferencesModel.inputState.devices.contains(where: { $0.uid == preferredUID }) {
             SignalLedgerDivider()
             inputDeviceButton(
                 uid: preferredUID,
                 icon: "mic.slash",
-                title: model.inputState.preferredName ?? "Previously selected device",
+                title: preferencesModel.inputState.preferredName ?? "Previously selected device",
                 detail: "Not connected — Preferred",
-                unavailable: true
+                unavailable: true,
+                interface: preferencesModel
             )
         }
     }
 
     private func inputDeviceButton(
-        uid: String?, icon: String, title: String, detail: String, unavailable: Bool
+        uid: String?,
+        icon: String,
+        title: String,
+        detail: String,
+        unavailable: Bool,
+        interface preferencesModel: PreferencesPaneInterface
     ) -> some View {
-        let selected = model.inputState.preferredUID == uid
+        let selected = preferencesModel.inputState.preferredUID == uid
         return Button {
             guard !unavailable else { return }
-            model.onSelectInputDevice?(uid)
+            preferencesModel.selectInputDevice(uid)
         } label: {
             HStack(spacing: 0) {
                 EmberIngress(color: selected ? Theme.accent : .clear)
@@ -1097,12 +1313,14 @@ struct SettingsView: View {
         .accessibilityHint(unavailable ? "\(detail). Unavailable." : detail)
     }
 
-    private var inputDeviceNotice: (
+    private func inputDeviceNotice(
+        _ preferencesModel: PreferencesPaneInterface
+    ) -> (
         kind: EmberStatusKind,
         title: String,
         detail: String
     )? {
-        switch model.inputState.status {
+        switch preferencesModel.inputState.status {
         case .ready:
             nil
         case let .fallback(preferred, effective):
@@ -1132,10 +1350,10 @@ struct SettingsView: View {
         "Version \(AppInfo.version)"
     }
 
-    private var updateTrailing: some View {
-        Button("Check for Updates") { model.onCheckUpdates?() }
+    private func updateTrailing(_ preferencesModel: PreferencesPaneInterface) -> some View {
+        Button("Check for Updates") { preferencesModel.checkForUpdates() }
             .buttonStyle(EmberButtonStyle(kind: .quiet))
-            .disabled(!model.canCheckForUpdates)
+            .disabled(!preferencesModel.canCheckForUpdates)
             .accessibilityIdentifier("settings.updates.check")
     }
 
@@ -1152,26 +1370,32 @@ struct SettingsView: View {
         .help(help)
     }
 
-    private func shortcutChip(key: String, field: SettingsModel.RecordingField) -> some View {
+    private func shortcutChip(
+        key: String,
+        field: SettingsModel.RecordingField,
+        interface preferencesModel: PreferencesPaneInterface
+    ) -> some View {
         Button {
-            model.onRecord?(field)
+            preferencesModel.record(field)
         } label: {
             HStack(spacing: 5) {
-                if model.recordingField == field {
+                if preferencesModel.recordingField == field {
                     Circle()
                         .fill(Theme.accent)
                         .frame(width: 6, height: 6)
                         .accessibilityHidden(true)
                 }
-                Text(shortcutLabel(key: key, field: field))
+                Text(shortcutLabel(key: key, field: field, interface: preferencesModel))
                     .font(Theme.compactData)
             }
-            .foregroundStyle(shortcutColor(key: key, field: field))
+            .foregroundStyle(
+                shortcutColor(key: key, field: field, interface: preferencesModel)
+            )
             .padding(.horizontal, 9)
             .frame(minHeight: 28)
             .emberControlSurface()
             .overlay {
-                if model.recordingField == field {
+                if preferencesModel.recordingField == field {
                     RoundedRectangle(cornerRadius: Theme.controlRadius)
                         .strokeBorder(Theme.accent, lineWidth: 1)
                 }
@@ -1180,9 +1404,15 @@ struct SettingsView: View {
         }
         .buttonStyle(EmberPlainButtonStyle())
         .accessibilityLabel("\(field.command.title) shortcut")
-        .accessibilityValue(shortcutAccessibilityValue(key: key, field: field))
+        .accessibilityValue(
+            shortcutAccessibilityValue(
+                key: key,
+                field: field,
+                interface: preferencesModel
+            )
+        )
         .accessibilityHint(
-            model.recordingField == field
+            preferencesModel.recordingField == field
                 ? "Press a key to assign it. The captured key will not run a command."
                 : "Activate to capture a key. Activate again to cancel."
         )
@@ -1190,9 +1420,10 @@ struct SettingsView: View {
 
     private func shortcutLabel(
         key: String,
-        field: SettingsModel.RecordingField
+        field: SettingsModel.RecordingField,
+        interface preferencesModel: PreferencesPaneInterface
     ) -> String {
-        if model.recordingField == field {
+        if preferencesModel.recordingField == field {
             return "Press a key…"
         }
         if key.isEmpty {
@@ -1203,9 +1434,10 @@ struct SettingsView: View {
 
     private func shortcutColor(
         key: String,
-        field: SettingsModel.RecordingField
+        field: SettingsModel.RecordingField,
+        interface preferencesModel: PreferencesPaneInterface
     ) -> Color {
-        if model.recordingField == field {
+        if preferencesModel.recordingField == field {
             return Theme.accent
         }
         return key.isEmpty ? Theme.textSecondary : Theme.textPrimary
@@ -1214,12 +1446,13 @@ struct SettingsView: View {
     @ViewBuilder
     private func ownedFeedback(
         _ owner: SettingsFeedbackOwner,
-        identifier: String
+        identifier: String,
+        interface preferencesModel: PreferencesPaneInterface
     ) -> some View {
-        if !model.status.isEmpty, model.statusOwner == owner {
+        if !preferencesModel.status.isEmpty, preferencesModel.statusOwner == owner {
             SignalLedgerFeedback(
-                kind: model.statusIsError ? .error : .success,
-                title: model.status
+                kind: preferencesModel.statusIsError ? .error : .success,
+                title: preferencesModel.status
             )
             .accessibilityIdentifier(identifier)
         }
@@ -1227,9 +1460,10 @@ struct SettingsView: View {
 
     private func shortcutAccessibilityValue(
         key: String,
-        field: SettingsModel.RecordingField
+        field: SettingsModel.RecordingField,
+        interface preferencesModel: PreferencesPaneInterface
     ) -> String {
-        if model.recordingField == field {
+        if preferencesModel.recordingField == field {
             return "Capturing"
         }
         if key.isEmpty {
@@ -1354,38 +1588,68 @@ struct CommandLedgerSelectionRow: View {
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 0) {
-                EmberIngress(color: item.isSelected ? Theme.accent : .clear)
-                HStack(spacing: 10) {
-                    Image(systemName: item.icon)
-                        .font(.system(size: 15, weight: item.isSelected ? .semibold : .medium))
-                        .foregroundStyle(
-                            item.isSelected ? Theme.accent : Theme.textTertiary
-                        )
-                        .frame(width: 20)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.name)
-                            .font(Theme.ui(12, item.isSelected ? .semibold : .medium))
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1)
-                        Text(item.summary)
-                            .font(Theme.compactData)
-                            .foregroundStyle(Theme.textSecondary)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 12)
-                    Image(systemName: item.isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(
-                            item.isSelected ? Theme.accent : Theme.textTertiary
-                        )
-                        .accessibilityHidden(true)
+            Canvas { context, size in
+                context.fill(
+                    Path(CGRect(origin: .zero, size: size)),
+                    with: .color(rowBackground)
+                )
+                if item.isSelected {
+                    context.fill(
+                        Path(CGRect(
+                            x: 0,
+                            y: 0,
+                            width: Theme.selectionIngressWidth,
+                            height: size.height
+                        )),
+                        with: .color(Theme.accent)
+                    )
                 }
-                .padding(.horizontal, 12)
+                if let icon = context.resolveSymbol(id: "mode-icon") {
+                    context.draw(
+                        icon,
+                        at: CGPoint(x: 26, y: size.height / 2)
+                    )
+                }
+                context.draw(
+                    Text(item.name)
+                        .font(Theme.ui(12, item.isSelected ? .semibold : .medium))
+                        .foregroundStyle(Theme.textPrimary),
+                    at: CGPoint(x: 46, y: 18),
+                    anchor: .leading
+                )
+                context.draw(
+                    Text(item.summary)
+                        .font(Theme.compactData)
+                        .foregroundStyle(Theme.textSecondary),
+                    at: CGPoint(x: 46, y: 35),
+                    anchor: .leading
+                )
+                if let selection = context.resolveSymbol(id: "selection") {
+                    context.draw(
+                        selection,
+                        at: CGPoint(x: size.width - 24, y: size.height / 2)
+                    )
+                }
+            } symbols: {
+                Image(systemName: item.icon)
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(
+                        size: 15,
+                        weight: item.isSelected ? .semibold : .medium
+                    ))
+                    .foregroundStyle(
+                        item.isSelected ? Theme.accent : Theme.textTertiary
+                    )
+                    .tag("mode-icon")
+                Image(systemName: item.isSelected ? "checkmark.circle.fill" : "circle")
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(
+                        item.isSelected ? Theme.accent : Theme.textTertiary
+                    )
+                    .tag("selection")
             }
             .frame(maxWidth: .infinity, minHeight: 52, maxHeight: 52)
-            .background(rowBackground)
             .contentShape(Rectangle())
         }
         .buttonStyle(EmberPlainButtonStyle(cornerRadius: Theme.surfaceRadius))
@@ -1415,6 +1679,720 @@ struct CommandLedgerSelectionRow: View {
             "modes.selection.\(id)"
         }
     }
+}
+
+private struct ModeVerticalLayoutCache {
+    var width: CGFloat?
+    var sizes: [CGSize] = []
+}
+
+private enum ModeVerticalLayout {
+    static func size(
+        proposal: ProposedViewSize,
+        subviews: LayoutSubviews,
+        spacing: CGFloat,
+        cache: inout ModeVerticalLayoutCache
+    ) -> CGSize {
+        let width = proposal.width
+            ?? subviews.map { $0.sizeThatFits(.unspecified).width }.max()
+            ?? 0
+        let sizes = subviews.map {
+            $0.sizeThatFits(ProposedViewSize(width: width, height: nil))
+        }
+        cache.width = width
+        cache.sizes = sizes
+        return CGSize(
+            width: width,
+            height: sizes.reduce(0) { $0 + $1.height }
+                + spacing * CGFloat(max(0, sizes.count - 1))
+        )
+    }
+
+    static func place(
+        in bounds: CGRect,
+        subviews: LayoutSubviews,
+        spacing: CGFloat,
+        cache: inout ModeVerticalLayoutCache
+    ) {
+        let sizes: [CGSize]
+        if cache.width == bounds.width, cache.sizes.count == subviews.count {
+            sizes = cache.sizes
+        } else {
+            sizes = subviews.map {
+                $0.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+            }
+            cache.width = bounds.width
+            cache.sizes = sizes
+        }
+        var y = bounds.minY
+        for (subview, size) in zip(subviews, sizes) {
+            subview.place(
+                at: CGPoint(x: bounds.minX, y: y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: size.height)
+            )
+            y += size.height + spacing
+        }
+    }
+}
+
+private struct ModeLibraryLayout: Layout {
+    func makeCache(subviews _: Subviews) -> ModeVerticalLayoutCache {
+        ModeVerticalLayoutCache()
+    }
+
+    func updateCache(
+        _ cache: inout ModeVerticalLayoutCache,
+        subviews _: Subviews
+    ) {
+        cache = ModeVerticalLayoutCache()
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) -> CGSize {
+        ModeVerticalLayout.size(
+            proposal: proposal,
+            subviews: subviews,
+            spacing: 8,
+            cache: &cache
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) {
+        ModeVerticalLayout.place(
+            in: bounds,
+            subviews: subviews,
+            spacing: 8,
+            cache: &cache
+        )
+    }
+}
+
+private struct ModeLibraryRowsLayout: Layout {
+    func makeCache(subviews _: Subviews) -> ModeVerticalLayoutCache {
+        ModeVerticalLayoutCache()
+    }
+
+    func updateCache(
+        _ cache: inout ModeVerticalLayoutCache,
+        subviews _: Subviews
+    ) {
+        cache = ModeVerticalLayoutCache()
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) -> CGSize {
+        ModeVerticalLayout.size(
+            proposal: proposal,
+            subviews: subviews,
+            spacing: 0,
+            cache: &cache
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) {
+        ModeVerticalLayout.place(
+            in: bounds,
+            subviews: subviews,
+            spacing: 0,
+            cache: &cache
+        )
+    }
+}
+
+private struct ModeDetailFieldLayout: Layout {
+    func makeCache(subviews _: Subviews) -> ModeVerticalLayoutCache {
+        ModeVerticalLayoutCache()
+    }
+
+    func updateCache(
+        _ cache: inout ModeVerticalLayoutCache,
+        subviews _: Subviews
+    ) {
+        cache = ModeVerticalLayoutCache()
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) -> CGSize {
+        ModeVerticalLayout.size(
+            proposal: proposal,
+            subviews: subviews,
+            spacing: 3,
+            cache: &cache
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) {
+        ModeVerticalLayout.place(
+            in: bounds,
+            subviews: subviews,
+            spacing: 3,
+            cache: &cache
+        )
+    }
+}
+
+private struct ModesPaneLayout: Layout {
+    struct Cache {
+        var width: CGFloat?
+        var addButton = CGSize.zero
+        var description = CGSize.zero
+    }
+
+    private let headerSpacing: CGFloat = 16
+    private let columnSpacing: CGFloat = 14
+    private let libraryWidth: CGFloat = 310
+
+    func makeCache(subviews _: Subviews) -> Cache {
+        Cache()
+    }
+
+    func updateCache(_ cache: inout Cache, subviews _: Subviews) {
+        cache = Cache()
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) -> CGSize {
+        let width = proposal.width ?? 880
+        guard subviews.count == 4 else {
+            return proposal.replacingUnspecifiedDimensions()
+        }
+        let addButton = subviews[1].sizeThatFits(.unspecified)
+        let description = subviews[0].sizeThatFits(ProposedViewSize(
+            width: max(0, width - addButton.width - headerSpacing),
+            height: nil
+        ))
+        cache.width = width
+        cache.addButton = addButton
+        cache.description = description
+        let headerHeight = max(description.height, addButton.height)
+        let library = subviews[2].sizeThatFits(ProposedViewSize(
+            width: libraryWidth,
+            height: nil
+        ))
+        let detail = subviews[3].sizeThatFits(ProposedViewSize(
+            width: max(0, width - libraryWidth - columnSpacing),
+            height: nil
+        ))
+        return CGSize(
+            width: width,
+            height: headerHeight + headerSpacing + max(library.height, detail.height)
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) {
+        guard subviews.count == 4 else { return }
+        let addButton = cache.width == bounds.width
+            ? cache.addButton
+            : subviews[1].sizeThatFits(.unspecified)
+        let descriptionWidth = max(0, bounds.width - addButton.width - headerSpacing)
+        let description = cache.width == bounds.width
+            ? cache.description
+            : subviews[0].sizeThatFits(ProposedViewSize(
+                width: descriptionWidth,
+                height: nil
+            ))
+        let headerHeight = max(description.height, addButton.height)
+        subviews[0].place(
+            at: bounds.origin,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: descriptionWidth, height: headerHeight)
+        )
+        subviews[1].place(
+            at: CGPoint(x: bounds.maxX, y: bounds.minY),
+            anchor: .topTrailing,
+            proposal: ProposedViewSize(addButton)
+        )
+        let contentY = bounds.minY + headerHeight + headerSpacing
+        subviews[2].place(
+            at: CGPoint(x: bounds.minX, y: contentY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: libraryWidth, height: nil)
+        )
+        subviews[3].place(
+            at: CGPoint(x: bounds.minX + libraryWidth + columnSpacing, y: contentY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(
+                width: max(0, bounds.width - libraryWidth - columnSpacing),
+                height: nil
+            )
+        )
+    }
+}
+
+private struct ModeDetailContentLayout: Layout {
+    struct Cache {
+        var width: CGFloat?
+        var fieldSizes: [CGSize] = []
+        var noticeSize = CGSize.zero
+    }
+
+    private let minimumHeight: CGFloat = 338
+
+    func makeCache(subviews _: Subviews) -> Cache {
+        Cache()
+    }
+
+    func updateCache(_ cache: inout Cache, subviews _: Subviews) {
+        cache = Cache()
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) -> CGSize {
+        let width = proposal.width ?? 480
+        guard subviews.count == 11 else {
+            return proposal.replacingUnspecifiedDimensions()
+        }
+        let fieldSizes = (5 ... 7).map {
+            subviews[$0].sizeThatFits(ProposedViewSize(
+                width: width,
+                height: nil
+            ))
+        }
+        let noticeSize = subviews[8].sizeThatFits(ProposedViewSize(
+            width: width,
+            height: nil
+        ))
+        cache.width = width
+        cache.fieldSizes = fieldSizes
+        cache.noticeSize = noticeSize
+        let fieldHeights = fieldSizes.map(\.height)
+        let noticeHeight = noticeSize.height
+        let contentHeight = 68
+            + fieldHeights.reduce(0, +)
+            + CGFloat(fieldHeights.count - 1) * 14
+            + (noticeHeight > 0 ? noticeHeight + 10 : 0)
+            + 56
+        return CGSize(
+            width: width,
+            height: max(minimumHeight, contentHeight)
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) {
+        guard subviews.count == 11 else { return }
+        let headerActionsWidth: CGFloat = 144
+        let titleX = bounds.minX + 42
+        let titleWidth = max(0, bounds.width - 42 - headerActionsWidth - 10)
+        subviews[0].place(
+            at: CGPoint(x: bounds.minX + 16, y: bounds.minY + 16),
+            anchor: .center,
+            proposal: ProposedViewSize(width: 32, height: 32)
+        )
+        subviews[1].place(
+            at: CGPoint(x: titleX, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: titleWidth, height: nil)
+        )
+        subviews[2].place(
+            at: CGPoint(x: titleX, y: bounds.minY + 29),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: titleWidth, height: nil)
+        )
+        subviews[3].place(
+            at: CGPoint(x: bounds.maxX, y: bounds.minY),
+            anchor: .topTrailing,
+            proposal: ProposedViewSize(width: headerActionsWidth, height: 28)
+        )
+        subviews[4].place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY + 52),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: nil)
+        )
+        var fieldY = bounds.minY + 68
+        let fieldSizes = cache.width == bounds.width && cache.fieldSizes.count == 3
+            ? cache.fieldSizes
+            : (5 ... 7).map {
+                subviews[$0].sizeThatFits(ProposedViewSize(
+                    width: bounds.width,
+                    height: nil
+                ))
+            }
+        for (index, size) in zip(5 ... 7, fieldSizes) {
+            subviews[index].place(
+                at: CGPoint(x: bounds.minX, y: fieldY),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: size.height)
+            )
+            fieldY += size.height + 14
+        }
+        let notice = cache.width == bounds.width
+            ? cache.noticeSize
+            : subviews[8].sizeThatFits(ProposedViewSize(
+                width: bounds.width,
+                height: nil
+            ))
+        if notice.height > 0 {
+            subviews[8].place(
+                at: CGPoint(x: bounds.minX, y: fieldY - 4),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: notice.height)
+            )
+        }
+        subviews[9].place(
+            at: CGPoint(x: bounds.minX, y: bounds.maxY - 42),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: nil)
+        )
+        subviews[10].place(
+            at: CGPoint(x: bounds.minX, y: bounds.maxY - 28),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: 28)
+        )
+    }
+}
+
+enum ModeDetailControlID: Hashable {
+    case edit
+    case duplicate
+    case moveUp
+    case moveDown
+    case delete
+}
+
+struct ModeDetailControlSurface {
+    let frame: CGRect
+    let trailingInset: CGFloat?
+    let isHovered: Bool
+    let isFocused: Bool
+    let isEnabled: Bool
+
+    init(
+        frame: CGRect,
+        isHovered: Bool,
+        isFocused: Bool,
+        isEnabled: Bool
+    ) {
+        self.frame = frame
+        trailingInset = nil
+        self.isHovered = isHovered
+        self.isFocused = isFocused
+        self.isEnabled = isEnabled
+    }
+
+    init(
+        trailingInset: CGFloat,
+        width: CGFloat,
+        height: CGFloat,
+        isHovered: Bool,
+        isFocused: Bool,
+        isEnabled: Bool
+    ) {
+        frame = CGRect(x: 0, y: 0, width: width, height: height)
+        self.trailingInset = trailingInset
+        self.isHovered = isHovered
+        self.isFocused = isFocused
+        self.isEnabled = isEnabled
+    }
+
+    func resolvedFrame(in size: CGSize) -> CGRect {
+        guard let trailingInset else { return frame }
+        return CGRect(
+            x: size.width - trailingInset - frame.width,
+            y: frame.minY,
+            width: frame.width,
+            height: frame.height
+        )
+    }
+}
+
+struct ModeDetailControlChrome: View {
+    let surfaces: [ModeDetailControlSurface]
+    var increaseContrastOverride: Bool?
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
+    init(
+        surfaces: [ModeDetailControlSurface],
+        increaseContrast: Bool? = nil
+    ) {
+        self.surfaces = surfaces
+        increaseContrastOverride = increaseContrast
+    }
+
+    var body: some View {
+        Canvas { context, size in
+            for surface in surfaces {
+                let frame = surface.resolvedFrame(in: size)
+                let path = Path(
+                    roundedRect: frame,
+                    cornerRadius: Theme.controlRadius
+                )
+                let opacity = surface.isEnabled ? 1.0 : 0.46
+                context.fill(
+                    path,
+                    with: .color(
+                        (surface.isHovered ? Theme.hover : Theme.surface)
+                            .opacity(opacity)
+                    )
+                )
+                context.stroke(
+                    path,
+                    with: .color(
+                        Theme.essentialBorderColor(
+                            increaseContrast: usesStrongBoundary
+                        )
+                        .opacity(opacity)
+                    ),
+                    lineWidth: Theme.essentialBorderWidth(
+                        increaseContrast: usesStrongBoundary
+                    )
+                )
+                if surface.isFocused {
+                    let focusFrame = frame.insetBy(dx: 2, dy: 2)
+                    let focusPath = Path(
+                        roundedRect: focusFrame,
+                        cornerRadius: max(0, Theme.controlRadius - 2)
+                    )
+                    context.stroke(
+                        focusPath,
+                        with: .color(Theme.canvas),
+                        lineWidth: Theme.focusGap + Theme.focusRingWidth
+                    )
+                    context.stroke(
+                        focusPath,
+                        with: .color(Theme.accent),
+                        lineWidth: Theme.focusRingWidth
+                    )
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private var usesStrongBoundary: Bool {
+        increaseContrastOverride ?? (colorSchemeContrast == .increased)
+    }
+}
+
+private struct ModeDetailHeaderActions: View {
+    let editLabel: String
+    let duplicateLabel: String
+    let onEdit: () -> Void
+    let onDuplicate: () -> Void
+    @State private var hoveredControl: ModeDetailControlID?
+    @FocusState private var focusedControl: ModeDetailControlID?
+
+    var body: some View {
+        ZStack {
+            ModeDetailControlChrome(surfaces: [
+                surface(.edit, frame: CGRect(x: 0, y: 0, width: 52, height: 28)),
+                surface(.duplicate, frame: CGRect(x: 60, y: 0, width: 84, height: 28)),
+            ])
+
+            HStack(spacing: 8) {
+                Button("Edit", action: onEdit)
+                    .frame(width: 52, height: 28)
+                    .focusEffectDisabled()
+                    .focused($focusedControl, equals: .edit)
+                    .onHover { setHover(.edit, isHovering: $0) }
+                    .accessibilityLabel(editLabel)
+                Button("Duplicate", action: onDuplicate)
+                    .frame(width: 84, height: 28)
+                    .focusEffectDisabled()
+                    .focused($focusedControl, equals: .duplicate)
+                    .onHover { setHover(.duplicate, isHovering: $0) }
+                    .accessibilityLabel(duplicateLabel)
+            }
+            .font(Theme.ui(10.5, .semibold))
+            .foregroundStyle(Theme.textPrimary)
+            .buttonStyle(EmberPlainButtonStyle())
+        }
+        .frame(width: 144, height: 28)
+    }
+
+    private func surface(
+        _ control: ModeDetailControlID,
+        frame: CGRect
+    ) -> ModeDetailControlSurface {
+        ModeDetailControlSurface(
+            frame: frame,
+            isHovered: hoveredControl == control,
+            isFocused: focusedControl == control,
+            isEnabled: true
+        )
+    }
+
+    private func setHover(_ control: ModeDetailControlID, isHovering: Bool) {
+        if isHovering {
+            hoveredControl = control
+        } else if hoveredControl == control {
+            hoveredControl = nil
+        }
+    }
+}
+
+private struct ModeDetailActions: View {
+    let presentation: ModeLibraryActionPresentation
+    let onAction: (ModeDetailAction) -> Void
+    @State private var hoveredControl: ModeDetailControlID?
+    @FocusState private var focusedControl: ModeDetailControlID?
+
+    var body: some View {
+        ZStack {
+            ModeDetailControlChrome(surfaces: [
+                surface(
+                    .moveUp,
+                    frame: CGRect(x: 0, y: 0, width: 92, height: 28),
+                    isEnabled: presentation.canMoveUp
+                ),
+                surface(
+                    .moveDown,
+                    frame: CGRect(x: 100, y: 0, width: 108, height: 28),
+                    isEnabled: presentation.canMoveDown
+                ),
+                trailingSurface(.delete, width: 68),
+            ])
+
+            HStack(spacing: 8) {
+                actionButton(
+                    "Move up",
+                    symbolName: "arrow.up",
+                    action: .moveUp,
+                    control: .moveUp,
+                    width: 92,
+                    isEnabled: presentation.canMoveUp,
+                    accessibilityLabel: presentation.moveUpLabel
+                )
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                actionButton(
+                    "Move down",
+                    symbolName: "arrow.down",
+                    action: .moveDown,
+                    control: .moveDown,
+                    width: 108,
+                    isEnabled: presentation.canMoveDown,
+                    accessibilityLabel: presentation.moveDownLabel
+                )
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                Spacer()
+                actionButton(
+                    "Delete",
+                    action: .delete,
+                    control: .delete,
+                    width: 68,
+                    accessibilityLabel: presentation.deleteLabel,
+                    accessibilityHint: presentation.deleteHint
+                )
+                .foregroundStyle(Theme.error)
+            }
+        }
+        .frame(height: 28)
+    }
+
+    private func actionButton(
+        _ title: String,
+        symbolName: String? = nil,
+        action: ModeDetailAction,
+        control: ModeDetailControlID,
+        width: CGFloat,
+        isEnabled: Bool = true,
+        accessibilityLabel: String,
+        accessibilityHint: String? = nil
+    ) -> some View {
+        Button {
+            onAction(action)
+        } label: {
+            if let symbolName {
+                Label(title, systemImage: symbolName)
+            } else {
+                Text(title)
+            }
+        }
+        .font(Theme.ui(10.5, .semibold))
+        .frame(width: width, height: 28)
+        .contentShape(Rectangle())
+        .buttonStyle(EmberPlainButtonStyle())
+        .focusEffectDisabled()
+        .focused($focusedControl, equals: control)
+        .onHover { setHover(control, isHovering: $0) }
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.46)
+        .foregroundStyle(action == .delete ? Theme.error : Theme.textPrimary)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(accessibilityHint ?? "")
+    }
+
+    private func surface(
+        _ control: ModeDetailControlID,
+        frame: CGRect,
+        isEnabled: Bool
+    ) -> ModeDetailControlSurface {
+        ModeDetailControlSurface(
+            frame: frame,
+            isHovered: hoveredControl == control,
+            isFocused: focusedControl == control,
+            isEnabled: isEnabled
+        )
+    }
+
+    private func trailingSurface(
+        _ control: ModeDetailControlID,
+        width: CGFloat
+    ) -> ModeDetailControlSurface {
+        ModeDetailControlSurface(
+            trailingInset: 0,
+            width: width,
+            height: 28,
+            isHovered: hoveredControl == control,
+            isFocused: focusedControl == control,
+            isEnabled: true
+        )
+    }
+
+    private func setHover(_ control: ModeDetailControlID, isHovering: Bool) {
+        if isHovering {
+            hoveredControl = control
+        } else if hoveredControl == control {
+            hoveredControl = nil
+        }
+    }
+}
+
+private enum ModeDetailAction: Equatable {
+    case moveUp
+    case moveDown
+    case delete
 }
 
 func keycapLabel(_ name: String) -> String {

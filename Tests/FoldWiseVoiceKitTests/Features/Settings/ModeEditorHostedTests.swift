@@ -171,6 +171,24 @@ final class ModeEditorHostedTests: XCTestCase {
         XCTAssertEqual(moved, .down)
     }
 
+    func testHostedModeDetailChromePreservesEveryInteractionState() throws {
+        let idle = try renderedModeDetailChrome()
+        let hovered = try renderedModeDetailChrome(isHovered: true)
+        let focused = try renderedModeDetailChrome(isFocused: true)
+        let disabled = try renderedModeDetailChrome(isEnabled: false)
+        let increasedContrast = try renderedModeDetailChrome(increaseContrast: true)
+
+        XCTAssertEqual(
+            [
+                differingPixelCount(idle, hovered) > 40,
+                differingPixelCount(idle, focused) > 40,
+                differingPixelCount(idle, disabled) > 40,
+                differingPixelCount(idle, increasedContrast) > 40,
+            ],
+            [true, true, true, true]
+        )
+    }
+
     func testHostedDeletionAlertKeepsConfirmationWhenDeleteFails() {
         let model = SettingsModel()
         let pending = ModeDeletionState(
@@ -269,6 +287,62 @@ final class ModeEditorHostedTests: XCTestCase {
             systemPrompt: "Keep wording.",
             vocabulary: []
         )
+    }
+
+    private func renderedModeDetailChrome(
+        isHovered: Bool = false,
+        isFocused: Bool = false,
+        isEnabled: Bool = true,
+        increaseContrast: Bool = false
+    ) throws -> NSBitmapImageRep {
+        let view = ModeDetailControlChrome(
+            surfaces: [
+                .init(
+                    frame: CGRect(x: 4, y: 4, width: 112, height: 28),
+                    isHovered: isHovered,
+                    isFocused: isFocused,
+                    isEnabled: isEnabled
+                ),
+            ],
+            increaseContrast: increaseContrast
+        )
+        .frame(width: 120, height: 36)
+        .environment(\.colorScheme, .light)
+        let controller = NSHostingController(rootView: view)
+        controller.view.frame = NSRect(x: 0, y: 0, width: 120, height: 36)
+        controller.view.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(
+            controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds)
+        )
+        controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
+        return bitmap
+    }
+
+    private func differingPixelCount(
+        _ lhs: NSBitmapImageRep,
+        _ rhs: NSBitmapImageRep
+    ) -> Int {
+        guard lhs.pixelsWide == rhs.pixelsWide, lhs.pixelsHigh == rhs.pixelsHigh else {
+            return .max
+        }
+        var count = 0
+        for x in 0 ..< lhs.pixelsWide {
+            for y in 0 ..< lhs.pixelsHigh {
+                guard
+                    let left = lhs.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+                    let right = rhs.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
+                else {
+                    continue
+                }
+                if abs(left.redComponent - right.redComponent) > 0.01
+                    || abs(left.greenComponent - right.greenComponent) > 0.01
+                    || abs(left.blueComponent - right.blueComponent) > 0.01
+                    || abs(left.alphaComponent - right.alphaComponent) > 0.01 {
+                    count += 1
+                }
+            }
+        }
+        return count
     }
 
     private func hostInKeyWindow(_ hosting: NSHostingView<SettingsView>) -> NSWindow {

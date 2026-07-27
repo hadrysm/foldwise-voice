@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 import XCTest
 @testable import FoldWiseVoiceKit
@@ -36,24 +37,28 @@ final class StatsPaneHostedTests: XCTestCase {
     }
 
     func testHostedStatsReusesProjectionForUnrelatedSettingsPublication() {
-        let model = SettingsModel()
-        var executionCount = 0
         let calendar = utcCalendar()
-        let cache = StatsProjectionCache(project: { input, now, calendar, locale in
-            executionCount += 1
-            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
-        })
+        let store = PaneProjectionStore()
+        let model = SettingsModel(
+            panePerformance: PaneNavigationPerformance(),
+            paneProjections: store
+        )
+        _ = store.stats(in: .init(
+            now: Date(),
+            calendar: calendar,
+            locale: Locale(identifier: "en_US")
+        ))
         let hosting = host(StatsPane(
-            model: model,
-            projectionCache: cache,
+            interface: model.statsPaneInterface,
             calendar: { calendar },
             locale: Locale(identifier: "en_US")
         ))
+        let initialGeneration = store.completedStats?.generation
 
         model.customModel = "unrelated publication"
         render(hosting)
 
-        XCTAssertEqual(executionCount, 1)
+        XCTAssertEqual(store.completedStats?.generation, initialGeneration)
     }
 
     func testHostedStatsRefreshesProjectionWhenSavedHistoryChanges() throws {
@@ -62,6 +67,7 @@ final class StatsPaneHostedTests: XCTestCase {
         defer { window.orderOut(nil) }
 
         model.historyEntries = [entry(rawText: "saved words", day: 1)]
+        waitUntilStatsCurrent(model)
         render(hosting)
 
         XCTAssertEqual(try node(identifier: "stats.calendar", in: window).value, "2 spoken words, 1 active day")
@@ -73,58 +79,88 @@ final class StatsPaneHostedTests: XCTestCase {
         defer { window.orderOut(nil) }
 
         model.saveHistory = false
+        waitUntilStatsCurrent(model)
         render(hosting)
 
         XCTAssertEqual(try noticeIdentifiers(in: window), ["stats.notice.savingOff"])
     }
 
     func testHostedStatsRefreshesProjectionForDayAndTimeZoneNotifications() {
-        let model = SettingsModel()
         let notifications = NotificationCenter()
         var currentNow = Date(timeIntervalSince1970: 1_783_512_000)
         var currentCalendar = utcCalendar()
-        var executionCount = 0
-        let cache = StatsProjectionCache(now: { currentNow }, project: { input, now, calendar, locale in
-            executionCount += 1
-            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
-        })
+        let store = PaneProjectionStore()
+        let model = SettingsModel(
+            panePerformance: PaneNavigationPerformance(),
+            paneProjections: store
+        )
+        _ = store.stats(in: .init(
+            now: currentNow,
+            calendar: currentCalendar,
+            locale: Locale(identifier: "en_US")
+        ))
         let hosting = host(StatsPane(
-            model: model,
-            projectionCache: cache,
+            interface: model.statsPaneInterface,
+            now: { currentNow },
             calendar: { currentCalendar },
             locale: Locale(identifier: "en_US"),
             notificationCenter: notifications
         ))
+        let initialGeneration = store.completedStats?.generation
 
         currentNow = currentNow.addingTimeInterval(86400)
         notifications.post(name: .NSCalendarDayChanged, object: nil)
+        waitUntilStatsCurrent(model, after: initialGeneration)
+        render(hosting)
+        let dayGeneration = store.completedStats?.generation
         currentCalendar.timeZone = TimeZone(identifier: "Europe/Warsaw") ?? currentCalendar.timeZone
         notifications.post(name: .NSSystemTimeZoneDidChange, object: nil)
+        waitUntilStatsCurrent(model, after: dayGeneration)
         render(hosting)
 
-        XCTAssertEqual(executionCount, 3)
+        XCTAssertEqual(
+            [
+                initialGeneration != dayGeneration,
+                dayGeneration != store.completedStats?.generation,
+            ],
+            [true, true]
+        )
     }
 
     func testHostedStatsRefreshesProjectionForLocaleEnvironmentChanges() {
-        let model = SettingsModel()
         let calendar = utcCalendar()
-        var projectedLocales: [String] = []
-        let cache = StatsProjectionCache(project: { input, now, calendar, locale in
-            projectedLocales.append(locale.identifier)
-            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
-        })
+        let now = calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 22, hour: 12
+        )) ?? .distantPast
+        let store = PaneProjectionStore()
+        let model = SettingsModel(
+            panePerformance: PaneNavigationPerformance(),
+            paneProjections: store
+        )
         let pane = StatsPane(
-            model: model,
-            projectionCache: cache,
+            interface: model.statsPaneInterface,
+            now: { now },
             calendar: { calendar }
         )
+        _ = store.stats(in: .init(
+            now: now,
+            calendar: calendar,
+            locale: Locale(identifier: "en_US")
+        ))
         let hosting = host(pane.environment(\.locale, Locale(identifier: "en_US")))
         render(hosting)
+        let english = store.completedStats
 
         hosting.rootView = pane.environment(\.locale, Locale(identifier: "pl_PL"))
         render(hosting)
+        waitUntilStatsCurrent(model, after: english?.generation)
+        render(hosting)
+        let polish = store.completedStats
 
-        XCTAssertEqual(projectedLocales, ["en_US", "pl_PL"])
+        XCTAssertEqual(
+            [english?.value.month.title, polish?.value.month.title],
+            ["July 2026", "lipiec 2026"]
+        )
     }
 
     func testHostedMetricTilesRemainOneRowAtRequiredWindowSizes() throws {
@@ -218,12 +254,97 @@ final class StatsPaneHostedTests: XCTestCase {
         let initialAccentCount = try renderedTokenCount(Theme.accent, in: hosting)
 
         model.historyEntries = [entry(rawText: "two words", day: 1)]
+        waitUntilStatsCurrent(model)
         render(hosting)
 
         XCTAssertGreaterThan(
             try renderedTokenCount(Theme.accent, in: hosting),
             initialAccentCount
         )
+    }
+
+    func testHostedCalendarHoverUpdatesTheRenderedDay() throws {
+        let (hosting, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+        window.appearance = NSAppearance(named: .aqua)
+        render(hosting)
+        let grid = try XCTUnwrap(calendarGrid(in: hosting))
+        let dayFrame = calendarDayFrame(at: 0, in: grid)
+        let samplePoint = CGPoint(x: dayFrame.midX, y: dayFrame.midY)
+        let initialColor = try renderedColor(at: samplePoint, in: grid)
+
+        moveMouse(
+            to: samplePoint,
+            in: grid,
+            window: window
+        )
+        render(hosting)
+        let hoveredColor = try waitForRenderedColorChange(
+            at: samplePoint,
+            in: grid,
+            from: initialColor
+        )
+
+        XCTAssertGreaterThan(
+            colorDistance(initialColor, hoveredColor),
+            0.1
+        )
+    }
+
+    func testHostedCalendarHoverIsImmediateWithReducedMotion() throws {
+        let hosting = host(fixedStatsPane(
+            model: SettingsModel(),
+            environment: StatsEnvironmentAdaptations(
+                reduceMotion: true,
+                increaseContrast: false
+            )
+        ))
+        let window = hostInWindow(hosting)
+        render(hosting)
+        defer { window.orderOut(nil) }
+        let grid = try XCTUnwrap(calendarGrid(in: hosting))
+        let dayFrame = calendarDayFrame(at: 0, in: grid)
+        let samplePoint = CGPoint(x: dayFrame.midX, y: dayFrame.midY)
+        let initialColor = try renderedColor(at: samplePoint, in: grid)
+        moveMouse(to: CGPoint(x: -10, y: -10), in: grid, window: window)
+
+        moveMouse(
+            to: samplePoint,
+            in: grid,
+            window: window
+        )
+        render(hosting)
+
+        XCTAssertGreaterThan(
+            colorDistance(initialColor, try renderedColor(at: samplePoint, in: grid)),
+            0.1
+        )
+    }
+
+    func testHostedCalendarFollowsWindowAppearance() throws {
+        let (lightHosting, lightWindow) = hostInteractiveStats(model: SettingsModel())
+        defer { lightWindow.orderOut(nil) }
+        lightWindow.appearance = NSAppearance(named: .aqua)
+        render(lightHosting)
+        let lightGrid = try XCTUnwrap(calendarGrid(in: lightHosting))
+        let lightDay = calendarDayFrame(at: 0, in: lightGrid)
+        let lightColor = try renderedColor(
+            at: CGPoint(x: lightDay.midX, y: lightDay.midY),
+            in: lightGrid
+        )
+
+        let (darkHosting, darkWindow) = hostInteractiveStats(model: SettingsModel())
+        defer { darkWindow.orderOut(nil) }
+        darkWindow.appearance = NSAppearance(named: .darkAqua)
+        render(darkHosting)
+        let darkGrid = try XCTUnwrap(calendarGrid(in: darkHosting))
+        let darkDay = calendarDayFrame(at: 0, in: darkGrid)
+        let darkColor = try renderedColor(
+            at: CGPoint(x: darkDay.midX, y: darkDay.midY),
+            in: darkGrid
+        )
+
+        XCTAssertGreaterThan(colorDistance(lightColor, darkColor), 1)
     }
 
     func testHostedCalendarAppliesContextOnce() throws {
@@ -467,12 +588,17 @@ final class StatsPaneHostedTests: XCTestCase {
             year: 2026, month: 7, day: 22, hour: 12
         )) ?? .distantPast
         let pane = StatsPane(
-            model: model,
-            projectionCache: StatsProjectionCache(now: { currentNow }),
+            interface: model.statsPaneInterface,
+            now: { currentNow },
             calendar: { calendar },
             locale: Locale(identifier: "en_US"),
             notificationCenter: notifications
         )
+        _ = model.paneProjections.stats(in: .init(
+            now: currentNow,
+            calendar: calendar,
+            locale: Locale(identifier: "en_US")
+        ))
         let hosting = host(pane)
         let window = hostInWindow(hosting)
         defer { window.orderOut(nil) }
@@ -481,7 +607,9 @@ final class StatsPaneHostedTests: XCTestCase {
         currentNow = calendar.date(from: DateComponents(
             year: 2026, month: 8, day: 1, hour: 12
         )) ?? .distantPast
+        let julyGeneration = model.paneProjections.completedStats?.generation
         notifications.post(name: .NSCalendarDayChanged, object: nil)
+        waitUntilStatsCurrent(model, after: julyGeneration)
         render(hosting)
 
         XCTAssertEqual(try focusedDayIdentifier(in: window), "stats.day.1")
@@ -491,7 +619,12 @@ final class StatsPaneHostedTests: XCTestCase {
         let model = SettingsModel()
         model.saveHistory = false
         model.pane = .stats
-        let hosting = host(StatsPane(model: model))
+        _ = model.paneProjections.stats(in: .init(
+            now: Date(),
+            calendar: .autoupdatingCurrent,
+            locale: .autoupdatingCurrent
+        ))
+        let hosting = host(StatsPane(interface: model.statsPaneInterface))
 
         let button = try XCTUnwrap(Self.button(named: "Open History", in: hosting))
         button.performClick(nil)
@@ -519,6 +652,46 @@ final class StatsPaneHostedTests: XCTestCase {
         return view.subviews.lazy.compactMap { button(named: title, in: $0) }.first
     }
 
+    private func calendarGrid(in view: NSView) -> StatsCalendarGridNSView? {
+        if let grid = view as? StatsCalendarGridNSView {
+            return grid
+        }
+        return view.subviews.lazy.compactMap(calendarGrid).first
+    }
+
+    private func calendarDayFrame(
+        at index: Int,
+        in grid: StatsCalendarGridNSView
+    ) -> CGRect {
+        StatsCalendarLayout(
+            width: grid.bounds.width,
+            leadingColumnOffset: 3,
+            dayCount: 31
+        ).dayFrame(at: index)
+    }
+
+    private func moveMouse(
+        to point: CGPoint,
+        in grid: StatsCalendarGridNSView,
+        window: NSWindow
+    ) {
+        guard let event = NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: grid.convert(point, to: nil),
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 0,
+            pressure: 0
+        ) else {
+            XCTFail("Expected a mouse-moved event")
+            return
+        }
+        grid.mouseMoved(with: event)
+    }
+
     private func host<Content: View>(
         _ content: Content,
         width: CGFloat = 755,
@@ -535,13 +708,17 @@ final class StatsPaneHostedTests: XCTestCase {
         environment: StatsEnvironmentAdaptations? = nil
     ) -> StatsPane {
         let calendar = utcCalendar()
+        let now = calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 22, hour: 12
+        )) ?? .distantPast
+        _ = model.paneProjections.stats(in: .init(
+            now: now,
+            calendar: calendar,
+            locale: Locale(identifier: "en_US")
+        ))
         return StatsPane(
-            model: model,
-            projectionCache: StatsProjectionCache(now: {
-                calendar.date(from: DateComponents(
-                    year: 2026, month: 7, day: 22, hour: 12
-                )) ?? .distantPast
-            }),
+            interface: model.statsPaneInterface,
+            now: { now },
             calendar: { calendar },
             locale: Locale(identifier: "en_US"),
             environmentOverride: environment
@@ -564,10 +741,43 @@ final class StatsPaneHostedTests: XCTestCase {
     ) -> (NSHostingView<SettingsView>, NSWindow) {
         let model = model ?? SettingsModel()
         model.pane = .stats
+        _ = model.paneProjections.stats(in: .init(
+            now: Date(),
+            calendar: .autoupdatingCurrent,
+            locale: .autoupdatingCurrent
+        ))
         let hosting = host(SettingsView(model: model), width: width, height: height)
         let window = hostInWindow(hosting)
         render(hosting)
         return (hosting, window)
+    }
+
+    private func waitUntilStatsCurrent(
+        _ model: SettingsModel,
+        after generation: PaneProjectionStore.Generation? = nil
+    ) {
+        let isReady: @MainActor () -> Bool = {
+            model.paneProjections.statsProjection.isCurrent
+                && (generation == nil
+                    || model.paneProjections.completedStats?.generation != generation)
+        }
+        guard !isReady() else { return }
+        let published = expectation(description: "Stats projection published")
+        func observeUntilReady() {
+            guard !isReady() else {
+                published.fulfill()
+                return
+            }
+            withObservationTracking {
+                _ = isReady()
+            } onChange: {
+                Task { @MainActor in
+                    observeUntilReady()
+                }
+            }
+        }
+        observeUntilReady()
+        wait(for: [published], timeout: 1)
     }
 
     private func dataStateModels() -> [SettingsModel] {
@@ -671,6 +881,52 @@ final class StatsPaneHostedTests: XCTestCase {
             bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?
                 .usingColorSpace(.sRGB)
         )
+    }
+
+    private func renderedColor(
+        at point: CGPoint,
+        in view: NSView
+    ) throws -> NSColor {
+        view.needsDisplay = true
+        view.displayIfNeeded()
+        let bitmap = try XCTUnwrap(
+            view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        )
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let xScale = CGFloat(bitmap.pixelsWide) / view.bounds.width
+        let yScale = CGFloat(bitmap.pixelsHigh) / view.bounds.height
+        return try XCTUnwrap(
+            bitmap.colorAt(
+                x: Int((point.x * xScale).rounded(.down)),
+                y: Int((point.y * yScale).rounded(.down))
+            )?.usingColorSpace(.sRGB)
+        )
+    }
+
+    private func waitForRenderedColorChange(
+        at point: CGPoint,
+        in view: NSView,
+        from initialColor: NSColor
+    ) throws -> NSColor {
+        let deadline = Date().addingTimeInterval(1)
+        while Date() < deadline {
+            let color = try renderedColor(at: point, in: view)
+            if colorDistance(initialColor, color) > 0.1 {
+                return color
+            }
+            _ = RunLoop.current.run(
+                mode: .default,
+                before: min(deadline, Date().addingTimeInterval(0.01))
+            )
+        }
+        XCTFail("Rendered calendar color did not change")
+        return initialColor
+    }
+
+    private func colorDistance(_ lhs: NSColor, _ rhs: NSColor) -> CGFloat {
+        abs(lhs.redComponent - rhs.redComponent)
+            + abs(lhs.greenComponent - rhs.greenComponent)
+            + abs(lhs.blueComponent - rhs.blueComponent)
     }
 
     private func sendKeys(_ keys: [KeyInput], to window: NSWindow) {

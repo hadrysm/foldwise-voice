@@ -122,7 +122,18 @@ final class HistoryPaneHostedTests: XCTestCase {
     }
 
     private func host(_ model: SettingsModel) -> NSWindow {
-        let hosting = NSHostingView(rootView: HistoryPane(model: model))
+        _ = model.paneProjections.history(
+            search: "",
+            flaggedOnly: false,
+            in: .init(
+                now: Date(),
+                calendar: .autoupdatingCurrent,
+                locale: .autoupdatingCurrent
+            )
+        )
+        let hosting = NSHostingView(
+            rootView: HistoryPane(interface: model.historyPaneInterface)
+        )
         hosting.frame = NSRect(x: 0, y: 0, width: 760, height: 600)
         let window = NSWindow(
             contentRect: hosting.frame,

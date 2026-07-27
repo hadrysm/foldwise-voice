@@ -1,0 +1,190 @@
+import Foundation
+
+struct PanePerformancePlan: Codable, Equatable {
+    let profile: PanePerformanceProfile
+    let outputURL: URL
+    let dataDirectory: URL
+    let sampleCount: Int
+    let destinations: [SettingsModel.Pane]
+
+    static func load(
+        from url: URL,
+        liveDataDirectory: URL = JSONLHistoryStore.defaultURL.deletingLastPathComponent()
+    ) throws -> PanePerformancePlan {
+        let plan = try JSONDecoder().decode(
+            PanePerformancePlan.self,
+            from: Data(contentsOf: url)
+        )
+        guard plan.sampleCount > 0 else {
+            throw PanePerformancePlanError.invalidSampleCount
+        }
+        guard !plan.destinations.isEmpty,
+              Set(plan.destinations).count == plan.destinations.count
+        else {
+            throw PanePerformancePlanError.invalidDestinations
+        }
+        guard plan.outputURL.isFileURL, plan.dataDirectory.isFileURL else {
+            throw PanePerformancePlanError.nonFileURL
+        }
+        let liveDirectory = liveDataDirectory
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let locations = [plan.outputURL, plan.dataDirectory].map {
+            $0.standardizedFileURL.resolvingSymlinksInPath()
+        }
+        guard locations.allSatisfy({
+            $0 != liveDirectory &&
+                !$0.path.hasPrefix(liveDirectory.path + "/")
+        }) else {
+            throw PanePerformancePlanError.liveProfile
+        }
+        let dataDirectory = locations[1]
+        guard !FileManager.default.fileExists(atPath: dataDirectory.path) else {
+            throw PanePerformancePlanError.existingDataDirectory
+        }
+        return plan
+    }
+}
+
+enum PanePerformancePlanError: LocalizedError {
+    case invalidSampleCount
+    case invalidDestinations
+    case nonFileURL
+    case liveProfile
+    case existingDataDirectory
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidSampleCount:
+            "Pane performance sample count must be greater than zero."
+        case .invalidDestinations:
+            "Pane performance destinations must be nonempty and unique."
+        case .nonFileURL:
+            "Pane performance output and data locations must be file URLs."
+        case .liveProfile:
+            "Pane performance data cannot use FoldWise's live Application Support profile."
+        case .existingDataDirectory:
+            "Pane performance data directory must not already exist."
+        }
+    }
+}
+
+enum PanePerformanceVisit: String, Codable {
+    case cold
+    case warm
+}
+
+enum PanePerformanceSampleKind: String, Codable {
+    case warmUp
+    case recorded
+}
+
+struct PanePerformanceNavigationInterval: Codable, Equatable {
+    let destination: SettingsModel.Pane
+    let visit: PanePerformanceVisit
+    let sample: PanePerformanceSampleKind
+    let startedAtSystemUptime: TimeInterval
+    let endedAtSystemUptime: TimeInterval
+    let startedAtEpoch: TimeInterval
+    let endedAtEpoch: TimeInterval
+}
+
+struct PanePerformanceStatistics: Codable, Equatable {
+    let medianMilliseconds: Double
+    let p95Milliseconds: Double
+    let worstMilliseconds: Double
+
+    init(samplesMilliseconds: [Double]) throws {
+        guard !samplesMilliseconds.isEmpty else {
+            throw PanePerformanceReportError.emptySamples
+        }
+        let sorted = samplesMilliseconds.sorted()
+        if sorted.count.isMultiple(of: 2) {
+            let upper = sorted.count / 2
+            medianMilliseconds = (sorted[upper - 1] + sorted[upper]) / 2
+        } else {
+            medianMilliseconds = sorted[sorted.count / 2]
+        }
+        let p95Index = max(0, Int(ceil(Double(sorted.count) * 0.95)) - 1)
+        p95Milliseconds = sorted[p95Index]
+        worstMilliseconds = sorted[sorted.count - 1]
+    }
+
+    init(
+        medianMilliseconds: Double,
+        p95Milliseconds: Double,
+        worstMilliseconds: Double
+    ) {
+        self.medianMilliseconds = medianMilliseconds
+        self.p95Milliseconds = p95Milliseconds
+        self.worstMilliseconds = worstMilliseconds
+    }
+}
+
+struct PanePerformanceRouteResult: Codable, Equatable {
+    let source: SettingsModel.Pane
+    let destination: SettingsModel.Pane
+    let visit: PanePerformanceVisit
+    let samplesMilliseconds: [Double]
+    let statistics: PanePerformanceStatistics
+
+    init(
+        source: SettingsModel.Pane,
+        destination: SettingsModel.Pane,
+        visit: PanePerformanceVisit,
+        samplesMilliseconds: [Double]
+    ) throws {
+        self.source = source
+        self.destination = destination
+        self.visit = visit
+        self.samplesMilliseconds = samplesMilliseconds
+        statistics = try PanePerformanceStatistics(samplesMilliseconds: samplesMilliseconds)
+    }
+}
+
+enum PanePerformanceReportError: LocalizedError {
+    case emptySamples
+
+    var errorDescription: String? {
+        "Pane performance route results require at least one sample."
+    }
+}
+
+struct PanePerformanceRunReport: Codable, Equatable {
+    let schemaVersion: Int
+    let fixtureIdentity: String
+    let profile: PanePerformanceProfile
+    let warmUpSamplesDiscarded: Int
+    let recordedSamplesPerClass: Int
+    let firstWindowMilliseconds: Double
+    let routes: [PanePerformanceRouteResult]
+    let navigationIntervals: [PanePerformanceNavigationInterval]
+
+    init(
+        fixtureIdentity: String,
+        profile: PanePerformanceProfile,
+        recordedSamplesPerClass: Int,
+        firstWindowMilliseconds: Double,
+        routes: [PanePerformanceRouteResult],
+        navigationIntervals: [PanePerformanceNavigationInterval] = []
+    ) {
+        schemaVersion = 2
+        self.fixtureIdentity = fixtureIdentity
+        self.profile = profile
+        warmUpSamplesDiscarded = 1
+        self.recordedSamplesPerClass = recordedSamplesPerClass
+        self.firstWindowMilliseconds = firstWindowMilliseconds
+        self.routes = routes
+        self.navigationIntervals = navigationIntervals
+    }
+
+    func write(to url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(self).write(to: url, options: .atomic)
+    }
+}

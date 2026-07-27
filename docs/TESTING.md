@@ -26,6 +26,7 @@ swift test
 ./scripts/coverage.sh
 COVERAGE_BASE_REF=<target-ref> ./scripts/coverage.sh
 ./scripts/coverage.sh <target-ref>
+python3 scripts/run_pane_performance.py
 ```
 
 `swift test` is the fast full-suite command. `./scripts/coverage.sh` is the
@@ -34,6 +35,12 @@ coverage, exports LLVM's report, calculates the target-branch diff, and invokes
 `scripts/check_coverage.py`. CI calls the same script without a retry wrapper.
 The default target is `origin/main`, then local `main`, then `HEAD`; use either
 override form above when the review target differs.
+
+`scripts/run_pane_performance.py` is the separate fixed-Mac Release harness for
+real packaged-app pane navigation. It deliberately does not run under coverage
+or on floating CI timing. See
+[Pane navigation performance harness](pane-performance-harness.md) for its
+measurement contract, isolated fixtures, and evidence layout.
 
 ## Coverage calculation and gates
 

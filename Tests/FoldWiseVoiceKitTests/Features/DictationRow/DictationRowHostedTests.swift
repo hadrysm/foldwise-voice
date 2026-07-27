@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 import XCTest
 @testable import FoldWiseVoiceKit
@@ -52,69 +53,105 @@ final class DictationRowHostedTests: XCTestCase {
     }
 
     func testHostedHistoryIgnoresUnrelatedModelPublicationForProjection() {
-        let model = SettingsModel()
+        let store = PaneProjectionStore()
+        let model = SettingsModel(
+            panePerformance: PaneNavigationPerformance(),
+            paneProjections: store
+        )
         model.historyEntries = [entry()]
-        var executionCount = 0
-        let cache = HistoryProjectionCache { input in
-            executionCount += 1
-            return HistoryProjection.project(
-                input,
-                now: Date(timeIntervalSince1970: 1_783_512_000),
-                calendar: self.utcCalendar(),
-                locale: Locale(identifier: "en_US")
+        _ = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: .init(
+                now: Date(),
+                calendar: .autoupdatingCurrent,
+                locale: .autoupdatingCurrent
             )
-        }
+        )
         let hosting = NSHostingView(
-            rootView: HistoryPane(model: model, projectionCache: cache)
-                .frame(width: 800)
+            rootView: HistoryPane(
+                interface: model.historyPaneInterface
+            )
+            .frame(width: 800)
         )
         hosting.layoutSubtreeIfNeeded()
-        let initialExecutions = executionCount
+        let initialGeneration = store.completedDefaultHistory?.generation
 
         model.customModel = "unrelated publication"
         hosting.needsLayout = true
         hosting.layoutSubtreeIfNeeded()
 
-        XCTAssertEqual([initialExecutions, executionCount], [1, 1])
+        XCTAssertEqual(
+            [initialGeneration, store.completedDefaultHistory?.generation],
+            [initialGeneration, initialGeneration]
+        )
     }
 
-    func testHostedHistoryRefreshesRelativeHeadersWhenTheCalendarDayChanges() throws {
-        let model = SettingsModel()
-        model.historyEntries = [entry()]
+    func testHostedHistoryRefreshesRelativeHeadersWhenTheCalendarDayChanges() async throws {
         let notificationCenter = NotificationCenter()
         let calendar = utcCalendar()
         var currentNow = Date(timeIntervalSince1970: 1_783_512_000)
-        var projectedHeaders: [[String]] = []
-        let cache = HistoryProjectionCache(
-            now: { currentNow },
-            calendar: calendar,
-            project: { input in
-                let projection = HistoryProjection.project(
-                    input,
-                    now: currentNow,
-                    calendar: calendar,
-                    locale: Locale(identifier: "en_US")
-                )
-                projectedHeaders.append(projection.sections.map(\.header))
-                return projection
-            }
+        let store = PaneProjectionStore()
+        let model = SettingsModel(
+            panePerformance: PaneNavigationPerformance(),
+            paneProjections: store
+        )
+        model.historyEntries = [entry()]
+        _ = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: .init(
+                now: currentNow,
+                calendar: calendar,
+                locale: Locale(identifier: "en_US")
+            )
         )
         let hosting = NSHostingView(
             rootView: HistoryPane(
-                model: model,
-                projectionCache: cache,
+                interface: model.historyPaneInterface,
+                now: { currentNow },
+                calendar: { calendar },
+                locale: Locale(identifier: "en_US"),
                 notificationCenter: notificationCenter
             )
             .frame(width: 800)
         )
         hosting.layoutSubtreeIfNeeded()
+        let initial = try XCTUnwrap(store.completedDefaultHistory)
 
         currentNow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: currentNow))
         notificationCenter.post(name: .NSCalendarDayChanged, object: nil)
         hosting.needsLayout = true
         hosting.layoutSubtreeIfNeeded()
+        await waitUntilDefaultHistoryCurrent(store, after: initial.generation)
+        let refreshed = try XCTUnwrap(store.completedDefaultHistory)
 
-        XCTAssertEqual(projectedHeaders, [["Today"], ["Yesterday"]])
+        XCTAssertEqual(
+            [
+                initial.value.sections.map(\.header),
+                refreshed.value.sections.map(\.header),
+            ],
+            [["Today"], ["Yesterday"]]
+        )
+    }
+
+    private func waitUntilDefaultHistoryCurrent(
+        _ store: PaneProjectionStore,
+        after generation: PaneProjectionStore.Generation
+    ) async {
+        let isReady: @MainActor () -> Bool = {
+            store.historyProjection.isCurrent
+                && store.completedDefaultHistory?.generation != generation
+        }
+        while !isReady() {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = isReady()
+                } onChange: {
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     func testHostedHomeRowKeyboardTraversalReachesCopyAndFlag() {

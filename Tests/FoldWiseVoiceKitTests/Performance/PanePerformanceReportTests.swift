@@ -1,0 +1,187 @@
+import Foundation
+import XCTest
+@testable import FoldWiseVoiceKit
+
+final class PanePerformanceReportTests: XCTestCase {
+    private let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("foldwise-pane-report-\(UUID().uuidString)")
+
+    override func setUpWithError() throws {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+    }
+
+    override func tearDownWithError() throws {
+        try FileManager.default.removeItem(at: directory)
+    }
+
+    func testStatisticsUseObservedP95AndRetainWorstSample() throws {
+        let statistics = try PanePerformanceStatistics(
+            samplesMilliseconds: Array((1 ... 20).reversed()).map(Double.init)
+        )
+
+        XCTAssertEqual(
+            statistics,
+            PanePerformanceStatistics(
+                medianMilliseconds: 10.5,
+                p95Milliseconds: 19,
+                worstMilliseconds: 20
+            )
+        )
+    }
+
+    func testReportRetainsEveryRawSample() throws {
+        let route = try PanePerformanceRouteResult(
+            source: .home,
+            destination: .stats,
+            visit: .warm,
+            samplesMilliseconds: [80, 90, 100]
+        )
+
+        XCTAssertEqual(route.samplesMilliseconds, [80, 90, 100])
+    }
+
+    func testStatisticsRejectAnEmptySampleSet() {
+        XCTAssertThrowsError(
+            try PanePerformanceStatistics(samplesMilliseconds: [])
+        )
+    }
+
+    func testPlanLoadsAnExplicitComparableRunMatrix() throws {
+        let url = directory.appendingPathComponent("plan.json")
+        let plan = PanePerformancePlan(
+            profile: .empty,
+            outputURL: directory.appendingPathComponent("result.json"),
+            dataDirectory: directory.appendingPathComponent("profile"),
+            sampleCount: 20,
+            destinations: SettingsModel.Pane.allCases
+        )
+        try JSONEncoder().encode(plan).write(to: url)
+
+        XCTAssertEqual(try loadPlan(from: url), plan)
+    }
+
+    func testPlanRejectsAnEmptySampleSet() throws {
+        let url = directory.appendingPathComponent("plan.json")
+        let plan = PanePerformancePlan(
+            profile: .empty,
+            outputURL: directory.appendingPathComponent("result.json"),
+            dataDirectory: directory.appendingPathComponent("profile"),
+            sampleCount: 0,
+            destinations: [.home]
+        )
+        try JSONEncoder().encode(plan).write(to: url)
+
+        XCTAssertThrowsError(try loadPlan(from: url))
+    }
+
+    func testPlanRejectsTheLiveApplicationSupportProfile() throws {
+        let url = directory.appendingPathComponent("plan.json")
+        let liveDataDirectory = directory.appendingPathComponent("live")
+        let plan = PanePerformancePlan(
+            profile: .empty,
+            outputURL: directory.appendingPathComponent("result.json"),
+            dataDirectory: liveDataDirectory,
+            sampleCount: 20,
+            destinations: [.home]
+        )
+        try JSONEncoder().encode(plan).write(to: url)
+
+        XCTAssertThrowsError(
+            try PanePerformancePlan.load(
+                from: url,
+                liveDataDirectory: liveDataDirectory
+            )
+        )
+    }
+
+    func testPlanRejectsAnOutputInLiveApplicationSupport() throws {
+        let url = directory.appendingPathComponent("plan.json")
+        let liveDataDirectory = directory.appendingPathComponent("live")
+        let plan = PanePerformancePlan(
+            profile: .empty,
+            outputURL: liveDataDirectory.appendingPathComponent("history.jsonl"),
+            dataDirectory: directory.appendingPathComponent("profile"),
+            sampleCount: 20,
+            destinations: [.home]
+        )
+        try JSONEncoder().encode(plan).write(to: url)
+
+        XCTAssertThrowsError(
+            try PanePerformancePlan.load(
+                from: url,
+                liveDataDirectory: liveDataDirectory
+            )
+        )
+    }
+
+    func testRunReportWritesMachineReadableRawResults() throws {
+        let outputURL = directory.appendingPathComponent("result.json")
+        let route = try PanePerformanceRouteResult(
+            source: .settings,
+            destination: .home,
+            visit: .cold,
+            samplesMilliseconds: [25, 30]
+        )
+        let report = PanePerformanceRunReport(
+            fixtureIdentity: "pane-empty-v1",
+            profile: .empty,
+            recordedSamplesPerClass: 2,
+            firstWindowMilliseconds: 80,
+            routes: [route]
+        )
+
+        try report.write(to: outputURL)
+
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                PanePerformanceRunReport.self,
+                from: Data(contentsOf: outputURL)
+            ),
+            report
+        )
+    }
+
+    func testRunReportRetainsWarmUpAndRecordedNavigationIntervals() {
+        let intervals = [
+            PanePerformanceNavigationInterval(
+                destination: .stats,
+                visit: .warm,
+                sample: .warmUp,
+                startedAtSystemUptime: 120,
+                endedAtSystemUptime: 120.080,
+                startedAtEpoch: 1000,
+                endedAtEpoch: 1000.080
+            ),
+            PanePerformanceNavigationInterval(
+                destination: .stats,
+                visit: .warm,
+                sample: .recorded,
+                startedAtSystemUptime: 121,
+                endedAtSystemUptime: 121.075,
+                startedAtEpoch: 1001,
+                endedAtEpoch: 1001.075
+            ),
+        ]
+
+        let report = PanePerformanceRunReport(
+            fixtureIdentity: "pane-empty-v1",
+            profile: .empty,
+            recordedSamplesPerClass: 1,
+            firstWindowMilliseconds: 70,
+            routes: [],
+            navigationIntervals: intervals
+        )
+
+        XCTAssertEqual(report.navigationIntervals, intervals)
+    }
+
+    private func loadPlan(from url: URL) throws -> PanePerformancePlan {
+        try PanePerformancePlan.load(
+            from: url,
+            liveDataDirectory: directory.appendingPathComponent("live")
+        )
+    }
+}
