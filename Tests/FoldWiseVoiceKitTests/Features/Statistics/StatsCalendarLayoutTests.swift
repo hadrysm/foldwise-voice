@@ -50,4 +50,44 @@ final class StatsCalendarLayoutTests: XCTestCase {
 
         XCTAssertEqual(layout.height, 261)
     }
+
+    func testHoverCrossfadePlanScopesTransitionToChangedDay() {
+        let dates = [
+            Date(timeIntervalSinceReferenceDate: 1),
+            Date(timeIntervalSinceReferenceDate: 2),
+        ]
+        let layout = StatsCalendarLayout(
+            width: 736,
+            leadingColumnOffset: 3,
+            dayCount: dates.count
+        )
+
+        XCTAssertEqual(
+            StatsCalendarCrossfadePlan.hoverFrames(
+                dates: dates,
+                from: nil,
+                to: dates[0],
+                layout: layout,
+                reduceMotion: false
+            ),
+            [layout.dayFrame(at: 0)]
+        )
+    }
+
+    func testHoverCrossfadePlanIsImmediateWithReducedMotion() {
+        let date = Date(timeIntervalSinceReferenceDate: 1)
+        let layout = StatsCalendarLayout(
+            width: 736,
+            leadingColumnOffset: 3,
+            dayCount: 1
+        )
+
+        XCTAssertTrue(StatsCalendarCrossfadePlan.hoverFrames(
+            dates: [date],
+            from: nil,
+            to: date,
+            layout: layout,
+            reduceMotion: true
+        ).isEmpty)
+    }
 }

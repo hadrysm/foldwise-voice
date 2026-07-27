@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 struct StatsCalendarLayout: Equatable {
     static let columnCount = 7
@@ -51,5 +52,21 @@ struct StatsCalendarLayout: Equatable {
         guard dayCount > 0 else { return 0 }
         return (leadingColumnOffset + dayCount + Self.columnCount - 1)
             / Self.columnCount
+    }
+}
+
+enum StatsCalendarCrossfadePlan {
+    static func hoverFrames(
+        dates: [Date],
+        from oldDate: Date?,
+        to newDate: Date?,
+        layout: StatsCalendarLayout,
+        reduceMotion: Bool
+    ) -> [CGRect] {
+        guard !reduceMotion else { return [] }
+        return [oldDate, newDate].compactMap { date in
+            guard let date, let index = dates.firstIndex(of: date) else { return nil }
+            return layout.dayFrame(at: index)
+        }
     }
 }

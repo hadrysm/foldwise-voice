@@ -1,5 +1,4 @@
 import AppKit
-import QuartzCore
 import SwiftUI
 
 struct StatsCalendarGridView: NSViewRepresentable {
@@ -8,8 +7,6 @@ struct StatsCalendarGridView: NSViewRepresentable {
     let hoveredDate: Date?
     let rovingDate: Date?
     let focusedDate: Date?
-    let performance: PaneNavigationPerformance
-    let marksFirstMeaningfulFrame: Bool
     let onHover: (Date?) -> Void
     let onFocus: (Date?) -> Void
 
@@ -18,9 +15,10 @@ struct StatsCalendarGridView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> StatsCalendarGridNSView {
-        let view = StatsCalendarGridNSView()
-        context.coordinator.connect(to: view)
-        return view
+        StatsCalendarGridNSView(
+            onHover: { context.coordinator.hover($0) },
+            onFocus: { context.coordinator.focus($0) }
+        )
     }
 
     func updateNSView(
@@ -34,10 +32,8 @@ struct StatsCalendarGridView: NSViewRepresentable {
                 environment: environment,
                 hoveredDate: hoveredDate,
                 rovingDate: rovingDate,
-                focusedDate: focusedDate,
-                marksFirstMeaningfulFrame: marksFirstMeaningfulFrame
-            ),
-            performance: performance
+                focusedDate: focusedDate
+            )
         )
     }
 
@@ -49,13 +45,12 @@ struct StatsCalendarGridView: NSViewRepresentable {
             self.parent = parent
         }
 
-        func connect(to view: StatsCalendarGridNSView) {
-            view.onHover = { [weak self] date in
-                self?.parent.onHover(date)
-            }
-            view.onFocus = { [weak self] date in
-                self?.parent.onFocus(date)
-            }
+        func hover(_ date: Date?) {
+            parent.onHover(date)
+        }
+
+        func focus(_ date: Date?) {
+            parent.onFocus(date)
         }
     }
 }
@@ -66,14 +61,10 @@ private struct StatsCalendarGridState {
     let hoveredDate: Date?
     let rovingDate: Date?
     let focusedDate: Date?
-    let marksFirstMeaningfulFrame: Bool
 }
 
 @MainActor
 final class StatsCalendarGridNSView: NSView {
-    var onHover: ((Date?) -> Void)?
-    var onFocus: ((Date?) -> Void)?
-
     private var month: StatsProjection.Month?
     private var environment = StatsEnvironmentAdaptations(
         reduceMotion: false,
@@ -82,18 +73,24 @@ final class StatsCalendarGridNSView: NSView {
     private var hoveredDate: Date?
     private var rovingDate: Date?
     private var focusedDate: Date?
-    private var performance: PaneNavigationPerformance?
-    private var marksFirstMeaningfulFrame = false
     private var dayAccessibilityElements: [DayAccessibilityElement] = []
     private var trackingAreaReference: NSTrackingArea?
+    private var preparedCrossfades: [StatsCalendarCrossfadeNSView] = []
     private let focusView = StatsCalendarFocusNSView()
+    private let onHover: (Date?) -> Void
+    private let onFocus: (Date?) -> Void
 
     override var isFlipped: Bool {
         true
     }
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(
+        onHover: @escaping (Date?) -> Void,
+        onFocus: @escaping (Date?) -> Void
+    ) {
+        self.onHover = onHover
+        self.onFocus = onFocus
+        super.init(frame: .zero)
         wantsLayer = true
         focusView.owner = self
         addSubview(focusView)
@@ -106,22 +103,21 @@ final class StatsCalendarGridNSView: NSView {
         nil
     }
 
-    fileprivate func update(
-        _ state: StatsCalendarGridState,
-        performance: PaneNavigationPerformance
-    ) {
+    fileprivate func update(_ state: StatsCalendarGridState) {
         let month = state.month
         let environment = state.environment
-        let hadMonth = self.month != nil
         let monthChanged = self.month?.days != month.days
-        let shouldCrossfade = hadMonth && monthChanged && !environment.reduceMotion
+        let crossfadeFrames = changedDayFrames(
+            nextMonth: month,
+            nextHoveredDate: state.hoveredDate,
+            reduceMotion: environment.reduceMotion
+        )
+        prepareCrossfades(in: crossfadeFrames)
         self.month = month
         self.environment = environment
         hoveredDate = state.hoveredDate
         rovingDate = state.rovingDate
         focusedDate = state.focusedDate
-        self.performance = performance
-        marksFirstMeaningfulFrame = state.marksFirstMeaningfulFrame
         setAccessibilityLabel(month.accessibilityLabel)
         setAccessibilityValueDescription(month.accessibilityValue)
         setAccessibilityIdentifier("stats.calendar")
@@ -133,23 +129,13 @@ final class StatsCalendarGridNSView: NSView {
         }
         needsLayout = true
         needsDisplay = true
-        if shouldCrossfade {
-            let transition = CATransition()
-            transition.type = .fade
-            transition.duration = 0.16
-            layer?.add(transition, forKey: "stats-calendar-update")
-        }
+        startPreparedCrossfades()
         synchronizeFocus()
     }
 
     override func layout() {
         super.layout()
-        guard let month else { return }
-        let layout = StatsCalendarLayout(
-            width: bounds.width,
-            leadingColumnOffset: month.leadingColumnOffset,
-            dayCount: month.days.count
-        )
+        guard let layout = calendarLayout else { return }
         for dayElement in dayAccessibilityElements {
             dayElement.element.setAccessibilityFrameInParentSpace(
                 layout.dayFrame(at: dayElement.index)
@@ -160,18 +146,10 @@ final class StatsCalendarGridNSView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard let month else { return }
-        let layout = StatsCalendarLayout(
-            width: bounds.width,
-            leadingColumnOffset: month.leadingColumnOffset,
-            dayCount: month.days.count
-        )
+        guard let month, let layout = calendarLayout else { return }
         drawWeekdays(month.weekdays, layout: layout)
         for index in month.days.indices {
             drawDay(month.days[index], at: layout.dayFrame(at: index))
-        }
-        if marksFirstMeaningfulFrame {
-            performance?.firstMeaningfulFrame(for: .stats)
         }
     }
 
@@ -195,42 +173,54 @@ final class StatsCalendarGridNSView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        guard let month else { return }
+        guard let month, let layout = calendarLayout else { return }
         let point = convert(event.locationInWindow, from: nil)
-        let layout = StatsCalendarLayout(
-            width: bounds.width,
-            leadingColumnOffset: month.leadingColumnOffset,
-            dayCount: month.days.count
-        )
         let hovered = month.days.indices.first { index in
             month.days[index].state != .future
                 && layout.dayFrame(at: index).contains(point)
         }.map { month.days[$0].date }
         guard hovered != hoveredDate else { return }
+        let frames = StatsCalendarCrossfadePlan.hoverFrames(
+            dates: month.days.map(\.date),
+            from: hoveredDate,
+            to: hovered,
+            layout: layout,
+            reduceMotion: environment.reduceMotion
+        )
+        prepareCrossfades(in: frames)
         hoveredDate = hovered
-        onHover?(hovered)
+        onHover(hovered)
         needsDisplay = true
+        startPreparedCrossfades()
     }
 
     override func mouseExited(with event: NSEvent) {
-        guard hoveredDate != nil else { return }
+        guard let month, hoveredDate != nil, let layout = calendarLayout else { return }
+        prepareCrossfades(in: StatsCalendarCrossfadePlan.hoverFrames(
+            dates: month.days.map(\.date),
+            from: hoveredDate,
+            to: nil,
+            layout: layout,
+            reduceMotion: environment.reduceMotion
+        ))
         hoveredDate = nil
-        onHover?(nil)
+        onHover(nil)
         needsDisplay = true
+        startPreparedCrossfades()
     }
 
     fileprivate func focusViewDidFocus() {
         guard let rovingDate else { return }
         focusedDate = rovingDate
         updateAccessibilityFocus()
-        onFocus?(rovingDate)
+        onFocus(rovingDate)
         needsDisplay = true
     }
 
     fileprivate func focusViewDidResign() {
         focusedDate = nil
         updateAccessibilityFocus()
-        onFocus?(nil)
+        onFocus(nil)
         needsDisplay = true
     }
 
@@ -244,15 +234,11 @@ final class StatsCalendarGridNSView: NSView {
         else { return }
         rovingDate = next
         self.focusedDate = next
-        let layout = StatsCalendarLayout(
-            width: bounds.width,
-            leadingColumnOffset: month.leadingColumnOffset,
-            dayCount: month.days.count
-        )
+        guard let layout = calendarLayout else { return }
         updateFocusView(layout: layout)
         updateAccessibilityChildren()
         updateAccessibilityFocus()
-        onFocus?(next)
+        onFocus(next)
         needsDisplay = true
     }
 
@@ -320,7 +306,10 @@ final class StatsCalendarGridNSView: NSView {
     ) {
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .bold),
-            .foregroundColor: NSColor(Theme.textTertiary),
+            .foregroundColor: resolvedColor(
+                Theme.textTertiary,
+                fallback: .secondaryLabelColor
+            ),
             .paragraphStyle: centeredParagraphStyle,
         ]
         for index in weekdays.indices {
@@ -342,14 +331,14 @@ final class StatsCalendarGridNSView: NSView {
             hovered: day.date == hoveredDate,
             increaseContrast: environment.increaseContrast
         )
-        NSColor(style.background).setFill()
+        resolvedColor(style.background, fallback: .windowBackgroundColor).setFill()
         NSBezierPath(
             roundedRect: frame,
             xRadius: Theme.controlRadius,
             yRadius: Theme.controlRadius
         ).fill()
         stroke(
-            color: NSColor(style.outline),
+            color: resolvedColor(style.outline, fallback: .separatorColor),
             width: style.boundaryWidth,
             frame: frame
         )
@@ -357,11 +346,14 @@ final class StatsCalendarGridNSView: NSView {
             at: CGPoint(x: frame.minX + 7, y: frame.minY + 5),
             withAttributes: [
                 .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold),
-                .foregroundColor: NSColor(style.foreground),
+                .foregroundColor: resolvedColor(
+                    style.foreground,
+                    fallback: .labelColor
+                ),
             ]
         )
         if day.state == .today {
-            NSColor(Theme.accent).setFill()
+            resolvedColor(Theme.accent, fallback: .controlAccentColor).setFill()
             NSBezierPath(
                 ovalIn: CGRect(x: frame.maxX - 11, y: frame.minY + 8, width: 4, height: 4)
             ).fill()
@@ -371,7 +363,10 @@ final class StatsCalendarGridNSView: NSView {
                 at: CGPoint(x: frame.minX + 7, y: frame.maxY - 18),
                 withAttributes: [
                     .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .regular),
-                    .foregroundColor: NSColor(style.foreground),
+                    .foregroundColor: resolvedColor(
+                        style.foreground,
+                        fallback: .labelColor
+                    ),
                 ]
             )
         } else {
@@ -385,29 +380,27 @@ final class StatsCalendarGridNSView: NSView {
         _ intensity: StatsProjection.Day.Intensity,
         at frame: CGRect
     ) {
-        let baseline = frame.maxY - 7
-        let pattern = StatsActivityStyle.waveformFillPattern(intensity)
         let boundaryWidth = Theme.essentialBorderWidth(
             increaseContrast: environment.increaseContrast
         )
-        for index in StatsActivityStyle.waveformBarHeights.indices {
-            let height = StatsActivityStyle.waveformBarHeights[index]
-            let barFrame = CGRect(
-                x: frame.minX + 7 + CGFloat(index) * 5,
-                y: baseline - height,
-                width: 3,
-                height: height
-            )
-            if pattern[index] {
-                NSColor(Theme.accent).setFill()
-                NSBezierPath(roundedRect: barFrame, xRadius: 1.5, yRadius: 1.5).fill()
+        for bar in StatsActivityStyle.waveformBars(
+            intensity,
+            x: frame.minX + 7,
+            baseline: frame.maxY - 7
+        ) {
+            if bar.isFilled {
+                resolvedColor(Theme.accent, fallback: .controlAccentColor).setFill()
+                NSBezierPath(roundedRect: bar.frame, xRadius: 1.5, yRadius: 1.5).fill()
             } else {
                 stroke(
-                    color: NSColor(Theme.essentialBorderColor(
-                        increaseContrast: environment.increaseContrast
-                    )),
+                    color: resolvedColor(
+                        Theme.essentialBorderColor(
+                            increaseContrast: environment.increaseContrast
+                        ),
+                        fallback: .separatorColor
+                    ),
                     width: boundaryWidth,
-                    frame: barFrame,
+                    frame: bar.frame,
                     radius: 1.5
                 )
             }
@@ -416,15 +409,23 @@ final class StatsCalendarGridNSView: NSView {
 
     private func drawFocusRing(at frame: CGRect) {
         stroke(
-            color: NSColor(Theme.canvas),
+            color: resolvedColor(Theme.canvas, fallback: .windowBackgroundColor),
             width: Theme.focusRingWidth + Theme.focusGap,
             frame: frame.insetBy(dx: Theme.focusGap, dy: Theme.focusGap)
         )
         stroke(
-            color: NSColor(Theme.accent),
+            color: resolvedColor(Theme.accent, fallback: .controlAccentColor),
             width: Theme.focusRingWidth,
             frame: frame.insetBy(dx: Theme.focusGap, dy: Theme.focusGap)
         )
+    }
+
+    private func resolvedColor(_ color: Color, fallback: NSColor) -> NSColor {
+        var resolved = fallback
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            resolved = NSColor(color)
+        }
+        return resolved
     }
 
     private func stroke(
@@ -443,16 +444,96 @@ final class StatsCalendarGridNSView: NSView {
         path.stroke()
     }
 
+    private func changedDayFrames(
+        nextMonth: StatsProjection.Month,
+        nextHoveredDate: Date?,
+        reduceMotion: Bool
+    ) -> [CGRect] {
+        guard !reduceMotion, let month, let layout = calendarLayout else { return [] }
+        return month.days.indices.compactMap { index in
+            let day = month.days[index]
+            guard let nextDay = nextMonth.days.first(where: { $0.date == day.date })
+            else { return nil }
+            let intensityChanged = day.intensity != nextDay.intensity
+            let hoverChanged = (day.date == hoveredDate) != (day.date == nextHoveredDate)
+            return intensityChanged || hoverChanged ? layout.dayFrame(at: index) : nil
+        }
+    }
+
+    private func prepareCrossfades(in frames: [CGRect]) {
+        for crossfade in preparedCrossfades {
+            crossfade.removeFromSuperview()
+        }
+        preparedCrossfades = []
+        guard !environment.reduceMotion else { return }
+        let uniqueFrames = frames.reduce(into: [CGRect]()) { result, frame in
+            guard !result.contains(frame) else { return }
+            result.append(frame)
+        }
+        for frame in uniqueFrames.sorted(by: {
+            $0.minY == $1.minY ? $0.minX < $1.minX : $0.minY < $1.minY
+        }) {
+            guard let bitmap = bitmapImageRepForCachingDisplay(in: frame) else { continue }
+            cacheDisplay(in: frame, to: bitmap)
+            let image = NSImage(size: frame.size)
+            image.addRepresentation(bitmap)
+            let crossfade = StatsCalendarCrossfadeNSView(image: image)
+            crossfade.frame = frame
+            addSubview(crossfade, positioned: .below, relativeTo: focusView)
+            preparedCrossfades.append(crossfade)
+        }
+    }
+
+    private func startPreparedCrossfades() {
+        guard !preparedCrossfades.isEmpty else { return }
+        let crossfades = preparedCrossfades
+        preparedCrossfades = []
+        DispatchQueue.main.async { [weak self] in
+            self?.displayIfNeeded()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
+                crossfades.forEach { $0.animator().alphaValue = 0 }
+            } completionHandler: {
+                crossfades.forEach { $0.removeFromSuperview() }
+            }
+        }
+    }
+
     private var centeredParagraphStyle: NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.alignment = .center
         return style
     }
 
+    private var calendarLayout: StatsCalendarLayout? {
+        guard let month else { return nil }
+        return StatsCalendarLayout(
+            width: bounds.width,
+            leadingColumnOffset: month.leadingColumnOffset,
+            dayCount: month.days.count
+        )
+    }
+
     private struct DayAccessibilityElement {
         let index: Int
         let date: Date
         let element: NSAccessibilityElement
+    }
+}
+
+@MainActor
+private final class StatsCalendarCrossfadeNSView: NSImageView {
+    init(image: NSImage) {
+        super.init(frame: .zero)
+        self.image = image
+        imageScaling = .scaleAxesIndependently
+        wantsLayer = true
+        setAccessibilityElement(false)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
     }
 }
 

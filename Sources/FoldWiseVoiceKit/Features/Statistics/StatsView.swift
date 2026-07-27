@@ -46,9 +46,7 @@ struct StatsPane: View {
                     StatsMetricStrip(metrics: projection.metrics)
                     MonthlyActivityCalendar(
                         month: projection.month,
-                        environment: resolvedEnvironment,
-                        performance: interface.performance,
-                        marksFirstMeaningfulFrame: projectionState.isCurrent
+                        environment: resolvedEnvironment
                     )
                 }
             } else {
@@ -58,6 +56,11 @@ struct StatsPane: View {
         .overlay(alignment: .topTrailing) {
             PaneProjectionUpdating(isVisible: projectionState.phase == .updating)
         }
+        .paneFirstMeaningfulFrame(
+            .stats,
+            performance: interface.performance,
+            isReady: projectionState.isCurrent
+        )
         .onAppear {
             refresh()
         }
@@ -234,8 +237,6 @@ private struct StatsMetricStrip: View {
 private struct MonthlyActivityCalendar: View {
     let month: StatsProjection.Month
     let environment: StatsEnvironmentAdaptations
-    let performance: PaneNavigationPerformance
-    let marksFirstMeaningfulFrame: Bool
 
     @State private var hoveredDate: Date?
     @State private var rovingDate: Date?
@@ -243,14 +244,10 @@ private struct MonthlyActivityCalendar: View {
 
     init(
         month: StatsProjection.Month,
-        environment: StatsEnvironmentAdaptations,
-        performance: PaneNavigationPerformance,
-        marksFirstMeaningfulFrame: Bool
+        environment: StatsEnvironmentAdaptations
     ) {
         self.month = month
         self.environment = environment
-        self.performance = performance
-        self.marksFirstMeaningfulFrame = marksFirstMeaningfulFrame
         _rovingDate = State(initialValue: month.days.last { $0.state != .future }?.date)
     }
 
@@ -329,9 +326,7 @@ private struct MonthlyActivityCalendar: View {
             environment: environment,
             hoveredDate: hoveredDate,
             rovingDate: rovingDate,
-            focusedDate: focusedDate,
-            performance: performance,
-            marksFirstMeaningfulFrame: marksFirstMeaningfulFrame
+            focusedDate: focusedDate
         ) { date in
             hoveredDate = date
         } onFocus: { date in
@@ -474,25 +469,21 @@ private struct StatsIntensityLegend: View {
             )
             return
         }
-        let pattern = StatsActivityStyle.waveformFillPattern(intensity)
         let boundaryWidth = Theme.essentialBorderWidth(
             increaseContrast: environment.increaseContrast
         )
-        for index in StatsActivityStyle.waveformBarHeights.indices {
-            let height = StatsActivityStyle.waveformBarHeights[index]
-            let frame = CGRect(
-                x: x + CGFloat(index) * 5,
-                y: baseline - height,
-                width: 3,
-                height: height
-            )
-            if pattern[index] {
+        for bar in StatsActivityStyle.waveformBars(
+            intensity,
+            x: x,
+            baseline: baseline
+        ) {
+            if bar.isFilled {
                 context.fill(
-                    Path(roundedRect: frame, cornerRadius: 1.5),
+                    Path(roundedRect: bar.frame, cornerRadius: 1.5),
                     with: .color(Theme.accent)
                 )
             } else {
-                let boundaryFrame = frame.insetBy(
+                let boundaryFrame = bar.frame.insetBy(
                     dx: boundaryWidth / 2,
                     dy: boundaryWidth / 2
                 )
@@ -544,6 +535,11 @@ private struct StatsWaveformCue: View {
 }
 
 struct StatsActivityStyle {
+    struct WaveformBar {
+        let frame: CGRect
+        let isFilled: Bool
+    }
+
     static let waveformBarHeights: [CGFloat] = [6, 10, 15, 11, 8]
 
     let background: Color
@@ -571,6 +567,26 @@ struct StatsActivityStyle {
         _ intensity: StatsProjection.Day.Intensity
     ) -> [Bool] {
         waveformBarHeights.indices.map { $0 < intensity.rawValue }
+    }
+
+    static func waveformBars(
+        _ intensity: StatsProjection.Day.Intensity,
+        x: CGFloat,
+        baseline: CGFloat
+    ) -> [WaveformBar] {
+        let pattern = waveformFillPattern(intensity)
+        return waveformBarHeights.indices.map { index in
+            let height = waveformBarHeights[index]
+            return WaveformBar(
+                frame: CGRect(
+                    x: x + CGFloat(index) * 5,
+                    y: baseline - height,
+                    width: 3,
+                    height: height
+                ),
+                isFilled: pattern[index]
+            )
+        }
     }
 }
 

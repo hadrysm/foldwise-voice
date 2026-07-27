@@ -263,6 +263,90 @@ final class StatsPaneHostedTests: XCTestCase {
         )
     }
 
+    func testHostedCalendarHoverUpdatesTheRenderedDay() throws {
+        let (hosting, window) = hostInteractiveStats(model: SettingsModel())
+        defer { window.orderOut(nil) }
+        window.appearance = NSAppearance(named: .aqua)
+        render(hosting)
+        let grid = try XCTUnwrap(calendarGrid(in: hosting))
+        let dayFrame = calendarDayFrame(at: 0, in: grid)
+        let samplePoint = CGPoint(x: dayFrame.midX, y: dayFrame.midY)
+        let initialColor = try renderedColor(at: samplePoint, in: grid)
+
+        moveMouse(
+            to: samplePoint,
+            in: grid,
+            window: window
+        )
+        render(hosting)
+        let hoveredColor = try waitForRenderedColorChange(
+            at: samplePoint,
+            in: grid,
+            from: initialColor
+        )
+
+        XCTAssertGreaterThan(
+            colorDistance(initialColor, hoveredColor),
+            0.1
+        )
+    }
+
+    func testHostedCalendarHoverIsImmediateWithReducedMotion() throws {
+        let hosting = host(fixedStatsPane(
+            model: SettingsModel(),
+            environment: StatsEnvironmentAdaptations(
+                reduceMotion: true,
+                increaseContrast: false
+            )
+        ))
+        let window = hostInWindow(hosting)
+        render(hosting)
+        defer { window.orderOut(nil) }
+        let grid = try XCTUnwrap(calendarGrid(in: hosting))
+        let dayFrame = calendarDayFrame(at: 0, in: grid)
+        let samplePoint = CGPoint(x: dayFrame.midX, y: dayFrame.midY)
+        let initialColor = try renderedColor(at: samplePoint, in: grid)
+        moveMouse(to: CGPoint(x: -10, y: -10), in: grid, window: window)
+
+        moveMouse(
+            to: samplePoint,
+            in: grid,
+            window: window
+        )
+        render(hosting)
+
+        XCTAssertGreaterThan(
+            colorDistance(initialColor, try renderedColor(at: samplePoint, in: grid)),
+            0.1
+        )
+    }
+
+    func testHostedCalendarFollowsWindowAppearance() throws {
+        let (lightHosting, lightWindow) = hostInteractiveStats(model: SettingsModel())
+        defer { lightWindow.orderOut(nil) }
+        lightWindow.appearance = NSAppearance(named: .aqua)
+        render(lightHosting)
+        let lightGrid = try XCTUnwrap(calendarGrid(in: lightHosting))
+        let lightDay = calendarDayFrame(at: 0, in: lightGrid)
+        let lightColor = try renderedColor(
+            at: CGPoint(x: lightDay.midX, y: lightDay.midY),
+            in: lightGrid
+        )
+
+        let (darkHosting, darkWindow) = hostInteractiveStats(model: SettingsModel())
+        defer { darkWindow.orderOut(nil) }
+        darkWindow.appearance = NSAppearance(named: .darkAqua)
+        render(darkHosting)
+        let darkGrid = try XCTUnwrap(calendarGrid(in: darkHosting))
+        let darkDay = calendarDayFrame(at: 0, in: darkGrid)
+        let darkColor = try renderedColor(
+            at: CGPoint(x: darkDay.midX, y: darkDay.midY),
+            in: darkGrid
+        )
+
+        XCTAssertGreaterThan(colorDistance(lightColor, darkColor), 1)
+    }
+
     func testHostedCalendarAppliesContextOnce() throws {
         let (_, window) = hostInteractiveStats(model: SettingsModel())
         defer { window.orderOut(nil) }
@@ -568,6 +652,46 @@ final class StatsPaneHostedTests: XCTestCase {
         return view.subviews.lazy.compactMap { button(named: title, in: $0) }.first
     }
 
+    private func calendarGrid(in view: NSView) -> StatsCalendarGridNSView? {
+        if let grid = view as? StatsCalendarGridNSView {
+            return grid
+        }
+        return view.subviews.lazy.compactMap(calendarGrid).first
+    }
+
+    private func calendarDayFrame(
+        at index: Int,
+        in grid: StatsCalendarGridNSView
+    ) -> CGRect {
+        StatsCalendarLayout(
+            width: grid.bounds.width,
+            leadingColumnOffset: 3,
+            dayCount: 31
+        ).dayFrame(at: index)
+    }
+
+    private func moveMouse(
+        to point: CGPoint,
+        in grid: StatsCalendarGridNSView,
+        window: NSWindow
+    ) {
+        guard let event = NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: grid.convert(point, to: nil),
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 0,
+            pressure: 0
+        ) else {
+            XCTFail("Expected a mouse-moved event")
+            return
+        }
+        grid.mouseMoved(with: event)
+    }
+
     private func host<Content: View>(
         _ content: Content,
         width: CGFloat = 755,
@@ -757,6 +881,52 @@ final class StatsPaneHostedTests: XCTestCase {
             bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?
                 .usingColorSpace(.sRGB)
         )
+    }
+
+    private func renderedColor(
+        at point: CGPoint,
+        in view: NSView
+    ) throws -> NSColor {
+        view.needsDisplay = true
+        view.displayIfNeeded()
+        let bitmap = try XCTUnwrap(
+            view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        )
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let xScale = CGFloat(bitmap.pixelsWide) / view.bounds.width
+        let yScale = CGFloat(bitmap.pixelsHigh) / view.bounds.height
+        return try XCTUnwrap(
+            bitmap.colorAt(
+                x: Int((point.x * xScale).rounded(.down)),
+                y: Int((point.y * yScale).rounded(.down))
+            )?.usingColorSpace(.sRGB)
+        )
+    }
+
+    private func waitForRenderedColorChange(
+        at point: CGPoint,
+        in view: NSView,
+        from initialColor: NSColor
+    ) throws -> NSColor {
+        let deadline = Date().addingTimeInterval(1)
+        while Date() < deadline {
+            let color = try renderedColor(at: point, in: view)
+            if colorDistance(initialColor, color) > 0.1 {
+                return color
+            }
+            _ = RunLoop.current.run(
+                mode: .default,
+                before: min(deadline, Date().addingTimeInterval(0.01))
+            )
+        }
+        XCTFail("Rendered calendar color did not change")
+        return initialColor
+    }
+
+    private func colorDistance(_ lhs: NSColor, _ rhs: NSColor) -> CGFloat {
+        abs(lhs.redComponent - rhs.redComponent)
+            + abs(lhs.greenComponent - rhs.greenComponent)
+            + abs(lhs.blueComponent - rhs.blueComponent)
     }
 
     private func sendKeys(_ keys: [KeyInput], to window: NSWindow) {
