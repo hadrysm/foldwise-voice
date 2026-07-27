@@ -103,5 +103,19 @@ final class DictationBaselineHarnessBuildTests: XCTestCase {
                 )
             )
         }
+
+        func testTranscriptContractAllowsASRVariantsAbovePolishFloor() {
+            XCTAssertEqual(
+                [
+                    DictationBaselineTranscriptContract.clearsPolishFloor(
+                        "Jutro o 8 wyślą do Anii krótki opis naszej rozmowy."
+                    ),
+                    DictationBaselineTranscriptContract.clearsPolishFloor(
+                        String(repeating: "a", count: MIN_CHARS_FOR_LLM)
+                    ),
+                ],
+                [true, false]
+            )
+        }
     }
 #endif

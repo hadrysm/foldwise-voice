@@ -164,6 +164,12 @@ enum DictationBaselineHarnessBuild {
         case expanding
     }
 
+    enum DictationBaselineTranscriptContract {
+        static func clearsPolishFloor(_ transcript: String) -> Bool {
+            transcript.count > MIN_CHARS_FOR_LLM
+        }
+    }
+
     struct DictationBaselineStageReport: Codable, Equatable {
         let samplesMilliseconds: [Double]
         let statistics: DictationBaselineStatistics
@@ -479,17 +485,14 @@ enum DictationBaselineHarnessBuild {
             guard let entry = entries.onlyEntry else {
                 throw DictationBaselineHarnessError.missingEntry
             }
-            guard entry.rawText == fixture.plan.expectedTranscript else {
-                throw DictationBaselineHarnessError.unexpectedTranscript(
+            guard DictationBaselineTranscriptContract.clearsPolishFloor(entry.rawText) else {
+                throw DictationBaselineHarnessError.transcriptBelowPolishFloor(
                     fixture.plan.length,
-                    expected: fixture.plan.expectedTranscript,
-                    observed: entry.rawText
+                    transcript: entry.rawText
                 )
             }
             if shape != .voiceToText {
-                guard entry.rawText.count > MIN_CHARS_FOR_LLM,
-                      entry.timing?.polishMilliseconds != nil
-                else {
+                guard entry.timing?.polishMilliseconds != nil else {
                     throw DictationBaselineHarnessError.polishDidNotRun(
                         fixture.plan.length,
                         transcript: entry.rawText
@@ -611,10 +614,9 @@ enum DictationBaselineHarnessBuild {
         case pipeline(String)
         case missingEntry
         case missingTiming
-        case unexpectedTranscript(
+        case transcriptBelowPolishFloor(
             DictationBaselineFixtureLength,
-            expected: String,
-            observed: String
+            transcript: String
         )
         case polishDidNotRun(DictationBaselineFixtureLength, transcript: String)
 
@@ -657,9 +659,9 @@ enum DictationBaselineHarnessBuild {
                 "Pipeline did not record exactly one completed Dictation session."
             case .missingTiming:
                 "Pipeline completed without Dictation-session timing."
-            case let .unexpectedTranscript(length, expected, observed):
-                "The \(length.rawValue) fixture transcribed differently from its "
-                    + "expected text. Expected: \(expected) Observed: \(observed)"
+            case let .transcriptBelowPolishFloor(length, transcript):
+                "The \(length.rawValue) fixture transcript did not clear the Polish "
+                    + "floor (\(transcript.count) characters): \(transcript)"
             case let .polishDidNotRun(length, transcript):
                 "Polish did not run for the \(length.rawValue) fixture "
                     + "(\(transcript.count) characters): \(transcript)"

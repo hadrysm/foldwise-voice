@@ -80,8 +80,9 @@ The evidence directory under `.context/` contains:
 
 The runner fails if either fixture is outside `.context/`, is not gitignored,
 is not 16 kHz mono WAV, or has an expected transcript at or below the Polish
-floor. The app fails rather than silently measuring a fallback ASR model or a
-transcript that differs from the fixture's expected text.
+floor. The app fails rather than silently measuring a fallback ASR model or an
+observed transcript at or below the Polish floor. Expected and observed text
+remain separate in the evidence so ordinary ASR wording differences are visible.
 
 ## Measure the real insert constant
 
