@@ -7,7 +7,7 @@ final class OllamaClientHTTPBehaviorTests: XCTestCase {
 
     func testPolishReturnsValidOutput() async {
         let transport = FakeOllamaTransport(
-            data: Data(#"{"choices":[{"message":{"content":"We should meet at noon."}}]}"#.utf8),
+            data: Data(#"{"message":{"content":"We should meet at noon."}}"#.utf8),
             status: 200
         )
 
@@ -20,6 +20,41 @@ final class OllamaClientHTTPBehaviorTests: XCTestCase {
         )
 
         XCTAssertEqual(result, "We should meet at noon.")
+    }
+
+    func testPolishReturnsNativeLoadAndGenerationTiming() async {
+        let transport = FakeOllamaTransport(
+            data: Data(
+                """
+                {
+                  "message": {"content": "We should meet at noon."},
+                  "total_duration": 250000000,
+                  "load_duration": 80000000,
+                  "prompt_eval_duration": 20000000,
+                  "eval_duration": 100000000
+                }
+                """.utf8
+            ),
+            status: 200
+        )
+
+        let result = await OllamaClient(transport: transport).polishWithTiming(
+            transcript,
+            model: "qwen2.5:3b",
+            systemPrompt: nil,
+            vocab: [],
+            expands: false
+        )
+
+        XCTAssertEqual(
+            result.timing,
+            OllamaGenerationTiming(
+                totalMilliseconds: 250,
+                modelLoadMilliseconds: 80,
+                promptEvalMilliseconds: 20,
+                generationMilliseconds: 100
+            )
+        )
     }
 
     func testPolishReturnsRawTranscriptWhenTransportFails() async {
@@ -56,7 +91,7 @@ final class OllamaClientHTTPBehaviorTests: XCTestCase {
 
     func testPolishReturnsRawTranscriptForEmptyOutput() async {
         let transport = FakeOllamaTransport(
-            data: Data(#"{"choices":[{"message":{"content":"   "}}]}"#.utf8),
+            data: Data(#"{"message":{"content":"   "}}"#.utf8),
             status: 200
         )
 

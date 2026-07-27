@@ -68,13 +68,16 @@ final class Pipeline {
     private let recorder: AudioRecording
     private let sessionProvider: ASRSessionHandleProviding
     private let ducker: AudioDucking
-    private let polish: (String, Mode) async -> String
+    private let polish: (String, Mode) async -> OllamaPolishResult
     private let insert: (String) async -> Bool
     /// Best-effort history sink (PRD #78): handed the assembled entry after
     /// insertion. A closure seam mirroring `polish`/`insert` (ADR-0002).
     private let record: (HistoryEntry) -> Void
     /// Frontmost-app name at insert time. Injectable so tests stay AppKit-free.
     private let frontmostApp: () async -> String?
+    /// Monotonic time since an arbitrary origin. Production uses
+    /// `ContinuousClock`; tests inject deterministic instants.
+    private let monotonicNow: () -> Duration
 
     /// Recursive because state observers and injected effects may synchronously
     /// call back into the Pipeline. State delivery stays inside the lock so a
@@ -97,15 +100,20 @@ final class Pipeline {
     private var lastEmitted: PipelineState = .idle
     private var isShutDown = false
 
+    private static let continuousClock = ContinuousClock()
+    private static let timingOrigin = continuousClock.now
+
     init(
         config: Config,
         recorder: AudioRecording,
         sessionProvider: ASRSessionHandleProviding,
         ducker: AudioDucking = AudioDucker(),
-        polish: @escaping (String, Mode) async -> String = Pipeline.ollamaPolish,
+        polish: @escaping (String, Mode) async -> OllamaPolishResult =
+            Pipeline.ollamaPolishWithTiming,
         insert: @escaping (String) async -> Bool = Pipeline.pasteboardInsert,
         record: @escaping (HistoryEntry) -> Void = Pipeline.recordToHistory,
-        frontmostApp: @escaping () async -> String? = Pipeline.frontmostAppName
+        frontmostApp: @escaping () async -> String? = Pipeline.frontmostAppName,
+        monotonicNow: @escaping () -> Duration = Pipeline.continuousNow
     ) {
         self.config = config
         self.recorder = recorder
@@ -115,19 +123,61 @@ final class Pipeline {
         self.insert = insert
         self.record = record
         self.frontmostApp = frontmostApp
+        self.monotonicNow = monotonicNow
         self.recorder.onFailure = { [weak self] error in
             self?.recordingFailed(error)
         }
     }
 
+    /// Compatibility initializer for tests and text-only callers that do not
+    /// observe Ollama's native timing metadata.
+    convenience init(
+        config: Config,
+        recorder: AudioRecording,
+        sessionProvider: ASRSessionHandleProviding,
+        ducker: AudioDucking = AudioDucker(),
+        polish: @escaping (String, Mode) async -> String,
+        insert: @escaping (String) async -> Bool = Pipeline.pasteboardInsert,
+        record: @escaping (HistoryEntry) -> Void = Pipeline.recordToHistory,
+        frontmostApp: @escaping () async -> String? = Pipeline.frontmostAppName,
+        monotonicNow: @escaping () -> Duration = Pipeline.continuousNow
+    ) {
+        self.init(
+            config: config,
+            recorder: recorder,
+            sessionProvider: sessionProvider,
+            ducker: ducker,
+            polish: { text, mode in
+                OllamaPolishResult(text: await polish(text, mode), timing: nil)
+            },
+            insert: insert,
+            record: record,
+            frontmostApp: frontmostApp,
+            monotonicNow: monotonicNow
+        )
+    }
+
     // MARK: - production stage defaults
 
     static func ollamaPolish(_ text: String, mode: Mode) async -> String {
-        guard let model = mode.llmModel else { return text }
-        return await OllamaClient.polish(
+        await ollamaPolishWithTiming(text, mode: mode).text
+    }
+
+    static func ollamaPolishWithTiming(
+        _ text: String,
+        mode: Mode
+    ) async -> OllamaPolishResult {
+        guard let model = mode.llmModel else {
+            return OllamaPolishResult(text: text, timing: nil)
+        }
+        return await OllamaClient().polishWithTiming(
             text, model: model, systemPrompt: mode.systemPrompt, vocab: mode.vocab,
             expands: mode.expands
         )
+    }
+
+    static func continuousNow() -> Duration {
+        timingOrigin.duration(to: continuousClock.now)
     }
 
     static func pasteboardInsert(_ text: String) async -> Bool {
@@ -223,6 +273,7 @@ final class Pipeline {
     }
 
     func stopRecording() {
+        let requestedAt = monotonicNow()
         withStateLock {
             guard !isShutDown, recording else { return }
             recording = false
@@ -258,7 +309,8 @@ final class Pipeline {
                         samples,
                         mode: context.mode,
                         asrSession: asrSession,
-                        saveHistory: saveHistory
+                        saveHistory: saveHistory,
+                        requestedAt: requestedAt
                     )
                 } onCancel: {
                     previous?.cancel()
@@ -344,8 +396,10 @@ final class Pipeline {
         _ samples: [Float],
         mode: Mode,
         asrSession: any ASRSessionHandle,
-        saveHistory: Bool
+        saveHistory: Bool,
+        requestedAt: Duration
     ) async {
+        let processingStartedAt = monotonicNow()
         let started = withStateLock {
             guard !isShutDown else { return false }
             jobActive = true
@@ -356,7 +410,9 @@ final class Pipeline {
             return
         }
         defer { withStateLock { jobActive = false } }
+        let transcribeStartedAt = monotonicNow()
         guard var text = await transcribe(samples, using: asrSession) else { return }
+        let transcribeFinishedAt = monotonicNow()
         guard !text.isEmpty else {
             emit(.idle)
             return
@@ -370,11 +426,19 @@ final class Pipeline {
         // keeps `text` at the raw transcript — extending the "model unreachable"
         // fallback to "model answered the wrong question." No new Badge state. The
         // emit here matches `Polish.run`'s gate via `Mode.willPolish`.
-        if mode.willPolish(text), let model = mode.llmModel {
+        let willPolish = mode.willPolish(text)
+        if willPolish, let model = mode.llmModel {
             guard emit(.polishing(model: model)) else { return }
         }
         guard !Task.isCancelled else { return }
-        let polished = await Polish.run(rawText: text, mode: mode, polish: polish)
+        let polishStartedAt = willPolish ? monotonicNow() : nil
+        var generationTiming: OllamaGenerationTiming?
+        let polished = await Polish.run(rawText: text, mode: mode) { text, mode in
+            let result = await self.polish(text, mode)
+            generationTiming = result.timing
+            return result.text
+        }
+        let polishFinishedAt = willPolish ? monotonicNow() : nil
         guard !Task.isCancelled else { return }
         text = polished.text
         let isPolished = polished.isPolished
@@ -386,13 +450,40 @@ final class Pipeline {
         }
 
         // Frontmost app is the paste target, captured just before insertion.
+        let serialTailStartedAt = monotonicNow()
         let sourceApp = await frontmostApp()
         guard !Task.isCancelled else { return }
+        let insertStartedAt = monotonicNow()
         let pasted = await insert(text)
+        let insertFinishedAt = monotonicNow()
         // The insert effect cannot be rolled back once started, but shutdown is
         // terminal: do not publish completion or history after it returns.
         guard !Task.isCancelled else { return }
         guard emit(pasted ? .inserted : .clipboard) else { return }
+
+        let timing = DictationSessionTiming(
+            totalMilliseconds: elapsedMilliseconds(from: requestedAt, to: insertFinishedAt),
+            queuedMilliseconds: elapsedMilliseconds(
+                from: requestedAt, to: processingStartedAt
+            ),
+            transcribeMilliseconds: elapsedMilliseconds(
+                from: transcribeStartedAt, to: transcribeFinishedAt
+            ),
+            polishMilliseconds: elapsedMilliseconds(
+                from: polishStartedAt, to: polishFinishedAt
+            ),
+            polishServerMilliseconds: generationTiming?.totalMilliseconds,
+            polishModelLoadMilliseconds: generationTiming?.modelLoadMilliseconds,
+            polishPromptEvalMilliseconds: generationTiming?.promptEvalMilliseconds,
+            polishGenerationMilliseconds: generationTiming?.generationMilliseconds,
+            insertMilliseconds: elapsedMilliseconds(
+                from: insertStartedAt, to: insertFinishedAt
+            ),
+            serialTailMilliseconds: elapsedMilliseconds(
+                from: serialTailStartedAt, to: insertFinishedAt
+            )
+        )
+        logTiming(timing, polished: willPolish)
 
         // Recorded after insertion so a history write can never delay the
         // paste (PRD #78); `record` is best-effort and never breaks a session.
@@ -411,12 +502,47 @@ final class Pipeline {
             sourceApp: sourceApp,
             durationMs: Int(Double(samples.count) / AudioRecorder.sampleRate * 1000),
             flagged: false,
-            flagReason: nil
+            flagReason: nil,
+            timing: timing
         )
         withStateLock {
             guard !isShutDown else { return }
             record(entry)
         }
+    }
+
+    private func elapsedMilliseconds(
+        from start: Duration?,
+        to end: Duration?
+    ) -> Double? {
+        guard let start, let end else { return nil }
+        return elapsedMilliseconds(from: start, to: end)
+    }
+
+    private func elapsedMilliseconds(from start: Duration, to end: Duration) -> Double {
+        let components = (end - start).components
+        let milliseconds = Double(components.seconds) * 1000
+            + Double(components.attoseconds) / 1_000_000_000_000_000
+        return max(0, milliseconds)
+    }
+
+    private func logTiming(_ timing: DictationSessionTiming, polished: Bool) {
+        func formatted(_ value: Double?) -> String {
+            value.map { String(format: "%.1f", $0) } ?? "n/a"
+        }
+        Log.dictationPerformance.info("""
+        Dictation timing [polish=\(String(polished), privacy: .public)] \
+        total=\(formatted(timing.totalMilliseconds), privacy: .public)ms \
+        queued=\(formatted(timing.queuedMilliseconds), privacy: .public)ms \
+        transcribe=\(formatted(timing.transcribeMilliseconds), privacy: .public)ms \
+        polish=\(formatted(timing.polishMilliseconds), privacy: .public)ms \
+        server=\(formatted(timing.polishServerMilliseconds), privacy: .public)ms \
+        load=\(formatted(timing.polishModelLoadMilliseconds), privacy: .public)ms \
+        prompt=\(formatted(timing.polishPromptEvalMilliseconds), privacy: .public)ms \
+        generate=\(formatted(timing.polishGenerationMilliseconds), privacy: .public)ms \
+        insert=\(formatted(timing.insertMilliseconds), privacy: .public)ms \
+        serial-tail=\(formatted(timing.serialTailMilliseconds), privacy: .public)ms
+        """)
     }
 
     private func transcribe(

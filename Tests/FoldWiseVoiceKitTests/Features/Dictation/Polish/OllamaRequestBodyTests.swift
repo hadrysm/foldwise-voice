@@ -1,10 +1,7 @@
-// Pins the Polish request body: `temperature` and `max_tokens` must be sent as
-// TOP-LEVEL fields for the OpenAI-compatible /v1/chat/completions endpoint,
-// which silently ignores the nested `options` object (Ollama's native
-// /api/chat convention). Before this, temperature: 0 lived inside `options` and
-// never applied, so Polish ran at Ollama's default temperature — a driver of
-// the off-task failures. Mirrors OllamaDeleteOutcomeTests: drives the client's
-// pure builder directly with no network.
+// Pins the native `/api/chat` request body. Native chat is required because its
+// response separates model load, prompt evaluation, and generation timing.
+// Mirrors OllamaDeleteOutcomeTests: drives the client's pure builder directly
+// with no network.
 
 import XCTest
 @testable import FoldWiseVoiceKit
@@ -19,16 +16,14 @@ final class OllamaRequestBodyTests: XCTestCase {
         )
     }
 
-    func testTemperatureIsTopLevelZero() {
-        XCTAssertEqual(body()["temperature"] as? Int, 0)
+    func testNativeOptionsSetTemperatureToZero() {
+        let options = body()["options"] as? [String: Any]
+        XCTAssertEqual(options?["temperature"] as? Int, 0)
     }
 
-    func testMaxTokensIsTopLevelAndThreaded() {
-        XCTAssertEqual(body(maxTokens: 512)["max_tokens"] as? Int, 512)
-    }
-
-    func testNoOptionsObjectIsSent() {
-        XCTAssertNil(body()["options"])
+    func testNativeOptionsThreadTheGenerationLimit() {
+        let options = body(maxTokens: 512)["options"] as? [String: Any]
+        XCTAssertEqual(options?["num_predict"] as? Int, 512)
     }
 
     func testMessagesCarrySystemThenUser() {

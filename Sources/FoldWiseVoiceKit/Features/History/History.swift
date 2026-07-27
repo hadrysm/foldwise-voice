@@ -6,6 +6,23 @@
 import Foundation
 import os
 
+/// Durable processing timings for one completed Dictation session. Values use
+/// milliseconds so the history JSONL stays directly consumable by reporting
+/// tools. Ollama-owned fields are nil for Voice to Text and whenever the server
+/// did not return native timing metadata.
+struct DictationSessionTiming: Codable, Equatable {
+    let totalMilliseconds: Double
+    let queuedMilliseconds: Double
+    let transcribeMilliseconds: Double
+    let polishMilliseconds: Double?
+    let polishServerMilliseconds: Double?
+    let polishModelLoadMilliseconds: Double?
+    let polishPromptEvalMilliseconds: Double?
+    let polishGenerationMilliseconds: Double?
+    let insertMilliseconds: Double
+    let serialTailMilliseconds: Double
+}
+
 /// One recorded dictation session. Both `rawText` (pre-Polish transcript) and
 /// `text` (what actually landed) are always kept: that pair powers the
 /// raw↔polished distinction, "Copy raw", and re-running Polish on stored text
@@ -23,6 +40,37 @@ struct HistoryEntry: Codable, Identifiable, Equatable {
     var durationMs: Int?
     var flagged: Bool
     var flagReason: String? // reserved; not captured in v1
+    var timing: DictationSessionTiming?
+
+    init(
+        id: UUID,
+        createdAt: Date,
+        text: String,
+        rawText: String,
+        isPolished: Bool,
+        modeName: String,
+        modeID: ModeID? = nil,
+        wordCount: Int? = nil,
+        sourceApp: String? = nil,
+        durationMs: Int? = nil,
+        flagged: Bool,
+        flagReason: String? = nil,
+        timing: DictationSessionTiming? = nil
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.text = text
+        self.rawText = rawText
+        self.isPolished = isPolished
+        self.modeName = modeName
+        self.modeID = modeID
+        self.wordCount = wordCount
+        self.sourceApp = sourceApp
+        self.durationMs = durationMs
+        self.flagged = flagged
+        self.flagReason = flagReason
+        self.timing = timing
+    }
 }
 
 /// What a history row's shown `text` actually is, for the row's honesty

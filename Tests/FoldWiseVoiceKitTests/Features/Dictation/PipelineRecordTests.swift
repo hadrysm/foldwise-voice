@@ -110,6 +110,89 @@ final class PipelineRecordTests: XCTestCase {
         XCTAssertEqual(entry.sourceApp, "TextEdit")
     }
 
+    func testRecordsEveryDictationSessionTimingStage() async throws {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success(longTranscript)
+        let recorded = RecordSpy()
+        let clock = StepClock(milliseconds: [0, 5, 5, 125, 125, 345, 345, 363, 415])
+        let pipeline = Pipeline(
+            config: makeTestConfig(mode: cleanMode),
+            recorder: FakeRecorder(),
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
+            polish: { _, _ in
+                OllamaPolishResult(
+                    text: self.cleaned,
+                    timing: OllamaGenerationTiming(
+                        totalMilliseconds: 200,
+                        modelLoadMilliseconds: 80,
+                        promptEvalMilliseconds: 20,
+                        generationMilliseconds: 100
+                    )
+                )
+            },
+            insert: { _ in true },
+            record: { recorded.record($0) },
+            frontmostApp: { "TextEdit" },
+            monotonicNow: { clock.now() }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(
+            try XCTUnwrap(recorded.entries.first?.timing),
+            DictationSessionTiming(
+                totalMilliseconds: 415,
+                queuedMilliseconds: 5,
+                transcribeMilliseconds: 120,
+                polishMilliseconds: 220,
+                polishServerMilliseconds: 200,
+                polishModelLoadMilliseconds: 80,
+                polishPromptEvalMilliseconds: 20,
+                polishGenerationMilliseconds: 100,
+                insertMilliseconds: 52,
+                serialTailMilliseconds: 70
+            )
+        )
+    }
+
+    func testVoiceToTextRecordsTheSameTimingPathWithoutPolishMetrics() async throws {
+        let transcriber = FakeTranscriber()
+        transcriber.result = .success(longTranscript)
+        let recorded = RecordSpy()
+        let clock = StepClock(milliseconds: [0, 2, 2, 122, 122, 130, 182])
+        let pipeline = Pipeline(
+            config: makeTestConfig(),
+            recorder: FakeRecorder(),
+            sessionProvider: FakeTranscriberSessionProvider(transcriber),
+            insert: { _ in true },
+            record: { recorded.record($0) },
+            frontmostApp: { "TextEdit" },
+            monotonicNow: { clock.now() }
+        )
+
+        pipeline.startRecording()
+        pipeline.stopRecording()
+        await pipeline.awaitPendingJob()
+
+        XCTAssertEqual(
+            try XCTUnwrap(recorded.entries.first?.timing),
+            DictationSessionTiming(
+                totalMilliseconds: 182,
+                queuedMilliseconds: 2,
+                transcribeMilliseconds: 120,
+                polishMilliseconds: nil,
+                polishServerMilliseconds: nil,
+                polishModelLoadMilliseconds: nil,
+                polishPromptEvalMilliseconds: nil,
+                polishGenerationMilliseconds: nil,
+                insertMilliseconds: 52,
+                serialTailMilliseconds: 60
+            )
+        )
+    }
+
     func testSessionUsesCompleteModeSnapshotFromRecordingStart() async throws {
         let result = try await runSessionsAcrossModeChange()
 
@@ -256,5 +339,18 @@ final class PipelineRecordTests: XCTestCase {
         try await MainActor.run { try config.setSaveHistory(false) }
         let entries = await recordSession(config: config, transcript: .success(longTranscript))
         XCTAssertTrue(entries.isEmpty)
+    }
+}
+
+private final class StepClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var instants: [Duration]
+
+    init(milliseconds: [Int64]) {
+        instants = milliseconds.map(Duration.milliseconds)
+    }
+
+    func now() -> Duration {
+        lock.withLock { instants.removeFirst() }
     }
 }
