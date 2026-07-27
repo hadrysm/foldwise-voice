@@ -76,6 +76,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     private var updaterController: SPUStandardUpdaterController?
     private var updaterAvailabilityObservation: NSKeyValueObservation?
     private var panePerformanceApplication: PanePerformanceApplication?
+    #if DICTATION_BASELINE_HARNESS
+        private var dictationBaselineApplication: DictationBaselineApplication?
+    #endif
     #if FOLDWISE_UPDATE_ACCEPTANCE
         private var updateRuntimeAcceptance: UpdateRuntimeAcceptanceController?
     #endif
@@ -91,6 +94,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DICTATION_BASELINE_HARNESS
+            if let planPath = ProcessInfo.processInfo.environment[
+                "FOLDWISE_DICTATION_BASELINE_PLAN"
+            ] {
+                do {
+                    let plan = try DictationBaselinePlan.load(
+                        from: URL(fileURLWithPath: planPath)
+                    )
+                    let application = DictationBaselineApplication(plan: plan)
+                    dictationBaselineApplication = application
+                    application.start()
+                } catch {
+                    FileHandle.standardError.write(
+                        Data("error: \(error.localizedDescription)\n".utf8)
+                    )
+                    NSApp.terminate(nil)
+                }
+                return
+            }
+        #endif
+
         #if FOLDWISE_UPDATE_ACCEPTANCE
             if let updateRuntimeAcceptance = UpdateRuntimeAcceptanceController() {
                 self.updateRuntimeAcceptance = updateRuntimeAcceptance

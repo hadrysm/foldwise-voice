@@ -17,6 +17,7 @@ Usage:  python3 scripts/build_swift_app.py         # build + install locally
         python3 scripts/build_swift_app.py --dmg   # build dist/FoldWise-Voice-<version>.dmg
         python3 scripts/build_swift_app.py --bundle-only
         python3 scripts/build_swift_app.py --development-bundle-only
+        python3 scripts/build_swift_app.py --dictation-baseline-bundle-only
 """
 
 from __future__ import annotations
@@ -358,22 +359,40 @@ def main() -> None:
         "--development-bundle-only", action="store_true",
         help="build an updater-disabled development app bundle without installing it",
     )
+    parser.add_argument(
+        "--dictation-baseline-bundle-only", action="store_true",
+        help="build the throwaway issue #349 Dictation baseline harness",
+    )
     args = parser.parse_args()
     selected_outputs = sum([
         args.dmg,
         args.bundle_only,
         args.development_bundle_only,
+        args.dictation_baseline_bundle_only,
     ])
     if selected_outputs > 1:
         parser.error("choose only one output mode")
 
-    binary = build_binary()
+    swift_defines = (
+        ("DICTATION_BASELINE_HARNESS",)
+        if args.dictation_baseline_bundle_only
+        else ()
+    )
+    binary = build_binary(swift_defines=swift_defines)
     icon, background = render_assets()
 
-    if args.bundle_only or args.development_bundle_only:
+    if (
+        args.bundle_only
+        or args.development_bundle_only
+        or args.dictation_baseline_bundle_only
+    ):
         if args.bundle_only:
             destination = DIST / "bundle"
             name = "FoldWise Voice"
+            share_repo_config = False
+        elif args.dictation_baseline_bundle_only:
+            destination = DIST / "dictation-baseline-bundle"
+            name = APP_NAME
             share_repo_config = False
         else:
             destination = DIST / "development-bundle"

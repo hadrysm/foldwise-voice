@@ -44,6 +44,9 @@ The report keeps every raw sample and calculates median, observed p95, and
 worst values for all measured sessions, Voice to Text, and sessions where
 Polish ran. Legacy and malformed lines are counted under `skippedSessions`.
 
+For the fixed private-fixture matrix used to set the perceived-latency budget,
+see [Dictation latency baseline harness](dictation-baseline-harness.md).
+
 ## Live log
 
 Completed sessions also emit a content-free public log line, including when
