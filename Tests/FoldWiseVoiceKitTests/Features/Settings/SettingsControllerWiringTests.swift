@@ -72,6 +72,14 @@ final class SettingsControllerWiringTests: XCTestCase {
         try FileManager.default.removeItem(at: dir)
     }
 
+    func testMainHostingControllerSkipsIntrinsicSizeNegotiation() {
+        let hosting = SettingsController.makeHostingController(
+            model: SettingsModel()
+        )
+
+        XCTAssertTrue(hosting.sizingOptions.isEmpty)
+    }
+
     func testSemanticHistoryCommandReachesWorkflow() {
         let store = JSONLHistoryStore(url: dir.appendingPathComponent("flag-history.jsonl"))
         let row = entry(text: "stored words")

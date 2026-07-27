@@ -25,9 +25,11 @@ final class PaneFirstMeaningfulFrameView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        performance.firstMeaningfulFrame(for: pane)
+        let pane = pane
+        let performance = performance
         let onDraw = onDraw
         DispatchQueue.main.async {
+            performance.firstMeaningfulFrame(for: pane)
             onDraw()
         }
     }
@@ -175,6 +177,78 @@ private struct SettingsDestinationObservationScope<Input, Content: View>: View {
     }
 }
 
+private struct PaneScrollLayout: Layout {
+    func makeCache(subviews _: Subviews) -> ModeVerticalLayoutCache {
+        ModeVerticalLayoutCache()
+    }
+
+    func updateCache(
+        _ cache: inout ModeVerticalLayoutCache,
+        subviews _: Subviews
+    ) {
+        cache = ModeVerticalLayoutCache()
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) -> CGSize {
+        ModeVerticalLayout.size(
+            proposal: proposal,
+            subviews: subviews,
+            spacing: 16,
+            cache: &cache
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) {
+        ModeVerticalLayout.place(
+            in: bounds,
+            subviews: subviews,
+            spacing: 16,
+            cache: &cache
+        )
+    }
+}
+
+private struct RenderBoxPrewarm: View {
+    var body: some View {
+        Canvas { context, size in
+            let bounds = CGRect(origin: .zero, size: size)
+            context.fill(
+                Path(roundedRect: bounds, cornerRadius: 0.5),
+                with: .color(Theme.canvas)
+            )
+            context.draw(
+                Text("A")
+                    .font(Theme.ui(1))
+                    .foregroundStyle(Theme.canvas),
+                at: CGPoint(x: bounds.midX, y: bounds.midY)
+            )
+            if let symbol = context.resolveSymbol(id: "prewarm-symbol") {
+                context.draw(
+                    symbol,
+                    at: CGPoint(x: bounds.midX, y: bounds.midY)
+                )
+            }
+        } symbols: {
+            Image(systemName: "checkmark")
+                .font(.system(size: 1))
+                .foregroundStyle(Theme.canvas)
+                .tag("prewarm-symbol")
+        }
+        .frame(width: 1, height: 1)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 struct SettingsView: View {
     var model: SettingsModel
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
@@ -196,7 +270,9 @@ struct SettingsView: View {
                 )
                 EmberHairline(axis: .horizontal)
                 HStack(spacing: 0) {
-                    sidebar
+                    SettingsContentObservationScope {
+                        sidebar
+                    }
                     EmberHairline(axis: .vertical)
                     SettingsContentObservationScope {
                         content
@@ -214,6 +290,9 @@ struct SettingsView: View {
             .onChange(of: geo.size.width) { _, width in
                 updateWindowWidth(width)
             }
+        }
+        .background(alignment: .topLeading) {
+            RenderBoxPrewarm()
         }
         .overlayPreferenceValue(RailTileBoundsKey.self) { anchors in
             railTooltip(anchors)
@@ -337,17 +416,14 @@ struct SettingsView: View {
     // MARK: - sidebar
 
     private var sidebar: some View {
-        ZStack(alignment: .topLeading) {
-            expandedSidebar
-                .frame(width: Theme.sidebarWidth)
-                .opacity(sidebarMode == .expanded ? 1 : 0)
-                .allowsHitTesting(sidebarMode == .expanded)
-                .accessibilityHidden(sidebarMode != .expanded)
-            railSidebar
-                .frame(width: Theme.railWidth)
-                .opacity(sidebarMode == .rail ? 1 : 0)
-                .allowsHitTesting(sidebarMode == .rail)
-                .accessibilityHidden(sidebarMode != .rail)
+        Group {
+            if sidebarMode == .expanded {
+                expandedSidebar
+                    .frame(width: Theme.sidebarWidth)
+            } else {
+                railSidebar
+                    .frame(width: Theme.railWidth)
+            }
         }
         .frame(
             width: sidebarMode == .expanded ? Theme.sidebarWidth : Theme.railWidth,
@@ -593,22 +669,16 @@ struct SettingsView: View {
     // MARK: - content shell
 
     private var content: some View {
-        VStack(spacing: 0) {
+        Group {
             if let message = model.configurationRecoveryMessage {
-                recoveryBanner(message)
-                EmberHairline(axis: .horizontal)
+                VStack(spacing: 0) {
+                    recoveryBanner(message)
+                    EmberHairline(axis: .horizontal)
+                    destinationShell
+                }
+            } else {
+                destinationShell
             }
-            ZStack {
-                destination
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .disabled(configurationPaneIsReadOnly)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("continuous-frame.destination")
-            .accessibilityValue(
-                configurationPaneIsReadOnly ? "Read-only" : "Available"
-            )
-            .opacity(configurationPaneIsReadOnly ? 0.54 : 1)
         }
         .background(Theme.canvas)
         .overlay(alignment: .bottomTrailing) {
@@ -624,6 +694,18 @@ struct SettingsView: View {
             Theme.ordinaryAnimation(reduceMotion: accessibilityReduceMotion),
             value: globalToastIsVisible
         )
+    }
+
+    private var destinationShell: some View {
+        destination
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .disabled(configurationPaneIsReadOnly)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("continuous-frame.destination")
+            .accessibilityValue(
+                configurationPaneIsReadOnly ? "Read-only" : "Available"
+            )
+            .opacity(configurationPaneIsReadOnly ? 0.54 : 1)
     }
 
     @ViewBuilder
@@ -697,7 +779,7 @@ struct SettingsView: View {
 
     private func paneScroll(_ title: String, @ViewBuilder body: () -> some View) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            PaneScrollLayout {
                 Text(title)
                     .font(Theme.display)
                     .tracking(Theme.displayTracking)
@@ -715,27 +797,20 @@ struct SettingsView: View {
     // MARK: - modes
 
     private func modesPane(_ modesModel: ModesPaneInterface) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline, spacing: 16) {
-                Text("Choose how the next Dictation session should shape your words.")
-                    .font(Theme.body)
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                Button("Add Mode", systemImage: "plus") { modesModel.addMode() }
-                    .buttonStyle(EmberButtonStyle(kind: .primary))
-                    .accessibilityHint("Opens a new unsaved Mode draft")
-            }
-            HStack(alignment: .top, spacing: 14) {
-                modeLibrary(modesModel)
-                    .frame(width: 310)
-                modeDetail(modesModel)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
+        ModesPaneLayout {
+            Text("Choose how the next Dictation session should shape your words.")
+                .font(Theme.body)
+                .foregroundStyle(Theme.textSecondary)
+            Button("Add Mode", systemImage: "plus") { modesModel.addMode() }
+                .buttonStyle(EmberButtonStyle(kind: .primary))
+                .accessibilityHint("Opens a new unsaved Mode draft")
+            modeLibrary(modesModel)
+            modeDetail(modesModel)
         }
     }
 
     private func modeLibrary(_ modesModel: ModesPaneInterface) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        ModeLibraryLayout {
             EmberSectionLabel("Dictation selection")
             EmberSurface {
                 CommandLedgerSelectionRow(
@@ -769,7 +844,7 @@ struct SettingsView: View {
                 .accessibilityElement(children: .contain)
             } else {
                 EmberSurface {
-                    VStack(spacing: 0) {
+                    ModeLibraryRowsLayout {
                         ForEach(
                             Array(modesModel.modeSelection.editableItems.enumerated()),
                             id: \.element.id
@@ -801,32 +876,24 @@ struct SettingsView: View {
                     modeCount: modesModel.modes.count
                 )
                 EmberSurface {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(spacing: 10) {
-                            Image(systemName: item.icon)
-                                .font(.system(size: 24, weight: .medium))
-                                .foregroundStyle(Theme.accent)
-                                .frame(width: 32)
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(mode.name)
-                                    .font(Theme.ui(20, .semibold))
-                                    .foregroundStyle(Theme.textPrimary)
-                                    .lineLimit(2)
-                                Text(mode.transformation == .inPlace ? "Keep wording" : "Reshape")
-                                    .font(Theme.body)
-                                    .foregroundStyle(Theme.textSecondary)
-                            }
-                            Spacer()
-                            HStack(spacing: 8) {
-                                Button("Edit") { modesModel.editMode(id) }
-                                    .buttonStyle(EmberButtonStyle(kind: .quiet))
-                                    .accessibilityLabel("Edit \(mode.name)")
-                                Button("Duplicate") { modesModel.duplicateMode(id) }
-                                    .buttonStyle(EmberButtonStyle(kind: .quiet))
-                                    .accessibilityLabel(actions.duplicateLabel)
-                            }
-                        }
+                    ModeDetailContentLayout {
+                        Image(systemName: item.icon)
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .accessibilityHidden(true)
+                        Text(mode.name)
+                            .font(Theme.ui(20, .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(2)
+                        Text(mode.transformation == .inPlace ? "Keep wording" : "Reshape")
+                            .font(Theme.body)
+                            .foregroundStyle(Theme.textSecondary)
+                        ModeDetailHeaderActions(
+                            editLabel: "Edit \(mode.name)",
+                            duplicateLabel: actions.duplicateLabel,
+                            onEdit: { modesModel.editMode(id) },
+                            onDuplicate: { modesModel.duplicateMode(id) }
+                        )
                         EmberHairline(axis: .horizontal)
                         modeDetailField(
                             "AI model",
@@ -839,38 +906,27 @@ struct SettingsView: View {
                             mode.vocab.isEmpty ? "None" : mode.vocab.joined(separator: " · "),
                             monospaced: true
                         )
-                        if let installed = modesModel.installed,
-                           !installed.contains(where: { $0.name == mode.llmModel }) {
-                            unavailableModelNotice(
-                                mode.llmModel ?? "This model",
-                                interface: modesModel
-                            )
+                        ZStack(alignment: .topLeading) {
+                            if let installed = modesModel.installed,
+                               !installed.contains(where: { $0.name == mode.llmModel }) {
+                                unavailableModelNotice(
+                                    mode.llmModel ?? "This model",
+                                    interface: modesModel
+                                )
+                            }
                         }
-                        Spacer(minLength: 12)
                         EmberHairline(axis: .horizontal)
-                        HStack(spacing: 8) {
-                            Button("Move up", systemImage: "arrow.up") {
+                        ModeDetailActions(presentation: actions) { action in
+                            switch action {
+                            case .moveUp:
                                 modesModel.moveMode(id, .up)
-                            }
-                            .buttonStyle(EmberButtonStyle(kind: .quiet))
-                            .disabled(!actions.canMoveUp)
-                            .accessibilityLabel(actions.moveUpLabel)
-                            .keyboardShortcut(.upArrow, modifiers: [.command, .option])
-                            Button("Move down", systemImage: "arrow.down") {
+                            case .moveDown:
                                 modesModel.moveMode(id, .down)
-                            }
-                            .buttonStyle(EmberButtonStyle(kind: .quiet))
-                            .disabled(!actions.canMoveDown)
-                            .accessibilityLabel(actions.moveDownLabel)
-                            .keyboardShortcut(.downArrow, modifiers: [.command, .option])
-                            Spacer()
-                            Button("Delete", role: .destructive) {
+                            case .delete:
                                 modesModel.requestModeDeletion(id)
                             }
-                            .buttonStyle(EmberButtonStyle(kind: .destructive))
-                            .accessibilityLabel(actions.deleteLabel)
-                            .accessibilityHint(actions.deleteHint)
                         }
+                        .frame(height: 28)
                     }
                     .padding(16)
                     .frame(maxWidth: .infinity, minHeight: 370, alignment: .topLeading)
@@ -907,7 +963,7 @@ struct SettingsView: View {
         _ value: String,
         monospaced: Bool = false
     ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        ModeDetailFieldLayout {
             Text(label)
                 .font(Theme.sectionLabel)
                 .tracking(Theme.sectionTracking)
@@ -1532,38 +1588,68 @@ struct CommandLedgerSelectionRow: View {
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 0) {
-                EmberIngress(color: item.isSelected ? Theme.accent : .clear)
-                HStack(spacing: 10) {
-                    Image(systemName: item.icon)
-                        .font(.system(size: 15, weight: item.isSelected ? .semibold : .medium))
-                        .foregroundStyle(
-                            item.isSelected ? Theme.accent : Theme.textTertiary
-                        )
-                        .frame(width: 20)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.name)
-                            .font(Theme.ui(12, item.isSelected ? .semibold : .medium))
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1)
-                        Text(item.summary)
-                            .font(Theme.compactData)
-                            .foregroundStyle(Theme.textSecondary)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 12)
-                    Image(systemName: item.isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(
-                            item.isSelected ? Theme.accent : Theme.textTertiary
-                        )
-                        .accessibilityHidden(true)
+            Canvas { context, size in
+                context.fill(
+                    Path(CGRect(origin: .zero, size: size)),
+                    with: .color(rowBackground)
+                )
+                if item.isSelected {
+                    context.fill(
+                        Path(CGRect(
+                            x: 0,
+                            y: 0,
+                            width: Theme.selectionIngressWidth,
+                            height: size.height
+                        )),
+                        with: .color(Theme.accent)
+                    )
                 }
-                .padding(.horizontal, 12)
+                if let icon = context.resolveSymbol(id: "mode-icon") {
+                    context.draw(
+                        icon,
+                        at: CGPoint(x: 26, y: size.height / 2)
+                    )
+                }
+                context.draw(
+                    Text(item.name)
+                        .font(Theme.ui(12, item.isSelected ? .semibold : .medium))
+                        .foregroundStyle(Theme.textPrimary),
+                    at: CGPoint(x: 46, y: 18),
+                    anchor: .leading
+                )
+                context.draw(
+                    Text(item.summary)
+                        .font(Theme.compactData)
+                        .foregroundStyle(Theme.textSecondary),
+                    at: CGPoint(x: 46, y: 35),
+                    anchor: .leading
+                )
+                if let selection = context.resolveSymbol(id: "selection") {
+                    context.draw(
+                        selection,
+                        at: CGPoint(x: size.width - 24, y: size.height / 2)
+                    )
+                }
+            } symbols: {
+                Image(systemName: item.icon)
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(
+                        size: 15,
+                        weight: item.isSelected ? .semibold : .medium
+                    ))
+                    .foregroundStyle(
+                        item.isSelected ? Theme.accent : Theme.textTertiary
+                    )
+                    .tag("mode-icon")
+                Image(systemName: item.isSelected ? "checkmark.circle.fill" : "circle")
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(
+                        item.isSelected ? Theme.accent : Theme.textTertiary
+                    )
+                    .tag("selection")
             }
             .frame(maxWidth: .infinity, minHeight: 52, maxHeight: 52)
-            .background(rowBackground)
             .contentShape(Rectangle())
         }
         .buttonStyle(EmberPlainButtonStyle(cornerRadius: Theme.surfaceRadius))
@@ -1593,6 +1679,720 @@ struct CommandLedgerSelectionRow: View {
             "modes.selection.\(id)"
         }
     }
+}
+
+private struct ModeVerticalLayoutCache {
+    var width: CGFloat?
+    var sizes: [CGSize] = []
+}
+
+private enum ModeVerticalLayout {
+    static func size(
+        proposal: ProposedViewSize,
+        subviews: LayoutSubviews,
+        spacing: CGFloat,
+        cache: inout ModeVerticalLayoutCache
+    ) -> CGSize {
+        let width = proposal.width
+            ?? subviews.map { $0.sizeThatFits(.unspecified).width }.max()
+            ?? 0
+        let sizes = subviews.map {
+            $0.sizeThatFits(ProposedViewSize(width: width, height: nil))
+        }
+        cache.width = width
+        cache.sizes = sizes
+        return CGSize(
+            width: width,
+            height: sizes.reduce(0) { $0 + $1.height }
+                + spacing * CGFloat(max(0, sizes.count - 1))
+        )
+    }
+
+    static func place(
+        in bounds: CGRect,
+        subviews: LayoutSubviews,
+        spacing: CGFloat,
+        cache: inout ModeVerticalLayoutCache
+    ) {
+        let sizes: [CGSize]
+        if cache.width == bounds.width, cache.sizes.count == subviews.count {
+            sizes = cache.sizes
+        } else {
+            sizes = subviews.map {
+                $0.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+            }
+            cache.width = bounds.width
+            cache.sizes = sizes
+        }
+        var y = bounds.minY
+        for (subview, size) in zip(subviews, sizes) {
+            subview.place(
+                at: CGPoint(x: bounds.minX, y: y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: size.height)
+            )
+            y += size.height + spacing
+        }
+    }
+}
+
+private struct ModeLibraryLayout: Layout {
+    func makeCache(subviews _: Subviews) -> ModeVerticalLayoutCache {
+        ModeVerticalLayoutCache()
+    }
+
+    func updateCache(
+        _ cache: inout ModeVerticalLayoutCache,
+        subviews _: Subviews
+    ) {
+        cache = ModeVerticalLayoutCache()
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) -> CGSize {
+        ModeVerticalLayout.size(
+            proposal: proposal,
+            subviews: subviews,
+            spacing: 8,
+            cache: &cache
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) {
+        ModeVerticalLayout.place(
+            in: bounds,
+            subviews: subviews,
+            spacing: 8,
+            cache: &cache
+        )
+    }
+}
+
+private struct ModeLibraryRowsLayout: Layout {
+    func makeCache(subviews _: Subviews) -> ModeVerticalLayoutCache {
+        ModeVerticalLayoutCache()
+    }
+
+    func updateCache(
+        _ cache: inout ModeVerticalLayoutCache,
+        subviews _: Subviews
+    ) {
+        cache = ModeVerticalLayoutCache()
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) -> CGSize {
+        ModeVerticalLayout.size(
+            proposal: proposal,
+            subviews: subviews,
+            spacing: 0,
+            cache: &cache
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) {
+        ModeVerticalLayout.place(
+            in: bounds,
+            subviews: subviews,
+            spacing: 0,
+            cache: &cache
+        )
+    }
+}
+
+private struct ModeDetailFieldLayout: Layout {
+    func makeCache(subviews _: Subviews) -> ModeVerticalLayoutCache {
+        ModeVerticalLayoutCache()
+    }
+
+    func updateCache(
+        _ cache: inout ModeVerticalLayoutCache,
+        subviews _: Subviews
+    ) {
+        cache = ModeVerticalLayoutCache()
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) -> CGSize {
+        ModeVerticalLayout.size(
+            proposal: proposal,
+            subviews: subviews,
+            spacing: 3,
+            cache: &cache
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ModeVerticalLayoutCache
+    ) {
+        ModeVerticalLayout.place(
+            in: bounds,
+            subviews: subviews,
+            spacing: 3,
+            cache: &cache
+        )
+    }
+}
+
+private struct ModesPaneLayout: Layout {
+    struct Cache {
+        var width: CGFloat?
+        var addButton = CGSize.zero
+        var description = CGSize.zero
+    }
+
+    private let headerSpacing: CGFloat = 16
+    private let columnSpacing: CGFloat = 14
+    private let libraryWidth: CGFloat = 310
+
+    func makeCache(subviews _: Subviews) -> Cache {
+        Cache()
+    }
+
+    func updateCache(_ cache: inout Cache, subviews _: Subviews) {
+        cache = Cache()
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) -> CGSize {
+        let width = proposal.width ?? 880
+        guard subviews.count == 4 else {
+            return proposal.replacingUnspecifiedDimensions()
+        }
+        let addButton = subviews[1].sizeThatFits(.unspecified)
+        let description = subviews[0].sizeThatFits(ProposedViewSize(
+            width: max(0, width - addButton.width - headerSpacing),
+            height: nil
+        ))
+        cache.width = width
+        cache.addButton = addButton
+        cache.description = description
+        let headerHeight = max(description.height, addButton.height)
+        let library = subviews[2].sizeThatFits(ProposedViewSize(
+            width: libraryWidth,
+            height: nil
+        ))
+        let detail = subviews[3].sizeThatFits(ProposedViewSize(
+            width: max(0, width - libraryWidth - columnSpacing),
+            height: nil
+        ))
+        return CGSize(
+            width: width,
+            height: headerHeight + headerSpacing + max(library.height, detail.height)
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) {
+        guard subviews.count == 4 else { return }
+        let addButton = cache.width == bounds.width
+            ? cache.addButton
+            : subviews[1].sizeThatFits(.unspecified)
+        let descriptionWidth = max(0, bounds.width - addButton.width - headerSpacing)
+        let description = cache.width == bounds.width
+            ? cache.description
+            : subviews[0].sizeThatFits(ProposedViewSize(
+                width: descriptionWidth,
+                height: nil
+            ))
+        let headerHeight = max(description.height, addButton.height)
+        subviews[0].place(
+            at: bounds.origin,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: descriptionWidth, height: headerHeight)
+        )
+        subviews[1].place(
+            at: CGPoint(x: bounds.maxX, y: bounds.minY),
+            anchor: .topTrailing,
+            proposal: ProposedViewSize(addButton)
+        )
+        let contentY = bounds.minY + headerHeight + headerSpacing
+        subviews[2].place(
+            at: CGPoint(x: bounds.minX, y: contentY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: libraryWidth, height: nil)
+        )
+        subviews[3].place(
+            at: CGPoint(x: bounds.minX + libraryWidth + columnSpacing, y: contentY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(
+                width: max(0, bounds.width - libraryWidth - columnSpacing),
+                height: nil
+            )
+        )
+    }
+}
+
+private struct ModeDetailContentLayout: Layout {
+    struct Cache {
+        var width: CGFloat?
+        var fieldSizes: [CGSize] = []
+        var noticeSize = CGSize.zero
+    }
+
+    private let minimumHeight: CGFloat = 338
+
+    func makeCache(subviews _: Subviews) -> Cache {
+        Cache()
+    }
+
+    func updateCache(_ cache: inout Cache, subviews _: Subviews) {
+        cache = Cache()
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) -> CGSize {
+        let width = proposal.width ?? 480
+        guard subviews.count == 11 else {
+            return proposal.replacingUnspecifiedDimensions()
+        }
+        let fieldSizes = (5 ... 7).map {
+            subviews[$0].sizeThatFits(ProposedViewSize(
+                width: width,
+                height: nil
+            ))
+        }
+        let noticeSize = subviews[8].sizeThatFits(ProposedViewSize(
+            width: width,
+            height: nil
+        ))
+        cache.width = width
+        cache.fieldSizes = fieldSizes
+        cache.noticeSize = noticeSize
+        let fieldHeights = fieldSizes.map(\.height)
+        let noticeHeight = noticeSize.height
+        let contentHeight = 68
+            + fieldHeights.reduce(0, +)
+            + CGFloat(fieldHeights.count - 1) * 14
+            + (noticeHeight > 0 ? noticeHeight + 10 : 0)
+            + 56
+        return CGSize(
+            width: width,
+            height: max(minimumHeight, contentHeight)
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) {
+        guard subviews.count == 11 else { return }
+        let headerActionsWidth: CGFloat = 144
+        let titleX = bounds.minX + 42
+        let titleWidth = max(0, bounds.width - 42 - headerActionsWidth - 10)
+        subviews[0].place(
+            at: CGPoint(x: bounds.minX + 16, y: bounds.minY + 16),
+            anchor: .center,
+            proposal: ProposedViewSize(width: 32, height: 32)
+        )
+        subviews[1].place(
+            at: CGPoint(x: titleX, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: titleWidth, height: nil)
+        )
+        subviews[2].place(
+            at: CGPoint(x: titleX, y: bounds.minY + 29),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: titleWidth, height: nil)
+        )
+        subviews[3].place(
+            at: CGPoint(x: bounds.maxX, y: bounds.minY),
+            anchor: .topTrailing,
+            proposal: ProposedViewSize(width: headerActionsWidth, height: 28)
+        )
+        subviews[4].place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY + 52),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: nil)
+        )
+        var fieldY = bounds.minY + 68
+        let fieldSizes = cache.width == bounds.width && cache.fieldSizes.count == 3
+            ? cache.fieldSizes
+            : (5 ... 7).map {
+                subviews[$0].sizeThatFits(ProposedViewSize(
+                    width: bounds.width,
+                    height: nil
+                ))
+            }
+        for (index, size) in zip(5 ... 7, fieldSizes) {
+            subviews[index].place(
+                at: CGPoint(x: bounds.minX, y: fieldY),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: size.height)
+            )
+            fieldY += size.height + 14
+        }
+        let notice = cache.width == bounds.width
+            ? cache.noticeSize
+            : subviews[8].sizeThatFits(ProposedViewSize(
+                width: bounds.width,
+                height: nil
+            ))
+        if notice.height > 0 {
+            subviews[8].place(
+                at: CGPoint(x: bounds.minX, y: fieldY - 4),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: notice.height)
+            )
+        }
+        subviews[9].place(
+            at: CGPoint(x: bounds.minX, y: bounds.maxY - 42),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: nil)
+        )
+        subviews[10].place(
+            at: CGPoint(x: bounds.minX, y: bounds.maxY - 28),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: 28)
+        )
+    }
+}
+
+enum ModeDetailControlID: Hashable {
+    case edit
+    case duplicate
+    case moveUp
+    case moveDown
+    case delete
+}
+
+struct ModeDetailControlSurface {
+    let frame: CGRect
+    let trailingInset: CGFloat?
+    let isHovered: Bool
+    let isFocused: Bool
+    let isEnabled: Bool
+
+    init(
+        frame: CGRect,
+        isHovered: Bool,
+        isFocused: Bool,
+        isEnabled: Bool
+    ) {
+        self.frame = frame
+        trailingInset = nil
+        self.isHovered = isHovered
+        self.isFocused = isFocused
+        self.isEnabled = isEnabled
+    }
+
+    init(
+        trailingInset: CGFloat,
+        width: CGFloat,
+        height: CGFloat,
+        isHovered: Bool,
+        isFocused: Bool,
+        isEnabled: Bool
+    ) {
+        frame = CGRect(x: 0, y: 0, width: width, height: height)
+        self.trailingInset = trailingInset
+        self.isHovered = isHovered
+        self.isFocused = isFocused
+        self.isEnabled = isEnabled
+    }
+
+    func resolvedFrame(in size: CGSize) -> CGRect {
+        guard let trailingInset else { return frame }
+        return CGRect(
+            x: size.width - trailingInset - frame.width,
+            y: frame.minY,
+            width: frame.width,
+            height: frame.height
+        )
+    }
+}
+
+struct ModeDetailControlChrome: View {
+    let surfaces: [ModeDetailControlSurface]
+    var increaseContrastOverride: Bool?
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
+    init(
+        surfaces: [ModeDetailControlSurface],
+        increaseContrast: Bool? = nil
+    ) {
+        self.surfaces = surfaces
+        increaseContrastOverride = increaseContrast
+    }
+
+    var body: some View {
+        Canvas { context, size in
+            for surface in surfaces {
+                let frame = surface.resolvedFrame(in: size)
+                let path = Path(
+                    roundedRect: frame,
+                    cornerRadius: Theme.controlRadius
+                )
+                let opacity = surface.isEnabled ? 1.0 : 0.46
+                context.fill(
+                    path,
+                    with: .color(
+                        (surface.isHovered ? Theme.hover : Theme.surface)
+                            .opacity(opacity)
+                    )
+                )
+                context.stroke(
+                    path,
+                    with: .color(
+                        Theme.essentialBorderColor(
+                            increaseContrast: usesStrongBoundary
+                        )
+                        .opacity(opacity)
+                    ),
+                    lineWidth: Theme.essentialBorderWidth(
+                        increaseContrast: usesStrongBoundary
+                    )
+                )
+                if surface.isFocused {
+                    let focusFrame = frame.insetBy(dx: 2, dy: 2)
+                    let focusPath = Path(
+                        roundedRect: focusFrame,
+                        cornerRadius: max(0, Theme.controlRadius - 2)
+                    )
+                    context.stroke(
+                        focusPath,
+                        with: .color(Theme.canvas),
+                        lineWidth: Theme.focusGap + Theme.focusRingWidth
+                    )
+                    context.stroke(
+                        focusPath,
+                        with: .color(Theme.accent),
+                        lineWidth: Theme.focusRingWidth
+                    )
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private var usesStrongBoundary: Bool {
+        increaseContrastOverride ?? (colorSchemeContrast == .increased)
+    }
+}
+
+private struct ModeDetailHeaderActions: View {
+    let editLabel: String
+    let duplicateLabel: String
+    let onEdit: () -> Void
+    let onDuplicate: () -> Void
+    @State private var hoveredControl: ModeDetailControlID?
+    @FocusState private var focusedControl: ModeDetailControlID?
+
+    var body: some View {
+        ZStack {
+            ModeDetailControlChrome(surfaces: [
+                surface(.edit, frame: CGRect(x: 0, y: 0, width: 52, height: 28)),
+                surface(.duplicate, frame: CGRect(x: 60, y: 0, width: 84, height: 28)),
+            ])
+
+            HStack(spacing: 8) {
+                Button("Edit", action: onEdit)
+                    .frame(width: 52, height: 28)
+                    .focusEffectDisabled()
+                    .focused($focusedControl, equals: .edit)
+                    .onHover { setHover(.edit, isHovering: $0) }
+                    .accessibilityLabel(editLabel)
+                Button("Duplicate", action: onDuplicate)
+                    .frame(width: 84, height: 28)
+                    .focusEffectDisabled()
+                    .focused($focusedControl, equals: .duplicate)
+                    .onHover { setHover(.duplicate, isHovering: $0) }
+                    .accessibilityLabel(duplicateLabel)
+            }
+            .font(Theme.ui(10.5, .semibold))
+            .foregroundStyle(Theme.textPrimary)
+            .buttonStyle(EmberPlainButtonStyle())
+        }
+        .frame(width: 144, height: 28)
+    }
+
+    private func surface(
+        _ control: ModeDetailControlID,
+        frame: CGRect
+    ) -> ModeDetailControlSurface {
+        ModeDetailControlSurface(
+            frame: frame,
+            isHovered: hoveredControl == control,
+            isFocused: focusedControl == control,
+            isEnabled: true
+        )
+    }
+
+    private func setHover(_ control: ModeDetailControlID, isHovering: Bool) {
+        if isHovering {
+            hoveredControl = control
+        } else if hoveredControl == control {
+            hoveredControl = nil
+        }
+    }
+}
+
+private struct ModeDetailActions: View {
+    let presentation: ModeLibraryActionPresentation
+    let onAction: (ModeDetailAction) -> Void
+    @State private var hoveredControl: ModeDetailControlID?
+    @FocusState private var focusedControl: ModeDetailControlID?
+
+    var body: some View {
+        ZStack {
+            ModeDetailControlChrome(surfaces: [
+                surface(
+                    .moveUp,
+                    frame: CGRect(x: 0, y: 0, width: 92, height: 28),
+                    isEnabled: presentation.canMoveUp
+                ),
+                surface(
+                    .moveDown,
+                    frame: CGRect(x: 100, y: 0, width: 108, height: 28),
+                    isEnabled: presentation.canMoveDown
+                ),
+                trailingSurface(.delete, width: 68),
+            ])
+
+            HStack(spacing: 8) {
+                actionButton(
+                    "Move up",
+                    symbolName: "arrow.up",
+                    action: .moveUp,
+                    control: .moveUp,
+                    width: 92,
+                    isEnabled: presentation.canMoveUp,
+                    accessibilityLabel: presentation.moveUpLabel
+                )
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                actionButton(
+                    "Move down",
+                    symbolName: "arrow.down",
+                    action: .moveDown,
+                    control: .moveDown,
+                    width: 108,
+                    isEnabled: presentation.canMoveDown,
+                    accessibilityLabel: presentation.moveDownLabel
+                )
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                Spacer()
+                actionButton(
+                    "Delete",
+                    action: .delete,
+                    control: .delete,
+                    width: 68,
+                    accessibilityLabel: presentation.deleteLabel,
+                    accessibilityHint: presentation.deleteHint
+                )
+                .foregroundStyle(Theme.error)
+            }
+        }
+        .frame(height: 28)
+    }
+
+    private func actionButton(
+        _ title: String,
+        symbolName: String? = nil,
+        action: ModeDetailAction,
+        control: ModeDetailControlID,
+        width: CGFloat,
+        isEnabled: Bool = true,
+        accessibilityLabel: String,
+        accessibilityHint: String? = nil
+    ) -> some View {
+        Button {
+            onAction(action)
+        } label: {
+            if let symbolName {
+                Label(title, systemImage: symbolName)
+            } else {
+                Text(title)
+            }
+        }
+        .font(Theme.ui(10.5, .semibold))
+        .frame(width: width, height: 28)
+        .contentShape(Rectangle())
+        .buttonStyle(EmberPlainButtonStyle())
+        .focusEffectDisabled()
+        .focused($focusedControl, equals: control)
+        .onHover { setHover(control, isHovering: $0) }
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.46)
+        .foregroundStyle(action == .delete ? Theme.error : Theme.textPrimary)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(accessibilityHint ?? "")
+    }
+
+    private func surface(
+        _ control: ModeDetailControlID,
+        frame: CGRect,
+        isEnabled: Bool
+    ) -> ModeDetailControlSurface {
+        ModeDetailControlSurface(
+            frame: frame,
+            isHovered: hoveredControl == control,
+            isFocused: focusedControl == control,
+            isEnabled: isEnabled
+        )
+    }
+
+    private func trailingSurface(
+        _ control: ModeDetailControlID,
+        width: CGFloat
+    ) -> ModeDetailControlSurface {
+        ModeDetailControlSurface(
+            trailingInset: 0,
+            width: width,
+            height: 28,
+            isHovered: hoveredControl == control,
+            isFocused: focusedControl == control,
+            isEnabled: true
+        )
+    }
+
+    private func setHover(_ control: ModeDetailControlID, isHovering: Bool) {
+        if isHovering {
+            hoveredControl = control
+        } else if hoveredControl == control {
+            hoveredControl = nil
+        }
+    }
+}
+
+private enum ModeDetailAction: Equatable {
+    case moveUp
+    case moveDown
+    case delete
 }
 
 func keycapLabel(_ name: String) -> String {

@@ -31,6 +31,10 @@ protocol PanePerformanceSignposting: AnyObject {
 struct PaneNavigationSample: Equatable {
     let destination: SettingsModel.Pane
     let durationMilliseconds: Double
+    let startedAtSystemUptime: TimeInterval
+    let endedAtSystemUptime: TimeInterval
+    let startedAtEpoch: TimeInterval
+    let endedAtEpoch: TimeInterval
 }
 
 @MainActor
@@ -47,26 +51,32 @@ final class PaneNavigationPerformance {
     private struct Pending {
         let destination: SettingsModel.Pane
         let startedAt: TimeInterval
+        let startedAtEpoch: TimeInterval
         let token: PanePerformanceSignpostToken
     }
 
     private let signposts: any PanePerformanceSignposting
     private let uptime: () -> TimeInterval
+    private let wallClock: () -> TimeInterval
     private var pendingNavigation: Pending?
     private var pendingFirstWindow: Pending?
 
     init(
         signposts: (any PanePerformanceSignposting)? = nil,
-        uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+        uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        wallClock: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 }
     ) {
         self.signposts = signposts ?? OSSPanePerformanceSignposts()
         self.uptime = uptime
+        self.wallClock = wallClock
     }
 
     func beginNavigation(to destination: SettingsModel.Pane) {
+        let startedAtEpoch = wallClock()
         pendingNavigation = Pending(
             destination: destination,
             startedAt: uptime(),
+            startedAtEpoch: startedAtEpoch,
             token: signposts.begin(.paneNavigation, destination: destination)
         )
     }
@@ -76,6 +86,7 @@ final class PaneNavigationPerformance {
         pendingFirstWindow = Pending(
             destination: .home,
             startedAt: uptime(),
+            startedAtEpoch: wallClock(),
             token: signposts.begin(.firstWindowOpening, destination: .home)
         )
     }
@@ -89,9 +100,18 @@ final class PaneNavigationPerformance {
                 destination: destination,
                 token: pendingNavigation.token
             )
+            let endedAt = uptime()
+            let endedAtEpoch = wallClock()
             onNavigationSample?(PaneNavigationSample(
                 destination: destination,
-                durationMilliseconds: elapsedMilliseconds(since: pendingNavigation.startedAt)
+                durationMilliseconds: elapsedMilliseconds(
+                    from: pendingNavigation.startedAt,
+                    to: endedAt
+                ),
+                startedAtSystemUptime: pendingNavigation.startedAt,
+                endedAtSystemUptime: endedAt,
+                startedAtEpoch: pendingNavigation.startedAtEpoch,
+                endedAtEpoch: endedAtEpoch
             ))
         }
         if let pendingFirstWindow, pendingFirstWindow.destination == destination {
@@ -106,7 +126,14 @@ final class PaneNavigationPerformance {
     }
 
     private func elapsedMilliseconds(since start: TimeInterval) -> Double {
-        max(0, uptime() - start) * 1000
+        elapsedMilliseconds(from: start, to: uptime())
+    }
+
+    private func elapsedMilliseconds(
+        from start: TimeInterval,
+        to end: TimeInterval
+    ) -> Double {
+        max(0, end - start) * 1000
     }
 }
 

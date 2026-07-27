@@ -424,7 +424,15 @@ private final class PanePerformanceApplication {
     private var frameContinuation:
         (pane: SettingsModel.Pane, continuation: CheckedContinuation<Void, Never>)?
     private var navigationContinuation:
-        (pane: SettingsModel.Pane, continuation: CheckedContinuation<Double, Never>)?
+        (
+            pane: SettingsModel.Pane,
+            continuation: CheckedContinuation<PaneNavigationSample, Never>
+        )?
+
+    private struct Samples {
+        let durations: [Double]
+        let intervals: [PanePerformanceNavigationInterval]
+    }
 
     init(plan: PanePerformancePlan) {
         self.plan = plan
@@ -447,7 +455,7 @@ private final class PanePerformanceApplication {
             ).load()
             let model = makeModel(initialPane: .home, entries: entries)
             currentModel = model
-            let controller = NSHostingController(rootView: SettingsView(model: model))
+            let controller = SettingsController.makeHostingController(model: model)
             let window = SettingsController.makeMainWindow(contentViewController: controller)
             window.setContentSize(NSSize(width: 980, height: 720))
             window.center()
@@ -476,7 +484,7 @@ private final class PanePerformanceApplication {
                 return
             }
             navigationContinuation?.continuation.resume(
-                returning: sample.durationMilliseconds
+                returning: sample
             )
             navigationContinuation = nil
         }
@@ -493,6 +501,7 @@ private final class PanePerformanceApplication {
     private func performRun() async throws {
         let firstWindow = await waitForFirstWindow()
         var results: [PanePerformanceRouteResult] = []
+        var navigationIntervals: [PanePerformanceNavigationInterval] = []
         for destination in plan.destinations {
             let source: SettingsModel.Pane = destination == .home ? .settings : .home
             let cold = await samples(
@@ -504,8 +513,9 @@ private final class PanePerformanceApplication {
                 source: source,
                 destination: destination,
                 visit: .cold,
-                samplesMilliseconds: cold
+                samplesMilliseconds: cold.durations
             ))
+            navigationIntervals.append(contentsOf: cold.intervals)
             let warm = await samples(
                 source: source,
                 destination: destination,
@@ -515,15 +525,17 @@ private final class PanePerformanceApplication {
                 source: source,
                 destination: destination,
                 visit: .warm,
-                samplesMilliseconds: warm
+                samplesMilliseconds: warm.durations
             ))
+            navigationIntervals.append(contentsOf: warm.intervals)
         }
         let report = PanePerformanceRunReport(
             fixtureIdentity: fixture.identity,
             profile: plan.profile,
             recordedSamplesPerClass: plan.sampleCount,
             firstWindowMilliseconds: firstWindow,
-            routes: results
+            routes: results,
+            navigationIntervals: navigationIntervals
         )
         try report.write(to: plan.outputURL)
         endProcessActivity()
@@ -534,21 +546,31 @@ private final class PanePerformanceApplication {
         source: SettingsModel.Pane,
         destination: SettingsModel.Pane,
         visit: PanePerformanceVisit
-    ) async -> [Double] {
-        var recorded: [Double] = []
+    ) async -> Samples {
+        var durations: [Double] = []
+        var intervals: [PanePerformanceNavigationInterval] = []
         for index in 0 ... plan.sampleCount {
             let model = await installFreshHost(initialPane: source)
             if visit == .warm {
                 _ = await navigate(model, to: destination)
                 _ = await navigate(model, to: source)
             }
-            let duration = await navigate(model, to: destination)
+            let sample = await navigate(model, to: destination)
+            intervals.append(PanePerformanceNavigationInterval(
+                destination: destination,
+                visit: visit,
+                sample: index == 0 ? .warmUp : .recorded,
+                startedAtSystemUptime: sample.startedAtSystemUptime,
+                endedAtSystemUptime: sample.endedAtSystemUptime,
+                startedAtEpoch: sample.startedAtEpoch,
+                endedAtEpoch: sample.endedAtEpoch
+            ))
             if index > 0 {
-                recorded.append(duration)
+                durations.append(sample.durationMilliseconds)
             }
             await releaseCurrentHost()
         }
-        return recorded
+        return Samples(durations: durations, intervals: intervals)
     }
 
     private func installFreshHost(initialPane: SettingsModel.Pane) async -> SettingsModel {
@@ -556,8 +578,8 @@ private final class PanePerformanceApplication {
         currentModel = model
         await withCheckedContinuation { continuation in
             frameContinuation = (initialPane, continuation)
-            window?.contentViewController = NSHostingController(
-                rootView: SettingsView(model: model)
+            window?.contentViewController = SettingsController.makeHostingController(
+                model: model
             )
             if let window {
                 PanePerformanceWindowPresenter.present(window)
@@ -570,14 +592,14 @@ private final class PanePerformanceApplication {
     private func navigate(
         _ model: SettingsModel,
         to destination: SettingsModel.Pane
-    ) async -> Double {
-        let duration = await withCheckedContinuation { continuation in
+    ) async -> PaneNavigationSample {
+        let sample = await withCheckedContinuation { continuation in
             navigationContinuation = (destination, continuation)
             model.selectPane(destination)
             window?.displayIfNeeded()
         }
         await settleAfterFrame()
-        return duration
+        return sample
     }
 
     private func settleAfterFrame() async {

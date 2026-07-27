@@ -144,6 +144,40 @@ final class PanePerformanceReportTests: XCTestCase {
         )
     }
 
+    func testRunReportRetainsWarmUpAndRecordedNavigationIntervals() {
+        let intervals = [
+            PanePerformanceNavigationInterval(
+                destination: .stats,
+                visit: .warm,
+                sample: .warmUp,
+                startedAtSystemUptime: 120,
+                endedAtSystemUptime: 120.080,
+                startedAtEpoch: 1000,
+                endedAtEpoch: 1000.080
+            ),
+            PanePerformanceNavigationInterval(
+                destination: .stats,
+                visit: .warm,
+                sample: .recorded,
+                startedAtSystemUptime: 121,
+                endedAtSystemUptime: 121.075,
+                startedAtEpoch: 1001,
+                endedAtEpoch: 1001.075
+            ),
+        ]
+
+        let report = PanePerformanceRunReport(
+            fixtureIdentity: "pane-empty-v1",
+            profile: .empty,
+            recordedSamplesPerClass: 1,
+            firstWindowMilliseconds: 70,
+            routes: [],
+            navigationIntervals: intervals
+        )
+
+        XCTAssertEqual(report.navigationIntervals, intervals)
+    }
+
     private func loadPlan(from url: URL) throws -> PanePerformancePlan {
         try PanePerformancePlan.load(
             from: url,

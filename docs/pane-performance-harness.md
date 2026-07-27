@@ -5,6 +5,10 @@ configuration. It is the fixed-Mac source of truth for action-to-first-meaningfu
 frame navigation measurements; ordinary hosted XCTest timing remains a broad
 regression signal only.
 
+The supported release lane runs on the repository's dedicated
+`foldwise-pane-reference` Apple-silicon runner. Do not substitute a hosted runner
+or another Mac when accepting a baseline.
+
 ## Run
 
 From the repository root:
@@ -34,6 +38,21 @@ python3 scripts/run_pane_performance.py \
 
 `--no-build` reuses the existing packaged app. It is safe only when that bundle
 was built from the source revision being measured.
+
+An authoritative run exits unsuccessfully unless all of the following hold:
+
+- the complete 2-profile × 6-destination × cold/warm matrix is present;
+- every class has exactly 20 raw samples after its discarded warm-up;
+- every raw sample is at most 100 ms;
+- every route median is at most 20% slower than
+  [`pane-performance-baselines.json`](pane-performance-baselines.json);
+- all required trace components and application signposts were recorded; and
+- the representative navigation intervals contain no Hitches, SwiftUI update
+  groups, or potential hangs.
+
+The absolute cap always wins: a slower accepted baseline never permits a sample
+above 100 ms. A smoke run is deliberately non-authoritative and cannot update
+the baseline.
 
 ## Measurement contract
 
@@ -88,8 +107,9 @@ The output directory contains:
 - `raw/<profile>/result.json`: every raw duration plus median, observed p95,
   and worst for each route and visit class;
 - each validated plan and its isolated profile data; and
-- `hitches/stats-10000.trace`: an Animation Hitches recording of representative
-  cold and warm 10,000-session Stats journeys, plus the trace command's output.
+- one SwiftUI trace for each fixture under `traces/`. Each trace retains SwiftUI
+  update groups, Time Profiler samples, Hitches, potential hangs, and the
+  `PaneNavigation` and `FirstWindowOpening` signposts from that same execution.
 
 The combined report records the commit and app version, Mac model/chip/memory,
 macOS and Xcode versions, power and thermal state, display configuration,
@@ -102,3 +122,44 @@ capture failure is evidence failure even if the duration matrix completed.
 Passing `--skip-trace` always produces a non-authoritative report; without that
 explicit smoke-run option, a trace failure fails the harness instead of
 publishing a combined report.
+
+## Fixed-Mac release lane
+
+The `pane-performance` job in `release-validation.yml` runs for release-please
+pull requests and manual release validation. It uses the fixed reference Mac,
+does not retry a failure, runs the Python gate, then independently checks the
+retained report against the same absolute and relative limits through XCTest.
+Its artifact retains the report, raw samples, environment, plans, isolated
+fixtures, trace exports, and trace bundles for 90 days.
+
+Before accepting a new baseline:
+
+1. Run the lane from a clean source commit under stable AC power and thermal
+   conditions.
+2. Confirm the report is `authoritative: true` and the artifact belongs to that
+   exact commit.
+3. Compare every route with `postSparkleComparison`; investigate rather than
+   retry any duration, hitch, update-group, or hang violation.
+4. Update `pane-performance-baselines.json` only from the accepted run, preserving
+   the 20% maximum and the 100 ms absolute cap.
+
+Ordinary PR CI continues to run projection/cancellation/bounded-work tests,
+hosted catastrophic-regression checks, the Python policy tests, and coverage.
+Those checks are deterministic safety nets; they do not claim hosted Debug
+timing enforces the 100 ms Release budget.
+
+## Causal trace review
+
+The automated causal gate correlates trace timestamps with the app-reported
+navigation intervals. Any overlapping Hitches row, SwiftUI update group, or
+potential hang in a recorded sample fails the lane. Continuous main-thread
+bursts over one 60 Hz frame are retained too. A burst is classified as explained
+frame rendering only when at least 80% of its sampled weight is in SwiftUI
+graph/layout/display-list, RenderBox, or Core Animation frames; every other burst
+fails as an unexplained stall. Open the retained trace at the failed
+app-reported epoch interval and explain the responsible invalidation or
+main-thread work in the fix. A rerun is evidence for a changed implementation,
+not a way to discard a bad sample.
+
+`FirstWindowOpening` remains visible in the Logging trace and in each raw run,
+but it is never evaluated against the pane-navigation duration baseline.

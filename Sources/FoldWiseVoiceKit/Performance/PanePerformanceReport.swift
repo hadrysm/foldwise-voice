@@ -74,6 +74,21 @@ enum PanePerformanceVisit: String, Codable {
     case warm
 }
 
+enum PanePerformanceSampleKind: String, Codable {
+    case warmUp
+    case recorded
+}
+
+struct PanePerformanceNavigationInterval: Codable, Equatable {
+    let destination: SettingsModel.Pane
+    let visit: PanePerformanceVisit
+    let sample: PanePerformanceSampleKind
+    let startedAtSystemUptime: TimeInterval
+    let endedAtSystemUptime: TimeInterval
+    let startedAtEpoch: TimeInterval
+    let endedAtEpoch: TimeInterval
+}
+
 struct PanePerformanceStatistics: Codable, Equatable {
     let medianMilliseconds: Double
     let p95Milliseconds: Double
@@ -143,21 +158,24 @@ struct PanePerformanceRunReport: Codable, Equatable {
     let recordedSamplesPerClass: Int
     let firstWindowMilliseconds: Double
     let routes: [PanePerformanceRouteResult]
+    let navigationIntervals: [PanePerformanceNavigationInterval]
 
     init(
         fixtureIdentity: String,
         profile: PanePerformanceProfile,
         recordedSamplesPerClass: Int,
         firstWindowMilliseconds: Double,
-        routes: [PanePerformanceRouteResult]
+        routes: [PanePerformanceRouteResult],
+        navigationIntervals: [PanePerformanceNavigationInterval] = []
     ) {
-        schemaVersion = 1
+        schemaVersion = 2
         self.fixtureIdentity = fixtureIdentity
         self.profile = profile
         warmUpSamplesDiscarded = 1
         self.recordedSamplesPerClass = recordedSamplesPerClass
         self.firstWindowMilliseconds = firstWindowMilliseconds
         self.routes = routes
+        self.navigationIntervals = navigationIntervals
     }
 
     func write(to url: URL) throws {

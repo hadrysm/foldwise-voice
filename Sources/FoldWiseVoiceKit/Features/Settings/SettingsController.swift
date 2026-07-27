@@ -226,7 +226,7 @@ final class SettingsController {
     }
 
     private func build() {
-        let hosting = NSHostingController(rootView: SettingsView(model: model))
+        let hosting = Self.makeHostingController(model: model)
         let win = Self.makeMainWindow(contentViewController: hosting)
         win.center()
         win.setFrameAutosaveName("FoldWiseMainWindow")
@@ -245,6 +245,17 @@ final class SettingsController {
             MainActor.assumeIsolated { self?.cancelRecording() }
         }
         window = win
+    }
+
+    static func makeHostingController(
+        model: SettingsModel
+    ) -> NSHostingController<SettingsView> {
+        let hosting = NSHostingController(rootView: SettingsView(model: model))
+        // The window owns a fixed/resizable content rectangle. Asking the root
+        // SwiftUI tree for intrinsic, minimum, and maximum sizes after every
+        // pane mutation duplicates its full layout negotiation.
+        hosting.sizingOptions = []
+        return hosting
     }
 
     /// Main-window chrome, internal (not private) so the titlebar tests pin

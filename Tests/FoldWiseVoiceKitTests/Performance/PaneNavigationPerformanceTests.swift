@@ -7,9 +7,11 @@ final class PaneNavigationPerformanceTests: XCTestCase {
     func testNavigationEndsOnlyWhenTheRequestedPaneDraws() {
         let signposts = RecordingPanePerformanceSignposts()
         var uptime = 10.0
+        var wallClock = 1000.0
         let performance = PaneNavigationPerformance(
             signposts: signposts,
-            uptime: { uptime }
+            uptime: { uptime },
+            wallClock: { wallClock }
         )
         var samples: [PaneNavigationSample] = []
         performance.onNavigationSample = { samples.append($0) }
@@ -20,6 +22,7 @@ final class PaneNavigationPerformanceTests: XCTestCase {
         XCTAssertTrue(samples.isEmpty)
 
         uptime = 10.250
+        wallClock = 1000.250
         performance.firstMeaningfulFrame(for: .history)
 
         XCTAssertEqual(
@@ -27,7 +30,11 @@ final class PaneNavigationPerformanceTests: XCTestCase {
             [
                 PaneNavigationSample(
                     destination: .history,
-                    durationMilliseconds: 250
+                    durationMilliseconds: 250,
+                    startedAtSystemUptime: 10,
+                    endedAtSystemUptime: 10.250,
+                    startedAtEpoch: 1000,
+                    endedAtEpoch: 1000.250
                 ),
             ]
         )
@@ -85,11 +92,15 @@ final class PaneNavigationPerformanceTests: XCTestCase {
         XCTAssertTrue(signposts.events.isEmpty)
     }
 
-    func testDrawMarkerCompletesThePaneIntervalAtTheAppKitBoundary() {
+    func testDrawMarkerCompletesThePaneIntervalAfterTheAppKitDrawTurn() async {
         let signposts = RecordingPanePerformanceSignposts()
         let performance = PaneNavigationPerformance(signposts: signposts)
         var samples: [PaneNavigationSample] = []
-        performance.onNavigationSample = { samples.append($0) }
+        let completed = expectation(description: "pane frame completed")
+        performance.onNavigationSample = {
+            samples.append($0)
+            completed.fulfill()
+        }
         let marker = PaneFirstMeaningfulFrameView(
             pane: .models,
             performance: performance
@@ -97,6 +108,8 @@ final class PaneNavigationPerformanceTests: XCTestCase {
 
         performance.beginNavigation(to: .models)
         marker.draw(NSRect(x: 0, y: 0, width: 1, height: 1))
+        XCTAssertTrue(samples.isEmpty)
+        await fulfillment(of: [completed])
 
         XCTAssertEqual(samples.map(\.destination), [.models])
     }
