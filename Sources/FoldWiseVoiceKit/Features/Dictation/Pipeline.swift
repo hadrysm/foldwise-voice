@@ -483,7 +483,7 @@ final class Pipeline {
                 from: serialTailStartedAt, to: insertFinishedAt
             )
         )
-        logTiming(timing, polished: willPolish)
+        logTiming(timing, polishRan: willPolish)
 
         // Recorded after insertion so a history write can never delay the
         // paste (PRD #78); `record` is best-effort and never breaks a session.
@@ -526,12 +526,12 @@ final class Pipeline {
         return max(0, milliseconds)
     }
 
-    private func logTiming(_ timing: DictationSessionTiming, polished: Bool) {
+    private func logTiming(_ timing: DictationSessionTiming, polishRan: Bool) {
         func formatted(_ value: Double?) -> String {
             value.map { String(format: "%.1f", $0) } ?? "n/a"
         }
         Log.dictationPerformance.info("""
-        Dictation timing [polish=\(String(polished), privacy: .public)] \
+        Dictation timing [polish-ran=\(String(polishRan), privacy: .public)] \
         total=\(formatted(timing.totalMilliseconds), privacy: .public)ms \
         queued=\(formatted(timing.queuedMilliseconds), privacy: .public)ms \
         transcribe=\(formatted(timing.transcribeMilliseconds), privacy: .public)ms \

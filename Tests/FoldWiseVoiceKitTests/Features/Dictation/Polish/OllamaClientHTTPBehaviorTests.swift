@@ -57,6 +57,24 @@ final class OllamaClientHTTPBehaviorTests: XCTestCase {
         )
     }
 
+    func testPolishUsesInjectedNativeChatEndpoint() async throws {
+        let transport = RecordingOllamaTransport(
+            data: Data(#"{"message":{"content":"We should meet at noon."}}"#.utf8),
+            status: 200
+        )
+        let chatURL = try XCTUnwrap(URL(string: "http://127.0.0.1:9999/custom-chat"))
+
+        _ = await OllamaClient(transport: transport, chatURL: chatURL).polish(
+            transcript,
+            model: "qwen2.5:3b",
+            systemPrompt: nil,
+            vocab: [],
+            expands: false
+        )
+
+        XCTAssertEqual(transport.lastDataRequest?.url, chatURL)
+    }
+
     func testPolishReturnsRawTranscriptWhenTransportFails() async {
         let transport = FakeOllamaTransport(status: 200, dataError: .unreachable)
 
@@ -325,6 +343,43 @@ private enum TestFailure: LocalizedError {
         case .unreachable:
             "Ollama is unreachable"
         }
+    }
+}
+
+private final class RecordingOllamaTransport: OllamaTransporting, @unchecked Sendable {
+    private let lock = NSLock()
+    private let data: Data
+    private let response: URLResponse
+    private var storedLastDataRequest: URLRequest?
+
+    var lastDataRequest: URLRequest? {
+        lock.withLock { storedLastDataRequest }
+    }
+
+    init(data: Data, status: Int) {
+        self.data = data
+        guard let response = HTTPURLResponse(
+            url: URL(string: "http://localhost")!,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: nil
+        ) else {
+            preconditionFailure("The canned HTTP response must be constructible")
+        }
+        self.response = response
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        lock.withLock {
+            storedLastDataRequest = request
+        }
+        return (data, response)
+    }
+
+    func lines(
+        for _: URLRequest
+    ) async throws -> (URLResponse, AsyncThrowingStream<String, Error>) {
+        preconditionFailure("This transport only records data requests")
     }
 }
 

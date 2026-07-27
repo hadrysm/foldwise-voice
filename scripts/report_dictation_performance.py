@@ -79,9 +79,7 @@ def build_report(history_path: Path) -> dict[str, object]:
                 continue
             measured.append(entry)
 
-    voice_to_text = [
-        entry for entry in measured if entry.get("modeName") == "Voice to Text"
-    ]
+    voice_to_text = [entry for entry in measured if entry.get("modeID") is None]
     polished = [
         entry
         for entry in measured

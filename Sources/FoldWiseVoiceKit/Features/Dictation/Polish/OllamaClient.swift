@@ -56,9 +56,14 @@ final class OllamaClient {
     }
 
     private let transport: any OllamaTransporting
+    private let chatURL: URL
 
-    init(transport: any OllamaTransporting = URLSessionOllamaTransport()) {
+    init(
+        transport: any OllamaTransporting = URLSessionOllamaTransport(),
+        chatURL: URL = URL(string: OLLAMA_CHAT_URL)!
+    ) {
         self.transport = transport
+        self.chatURL = chatURL
     }
 
     func polish(
@@ -106,7 +111,7 @@ final class OllamaClient {
             model: model, system: system, user: text, maxTokens: maxTokens
         )
 
-        var request = URLRequest(url: URL(string: OLLAMA_CHAT_URL)!)
+        var request = URLRequest(url: chatURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 60
@@ -138,8 +143,9 @@ final class OllamaClient {
                 timing: response.timing
             )
         } catch {
+            let chatEndpoint = chatURL.absoluteString
             Log.ollama.error("""
-            Ollama unreachable at \(OLLAMA_CHAT_URL, privacy: .public), \
+            Ollama unreachable at \(chatEndpoint, privacy: .public), \
             falling back to raw transcript: \
             \(error.localizedDescription, privacy: .public)
             """)

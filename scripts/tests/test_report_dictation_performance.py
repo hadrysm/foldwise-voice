@@ -92,7 +92,10 @@ class DictationPerformanceReportTests(unittest.TestCase):
             "serialTailMilliseconds": 60,
         }
         return {
-            "modeName": "Email" if polish is not None else "Voice to Text",
+            # A custom mode may reuse the built-in display name; modeID is the
+            # authoritative discriminator.
+            "modeName": "Voice to Text",
+            "modeID": "email-mode" if polish is not None else None,
             "timing": timing,
         }
 
