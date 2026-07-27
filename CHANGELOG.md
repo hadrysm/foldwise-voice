@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.3](https://github.com/hadrysm/foldwise-voice/compare/v0.18.2...v0.18.3) (2026-07-27)
+
+
+### Performance
+
+* deliver sub-100 ms pane navigation ([#337](https://github.com/hadrysm/foldwise-voice/issues/337)) ([837d143](https://github.com/hadrysm/foldwise-voice/commit/837d143e2efbc49ff698965e8fc639c66c2d7c82)), closes [#325](https://github.com/hadrysm/foldwise-voice/issues/325)
+
 ## [0.18.2](https://github.com/hadrysm/foldwise-voice/compare/v0.18.1...v0.18.2) (2026-07-26)
 
 
