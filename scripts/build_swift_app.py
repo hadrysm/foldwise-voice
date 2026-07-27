@@ -17,7 +17,6 @@ Usage:  python3 scripts/build_swift_app.py         # build + install locally
         python3 scripts/build_swift_app.py --dmg   # build dist/FoldWise-Voice-<version>.dmg
         python3 scripts/build_swift_app.py --bundle-only
         python3 scripts/build_swift_app.py --development-bundle-only
-        python3 scripts/build_swift_app.py --badge-transcript-prototype
 """
 
 from __future__ import annotations
@@ -359,26 +358,16 @@ def main() -> None:
         "--development-bundle-only", action="store_true",
         help="build an updater-disabled development app bundle without installing it",
     )
-    parser.add_argument(
-        "--badge-transcript-prototype", action="store_true",
-        help="build, install, and launch the throwaway issue #346 Badge prototype",
-    )
     args = parser.parse_args()
     selected_outputs = sum([
         args.dmg,
         args.bundle_only,
         args.development_bundle_only,
-        args.badge_transcript_prototype,
     ])
     if selected_outputs > 1:
         parser.error("choose only one output mode")
 
-    swift_defines = (
-        ("BADGE_TRANSCRIPT_PROTOTYPE",)
-        if args.badge_transcript_prototype
-        else ()
-    )
-    binary = build_binary(swift_defines=swift_defines)
+    binary = build_binary()
     icon, background = render_assets()
 
     if args.bundle_only or args.development_bundle_only:
@@ -419,32 +408,9 @@ def main() -> None:
             print('  xattr -dr com.apple.quarantine "/Applications/FoldWise Voice.app"')
         return
 
-    launch_environment = None
-    if args.badge_transcript_prototype:
-        launch_environment = {
-            "FOLDWISE_CONFIG": str(REPO / "config.json"),
-            "FOLDWISE_BADGE_TRANSCRIPT_PROTOTYPE": "1",
-        }
-    app = build_bundle(
-        binary,
-        DIST,
-        APP_NAME,
-        icon,
-        share_repo_config=True,
-        launch_environment=launch_environment,
-    )
+    app = build_bundle(binary, DIST, APP_NAME, icon, share_repo_config=True)
     installed = install(app)
     print(f"Built and installed: {installed}")
-    if args.badge_transcript_prototype:
-        subprocess.run(
-            ["osascript", "-e", f'tell application "{APP_NAME}" to quit'],
-            check=False,
-        )
-        time.sleep(1)
-        subprocess.run(["open", "-n", str(installed)], check=True)
-        print("Launched the refined Badge caption prototype.")
-        print("Hold the normal Dictation shortcut for at least 7 seconds.")
-        return
     print("First launch: grant Microphone when prompted; add the app under")
     print("System Settings → Privacy & Security → Accessibility for auto-paste")
     print("(and Input Monitoring if the hotkey doesn't fire).")

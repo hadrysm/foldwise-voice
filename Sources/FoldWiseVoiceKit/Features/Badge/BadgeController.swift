@@ -40,11 +40,6 @@ final class BadgeController: NSObject {
     private var secondsTimer: Timer?
     private var dwellTimer: Timer?
     private var modeCycleTimer: Timer?
-    #if BADGE_TRANSCRIPT_PROTOTYPE
-        private var transcriptPrototypeTimer: Timer?
-        private var transcriptPrototypeStartedAt: Date?
-        private var transcriptPrototypeCaptionPanel: BadgePanel?
-    #endif
     private var unhoverWork: DispatchWorkItem?
     private var saveWork: DispatchWorkItem?
     private var deferredModeSelectionError = false
@@ -105,10 +100,6 @@ final class BadgeController: NSObject {
 
     /// Fold a pipeline phase into the state machine.
     func apply(_ phase: PipelineState) {
-        #if BADGE_TRANSCRIPT_PROTOTYPE
-            model.transcriptPrototype.apply(phase, modeName: model.activeModeName)
-            updateTranscriptPrototype(for: phase)
-        #endif
         if phase.ownsBadge {
             handleModeCycle(.badgeBecameBusy, fitPresentation: false)
         }
@@ -276,9 +267,6 @@ final class BadgeController: NSObject {
         if state == .idle, !modeCycleState.badgeIsAvailable {
             handleModeCycle(.badgeBecameAvailable)
         }
-        #if BADGE_TRANSCRIPT_PROTOTYPE
-            updateTranscriptPrototypePanels()
-        #endif
     }
 
     // MARK: - panel
@@ -323,9 +311,6 @@ final class BadgeController: NSObject {
         }
 
         panel = p
-        #if BADGE_TRANSCRIPT_PROTOTYPE
-            ensureTranscriptPrototypePanels()
-        #endif
         setSize(rect.size, animate: false)
     }
 
@@ -425,9 +410,6 @@ final class BadgeController: NSObject {
             panel.setFrame(frame, display: true)
             programmaticMove.complete(revision: moveRevision)
         }
-        #if BADGE_TRANSCRIPT_PROTOTYPE
-            updateTranscriptPrototypePanelFrames()
-        #endif
     }
 
     // MARK: - hover (with hysteresis)
@@ -453,9 +435,6 @@ final class BadgeController: NSObject {
         guard let panel, !programmaticMove.isActive, !config.isReadOnly else { return }
         let f = panel.frame
         anchor = CGPoint(x: f.midX, y: f.minY)
-        #if BADGE_TRANSCRIPT_PROTOTYPE
-            updateTranscriptPrototypePanelFrames()
-        #endif
         saveWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.persistAnchor() }
         saveWork = work
@@ -514,127 +493,7 @@ final class BadgeController: NSObject {
         dwellTimer = nil
         modeCycleTimer?.invalidate()
         modeCycleTimer = nil
-        #if BADGE_TRANSCRIPT_PROTOTYPE
-            transcriptPrototypeTimer?.invalidate()
-            transcriptPrototypeTimer = nil
-        #endif
     }
-
-    #if BADGE_TRANSCRIPT_PROTOTYPE
-
-        // MARK: - issue #346 throwaway prototype
-
-        private func updateTranscriptPrototype(for phase: PipelineState) {
-            switch phase {
-            case .listening:
-                transcriptPrototypeStartedAt = Date()
-                transcriptPrototypeTimer?.invalidate()
-                transcriptPrototypeTimer = Timer.scheduledTimer(
-                    withTimeInterval: 0.1,
-                    repeats: true
-                ) { [weak self] _ in
-                    Task { @MainActor in
-                        guard let self,
-                              let startedAt = self.transcriptPrototypeStartedAt
-                        else {
-                            return
-                        }
-                        self.model.transcriptPrototype.advance(
-                            elapsed: Date().timeIntervalSince(startedAt)
-                        )
-                    }
-                }
-            case .transcribing, .polishing, .inserted, .clipboard, .error, .idle:
-                transcriptPrototypeTimer?.invalidate()
-                transcriptPrototypeTimer = nil
-                transcriptPrototypeStartedAt = nil
-            case .downloadingModel, .loadingModel, .switchingASRModel,
-                 .recognitionUnavailable:
-                break
-            }
-            updateTranscriptPrototypePanels()
-        }
-
-        private func ensureTranscriptPrototypePanels() {
-            guard transcriptPrototypeCaptionPanel == nil else { return }
-
-            let caption = BadgePanel(
-                contentRect: NSRect(x: 0, y: 0, width: 420, height: 82),
-                styleMask: [.borderless, .nonactivatingPanel],
-                backing: .buffered,
-                defer: false
-            )
-            configurePrototypePanel(caption)
-            caption.ignoresMouseEvents = true
-            caption.contentView = NSHostingView(
-                rootView: BadgeTranscriptPrototypeCaption(
-                    prototype: model.transcriptPrototype
-                )
-            )
-            transcriptPrototypeCaptionPanel = caption
-
-            updateTranscriptPrototypePanels()
-        }
-
-        private func configurePrototypePanel(_ panel: BadgePanel) {
-            panel.level = .statusBar
-            panel.isOpaque = false
-            panel.backgroundColor = .clear
-            panel.hasShadow = false
-            panel.hidesOnDeactivate = false
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        }
-
-        private func updateTranscriptPrototypePanels() {
-            guard let panel else { return }
-            if model.transcriptPrototype.phase.presentsPreview {
-                showTranscriptPrototypeCaption()
-            } else {
-                transcriptPrototypeCaptionPanel?.orderOut(nil)
-            }
-            updateTranscriptPrototypePanelFrames(relativeTo: panel.frame)
-        }
-
-        private func showTranscriptPrototypeCaption() {
-            guard let caption = transcriptPrototypeCaptionPanel else { return }
-            guard !caption.isVisible else { return }
-            if reduceMotion {
-                caption.alphaValue = 1
-                caption.orderFrontRegardless()
-                return
-            }
-            caption.alphaValue = 0
-            caption.orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.16
-                caption.animator().alphaValue = 1
-            }
-        }
-
-        private func updateTranscriptPrototypePanelFrames() {
-            guard let panel else { return }
-            updateTranscriptPrototypePanelFrames(relativeTo: panel.frame)
-        }
-
-        private func updateTranscriptPrototypePanelFrames(relativeTo badgeFrame: NSRect) {
-            if let caption = transcriptPrototypeCaptionPanel {
-                var x = badgeFrame.midX - caption.frame.width / 2
-                let badgeCenter = CGPoint(x: badgeFrame.midX, y: badgeFrame.midY)
-                if let screen = screenFrame(at: badgeCenter) {
-                    x = max(
-                        screen.minX + 4,
-                        min(x, screen.maxX - caption.frame.width - 4)
-                    )
-                }
-                model.transcriptPrototype.setCaptionTetherOffset(
-                    badgeFrame.midX - (x + caption.frame.width / 2)
-                )
-                let origin = CGPoint(x: x, y: badgeFrame.maxY + 2)
-                caption.setFrameOrigin(origin)
-            }
-        }
-
-    #endif
 }
 
 private extension PipelineState {

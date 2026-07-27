@@ -17,9 +17,6 @@ final class BadgeModel: ObservableObject {
     /// Smoothed ribbon amplitude in [0.10, 0.45]; mutated by the controller at
     /// 30 Hz while recording. Not @Published — TimelineView redraws anyway.
     var amplitude: Double = LevelSmoother.floor
-    #if BADGE_TRANSCRIPT_PROTOTYPE
-        let transcriptPrototype = BadgeTranscriptPrototypeModel()
-    #endif
 }
 
 struct BadgeEnvironmentAdaptations: Equatable {
@@ -231,124 +228,6 @@ struct BadgeView: View {
         .padding(.horizontal, 6)
     }
 }
-
-#if BADGE_TRANSCRIPT_PROTOTYPE
-
-    struct BadgeTranscriptPrototypeCaption: View {
-        @ObservedObject var prototype: BadgeTranscriptPrototypeModel
-
-        var body: some View {
-            VStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(phaseColor)
-                            .frame(width: 5, height: 5)
-                        Text(captionLabel)
-                            .font(Theme.mono(9, .semibold))
-                            .tracking(0.8)
-                            .foregroundStyle(Theme.textTertiary)
-                        Spacer()
-                        if let handoffLabel {
-                            HStack(spacing: 4) {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 8, weight: .semibold))
-                                Text(handoffLabel)
-                                    .font(Theme.ui(9.5, .semibold))
-                            }
-                            .foregroundStyle(Theme.accent)
-                            .lineLimit(1)
-                        }
-                    }
-                    captionText
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .lineLimit(2)
-                        .truncationMode(.head)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(Theme.border, lineWidth: 1)
-                }
-
-                VStack(spacing: 0) {
-                    Rectangle()
-                        .fill(Theme.accent.opacity(0.58))
-                        .frame(width: 1, height: 7)
-                    Circle()
-                        .fill(Theme.accent)
-                        .frame(width: 4, height: 4)
-                }
-                .frame(height: 11)
-                .offset(x: prototype.captionTetherOffset)
-                .accessibilityHidden(true)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        }
-
-        @ViewBuilder
-        private var captionText: some View {
-            if prototype.fullTranscript.isEmpty {
-                Text("Listening for words…")
-                    .font(Theme.ui(12.5, .medium))
-                    .foregroundStyle(Theme.textTertiary)
-            } else {
-                (
-                    Text(prototype.confirmed)
-                        .foregroundStyle(
-                            prototype.phase == .polishing
-                                ? Theme.textSecondary
-                                : Theme.textPrimary
-                        )
-                        + Text(prototype.confirmed.isEmpty || prototype.tentative.isEmpty ? "" : " ")
-                        + Text(prototype.tentative)
-                        .foregroundStyle(Theme.textPrimary.opacity(0.48))
-                        + Text(prototype.tentative.isEmpty ? "" : "  •")
-                        .foregroundStyle(Theme.accent.opacity(0.72))
-                )
-                .font(Theme.ui(12.5, .medium))
-            }
-        }
-
-        private var captionLabel: String {
-            switch prototype.phase {
-            case .listening:
-                "RAW · LIVE"
-            case .transcribing:
-                "RAW · LOCKED"
-            case .polishing:
-                "RAW · LOCKED"
-            case .idle, .finished, .failed:
-                "RAW"
-            }
-        }
-
-        private var handoffLabel: String? {
-            switch prototype.phase {
-            case .transcribing:
-                "finalizing speech…"
-            case .polishing:
-                "shaping as \(prototype.modeName)…"
-            case .idle, .listening, .finished, .failed:
-                nil
-            }
-        }
-
-        private var phaseColor: Color {
-            switch prototype.phase {
-            case .polishing:
-                Theme.warning
-            case .failed:
-                Theme.error
-            case .idle, .listening, .transcribing, .finished:
-                Theme.accent
-            }
-        }
-    }
-
-#endif
 
 private struct BadgeModeCycleReel: View {
     let display: BadgeModeCycleDisplay
