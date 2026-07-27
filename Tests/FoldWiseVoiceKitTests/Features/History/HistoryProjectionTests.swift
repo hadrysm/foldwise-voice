@@ -1,6 +1,7 @@
 import XCTest
 @testable import FoldWiseVoiceKit
 
+@MainActor
 final class HistoryProjectionTests: XCTestCase {
     private var calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
@@ -37,7 +38,7 @@ final class HistoryProjectionTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            projection.sections.flatMap(\.rows).map(\.entry),
+            projection.sections.flatMap(\.rows).map { projection.entry(for: $0) },
             [newest, olderMatch]
         )
     }
@@ -58,17 +59,54 @@ final class HistoryProjectionTests: XCTestCase {
         XCTAssertEqual(projection.sections.map(\.header), ["Today", "Yesterday", "Jul 5, 2026"])
     }
 
-    func testProjectionRetainsSharedPresentationBesideExactSource() {
+    func testProjectionCarriesExactSourceEntry() throws {
         let today = entry(
             text: "today", rawText: "today", minutesAgo: 60, flagged: false
         )
+        let projection = project([today])
+        let row = try XCTUnwrap(projection.sections.first?.rows.first)
 
-        let row = project([today]).sections.first?.rows.first
+        XCTAssertEqual(projection.entry(for: row), today)
+    }
 
-        XCTAssertEqual(row, HistoryProjection.Row(
-            entry: today,
-            presentation: DictationRowPresentation(entry: today, calendar: calendar)
-        ))
+    func testProjectionBuildsPresentationWhenRowIsRequested() throws {
+        let today = entry(
+            text: "today", rawText: "today", minutesAgo: 60, flagged: false
+        )
+        let projection = project([today])
+        let row = try XCTUnwrap(projection.sections.first?.rows.first)
+
+        XCTAssertEqual(projection.presentation(for: row).text, "today")
+    }
+
+    func testProjectionCancelsWithinDenseDayGroup() {
+        let indices: Range<Int> = 0 ..< 10000
+        let entries = indices.map { index in
+            entry(
+                text: "entry \(index)",
+                rawText: "entry \(index)",
+                minutesAgo: Double(index) / 1000,
+                flagged: false
+            )
+        }
+        var index = HistoryIndex()
+        index.setEntries(entries)
+        let snapshot = index.snapshot(calendar: calendar)
+        var cancellationChecks = 0
+
+        let projection = HistoryProjection.project(
+            snapshot,
+            search: "absent",
+            flaggedOnly: false,
+            now: now,
+            locale: Locale(identifier: "en_US"),
+            shouldCancel: {
+                cancellationChecks += 1
+                return cancellationChecks == 4
+            }
+        )
+
+        XCTAssertNil(projection)
     }
 
     func testProjectionResolvesModeAttributionFromCurrentLibrary() {
@@ -89,10 +127,12 @@ final class HistoryProjectionTests: XCTestCase {
             vocabulary: []
         )
 
-        let row = project([source], modes: [current]).sections.first?.rows.first
+        let projection = project([source], modes: [current])
+        let row = projection.sections.first?.rows.first
+        let presentation = row.map { projection.presentation(for: $0) }
 
         XCTAssertEqual(
-            [row?.presentation.fullModeName, row?.presentation.modeIcon],
+            [presentation?.fullModeName, presentation?.modeIcon],
             ["Current Name", "envelope"]
         )
     }
@@ -102,71 +142,83 @@ final class HistoryProjectionTests: XCTestCase {
             text: "one", rawText: "one", minutesAgo: 1, flagged: false
         )
 
-        XCTAssertEqual(project([source], search: "   ").sections.first?.rows.map(\.entry), [source])
+        let projection = project([source], search: "   ")
+
+        XCTAssertEqual(
+            projection.sections.first?.rows.map { projection.entry(for: $0) },
+            [source]
+        )
     }
 
     func testEmptyInputProjectsEmpty() {
         XCTAssertTrue(project([]).isEmpty)
     }
 
-    func testCacheExecutesOnlyWhenEntriesFiltersOrModesChange() {
+    func testStoreExecutesOnlyWhenEntriesFiltersOrModesChange() {
         let source = entry(
             text: "one", rawText: "one", minutesAgo: 1, flagged: false
         )
         let added = entry(
             text: "two", rawText: "two", minutesAgo: 2, flagged: true
         )
-        var executionCount = 0
-        let cache = HistoryProjectionCache { input in
-            executionCount += 1
-            return HistoryProjection.project(
-                input,
-                now: self.now,
-                calendar: self.calendar,
-                locale: Locale(identifier: "en_US")
-            )
-        }
-        let initial = HistoryProjection.Input(
-            entries: [source], search: "", flaggedOnly: false
+        let store = PaneProjectionStore()
+        let locale = Locale(identifier: "en_US")
+        let environment = PaneProjectionStore.Environment(
+            now: now,
+            calendar: calendar,
+            locale: locale
         )
 
-        _ = cache.resolve(initial)
-        _ = cache.resolve(initial)
-        _ = cache.resolve(.init(entries: [source, added], search: "", flaggedOnly: false))
-        _ = cache.resolve(.init(entries: [source, added], search: "two", flaggedOnly: false))
-        _ = cache.resolve(.init(entries: [source, added], search: "two", flaggedOnly: true))
-        _ = cache.resolve(.init(
-            entries: [source, added], search: "two", flaggedOnly: true,
-            modes: [Mode(
-                id: .random(), name: "Current", icon: "pencil",
-                asrModel: ASRModelCatalog.defaultID, llmModel: "qwen2.5:3b",
-                transformation: .inPlace, systemPrompt: "Prompt", vocabulary: []
-            )]
-        ))
+        store.setHistoryEntries([source])
+        let initial = store.history(search: "", flaggedOnly: false, in: environment)
+        let unchanged = store.history(search: "", flaggedOnly: false, in: environment)
+        store.setHistoryEntries([source, added])
+        let entriesChanged = store.history(search: "", flaggedOnly: false, in: environment)
+        let searchChanged = store.history(search: "two", flaggedOnly: false, in: environment)
+        let filterChanged = store.history(search: "two", flaggedOnly: true, in: environment)
+        store.setModes([Mode(
+            id: .random(), name: "Current", icon: "pencil",
+            asrModel: ASRModelCatalog.defaultID, llmModel: "qwen2.5:3b",
+            transformation: .inPlace, systemPrompt: "Prompt", vocabulary: []
+        )])
+        let modesChanged = store.history(search: "two", flaggedOnly: true, in: environment)
 
-        XCTAssertEqual(executionCount, 5)
+        XCTAssertEqual(initial.generation, unchanged.generation)
+        XCTAssertEqual(
+            Set([
+                initial.generation,
+                entriesChanged.generation,
+                searchChanged.generation,
+                filterChanged.generation,
+                modesChanged.generation,
+            ]).count,
+            5
+        )
     }
 
-    func testCacheInvalidatesWhenTheCalendarDayChanges() throws {
+    func testStoreInvalidatesWhenTheCalendarDayChanges() throws {
         var currentNow = now
         let source = entry(
             text: "one", rawText: "one", minutesAgo: 60, flagged: false
         )
-        let input = HistoryProjection.Input(
-            entries: [source], search: "", flaggedOnly: false
-        )
-        let cache = HistoryProjectionCache(
-            now: { currentNow },
-            calendar: calendar,
-            locale: Locale(identifier: "en_US")
-        )
+        let store = PaneProjectionStore()
+        store.setHistoryEntries([source])
+        let locale = Locale(identifier: "en_US")
 
-        let beforeMidnight = cache.resolve(input)
+        let beforeMidnight = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: .init(now: currentNow, calendar: calendar, locale: locale)
+        )
         currentNow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: currentNow))
-        let afterMidnight = cache.resolve(input)
+        let afterMidnight = store.history(
+            search: "",
+            flaggedOnly: false,
+            in: .init(now: currentNow, calendar: calendar, locale: locale)
+        )
 
-        XCTAssertEqual(beforeMidnight.sections.map(\.header), ["Today"])
-        XCTAssertEqual(afterMidnight.sections.map(\.header), ["Yesterday"])
+        XCTAssertEqual(beforeMidnight.value.sections.map(\.header), ["Today"])
+        XCTAssertEqual(afterMidnight.value.sections.map(\.header), ["Yesterday"])
     }
 
     private func project(

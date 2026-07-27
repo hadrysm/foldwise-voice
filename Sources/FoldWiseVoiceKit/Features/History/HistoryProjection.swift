@@ -1,9 +1,42 @@
 import Foundation
 
+/// The current semantic Mode attribution for one saved Dictation session.
+/// Symbol validation remains presentation work and happens only for a visible
+/// row.
+struct HistoryModeAttribution: Equatable {
+    let name: String
+    let icon: String
+    let isDeleted: Bool
+
+    init(entry: HistoryEntry, currentMode: Mode?) {
+        guard entry.modeID != nil else {
+            name = entry.modeName
+            icon = "text.bubble"
+            isDeleted = false
+            return
+        }
+        guard let currentMode else {
+            name = entry.modeName
+            icon = "text.bubble"
+            isDeleted = true
+            return
+        }
+        name = currentMode.name
+        icon = currentMode.icon
+        isDeleted = false
+    }
+
+    fileprivate init(name: String, icon: String, isDeleted: Bool) {
+        self.name = name
+        self.icon = icon
+        self.isDeleted = isDeleted
+    }
+}
+
 /// Search, filtering, ordering, and day grouping for the full History
-/// collection. The exact entry travels beside its shared row presentation so
-/// commands never need to look a saved Dictation session up again.
-struct HistoryProjection: Equatable {
+/// collection. Rows retain semantic source data; their presentation is
+/// materialized only when SwiftUI asks a lazy row to render.
+final class HistoryProjection: Equatable, @unchecked Sendable {
     struct Input: Equatable {
         let entries: [HistoryEntry]
         let search: String
@@ -24,11 +57,10 @@ struct HistoryProjection: Equatable {
     }
 
     struct Row: Equatable, Identifiable {
-        let entry: HistoryEntry
-        let presentation: DictationRowPresentation
+        let id: UUID
 
-        var id: UUID {
-            entry.id
+        fileprivate init(id: UUID) {
+            self.id = id
         }
     }
 
@@ -38,12 +70,65 @@ struct HistoryProjection: Equatable {
     }
 
     let sections: [Section]
+    let hasSourceEntries: Bool
+    private let recordsByID: [UUID: HistoryIndex.Record]
+    private let calendar: Calendar
+    private let presentationLock = NSLock()
+    private var presentationsByID: [UUID: DictationRowPresentation] = [:]
 
     var isEmpty: Bool {
         sections.isEmpty
     }
 
-    static let empty = HistoryProjection(sections: [])
+    private init(
+        sections: [Section],
+        hasSourceEntries: Bool,
+        recordsByID: [UUID: HistoryIndex.Record],
+        calendar: Calendar
+    ) {
+        self.sections = sections
+        self.hasSourceEntries = hasSourceEntries
+        self.recordsByID = recordsByID
+        self.calendar = calendar
+    }
+
+    static let empty = HistoryProjection(
+        sections: [],
+        hasSourceEntries: false,
+        recordsByID: [:],
+        calendar: .current
+    )
+
+    static func == (lhs: HistoryProjection, rhs: HistoryProjection) -> Bool {
+        lhs === rhs
+    }
+
+    func entry(for row: Row) -> HistoryEntry {
+        record(for: row).entry
+    }
+
+    func presentation(for row: Row) -> DictationRowPresentation {
+        presentationLock.withLock {
+            if let presentation = presentationsByID[row.id] {
+                return presentation
+            }
+            let record = record(for: row)
+            let presentation = DictationRowPresentation(
+                entry: record.entry,
+                attribution: record.attribution,
+                calendar: calendar
+            )
+            presentationsByID[row.id] = presentation
+            return presentation
+        }
+    }
+
+    private func record(for row: Row) -> HistoryIndex.Record {
+        guard let record = recordsByID[row.id] else {
+            preconditionFailure("History row lost its indexed source")
+        }
+        return record
+    }
 
     static func project(
         _ input: Input,
@@ -51,42 +136,81 @@ struct HistoryProjection: Equatable {
         calendar: Calendar = .current,
         locale: Locale = .current
     ) -> HistoryProjection {
-        let search = input.search.trimmingCharacters(in: .whitespacesAndNewlines)
-        let entries = input.entries
-            .filter { entry in
-                if input.flaggedOnly, !entry.flagged {
-                    return false
-                }
-                guard !search.isEmpty else { return true }
-                return entry.text.localizedCaseInsensitiveContains(search)
-                    || entry.rawText.localizedCaseInsensitiveContains(search)
-            }
-            .sorted { $0.createdAt > $1.createdAt }
+        var index = HistoryIndex()
+        index.setModes(input.modes)
+        index.setEntries(input.entries)
+        let snapshot = index.snapshot(calendar: calendar)
+        return project(
+            snapshot,
+            search: input.search,
+            flaggedOnly: input.flaggedOnly,
+            now: now,
+            locale: locale
+        ) ?? .empty
+    }
 
-        var dayOrder: [Date] = []
-        var buckets: [Date: [Row]] = [:]
-        for entry in entries {
-            let day = calendar.startOfDay(for: entry.createdAt)
-            if buckets[day] == nil {
-                dayOrder.append(day)
+    static func project(
+        _ snapshot: HistoryIndex.Snapshot,
+        search: String,
+        flaggedOnly: Bool,
+        now: Date,
+        locale: Locale,
+        shouldCancel: () -> Bool = { false }
+    ) -> HistoryProjection? {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let formatter = dayFormatter(
+            calendar: snapshot.calendar,
+            locale: locale
+        )
+        var projectedGroups: [(header: String, records: [HistoryIndex.Record])] = []
+        projectedGroups.reserveCapacity(snapshot.groups.count)
+        var recordsByID: [UUID: HistoryIndex.Record] = [:]
+        recordsByID.reserveCapacity(snapshot.sourceCount)
+
+        for group in snapshot.groups {
+            guard !shouldCancel() else { return nil }
+            var records: [HistoryIndex.Record] = []
+            records.reserveCapacity(group.records.count)
+            for record in group.records {
+                guard !shouldCancel() else { return nil }
+                if flaggedOnly, !record.entry.flagged {
+                    continue
+                }
+                if !query.isEmpty,
+                   !record.entry.text.localizedCaseInsensitiveContains(query),
+                   !record.entry.rawText.localizedCaseInsensitiveContains(query) {
+                    continue
+                }
+                records.append(record)
             }
-            buckets[day, default: []].append(Row(
-                entry: entry,
-                presentation: DictationRowPresentation(
-                    entry: entry,
-                    modes: input.modes,
-                    calendar: calendar
-                )
+            guard !records.isEmpty else { continue }
+            for record in records {
+                recordsByID[record.entry.id] = record
+            }
+            projectedGroups.append((
+                header: header(
+                    for: group.day,
+                    now: now,
+                    calendar: snapshot.calendar,
+                    formatter: formatter
+                ),
+                records: records
             ))
         }
 
-        let formatter = dayFormatter(calendar: calendar, locale: locale)
-        return HistoryProjection(sections: dayOrder.map { day in
-            Section(
-                header: header(for: day, now: now, calendar: calendar, formatter: formatter),
-                rows: buckets[day] ?? []
-            )
-        })
+        return HistoryProjection(
+            sections: projectedGroups.map { group in
+                Section(
+                    header: group.header,
+                    rows: group.records.map {
+                        Row(id: $0.entry.id)
+                    }
+                )
+            },
+            hasSourceEntries: snapshot.sourceCount > 0,
+            recordsByID: recordsByID,
+            calendar: snapshot.calendar
+        )
     }
 
     private static func header(
@@ -106,7 +230,10 @@ struct HistoryProjection: Equatable {
         return formatter.string(from: day)
     }
 
-    private static func dayFormatter(calendar: Calendar, locale: Locale) -> DateFormatter {
+    private static func dayFormatter(
+        calendar: Calendar,
+        locale: Locale
+    ) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.timeZone = calendar.timeZone
@@ -117,56 +244,310 @@ struct HistoryProjection: Equatable {
     }
 }
 
-/// Memoizes History's O(n) projection by its entries, filters, current Mode
-/// library, and the calendar day that determines relative headers. SwiftUI may
-/// republish unrelated settings freely without making the collection rescan or
-/// regroup.
-final class HistoryProjectionCache {
-    typealias Project = (HistoryProjection.Input) -> HistoryProjection
-    private typealias TimedProject = (HistoryProjection.Input, Date) -> HistoryProjection
+/// Controller-retained chronological and day-grouped index. The store mutates
+/// this value on the main actor, then hands immutable snapshots to detached
+/// projection tasks.
+struct HistoryIndex {
+    private static let incrementalUpdateLimit = 64
 
-    private let now: () -> Date
-    private let calendar: Calendar
-    private let project: TimedProject
-    private var cached: (
-        input: HistoryProjection.Input, day: Date, output: HistoryProjection
-    )?
+    fileprivate struct Group: Equatable {
+        let day: Date
+        var records: [Record]
+    }
 
-    init(
-        now: @escaping () -> Date = Date.init,
-        calendar: Calendar = .current,
-        locale: Locale = .current
-    ) {
-        self.now = now
-        self.calendar = calendar
-        project = { input, currentNow in
-            HistoryProjection.project(
-                input,
-                now: currentNow,
-                calendar: calendar,
-                locale: locale
+    struct Snapshot: Equatable {
+        let calendar: Calendar
+        fileprivate var groups: [Group]
+        fileprivate(set) var sourceCount: Int
+
+        fileprivate mutating func apply(
+            removing removedIDs: Set<UUID>,
+            inserting records: [Record]
+        ) {
+            if !removedIDs.isEmpty {
+                groups = groups.compactMap { group in
+                    let records = group.records.filter {
+                        !removedIDs.contains($0.entry.id)
+                    }
+                    return records.isEmpty
+                        ? nil
+                        : Group(day: group.day, records: records)
+                }
+            }
+            for record in records {
+                insert(record)
+            }
+        }
+
+        fileprivate mutating func refresh(
+            ids: Set<UUID>,
+            from recordsByID: [UUID: Record]
+        ) {
+            guard !ids.isEmpty else { return }
+            for groupIndex in groups.indices {
+                for recordIndex in groups[groupIndex].records.indices {
+                    let id = groups[groupIndex].records[recordIndex].entry.id
+                    guard ids.contains(id), let record = recordsByID[id] else {
+                        continue
+                    }
+                    groups[groupIndex].records[recordIndex] = record
+                }
+            }
+        }
+
+        fileprivate mutating func replace(_ record: Record) {
+            let day = calendar.startOfDay(for: record.entry.createdAt)
+            guard let groupIndex = groups.firstIndex(where: { $0.day == day }),
+                  let recordIndex = groups[groupIndex].records.firstIndex(
+                      where: { $0.entry.id == record.entry.id }
+                  ) else { return }
+            groups[groupIndex].records[recordIndex] = record
+        }
+
+        fileprivate mutating func remove(_ record: Record) {
+            let day = calendar.startOfDay(for: record.entry.createdAt)
+            guard let groupIndex = groups.firstIndex(where: { $0.day == day }),
+                  let recordIndex = groups[groupIndex].records.firstIndex(
+                      where: { $0.entry.id == record.entry.id }
+                  ) else { return }
+            groups[groupIndex].records.remove(at: recordIndex)
+            if groups[groupIndex].records.isEmpty {
+                groups.remove(at: groupIndex)
+            }
+            sourceCount -= 1
+        }
+
+        fileprivate mutating func removeAll() {
+            groups.removeAll(keepingCapacity: true)
+            sourceCount = 0
+        }
+
+        private mutating func insert(_ record: Record) {
+            let day = calendar.startOfDay(for: record.entry.createdAt)
+            if let groupIndex = groups.firstIndex(where: { $0.day == day }) {
+                let recordIndex = groups[groupIndex].records.firstIndex {
+                    HistoryIndex.isNewer(record, than: $0)
+                } ?? groups[groupIndex].records.endIndex
+                groups[groupIndex].records.insert(record, at: recordIndex)
+                return
+            }
+            let groupIndex = groups.firstIndex { $0.day < day }
+                ?? groups.endIndex
+            groups.insert(
+                Group(day: day, records: [record]),
+                at: groupIndex
             )
         }
     }
 
-    init(
-        now: @escaping () -> Date = Date.init,
-        calendar: Calendar = .current,
-        project: @escaping Project
-    ) {
-        self.now = now
-        self.calendar = calendar
-        self.project = { input, _ in project(input) }
+    fileprivate struct Record: Equatable {
+        let entry: HistoryEntry
+        let attribution: HistoryModeAttribution
     }
 
-    func resolve(_ input: HistoryProjection.Input) -> HistoryProjection {
-        let currentNow = now()
-        let day = calendar.startOfDay(for: currentNow)
-        if let cached, cached.input == input, cached.day == day {
-            return cached.output
+    private struct ModeValue: Equatable {
+        let name: String
+        let icon: String
+    }
+
+    private struct CalendarKey: Equatable {
+        let identifier: String
+        let timeZoneIdentifier: String
+    }
+
+    private var recordsByID: [UUID: Record] = [:]
+    private var entryIDsByModeID: [ModeID: Set<UUID>] = [:]
+    private var modesByID: [ModeID: ModeValue] = [:]
+    private var cachedSnapshot: (key: CalendarKey, value: Snapshot)?
+
+    mutating func setModes(_ modes: [Mode]) {
+        let nextModes = modes.reduce(into: [ModeID: ModeValue]()) { values, mode in
+            guard let id = mode.id else { return }
+            values[id] = ModeValue(name: mode.name, icon: mode.icon)
         }
-        let output = project(input, currentNow)
-        cached = (input, day, output)
-        return output
+        let changedModeIDs = Set(modesByID.keys)
+            .union(nextModes.keys)
+            .filter { modesByID[$0] != nextModes[$0] }
+        modesByID = nextModes
+        let affectedEntryIDs = changedModeIDs.reduce(into: Set<UUID>()) { ids, modeID in
+            ids.formUnion(entryIDsByModeID[modeID] ?? [])
+        }
+        guard !affectedEntryIDs.isEmpty else { return }
+        for id in affectedEntryIDs {
+            guard let existing = recordsByID[id] else { continue }
+            recordsByID[id] = record(for: existing.entry)
+        }
+        cachedSnapshot?.value.refresh(
+            ids: affectedEntryIDs,
+            from: recordsByID
+        )
+    }
+
+    mutating func setEntries(_ entries: [HistoryEntry]) {
+        var incomingByID: [UUID: HistoryEntry] = [:]
+        var incomingIDs: [UUID] = []
+        incomingIDs.reserveCapacity(entries.count)
+        for entry in entries where incomingByID[entry.id] == nil {
+            incomingByID[entry.id] = entry
+            incomingIDs.append(entry.id)
+        }
+
+        let removedIDs = Set(recordsByID.keys).subtracting(incomingByID.keys)
+        var changedIDs = Set<UUID>()
+        for id in incomingIDs {
+            guard let entry = incomingByID[id] else { continue }
+            if let existing = recordsByID[id] {
+                guard existing.entry != entry else { continue }
+                changedIDs.insert(id)
+            } else {
+                changedIDs.insert(id)
+            }
+        }
+        guard !removedIDs.isEmpty || !changedIDs.isEmpty else { return }
+
+        for id in removedIDs.union(changedIDs) {
+            removeModeMembership(for: recordsByID[id]?.entry)
+        }
+        for id in removedIDs {
+            recordsByID[id] = nil
+        }
+        for id in changedIDs {
+            guard let entry = incomingByID[id] else { continue }
+            recordsByID[id] = record(for: entry)
+            addModeMembership(for: entry)
+        }
+
+        let replacedIDs = removedIDs.union(changedIDs)
+        if replacedIDs.count > Self.incrementalUpdateLimit {
+            cachedSnapshot = nil
+        } else {
+            let replacements = changedIDs.compactMap { recordsByID[$0] }
+            cachedSnapshot?.value.apply(
+                removing: replacedIDs,
+                inserting: replacements
+            )
+            cachedSnapshot?.value.sourceCount = recordsByID.count
+        }
+    }
+
+    @discardableResult
+    mutating func append(_ entry: HistoryEntry) -> Bool {
+        guard recordsByID[entry.id] == nil else { return false }
+        let newRecord = record(for: entry)
+        recordsByID[entry.id] = newRecord
+        addModeMembership(for: entry)
+        cachedSnapshot?.value.apply(
+            removing: [],
+            inserting: [newRecord]
+        )
+        cachedSnapshot?.value.sourceCount = recordsByID.count
+        return true
+    }
+
+    @discardableResult
+    mutating func update(_ entry: HistoryEntry) -> Bool {
+        guard let existing = recordsByID[entry.id],
+              existing.entry != entry else { return false }
+        removeModeMembership(for: existing.entry)
+        let replacement = record(for: entry)
+        recordsByID[entry.id] = replacement
+        addModeMembership(for: entry)
+        if existing.entry.createdAt == entry.createdAt {
+            cachedSnapshot?.value.replace(replacement)
+            return true
+        }
+
+        cachedSnapshot?.value.apply(
+            removing: [entry.id],
+            inserting: [replacement]
+        )
+        return true
+    }
+
+    @discardableResult
+    mutating func delete(id: UUID) -> Bool {
+        guard let removed = recordsByID.removeValue(forKey: id) else {
+            return false
+        }
+        removeModeMembership(for: removed.entry)
+        cachedSnapshot?.value.remove(removed)
+        return true
+    }
+
+    @discardableResult
+    mutating func clear() -> Bool {
+        guard !recordsByID.isEmpty else { return false }
+        recordsByID.removeAll(keepingCapacity: true)
+        entryIDsByModeID.removeAll(keepingCapacity: true)
+        cachedSnapshot?.value.removeAll()
+        return true
+    }
+
+    mutating func snapshot(calendar: Calendar) -> Snapshot {
+        let key = CalendarKey(
+            identifier: String(describing: calendar.identifier),
+            timeZoneIdentifier: calendar.timeZone.identifier
+        )
+        if let cachedSnapshot, cachedSnapshot.key == key {
+            return cachedSnapshot.value
+        }
+
+        var groups: [Group] = []
+        let orderedRecords = recordsByID.values.sorted(by: Self.isNewer)
+        for record in orderedRecords {
+            let day = calendar.startOfDay(for: record.entry.createdAt)
+            if groups.last?.day == day {
+                groups[groups.endIndex - 1].records.append(record)
+            } else {
+                groups.append(Group(day: day, records: [record]))
+            }
+        }
+        let snapshot = Snapshot(
+            calendar: calendar,
+            groups: groups,
+            sourceCount: recordsByID.count
+        )
+        cachedSnapshot = (key, snapshot)
+        return snapshot
+    }
+
+    private mutating func removeModeMembership(for entry: HistoryEntry?) {
+        guard let entry, let modeID = entry.modeID else { return }
+        entryIDsByModeID[modeID]?.remove(entry.id)
+        if entryIDsByModeID[modeID]?.isEmpty == true {
+            entryIDsByModeID[modeID] = nil
+        }
+    }
+
+    private mutating func addModeMembership(for entry: HistoryEntry) {
+        guard let modeID = entry.modeID else { return }
+        entryIDsByModeID[modeID, default: []].insert(entry.id)
+    }
+
+    private func record(for entry: HistoryEntry) -> Record {
+        let attribution = if let modeID = entry.modeID, let mode = modesByID[modeID] {
+            HistoryModeAttribution(
+                name: mode.name,
+                icon: mode.icon,
+                isDeleted: false
+            )
+        } else {
+            HistoryModeAttribution(
+                name: entry.modeName,
+                icon: "text.bubble",
+                isDeleted: entry.modeID != nil
+            )
+        }
+        return Record(entry: entry, attribution: attribution)
+    }
+
+    fileprivate static func isNewer(
+        _ lhs: Record,
+        than rhs: Record
+    ) -> Bool {
+        if lhs.entry.createdAt != rhs.entry.createdAt {
+            return lhs.entry.createdAt > rhs.entry.createdAt
+        }
+        return lhs.entry.id.uuidString < rhs.entry.id.uuidString
     }
 }

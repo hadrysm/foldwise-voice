@@ -5,6 +5,39 @@ import XCTest
 
 @MainActor
 final class ModelsWorkspaceHostedTests: XCTestCase {
+    func testHostedModelsDoesNotReprojectForUnrelatedShortcutChange() {
+        let model = SettingsModel()
+        var projectionCount = 0
+        let controller = NSHostingController(
+            rootView: ModelsCombinedPane(
+                interface: model.modelsPaneInterface,
+                project: { input in
+                    projectionCount += 1
+                    return ModelsWorkspaceProjection.make(
+                        asrSnapshot: input.asrSnapshot,
+                        asrFailures: input.asrFailures,
+                        polishState: input.polishState,
+                        modes: input.modes,
+                        inspectedID: input.inspectedID,
+                        previousPolishRowIDs: input.previousPolishRowIDs
+                    )
+                }
+            )
+            .frame(width: 900, height: 700)
+        )
+        controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        controller.view.layoutSubtreeIfNeeded()
+        let initialProjectionCount = projectionCount
+
+        model.pttKey = "f18"
+        let observationSettled = expectation(description: "unrelated observation settled")
+        DispatchQueue.main.async { observationSettled.fulfill() }
+        wait(for: [observationSettled], timeout: 1)
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(projectionCount, initialProjectionCount)
+    }
+
     func testNativeSplitProtectsBothPaneMinimumsAtCompactWidth() {
         let controller = compactSplitController()
 
@@ -143,7 +176,7 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
             OllamaClient.InstalledModel(name: "qwen2.5:3b", sizeBytes: 1_900_000_000),
         ]
         let controller = NSHostingController(
-            rootView: ModelsCombinedPane(model: model)
+            rootView: ModelsCombinedPane(interface: model.modelsPaneInterface)
                 .frame(width: 617, height: 780)
                 .environment(\.colorScheme, .light)
         )
@@ -195,7 +228,7 @@ final class ModelsWorkspaceHostedTests: XCTestCase {
             isDictationBlocked: false
         ))
         let controller = NSHostingController(
-            rootView: ModelsCombinedPane(model: model)
+            rootView: ModelsCombinedPane(interface: model.modelsPaneInterface)
                 .frame(width: 900, height: 700)
                 .environment(\.colorScheme, .light)
                 .tint(Theme.accent)

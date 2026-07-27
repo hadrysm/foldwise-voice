@@ -8,28 +8,27 @@ struct StatsEnvironmentAdaptations: Equatable {
 }
 
 struct StatsPane: View {
-    @ObservedObject var model: SettingsModel
+    let interface: StatsPaneInterface
     @Environment(\.locale) private var environmentLocale
     @Environment(\.accessibilityReduceMotion) private var environmentReduceMotion
     @Environment(\.colorSchemeContrast) private var environmentContrast
-    @State private var projection: StatsProjection?
-    @State private var projectionCache: StatsProjectionCache
 
+    private let now: () -> Date
     private let calendar: () -> Calendar
     private let locale: Locale?
     private let notificationCenter: NotificationCenter
     private let environmentOverride: StatsEnvironmentAdaptations?
 
     init(
-        model: SettingsModel,
-        projectionCache: StatsProjectionCache = StatsProjectionCache(),
+        interface: StatsPaneInterface,
+        now: @escaping () -> Date = Date.init,
         calendar: @escaping () -> Calendar = { .autoupdatingCurrent },
         locale: Locale? = nil,
         notificationCenter: NotificationCenter = .default,
         environmentOverride: StatsEnvironmentAdaptations? = nil
     ) {
-        self.model = model
-        _projectionCache = State(initialValue: projectionCache)
+        self.interface = interface
+        self.now = now
         self.calendar = calendar
         self.locale = locale
         self.notificationCenter = notificationCenter
@@ -37,40 +36,47 @@ struct StatsPane: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("A look at how you dictate, drawn from the History you already keep.")
-                .font(Theme.body)
-                .foregroundStyle(Theme.textSecondary)
-
-            if let projection {
-                notice(projection.notice)
-                StatsMetricStrip(metrics: projection.metrics)
-                MonthlyActivityCalendar(
-                    month: projection.month,
-                    environment: resolvedEnvironment
-                )
+        Group {
+            if let projection = projectionState.completed?.value {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("A look at how you dictate, drawn from the History you already keep.")
+                        .font(Theme.body)
+                        .foregroundStyle(Theme.textSecondary)
+                    notice(projection.notice)
+                    StatsMetricStrip(metrics: projection.metrics)
+                    MonthlyActivityCalendar(
+                        month: projection.month,
+                        environment: resolvedEnvironment
+                    )
+                }
+            } else {
+                PaneProjectionLoading(paneName: "Stats")
             }
         }
-        .onChange(of: input, initial: true) { _, input in
-            refresh(input)
+        .overlay(alignment: .topTrailing) {
+            PaneProjectionUpdating(isVisible: projectionState.phase == .updating)
+        }
+        .paneFirstMeaningfulFrame(
+            .stats,
+            performance: interface.performance,
+            isReady: projectionState.isCurrent
+        )
+        .onAppear {
+            refresh()
         }
         .onChange(of: environmentLocale) { _, _ in
-            refresh(input)
+            refresh()
         }
         .onReceive(notificationCenter.publisher(for: .NSCalendarDayChanged)) { _ in
-            refresh(input)
+            refresh()
         }
         .onReceive(notificationCenter.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
-            refresh(input)
+            refresh()
         }
     }
 
-    private var input: StatsProjection.Input {
-        StatsProjection.Input(
-            entries: model.historyEntries,
-            currentStreak: model.currentStreak,
-            savingEnabled: model.saveHistory
-        )
+    private var projectionState: PaneProjectionStore.Projection<StatsProjection> {
+        interface.projection
     }
 
     private var resolvedEnvironment: StatsEnvironmentAdaptations {
@@ -80,12 +86,12 @@ struct StatsPane: View {
         )
     }
 
-    private func refresh(_ input: StatsProjection.Input) {
-        projection = projectionCache.resolve(
-            input,
+    private func refresh() {
+        interface.prepareProjection(in: .init(
+            now: now(),
             calendar: calendar(),
             locale: locale ?? environmentLocale
-        )
+        ))
     }
 
     @ViewBuilder
@@ -114,7 +120,7 @@ struct StatsPane: View {
     }
 
     private func openHistory() {
-        model.pane = .history
+        interface.openHistory()
     }
 }
 
@@ -234,7 +240,7 @@ private struct MonthlyActivityCalendar: View {
 
     @State private var hoveredDate: Date?
     @State private var rovingDate: Date?
-    @FocusState private var focusedDate: Date?
+    @State private var focusedDate: Date?
 
     init(
         month: StatsProjection.Month,
@@ -243,10 +249,6 @@ private struct MonthlyActivityCalendar: View {
         self.month = month
         self.environment = environment
         _rovingDate = State(initialValue: month.days.last { $0.state != .future }?.date)
-    }
-
-    private var columns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
     }
 
     private var eligibleDates: [Date] {
@@ -319,53 +321,25 @@ private struct MonthlyActivityCalendar: View {
     }
 
     private var grid: some View {
-        LazyVGrid(columns: columns, spacing: 6) {
-            ForEach(month.weekdays, id: \.self) { weekday in
-                Text(weekday)
-                    .font(Theme.mono(9, .bold))
-                    .foregroundStyle(Theme.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .accessibilityHidden(true)
-                    .accessibilityIdentifier("stats.weekday.\(weekday)")
-            }
-            ForEach(0 ..< month.leadingColumnOffset, id: \.self) { index in
-                Color.clear
-                    .frame(height: 44)
-                    .accessibilityHidden(true)
-                    .accessibilityIdentifier("stats.spacer.leading.\(index)")
-            }
-            ForEach(month.days) { day in
-                StatsDayCell(
-                    day: day,
-                    canFocus: day.date == rovingDate && day.state != .future,
-                    isFocused: day.date == focusedDate,
-                    isHovered: day.date == hoveredDate,
-                    environment: environment
-                ) { hovering in
-                    guard day.state != .future else { return }
-                    if hovering {
-                        hoveredDate = day.date
-                    } else if hoveredDate == day.date {
-                        hoveredDate = nil
-                    }
-                } onMove: { direction in
-                    moveFocus(direction)
-                }
-                .focused($focusedDate, equals: day.date)
+        StatsCalendarGridView(
+            month: month,
+            environment: environment,
+            hoveredDate: hoveredDate,
+            rovingDate: rovingDate,
+            focusedDate: focusedDate
+        ) { date in
+            hoveredDate = date
+        } onFocus: { date in
+            focusedDate = date
+            if let date {
+                rovingDate = date
             }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(month.accessibilityLabel)
-        .accessibilityValue(month.accessibilityValue)
-        .accessibilityIdentifier("stats.calendar")
-    }
-
-    private func moveFocus(_ direction: CalendarFocusNavigator.Direction) {
-        guard let focusedDate else { return }
-        let navigator = CalendarFocusNavigator(eligibleDates: eligibleDates)
-        guard let next = navigator.move(from: focusedDate, direction: direction) else { return }
-        rovingDate = next
-        self.focusedDate = next
+        .frame(height: StatsCalendarLayout(
+            width: 0,
+            leadingColumnOffset: month.leadingColumnOffset,
+            dayCount: month.days.count
+        ).height)
     }
 
     private func repairFocus() {
@@ -378,87 +352,6 @@ private struct MonthlyActivityCalendar: View {
         DispatchQueue.main.async {
             focusedDate = repaired
         }
-    }
-}
-
-private struct StatsDayCell: View {
-    let day: StatsProjection.Day
-    let canFocus: Bool
-    let isFocused: Bool
-    let isHovered: Bool
-    let environment: StatsEnvironmentAdaptations
-    let onHover: (Bool) -> Void
-    let onMove: (CalendarFocusNavigator.Direction) -> Void
-
-    private var style: StatsActivityStyle {
-        StatsActivityStyle(
-            day: day,
-            focused: isFocused,
-            hovered: isHovered,
-            increaseContrast: environment.increaseContrast
-        )
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text(day.dayNumber)
-                    .font(Theme.mono(10, .semibold))
-                Spacer(minLength: 2)
-                if day.state == .today {
-                    Circle()
-                        .fill(Theme.accent)
-                        .frame(width: 4, height: 4)
-                        .accessibilityHidden(true)
-                }
-            }
-            Spacer(minLength: 1)
-            if day.state == .future || day.intensity == .neutral {
-                Text("—")
-                    .font(Theme.mono(9))
-            } else {
-                StatsWaveformCue(
-                    intensity: day.intensity,
-                    increaseContrast: environment.increaseContrast
-                )
-            }
-        }
-        .foregroundStyle(style.foreground)
-        .padding(7)
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
-        .background(style.background, in: RoundedRectangle(cornerRadius: 6))
-        .overlay {
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(style.outline, lineWidth: style.boundaryWidth)
-        }
-        .emberInsetFocusRing(isFocused)
-        .contentShape(Rectangle())
-        .focusable(canFocus)
-        .focusEffectDisabled()
-        .onHover(perform: onHover)
-        .onMoveCommand { direction in
-            guard isFocused else { return }
-            switch direction {
-            case .left: onMove(.left)
-            case .right: onMove(.right)
-            case .up: onMove(.up)
-            case .down: onMove(.down)
-            default: break
-            }
-        }
-        .animation(
-            StatsTransitionPolicy.resolve(reduceMotion: environment.reduceMotion).animation,
-            value: day.intensity
-        )
-        .animation(
-            StatsTransitionPolicy.resolve(reduceMotion: environment.reduceMotion).animation,
-            value: isHovered
-        )
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(day.accessibilityLabel)
-        .accessibilityValue(day.accessibilityValue)
-        .accessibilityHidden(day.state == .future)
-        .accessibilityIdentifier("stats.day.\(day.dayNumber)")
     }
 }
 
@@ -515,34 +408,92 @@ private struct StatsIntensityLegend: View {
     let environment: StatsEnvironmentAdaptations
 
     var body: some View {
-        HStack(spacing: 12) {
-            Text("Daily spoken words")
-                .font(Theme.ui(10, .semibold))
-                .foregroundStyle(Theme.textSecondary)
-            Spacer(minLength: 6)
-            ForEach(
-                Array(zip(StatsProjection.Day.Intensity.allCases, labels)),
-                id: \.0.rawValue
-            ) { intensity, label in
-                HStack(spacing: 5) {
-                    if intensity == .neutral {
-                        Text("—")
-                            .font(Theme.mono(9))
-                            .foregroundStyle(Theme.textTertiary)
-                    } else {
-                        StatsWaveformCue(
-                            intensity: intensity,
-                            increaseContrast: environment.increaseContrast
-                        )
-                    }
+        Canvas { context, size in
+            context.draw(
+                Text("Daily spoken words")
+                    .font(Theme.ui(10, .semibold))
+                    .foregroundStyle(Theme.textSecondary),
+                at: CGPoint(x: 0, y: size.height / 2),
+                anchor: .leading
+            )
+            var trailingX = size.width
+            let entries = Array(zip(
+                StatsProjection.Day.Intensity.allCases,
+                labels
+            ))
+            for (intensity, label) in entries.reversed() {
+                let resolvedLabel = context.resolve(
                     Text(label)
                         .font(Theme.mono(8.7, .medium))
                         .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-                .accessibilityHidden(true)
-                .accessibilityIdentifier("stats.decoration.legend.\(intensity.rawValue)")
+                )
+                let labelSize = resolvedLabel.measure(
+                    in: CGSize(width: .infinity, height: size.height)
+                )
+                trailingX -= labelSize.width
+                context.draw(
+                    resolvedLabel,
+                    at: CGPoint(x: trailingX, y: size.height / 2),
+                    anchor: .leading
+                )
+                trailingX -= 5
+                let cueWidth: CGFloat = intensity == .neutral ? 7 : 23
+                trailingX -= cueWidth
+                drawCue(
+                    intensity,
+                    x: trailingX,
+                    baseline: size.height,
+                    in: &context
+                )
+                trailingX -= 12
+            }
+        }
+        .frame(height: 16)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Daily spoken words")
+    }
+
+    private func drawCue(
+        _ intensity: StatsProjection.Day.Intensity,
+        x: CGFloat,
+        baseline: CGFloat,
+        in context: inout GraphicsContext
+    ) {
+        guard intensity != .neutral else {
+            context.draw(
+                Text("—")
+                    .font(Theme.mono(9))
+                    .foregroundStyle(Theme.textTertiary),
+                at: CGPoint(x: x, y: baseline),
+                anchor: .bottomLeading
+            )
+            return
+        }
+        let boundaryWidth = Theme.essentialBorderWidth(
+            increaseContrast: environment.increaseContrast
+        )
+        for bar in StatsActivityStyle.waveformBars(
+            intensity,
+            x: x,
+            baseline: baseline
+        ) {
+            if bar.isFilled {
+                context.fill(
+                    Path(roundedRect: bar.frame, cornerRadius: 1.5),
+                    with: .color(Theme.accent)
+                )
+            } else {
+                let boundaryFrame = bar.frame.insetBy(
+                    dx: boundaryWidth / 2,
+                    dy: boundaryWidth / 2
+                )
+                context.stroke(
+                    Path(roundedRect: boundaryFrame, cornerRadius: 1.5),
+                    with: .color(Theme.essentialBorderColor(
+                        increaseContrast: environment.increaseContrast
+                    )),
+                    lineWidth: boundaryWidth
+                )
             }
         }
     }
@@ -584,6 +535,11 @@ private struct StatsWaveformCue: View {
 }
 
 struct StatsActivityStyle {
+    struct WaveformBar {
+        let frame: CGRect
+        let isFilled: Bool
+    }
+
     static let waveformBarHeights: [CGFloat] = [6, 10, 15, 11, 8]
 
     let background: Color
@@ -611,6 +567,26 @@ struct StatsActivityStyle {
         _ intensity: StatsProjection.Day.Intensity
     ) -> [Bool] {
         waveformBarHeights.indices.map { $0 < intensity.rawValue }
+    }
+
+    static func waveformBars(
+        _ intensity: StatsProjection.Day.Intensity,
+        x: CGFloat,
+        baseline: CGFloat
+    ) -> [WaveformBar] {
+        let pattern = waveformFillPattern(intensity)
+        return waveformBarHeights.indices.map { index in
+            let height = waveformBarHeights[index]
+            return WaveformBar(
+                frame: CGRect(
+                    x: x + CGFloat(index) * 5,
+                    y: baseline - height,
+                    width: 3,
+                    height: height
+                ),
+                isFilled: pattern[index]
+            )
+        }
     }
 }
 

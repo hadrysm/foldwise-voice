@@ -5,6 +5,12 @@
 import AppKit
 import SwiftUI
 
+private extension Notification.Name {
+    static let localeCurrentDidChange = Notification.Name(
+        "kCFLocaleCurrentLocaleDidChangeNotification"
+    )
+}
+
 @MainActor
 final class SettingsController {
     private let config: Config
@@ -18,7 +24,10 @@ final class SettingsController {
     private let calendar: Calendar
     private let notificationCenter: NotificationCenter
     private let permissionRecovery: PermissionRecoveryCoordinator
-    let model = SettingsModel()
+    // The controller deliberately owns completed projections for the window's
+    // lifetime; disposable pane views reach this same instance through model.
+    private let paneProjections: PaneProjectionStore
+    let model: SettingsModel
     private lazy var workflow = SettingsWorkflow(
         config: config,
         model: model,
@@ -56,6 +65,12 @@ final class SettingsController {
         notificationCenter: NotificationCenter = .default,
         permissionRecoveryEnvironment: PermissionRecoveryEnvironment? = nil
     ) {
+        let paneProjections = PaneProjectionStore()
+        self.paneProjections = paneProjections
+        model = SettingsModel(
+            panePerformance: PaneNavigationPerformance(),
+            paneProjections: paneProjections
+        )
         self.config = config
         self.historyStore = historyStore
         self.statsStore = statsStore
@@ -110,9 +125,11 @@ final class SettingsController {
 
     func show() {
         if window == nil {
+            model.panePerformance.beginFirstWindow()
             build()
         }
         populate()
+        refreshPaneProjections()
         // Accessory apps never own the menu bar; become a regular app while
         // settings is open so the menu bar shows FoldWise Voice, not whatever
         // app was frontmost before.
@@ -181,7 +198,11 @@ final class SettingsController {
     }
 
     private func observeBoundaryNotifications() {
-        for name in [Notification.Name.NSCalendarDayChanged, .NSSystemTimeZoneDidChange] {
+        for name in [
+            Notification.Name.NSCalendarDayChanged,
+            .NSSystemTimeZoneDidChange,
+            .localeCurrentDidChange,
+        ] {
             boundaryObservers.append(notificationCenter.addObserver(
                 forName: name,
                 object: nil,
@@ -189,6 +210,7 @@ final class SettingsController {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     self?.workflow.refreshStreak()
+                    self?.refreshPaneProjections()
                 }
             })
         }
@@ -204,7 +226,7 @@ final class SettingsController {
     }
 
     private func build() {
-        let hosting = NSHostingController(rootView: SettingsView(model: model))
+        let hosting = Self.makeHostingController(model: model)
         let win = Self.makeMainWindow(contentViewController: hosting)
         win.center()
         win.setFrameAutosaveName("FoldWiseMainWindow")
@@ -223,6 +245,17 @@ final class SettingsController {
             MainActor.assumeIsolated { self?.cancelRecording() }
         }
         window = win
+    }
+
+    static func makeHostingController(
+        model: SettingsModel
+    ) -> NSHostingController<SettingsView> {
+        let hosting = NSHostingController(rootView: SettingsView(model: model))
+        // The window owns a fixed/resizable content rectangle. Asking the root
+        // SwiftUI tree for intrinsic, minimum, and maximum sizes after every
+        // pane mutation duplicates its full layout negotiation.
+        hosting.sizingOptions = []
+        return hosting
     }
 
     /// Main-window chrome, internal (not private) so the titlebar tests pin
@@ -251,6 +284,14 @@ final class SettingsController {
         }
         workflow.populateHistory()
         workflow.refreshLLMModels()
+    }
+
+    private func refreshPaneProjections() {
+        paneProjections.prepareAll(in: .init(
+            now: now(),
+            calendar: calendar,
+            locale: .autoupdatingCurrent
+        ))
     }
 
     private func resetConfiguration() {

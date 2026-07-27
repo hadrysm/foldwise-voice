@@ -9,6 +9,7 @@ import Darwin
 import Foundation
 import os
 import Sparkle
+import SwiftUI
 
 final class LiveLLMModelManager: LLMModelManaging {
     func list() async -> [OllamaClient.InstalledModel] {
@@ -53,6 +54,7 @@ private func acquireInstanceLock(port: UInt16) -> Bool {
 final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     let configPath: String?
     let showSettingsOnLaunch: Bool
+    let panePerformancePlan: PanePerformancePlan?
 
     // Standard AppKit delayed-init: these exist for the app's whole life but
     // can only be built in applicationDidFinishLaunching. Optionals would
@@ -73,13 +75,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     private var lifecycleCoordinator: DictationLifecycleCoordinator?
     private var updaterController: SPUStandardUpdaterController?
     private var updaterAvailabilityObservation: NSKeyValueObservation?
+    private var panePerformanceApplication: PanePerformanceApplication?
     #if FOLDWISE_UPDATE_ACCEPTANCE
         private var updateRuntimeAcceptance: UpdateRuntimeAcceptanceController?
     #endif
 
-    init(configPath: String?, showSettingsOnLaunch: Bool) {
+    init(
+        configPath: String?,
+        showSettingsOnLaunch: Bool,
+        panePerformancePlan: PanePerformancePlan? = nil
+    ) {
         self.configPath = configPath
         self.showSettingsOnLaunch = showSettingsOnLaunch
+        self.panePerformancePlan = panePerformancePlan
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -90,6 +98,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
                 return
             }
         #endif
+
+        if let panePerformancePlan {
+            let application = PanePerformanceApplication(plan: panePerformancePlan)
+            panePerformanceApplication = application
+            application.start()
+            return
+        }
 
         let acquiredInstanceLock = acquireInstanceLock(port: lockPort)
         let url = Config.resolvePath(cliPath: configPath)
@@ -393,6 +408,282 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         main.addItem(windowItem)
 
         return main
+    }
+}
+
+@MainActor
+private final class PanePerformanceApplication {
+    private let plan: PanePerformancePlan
+    private let fixture: PanePerformanceFixture
+    private let performance = PaneNavigationPerformance()
+    private var window: NSWindow?
+    private var currentModel: SettingsModel?
+    private var processActivity: NSObjectProtocol?
+    private var firstWindowMilliseconds: Double?
+    private var firstWindowContinuation: CheckedContinuation<Double, Never>?
+    private var frameContinuation:
+        (pane: SettingsModel.Pane, continuation: CheckedContinuation<Void, Never>)?
+    private var navigationContinuation:
+        (
+            pane: SettingsModel.Pane,
+            continuation: CheckedContinuation<PaneNavigationSample, Never>
+        )?
+
+    private struct Samples {
+        let durations: [Double]
+        let intervals: [PanePerformanceNavigationInterval]
+    }
+
+    init(plan: PanePerformancePlan) {
+        self.plan = plan
+        fixture = PanePerformanceFixture(profile: plan.profile)
+    }
+
+    func start() {
+        processActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .latencyCritical],
+            reason: "Measure foreground pane-navigation latency"
+        )
+        do {
+            try fixture.write(
+                to: plan.dataDirectory.appendingPathComponent("history.jsonl")
+            )
+            configureCallbacks()
+            performance.beginFirstWindow()
+            let entries = JSONLHistoryStore(
+                url: plan.dataDirectory.appendingPathComponent("history.jsonl")
+            ).load()
+            let model = makeModel(initialPane: .home, entries: entries)
+            currentModel = model
+            let controller = SettingsController.makeHostingController(model: model)
+            let window = SettingsController.makeMainWindow(contentViewController: controller)
+            window.setContentSize(NSSize(width: 980, height: 720))
+            window.center()
+            self.window = window
+            PanePerformanceWindowPresenter.present(window)
+            Task { await run() }
+        } catch {
+            fail(error)
+        }
+    }
+
+    private func configureCallbacks() {
+        performance.onFirstWindowSample = { [weak self] duration in
+            guard let self else { return }
+            firstWindowMilliseconds = duration
+            firstWindowContinuation?.resume(returning: duration)
+            firstWindowContinuation = nil
+        }
+        performance.onFirstMeaningfulFrame = { [weak self] pane in
+            guard let self, frameContinuation?.pane == pane else { return }
+            frameContinuation?.continuation.resume()
+            frameContinuation = nil
+        }
+        performance.onNavigationSample = { [weak self] sample in
+            guard let self, navigationContinuation?.pane == sample.destination else {
+                return
+            }
+            navigationContinuation?.continuation.resume(
+                returning: sample
+            )
+            navigationContinuation = nil
+        }
+    }
+
+    private func run() async {
+        do {
+            try await performRun()
+        } catch {
+            fail(error)
+        }
+    }
+
+    private func performRun() async throws {
+        let firstWindow = await waitForFirstWindow()
+        var results: [PanePerformanceRouteResult] = []
+        var navigationIntervals: [PanePerformanceNavigationInterval] = []
+        for destination in plan.destinations {
+            let source: SettingsModel.Pane = destination == .home ? .settings : .home
+            let cold = await samples(
+                source: source,
+                destination: destination,
+                visit: .cold
+            )
+            results.append(try PanePerformanceRouteResult(
+                source: source,
+                destination: destination,
+                visit: .cold,
+                samplesMilliseconds: cold.durations
+            ))
+            navigationIntervals.append(contentsOf: cold.intervals)
+            let warm = await samples(
+                source: source,
+                destination: destination,
+                visit: .warm
+            )
+            results.append(try PanePerformanceRouteResult(
+                source: source,
+                destination: destination,
+                visit: .warm,
+                samplesMilliseconds: warm.durations
+            ))
+            navigationIntervals.append(contentsOf: warm.intervals)
+        }
+        let report = PanePerformanceRunReport(
+            fixtureIdentity: fixture.identity,
+            profile: plan.profile,
+            recordedSamplesPerClass: plan.sampleCount,
+            firstWindowMilliseconds: firstWindow,
+            routes: results,
+            navigationIntervals: navigationIntervals
+        )
+        try report.write(to: plan.outputURL)
+        endProcessActivity()
+        NSApp.terminate(nil)
+    }
+
+    private func samples(
+        source: SettingsModel.Pane,
+        destination: SettingsModel.Pane,
+        visit: PanePerformanceVisit
+    ) async -> Samples {
+        var durations: [Double] = []
+        var intervals: [PanePerformanceNavigationInterval] = []
+        for index in 0 ... plan.sampleCount {
+            let model = await installFreshHost(initialPane: source)
+            if visit == .warm {
+                _ = await navigate(model, to: destination)
+                _ = await navigate(model, to: source)
+            }
+            let sample = await navigate(model, to: destination)
+            intervals.append(PanePerformanceNavigationInterval(
+                destination: destination,
+                visit: visit,
+                sample: index == 0 ? .warmUp : .recorded,
+                startedAtSystemUptime: sample.startedAtSystemUptime,
+                endedAtSystemUptime: sample.endedAtSystemUptime,
+                startedAtEpoch: sample.startedAtEpoch,
+                endedAtEpoch: sample.endedAtEpoch
+            ))
+            if index > 0 {
+                durations.append(sample.durationMilliseconds)
+            }
+            await releaseCurrentHost()
+        }
+        return Samples(durations: durations, intervals: intervals)
+    }
+
+    private func installFreshHost(initialPane: SettingsModel.Pane) async -> SettingsModel {
+        let model = makeModel(initialPane: initialPane, entries: fixture.entries)
+        currentModel = model
+        await withCheckedContinuation { continuation in
+            frameContinuation = (initialPane, continuation)
+            window?.contentViewController = SettingsController.makeHostingController(
+                model: model
+            )
+            if let window {
+                PanePerformanceWindowPresenter.present(window)
+            }
+        }
+        await settleAfterFrame()
+        return model
+    }
+
+    private func navigate(
+        _ model: SettingsModel,
+        to destination: SettingsModel.Pane
+    ) async -> PaneNavigationSample {
+        let sample = await withCheckedContinuation { continuation in
+            navigationContinuation = (destination, continuation)
+            model.selectPane(destination)
+            window?.displayIfNeeded()
+        }
+        await settleAfterFrame()
+        return sample
+    }
+
+    private func settleAfterFrame() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(350)) {
+                continuation.resume()
+            }
+        }
+    }
+
+    private func releaseCurrentHost() async {
+        window?.contentViewController = NSViewController()
+        currentModel = nil
+        await settleAfterFrame()
+    }
+
+    private func endProcessActivity() {
+        guard let processActivity else { return }
+        ProcessInfo.processInfo.endActivity(processActivity)
+        self.processActivity = nil
+    }
+
+    private func waitForFirstWindow() async -> Double {
+        if let firstWindowMilliseconds {
+            return firstWindowMilliseconds
+        }
+        return await withCheckedContinuation { continuation in
+            firstWindowContinuation = continuation
+        }
+    }
+
+    private func makeModel(
+        initialPane: SettingsModel.Pane,
+        entries: [HistoryEntry]
+    ) -> SettingsModel {
+        let model = SettingsModel(panePerformance: performance)
+        let config = Config.loadOrCreate(
+            at: plan.dataDirectory.appendingPathComponent("config.json")
+        )
+        model.pane = initialPane
+        model.pttKey = config.hotkey
+        model.toggleKey = config.toggleHotkey ?? ""
+        model.cycleKey = config.modeCycleHotkey ?? ""
+        model.pauseAudio = config.pauseAudio
+        model.appearance = config.appearance
+        model.saveHistory = config.saveHistory
+        model.retention = .forever
+        model.sidebar = SidebarPresentation(prefersCollapsed: false)
+        model.windowWidth = 980
+        model.modeSelection = ModePresentationFactory.projection(
+            modes: config.orderedModes,
+            selection: config.selection
+        )
+        model.modes = config.orderedModes
+        model.selectedModel = config.mode.llmModel ?? ""
+        model.installed = []
+        model.historyEntries = entries
+        model.currentStreak = entries.isEmpty ? nil : 14
+        model.paneProjections.prepareAll(in: .init(
+            now: Date(),
+            calendar: .autoupdatingCurrent,
+            locale: .autoupdatingCurrent
+        ))
+        return model
+    }
+
+    private func fail(_ error: Error) {
+        endProcessActivity()
+        let failureURL = plan.outputURL
+            .deletingPathExtension()
+            .appendingPathExtension("failure.txt")
+        do {
+            try error.localizedDescription.write(
+                to: failureURL,
+                atomically: true,
+                encoding: .utf8
+            )
+        } catch {
+            let detail = error.localizedDescription
+            Log.app.error(
+                "Pane performance failure artifact skipped: \(detail, privacy: .public)"
+            )
+        }
+        NSApp.terminate(nil)
     }
 }
 
@@ -827,6 +1118,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
 
 public enum FoldWiseVoiceApp {
     public static func main() {
+        let performancePlan: PanePerformancePlan?
+        if let planPath = ProcessInfo.processInfo.environment[
+            "FOLDWISE_PANE_PERFORMANCE_PLAN"
+        ] {
+            do {
+                performancePlan = try PanePerformancePlan.load(
+                    from: URL(fileURLWithPath: planPath)
+                )
+            } catch {
+                FileHandle.standardError.write(
+                    Data("error: \(error.localizedDescription)\n".utf8)
+                )
+                exit(1)
+            }
+        } else {
+            performancePlan = nil
+        }
         let action = FoldWiseVoiceCommandLine().evaluate(arguments: CommandLine.arguments)
         let cliConfig: String?
         let showSettingsOnLaunch: Bool
@@ -848,7 +1156,8 @@ public enum FoldWiseVoiceApp {
             let app = NSApplication.shared
             let delegate = AppDelegate(
                 configPath: cliConfig,
-                showSettingsOnLaunch: showSettingsOnLaunch
+                showSettingsOnLaunch: showSettingsOnLaunch,
+                panePerformancePlan: performancePlan
             )
             app.delegate = delegate
             app.setActivationPolicy(.accessory)

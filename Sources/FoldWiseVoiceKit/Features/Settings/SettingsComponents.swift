@@ -1,8 +1,39 @@
 import AppKit
 import SwiftUI
 
+struct PaneProjectionLoading: View {
+    let paneName: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Loading \(paneName)…")
+                .font(Theme.body)
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("pane.projection.loading")
+    }
+}
+
+struct PaneProjectionUpdating: View {
+    let isVisible: Bool
+
+    var body: some View {
+        if isVisible {
+            ProgressView()
+                .controlSize(.small)
+                .help("Updating current content")
+                .accessibilityLabel("Updating current content")
+                .padding(12)
+        }
+    }
+}
+
 struct PermissionRecoveryGuide: View {
-    @ObservedObject var model: SettingsModel
+    var model: SettingsModel
 
     private var state: PermissionRecoveryWorkflow.State {
         model.permissionRecovery

@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "maximumRegressionPercent": 20.0,
+  "sourceCommit": "7fb5d0de438e2b46307869d8d2bda4c7693a8bce",
+  "postSparkleSourceCommit": "c939d8d2ff94732fa547fe68bff83b1d672dccda",
+  "postSparkleRoutes": {
+    "empty/Home/cold": {"medianMilliseconds": 34.794},
+    "empty/Home/warm": {"medianMilliseconds": 31.968},
+    "empty/Modes/cold": {"medianMilliseconds": 131.608},
+    "empty/Modes/warm": {"medianMilliseconds": 131.838},
+    "empty/Models/cold": {"medianMilliseconds": 42.331},
+    "empty/Models/warm": {"medianMilliseconds": 43.188},
+    "empty/History/cold": {"medianMilliseconds": 56.989},
+    "empty/History/warm": {"medianMilliseconds": 53.930},
+    "empty/Stats/cold": {"medianMilliseconds": 194.418},
+    "empty/Stats/warm": {"medianMilliseconds": 182.433},
+    "empty/Settings/cold": {"medianMilliseconds": 78.996},
+    "empty/Settings/warm": {"medianMilliseconds": 73.913},
+    "10000/Home/cold": {"medianMilliseconds": 289.577},
+    "10000/Home/warm": {"medianMilliseconds": 288.551},
+    "10000/Modes/cold": {"medianMilliseconds": 140.686},
+    "10000/Modes/warm": {"medianMilliseconds": 143.169},
+    "10000/Models/cold": {"medianMilliseconds": 59.107},
+    "10000/Models/warm": {"medianMilliseconds": 51.874},
+    "10000/History/cold": {"medianMilliseconds": 386.664},
+    "10000/History/warm": {"medianMilliseconds": 376.112},
+    "10000/Stats/cold": {"medianMilliseconds": 453.896},
+    "10000/Stats/warm": {"medianMilliseconds": 411.628},
+    "10000/Settings/cold": {"medianMilliseconds": 95.897},
+    "10000/Settings/warm": {"medianMilliseconds": 83.766}
+  },
+  "routes": {
+    "empty/Home/cold": {
+      "medianMilliseconds": 38.736271
+    },
+    "empty/Home/warm": {
+      "medianMilliseconds": 46.656271
+    },
+    "empty/Modes/cold": {
+      "medianMilliseconds": 140.922188
+    },
+    "empty/Modes/warm": {
+      "medianMilliseconds": 135.852417
+    },
+    "empty/Models/cold": {
+      "medianMilliseconds": 56.541354
+    },
+    "empty/Models/warm": {
+      "medianMilliseconds": 45.071
+    },
+    "empty/History/cold": {
+      "medianMilliseconds": 57.286583
+    },
+    "empty/History/warm": {
+      "medianMilliseconds": 56.755854
+    },
+    "empty/Stats/cold": {
+      "medianMilliseconds": 49.567479
+    },
+    "empty/Stats/warm": {
+      "medianMilliseconds": 54.543687
+    },
+    "empty/Settings/cold": {
+      "medianMilliseconds": 83.747208
+    },
+    "empty/Settings/warm": {
+      "medianMilliseconds": 66.791979
+    },
+    "10000/Home/cold": {
+      "medianMilliseconds": 65.213021
+    },
+    "10000/Home/warm": {
+      "medianMilliseconds": 67.685396
+    },
+    "10000/Modes/cold": {
+      "medianMilliseconds": 134.171229
+    },
+    "10000/Modes/warm": {
+      "medianMilliseconds": 137.241896
+    },
+    "10000/Models/cold": {
+      "medianMilliseconds": 47.916771
+    },
+    "10000/Models/warm": {
+      "medianMilliseconds": 49.081687
+    },
+    "10000/History/cold": {
+      "medianMilliseconds": 64.312687
+    },
+    "10000/History/warm": {
+      "medianMilliseconds": 63.912396
+    },
+    "10000/Stats/cold": {
+      "medianMilliseconds": 45.265771
+    },
+    "10000/Stats/warm": {
+      "medianMilliseconds": 44.178542
+    },
+    "10000/Settings/cold": {
+      "medianMilliseconds": 77.881271
+    },
+    "10000/Settings/warm": {
+      "medianMilliseconds": 78.236604
+    }
+  }
+}

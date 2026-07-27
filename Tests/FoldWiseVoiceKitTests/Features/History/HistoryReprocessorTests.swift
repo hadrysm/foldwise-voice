@@ -59,13 +59,14 @@ final class HistoryReprocessorTests: XCTestCase {
 
     // MARK: - a surviving polish overwrites the row
 
-    func testRerunPolishOverwritesTextAndMarksPolishedWhenSurvives() async {
+    func testRerunPolishOverwritesTextAndMarksPolishedWhenSurvives() async throws {
         let store = JSONLHistoryStore(url: storeURL)
         let entry = storedEntry(text: rawTranscript, rawText: rawTranscript, isPolished: false)
         store.append(entry)
         let reprocessor = HistoryReprocessor(store: store, polish: { _, _ in self.cleaned })
 
-        let updated = await reprocessor.rerunPolish(entry, mode: cleanMode)
+        let result = await reprocessor.rerunPolish(entry, mode: cleanMode)
+        let updated = try XCTUnwrap(result)
 
         XCTAssertEqual(updated.text, cleaned)
         XCTAssertTrue(updated.isPolished)
@@ -86,7 +87,7 @@ final class HistoryReprocessorTests: XCTestCase {
 
     // MARK: - off-task fallback keeps the raw transcript
 
-    func testRerunPolishFallsBackToRawWhenPolishGoesOffTask() async {
+    func testRerunPolishFallsBackToRawWhenPolishGoesOffTask() async throws {
         let store = JSONLHistoryStore(url: storeURL)
         let entry = storedEntry(text: rawTranscript, rawText: rawTranscript, isPolished: false)
         store.append(entry)
@@ -94,7 +95,8 @@ final class HistoryReprocessorTests: XCTestCase {
             "Roses are red, violets are blue, a poem replies where a cleanup was due."
         })
 
-        let updated = await reprocessor.rerunPolish(entry, mode: cleanMode)
+        let result = await reprocessor.rerunPolish(entry, mode: cleanMode)
+        let updated = try XCTUnwrap(result)
 
         XCTAssertEqual(updated.text, rawTranscript)
         XCTAssertFalse(updated.isPolished)
@@ -128,7 +130,7 @@ final class HistoryReprocessorTests: XCTestCase {
     /// session applies — and resolves to the raw transcript marked unpolished.
     /// The menu offers every LLM Mode regardless of length, so this path is
     /// reachable from the UI.
-    func testRerunPolishSkipsPolishForATooShortTranscript() async {
+    func testRerunPolishSkipsPolishForATooShortTranscript() async throws {
         let store = JSONLHistoryStore(url: storeURL)
         let short = "too short to polish"
         let entry = storedEntry(text: short, rawText: short, isPolished: false)
@@ -139,7 +141,8 @@ final class HistoryReprocessorTests: XCTestCase {
             return self.cleaned
         })
 
-        let updated = await reprocessor.rerunPolish(entry, mode: cleanMode)
+        let result = await reprocessor.rerunPolish(entry, mode: cleanMode)
+        let updated = try XCTUnwrap(result)
 
         XCTAssertNil(box.value) // the polish seam was never called
         XCTAssertEqual(updated.text, short)
@@ -148,7 +151,7 @@ final class HistoryReprocessorTests: XCTestCase {
 
     // MARK: - the chosen Mode is recorded as the row's producer
 
-    func testRerunPolishRecordsTheChosenModeName() async {
+    func testRerunPolishRecordsTheChosenModeName() async throws {
         let store = JSONLHistoryStore(url: storeURL)
         let entry = storedEntry(
             text: rawTranscript, rawText: rawTranscript, isPolished: false, modeName: "Voice to Text"
@@ -156,7 +159,8 @@ final class HistoryReprocessorTests: XCTestCase {
         store.append(entry)
         let reprocessor = HistoryReprocessor(store: store, polish: { _, _ in self.cleaned })
 
-        let updated = await reprocessor.rerunPolish(entry, mode: cleanMode)
+        let result = await reprocessor.rerunPolish(entry, mode: cleanMode)
+        let updated = try XCTUnwrap(result)
 
         XCTAssertEqual(updated.modeName, "Clean")
     }

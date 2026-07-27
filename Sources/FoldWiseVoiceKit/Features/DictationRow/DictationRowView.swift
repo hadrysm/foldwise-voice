@@ -64,23 +64,9 @@ struct DictationRowContent: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text(presentation.time)
-                .font(Theme.data)
-                .foregroundStyle(Theme.textTertiary)
-                .frame(width: 42, alignment: .leading)
-            EmberIngress(color: Theme.accent)
-                .frame(height: 22)
-            Text(presentation.text)
-                .font(Theme.ui(11.5))
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 12)
+        DictationRowShell(presentation: presentation) {
             trailingRegion
         }
-        .padding(.horizontal, 12)
-        .frame(height: 44)
         .background(
             interactionState.isHovered
                 ? Theme.hover
@@ -141,6 +127,53 @@ struct DictationRowContent: View {
     }
 
     private var identity: some View {
+        DictationRowIdentity(presentation: presentation)
+    }
+}
+
+struct DictationRowPreview: View {
+    let presentation: DictationRowPresentation
+
+    var body: some View {
+        DictationRowShell(presentation: presentation) {
+            DictationRowIdentity(presentation: presentation)
+                .frame(width: 150, alignment: .trailing)
+        }
+        .background(Theme.surface)
+    }
+}
+
+private struct DictationRowShell<Trailing: View>: View {
+    let presentation: DictationRowPresentation
+    @ViewBuilder let trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(presentation.time)
+                .font(Theme.data)
+                .foregroundStyle(Theme.textTertiary)
+                .frame(width: 42, alignment: .leading)
+            EmberIngress(color: Theme.accent)
+                .frame(height: 22)
+            Text(presentation.text)
+                .font(Theme.ui(11.5))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 12)
+            trailing()
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 44)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(presentation.accessibilityDescription)
+    }
+}
+
+private struct DictationRowIdentity: View {
+    let presentation: DictationRowPresentation
+
+    var body: some View {
         HStack(spacing: 5) {
             Image(systemName: presentation.polishStatusSymbolName)
                 .font(Theme.ui(9, .semibold))
@@ -167,7 +200,9 @@ struct DictationRowContent: View {
         }
         .help(presentation.fullModeName)
     }
+}
 
+extension DictationRowContent {
     private var actions: some View {
         HStack(spacing: 4) {
             if actionComposition.directActions.contains(.copy) {

@@ -26,7 +26,7 @@ final class HistoryReprocessor {
     /// resolves to the raw transcript marked unpolished — the same gate the live
     /// session applies.
     @discardableResult
-    func rerunPolish(_ entry: HistoryEntry, mode: Mode) async -> HistoryEntry {
+    func rerunPolish(_ entry: HistoryEntry, mode: Mode) async -> HistoryEntry? {
         var updated = entry
         // `modeName` records which Mode was applied, matching the live session's
         // convention (set to the session's Mode whether or not Polish survived);
@@ -39,7 +39,6 @@ final class HistoryReprocessor {
         let polished = await Polish.run(rawText: entry.rawText, mode: mode, polish: polish)
         updated.text = polished.text
         updated.isPolished = polished.isPolished
-        store.update(updated)
-        return updated
+        return store.update(updated) ? updated : nil
     }
 }

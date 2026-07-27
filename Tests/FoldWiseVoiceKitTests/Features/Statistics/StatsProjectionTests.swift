@@ -1,6 +1,7 @@
 import XCTest
 @testable import FoldWiseVoiceKit
 
+@MainActor
 final class StatsProjectionTests: XCTestCase {
     func testProjectionExcludesOutsideAndFutureWordsFromMonthSummary() throws {
         XCTAssertEqual(try currentMonthProjection().month.spokenWordTotal, 3)
@@ -560,34 +561,70 @@ final class StatsProjectionTests: XCTestCase {
         )
     }
 
-    func testCacheReusesSemanticInputAndInvalidatesEnvironmentChanges() throws {
+    func testStoreReusesSemanticInputAndInvalidatesEnvironmentChanges() throws {
         var currentNow = Date(timeIntervalSince1970: 1_783_512_000)
-        var executionCount = 0
         let utc = try calendar(locale: "en_US", timeZone: "UTC")
         let warsaw = try calendar(locale: "en_US", timeZone: "Europe/Warsaw")
-        let input = StatsProjection.Input(entries: [], currentStreak: nil, savingEnabled: true)
-        let cache = StatsProjectionCache(now: { currentNow }, project: { input, now, calendar, locale in
-            executionCount += 1
-            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
-        })
-
-        _ = cache.resolve(input, calendar: utc, locale: Locale(identifier: "en_US"))
-        _ = cache.resolve(input, calendar: utc, locale: Locale(identifier: "en_US"))
-        _ = cache.resolve(
-            .init(entries: [], currentStreak: nil, savingEnabled: false),
+        let store = PaneProjectionStore()
+        let englishUTC = PaneProjectionStore.Environment(
+            now: currentNow,
             calendar: utc,
-            locale: .init(identifier: "en_US")
+            locale: Locale(identifier: "en_US")
         )
-        _ = cache.resolve(input, calendar: warsaw, locale: Locale(identifier: "en_US"))
-        _ = cache.resolve(input, calendar: utc, locale: Locale(identifier: "pl_PL"))
-        currentNow = try XCTUnwrap(utc.date(byAdding: .day, value: 1, to: currentNow))
-        _ = cache.resolve(input, calendar: utc, locale: Locale(identifier: "en_US"))
 
-        XCTAssertEqual(executionCount, 5)
+        let initial = store.stats(in: englishUTC)
+        let unchanged = store.stats(in: englishUTC)
+        store.setSavingEnabled(false)
+        let saving = store.stats(in: englishUTC)
+        store.setSavingEnabled(true)
+        let timeZone = store.stats(in: .init(
+            now: currentNow,
+            calendar: warsaw,
+            locale: Locale(identifier: "en_US")
+        ))
+        let locale = store.stats(in: .init(
+            now: currentNow,
+            calendar: utc,
+            locale: Locale(identifier: "pl_PL")
+        ))
+        currentNow = try XCTUnwrap(utc.date(byAdding: .day, value: 1, to: currentNow))
+        let day = store.stats(in: .init(
+            now: currentNow,
+            calendar: utc,
+            locale: Locale(identifier: "en_US")
+        ))
+
+        XCTAssertEqual(
+            [
+                initial.generation,
+                unchanged.generation,
+                saving.generation,
+                timeZone.generation,
+                locale.generation,
+                day.generation,
+            ],
+            [
+                initial.generation,
+                initial.generation,
+                saving.generation,
+                timeZone.generation,
+                locale.generation,
+                day.generation,
+            ]
+        )
+        XCTAssertEqual(
+            Set([
+                initial.generation,
+                saving.generation,
+                timeZone.generation,
+                locale.generation,
+                day.generation,
+            ]).count,
+            5
+        )
     }
 
-    func testCacheReusesProjectionWhenHistoryPresentationMetadataChanges() throws {
-        var executionCount = 0
+    func testStoreReusesProjectionWhenHistoryPresentationMetadataChanges() throws {
         let utc = try calendar(locale: "en_US", timeZone: "UTC")
         let createdAt = try date(2026, 7, 1, 8, calendar: utc)
         let original = entry(rawText: "spoken words", createdAt: createdAt, durationMs: 1000)
@@ -599,23 +636,20 @@ final class StatsProjectionTests: XCTestCase {
         updated.sourceApp = "Notes"
         updated.flagged = true
         updated.flagReason = "Review"
-        let cache = StatsProjectionCache(now: { createdAt }, project: { input, now, calendar, locale in
-            executionCount += 1
-            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
-        })
-
-        _ = cache.resolve(
-            .init(entries: [original], currentStreak: 1, savingEnabled: true),
+        let store = PaneProjectionStore()
+        let environment = PaneProjectionStore.Environment(
+            now: createdAt,
             calendar: utc,
             locale: Locale(identifier: "en_US")
         )
-        _ = cache.resolve(
-            .init(entries: [updated], currentStreak: 1, savingEnabled: true),
-            calendar: utc,
-            locale: Locale(identifier: "en_US")
-        )
+        store.setCurrentStreak(1)
 
-        XCTAssertEqual(executionCount, 1)
+        store.setHistoryEntries([original])
+        let originalProjection = store.stats(in: environment)
+        store.setHistoryEntries([updated])
+        let updatedProjection = store.stats(in: environment)
+
+        XCTAssertEqual(originalProjection.generation, updatedProjection.generation)
     }
 
     func testCacheInvalidatesProjectionWhenRawTranscriptChanges() throws {
@@ -693,25 +727,22 @@ final class StatsProjectionTests: XCTestCase {
         now: Date,
         calendar: Calendar
     ) -> Int {
-        var executionCount = 0
-        let cache = StatsProjectionCache(now: { now }, project: { input, now, calendar, locale in
-            executionCount += 1
-            return StatsProjection.project(input, now: now, calendar: calendar, locale: locale)
-        })
+        let store = PaneProjectionStore()
         let locale = Locale(identifier: "en_US")
-
-        _ = cache.resolve(
-            .init(entries: first, currentStreak: firstStreak, savingEnabled: true),
-            calendar: calendar,
-            locale: locale
-        )
-        _ = cache.resolve(
-            .init(entries: second, currentStreak: secondStreak, savingEnabled: true),
+        let environment = PaneProjectionStore.Environment(
+            now: now,
             calendar: calendar,
             locale: locale
         )
 
-        return executionCount
+        store.setHistoryEntries(first)
+        store.setCurrentStreak(firstStreak)
+        let firstProjection = store.stats(in: environment)
+        store.setHistoryEntries(second)
+        store.setCurrentStreak(secondStreak)
+        let secondProjection = store.stats(in: environment)
+
+        return Set([firstProjection.generation, secondProjection.generation]).count
     }
 
     private func calendar(locale: String, timeZone: String) throws -> Calendar {
