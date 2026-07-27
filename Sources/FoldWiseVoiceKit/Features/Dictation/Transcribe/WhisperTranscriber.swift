@@ -85,6 +85,15 @@ enum SharedTaskValue {
 }
 
 final class WhisperTranscriber: Transcribing {
+    static var decodingOptions: DecodingOptions {
+        DecodingOptions(
+            task: .transcribe,
+            language: nil,
+            usePrefillPrompt: true,
+            detectLanguage: true
+        )
+    }
+
     /// WhisperKit isn't `Sendable` (unlike FluidAudio's `AsrManager`, which is
     /// why the twin Parakeet `Transcriber` needs no such box), so the loaded
     /// pipeline can't cross the load-`Task`'s concurrency boundary on its own.
@@ -163,7 +172,10 @@ final class WhisperTranscriber: Transcribing {
             clearLoadTask(task) // allow a retry after a shared-load failure
             throw error
         }
-        let results = try await loaded.pipe.transcribe(audioArray: samples)
+        let results = try await loaded.pipe.transcribe(
+            audioArray: samples,
+            decodeOptions: Self.decodingOptions
+        )
         return results.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
