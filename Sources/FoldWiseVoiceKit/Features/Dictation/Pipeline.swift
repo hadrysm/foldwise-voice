@@ -114,11 +114,33 @@ enum DictationSessionEvent: Equatable {
     case finished(UUID)
 }
 
+/// One Dictation session's live recognition progress (ADR-0009). Carried on its
+/// own observer rather than as a `PipelineState` case, so snapshots arriving at
+/// the engine's cadence cannot disturb the ordered progress-state sequence, and
+/// so a consumer can tell whose session it is watching.
+struct DictationTranscript: Equatable {
+    /// Whether later audio may still rewrite the snapshot.
+    enum Phase: Equatable {
+        /// The user is still speaking.
+        case live
+        /// The hotkey is released: the raw text is frozen while the session
+        /// finalizes and, if the Mode asks for it, polishes.
+        case locked
+    }
+
+    let dictationSessionID: UUID
+    let snapshot: TranscriptSnapshot
+    let phase: Phase
+}
+
 final class Pipeline {
     private struct RecordingContext {
         let dictationSessionID: UUID
         let mode: Mode
         let asrSession: any ASRSessionHandle
+        /// Present only while a Streaming ASR model is effective *and* no earlier
+        /// streaming session is still driving it.
+        let live: LiveTranscription?
     }
 
     let config: Config
@@ -148,6 +170,9 @@ final class Pipeline {
     /// Paired identity events for lifecycle policy; unlike presentation states,
     /// an unmatched startup error cannot finish another queued session.
     var onSessionEvent: ((DictationSessionEvent) -> Void)?
+    /// Live recognition progress, for sessions whose Effective ASR model streams.
+    /// May fire from any thread, at the engine's cadence.
+    var onTranscript: ((DictationTranscript) -> Void)?
 
     /// Owned here rather than read back through the record seam, so the
     /// start/stop guards are self-contained and fakes needn't track it.
@@ -156,6 +181,10 @@ final class Pipeline {
     private var recordingContext: RecordingContext?
     private var lastJob: Task<Void, Never>?
     private var jobActive = false
+    /// Whether a streaming session still owns the loaded engine. One driver per
+    /// loaded engine (ADR-0005), so a Dictation session that starts while this is
+    /// `true` records without live snapshots and recovers by re-feed.
+    private var liveTranscriptionInFlight = false
     private var lastEmitted: PipelineState = .idle
     private var isShutDown = false
 
@@ -303,7 +332,8 @@ final class Pipeline {
             recordingContext = RecordingContext(
                 dictationSessionID: id,
                 mode: mode,
-                asrSession: asrSession
+                asrSession: asrSession,
+                live: beginLiveTranscription(for: asrSession, dictationSessionID: id)
             )
             return (id, mode)
         }
@@ -350,12 +380,20 @@ final class Pipeline {
                 return
             }
             let samples = recorder.stop()
+            recorder.deliverSamples(to: nil)
             ducker.restore()
             guard let context = recordingContext else { return }
             recordingContext = nil
             let asrSession = context.asrSession
+            // Hotkey release freezes the raw text: nothing recognized after this
+            // instant rewrites what the user is looking at while it finalizes.
+            if let live = context.live {
+                live.endCapture()
+                publish(live.snapshot, for: context.dictationSessionID, phase: .locked)
+            }
             guard emit(.transcribing) else {
                 asrSession.release()
+                endLiveTranscription(context.live)
                 deliverSessionEvent(.finished(context.dictationSessionID))
                 return
             }
@@ -369,12 +407,12 @@ final class Pipeline {
                     await previous?.value
                     guard !Task.isCancelled else {
                         asrSession.release()
+                        self.endLiveTranscription(context.live)
                         return
                     }
                     await self.process(
                         samples,
-                        mode: context.mode,
-                        asrSession: asrSession,
+                        context: context,
                         saveHistory: saveHistory,
                         requestedAt: requestedAt
                     )
@@ -443,7 +481,54 @@ final class Pipeline {
 
     private func releaseRecordingContext() {
         recordingContext?.asrSession.release()
+        endLiveTranscription(recordingContext?.live)
         recordingContext = nil
+    }
+
+    // MARK: - live recognition
+
+    /// Opens this session's live attempt when its Effective ASR model streams and
+    /// no earlier streaming session is still driving that engine. Subscribing to
+    /// the recorder happens here, before capture starts, because a session
+    /// captures its incremental delivery exactly as it captures its ASR model.
+    private func beginLiveTranscription(
+        for asrSession: any ASRSessionHandle,
+        dictationSessionID id: UUID
+    ) -> LiveTranscription? {
+        recorder.deliverSamples(to: nil)
+        guard asrSession.canStream, !liveTranscriptionInFlight else { return nil }
+        liveTranscriptionInFlight = true
+        let live = LiveTranscription(asrSession: asrSession) { [weak self] snapshot in
+            self?.publish(snapshot, for: id, phase: .live)
+        }
+        recorder.deliverSamples(to: { [weak live] chunk in live?.accept(chunk) })
+        live.begin()
+        return live
+    }
+
+    /// Ends a session's live attempt and frees the engine's driver slot. Safe on
+    /// every completion path: abandoning an attempt that already finalized is a
+    /// no-op, so the slot is released exactly once whether the session inserted,
+    /// failed, or was shut down.
+    private func endLiveTranscription(_ live: LiveTranscription?) {
+        guard let live else { return }
+        live.cancel()
+        withStateLock { liveTranscriptionInFlight = false }
+    }
+
+    private func publish(
+        _ snapshot: TranscriptSnapshot,
+        for dictationSessionID: UUID,
+        phase: DictationTranscript.Phase
+    ) {
+        withStateLock {
+            guard !isShutDown else { return }
+            onTranscript?(DictationTranscript(
+                dictationSessionID: dictationSessionID,
+                snapshot: snapshot,
+                phase: phase
+            ))
+        }
     }
 
     private func finishDictationSession(_ id: UUID) {
@@ -460,11 +545,12 @@ final class Pipeline {
 
     private func process(
         _ samples: [Float],
-        mode: Mode,
-        asrSession: any ASRSessionHandle,
+        context: RecordingContext,
         saveHistory: Bool,
         requestedAt: Duration
     ) async {
+        let mode = context.mode
+        let asrSession = context.asrSession
         let processingStartedAt = monotonicNow()
         let started = withStateLock {
             guard !isShutDown else { return false }
@@ -473,11 +559,14 @@ final class Pipeline {
         }
         guard started else {
             asrSession.release()
+            endLiveTranscription(context.live)
             return
         }
         defer { withStateLock { jobActive = false } }
         let transcribeStartedAt = monotonicNow()
-        guard var text = await transcribe(samples, using: asrSession) else { return }
+        guard var text = await transcribe(samples, using: asrSession, live: context.live) else {
+            return
+        }
         let transcribeFinishedAt = monotonicNow()
         guard !text.isEmpty else {
             emit(.idle)
@@ -485,6 +574,16 @@ final class Pipeline {
         }
         Log.pipeline.info("raw: \(text, privacy: .private)")
         let rawText = text
+        // The authoritative raw transcript replaces whatever the live attempt had
+        // shown, so the frozen caption agrees with what Polish and insertion
+        // consume even when recovery re-recognized the audio.
+        if context.live != nil {
+            publish(
+                TranscriptSnapshot(committed: rawText, tentative: ""),
+                for: context.dictationSessionID,
+                phase: .locked
+            )
+        }
 
         // The keep-or-fall-back decision lives in `Polish.run`, shared with
         // Re-run Polish (ADR-0004): the candidate is already sanitized, so the
@@ -611,11 +710,29 @@ final class Pipeline {
         """)
     }
 
+    /// The two points the streaming latency gate reads (PRD #351): how long the
+    /// first words took to show, and what finalization cost after release.
+    private func logStreamTimings(_ timings: TranscriptStreamTimings) {
+        func formatted(_ value: Duration?) -> String {
+            guard let value else { return "n/a" }
+            return String(format: "%.1f", elapsedMilliseconds(from: .zero, to: value))
+        }
+        Log.dictationPerformance.info("""
+        Streaming timing \
+        first-snapshot=\(formatted(timings.timeToFirstSnapshot), privacy: .public)ms \
+        finalization=\(formatted(timings.finalization), privacy: .public)ms
+        """)
+    }
+
     private func transcribe(
         _ samples: [Float],
-        using asrSession: any ASRSessionHandle
+        using asrSession: any ASRSessionHandle,
+        live: LiveTranscription?
     ) async -> String? {
-        defer { asrSession.release() }
+        defer {
+            asrSession.release()
+            endLiveTranscription(live)
+        }
         guard samples.count >= 1600 else { // < 0.1 s — no real audio captured
             emit(.idle)
             return nil
@@ -626,7 +743,17 @@ final class Pipeline {
             return nil
         }
         do {
-            let text = try await asrSession.transcribe(samples)
+            // A streaming session's own stream is the sole authority (ADR-0009):
+            // it has already recognized this audio, so there is no second batch
+            // transcription to run over the same buffer.
+            let text = if let live {
+                try await live.resolve(retained: samples)
+            } else {
+                try await asrSession.transcribe(samples)
+            }
+            if let timings = live?.timings {
+                logStreamTimings(timings)
+            }
             guard !Task.isCancelled else { return nil }
             return text
         } catch is CancellationError {

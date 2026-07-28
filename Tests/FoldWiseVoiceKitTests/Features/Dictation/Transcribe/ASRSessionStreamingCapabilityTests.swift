@@ -147,24 +147,3 @@ private final class BatchCapabilityEngine: Transcribing {
         "batch"
     }
 }
-
-private final class StreamingCapabilityAdapter: ASRModelFamilyAdapting, @unchecked Sendable {
-    let modelIDs: Set<String> = [ASRModelCatalog.defaultID]
-    let manager = FakeStreamingASRManager()
-
-    func isModelDataAvailable(for _: String) -> Bool {
-        true
-    }
-
-    func downloadModelData(
-        for _: String,
-        progress _: @escaping @Sendable (Double) -> Void
-    ) async throws {}
-
-    func makeEngine(for _: String) throws -> Transcribing {
-        let manager = manager
-        return StreamingTranscriber(makeManager: { manager })
-    }
-
-    func removeModelData(for _: String) async throws {}
-}

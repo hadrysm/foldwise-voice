@@ -14,9 +14,15 @@ final class FakeRecorder: AudioRecording {
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private(set) var closeCount = 0
+    private var samplesConsumer: (([Float]) -> Void)?
 
     init(samples: [Float] = FakeRecorder.speech()) {
         self.samples = samples
+    }
+
+    /// Whether a Dictation session is subscribed to incremental delivery.
+    var deliversSamples: Bool {
+        samplesConsumer != nil
     }
 
     func start() throws {
@@ -33,6 +39,18 @@ final class FakeRecorder: AudioRecording {
 
     func close() {
         closeCount += 1
+        samplesConsumer = nil
+    }
+
+    func deliverSamples(to consumer: (([Float]) -> Void)?) {
+        samplesConsumer = consumer
+    }
+
+    /// Captures one chunk, as the real recorder does: the chunk reaches the
+    /// subscribed consumer *and* becomes part of the buffer `stop()` retains.
+    func deliver(_ chunk: [Float]) {
+        samples.append(contentsOf: chunk)
+        samplesConsumer?(chunk)
     }
 
     func fail(_ error: AudioCaptureError) {
