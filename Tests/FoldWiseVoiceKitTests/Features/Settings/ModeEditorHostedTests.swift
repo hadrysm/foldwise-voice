@@ -223,7 +223,7 @@ final class ModeEditorHostedTests: XCTestCase {
         window.delegate = observer
 
         showInKeyWindow(window, hosting: hosting)
-        NSApp.runModal(for: window)
+        runModalBounded(window)
         window.delegate = nil
         window.orderOut(nil)
 
@@ -473,7 +473,7 @@ final class ModeEditorHostedTests: XCTestCase {
             }
             NSApp.abortModal()
         }
-        NSApp.runModal(for: window)
+        runModalBounded(window)
         window.contentView?.layoutSubtreeIfNeeded()
     }
 }

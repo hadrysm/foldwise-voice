@@ -20,11 +20,23 @@ final class BadgeModeCycleWiringTests: XCTestCase {
         try FileManager.default.removeItem(at: directory)
     }
 
+    /// A Badge that leaves the screen with the test. Driving the reducer at all
+    /// calls `ensurePanel()` and orders the panel front, and the panel is
+    /// `.statusBar` level, borderless and joins every Space — so a test that
+    /// merely drops its controller leaves a pill floating above every window
+    /// with no way to close it, for as long as the process lives
+    /// (`BadgeController.deinit` releases the move observer, not the panel).
+    private func makeBadge(config: Config) -> BadgeController {
+        let badge = BadgeController(config: config, onOpenApp: {})
+        addTeardownBlock { @MainActor in badge.hide() }
+        return badge
+    }
+
     func testDirectSelectionDoesNotPrepareModeReel() throws {
         let config = Config.defaultConfig(path: directory.appendingPathComponent("config.json"))
         let second = try XCTUnwrap(config.orderedModes.last)
         let secondID = try XCTUnwrap(second.id)
-        let badge = BadgeController(config: config, onOpenApp: {})
+        let badge = makeBadge(config: config)
 
         try config.select(.mode(secondID))
 
@@ -33,7 +45,7 @@ final class BadgeModeCycleWiringTests: XCTestCase {
 
     func testDirectSelectionCancelsActiveModeReel() async throws {
         let config = Config.defaultConfig(path: directory.appendingPathComponent("config.json"))
-        let badge = BadgeController(config: config, onOpenApp: {})
+        let badge = makeBadge(config: config)
         let command = ModeCycleCommand(
             config: config,
             onCommitted: { badge.confirmModeCycle($0) }
@@ -51,7 +63,7 @@ final class BadgeModeCycleWiringTests: XCTestCase {
     func testDeletingPresentedModeCancelsActiveModeReel() throws {
         let config = Config.defaultConfig(path: directory.appendingPathComponent("config.json"))
         let remaining = try XCTUnwrap(config.orderedModes.first)
-        let badge = BadgeController(config: config, onOpenApp: {})
+        let badge = makeBadge(config: config)
         let command = ModeCycleCommand(
             config: config,
             onCommitted: { badge.confirmModeCycle($0) }
@@ -65,7 +77,7 @@ final class BadgeModeCycleWiringTests: XCTestCase {
 
     func testRapidCommittedCyclesSurviveDeferredSelectionReconciliation() async {
         let config = Config.defaultConfig(path: directory.appendingPathComponent("config.json"))
-        let badge = BadgeController(config: config, onOpenApp: {})
+        let badge = makeBadge(config: config)
         let command = ModeCycleCommand(
             config: config,
             onCommitted: { badge.confirmModeCycle($0) }
@@ -87,7 +99,7 @@ final class BadgeModeCycleWiringTests: XCTestCase {
         let second = try XCTUnwrap(config.orderedModes.last)
         let secondID = try XCTUnwrap(second.id)
         try config.select(.mode(secondID))
-        let badge = BadgeController(config: config, onOpenApp: {})
+        let badge = makeBadge(config: config)
         let command = ModeCycleCommand(
             config: config,
             onCommitted: { badge.confirmModeCycle($0) }
@@ -112,7 +124,7 @@ final class BadgeModeCycleWiringTests: XCTestCase {
         let path = directory.appendingPathComponent("missing/config.json")
         let config = Config.defaultConfig(path: path)
         let original = config.selection
-        let badge = BadgeController(config: config, onOpenApp: {})
+        let badge = makeBadge(config: config)
         let command = ModeCycleCommand(
             config: config,
             onCommitted: { badge.confirmModeCycle($0) },
@@ -140,7 +152,7 @@ final class BadgeModeCycleWiringTests: XCTestCase {
         var modes = config.orderedModes
         modes[1].icon = "not.a.real.symbol"
         try config.replaceModes(modes, selection: config.selection)
-        let badge = BadgeController(config: config, onOpenApp: {})
+        let badge = makeBadge(config: config)
         let command = ModeCycleCommand(
             config: config,
             onCommitted: { badge.confirmModeCycle($0) }
@@ -157,7 +169,7 @@ final class BadgeModeCycleWiringTests: XCTestCase {
         let fromID = try XCTUnwrap(from.id)
         var renamed = try XCTUnwrap(config.orderedModes.last)
         let renamedID = try XCTUnwrap(renamed.id)
-        let badge = BadgeController(config: config, onOpenApp: {})
+        let badge = makeBadge(config: config)
         let command = ModeCycleCommand(
             config: config,
             onCommitted: { badge.confirmModeCycle($0) }
@@ -188,7 +200,7 @@ final class BadgeModeCycleWiringTests: XCTestCase {
         let fromID = try XCTUnwrap(from.id)
         let to = try XCTUnwrap(config.orderedModes.last)
         let toID = try XCTUnwrap(to.id)
-        let badge = BadgeController(config: config, onOpenApp: {})
+        let badge = makeBadge(config: config)
         let command = ModeCycleCommand(
             config: config,
             onCommitted: { badge.confirmModeCycle($0) }
@@ -218,7 +230,7 @@ final class BadgeModeCycleWiringTests: XCTestCase {
 
     func testExistingBadgeErrorCancelsActiveModeReel() {
         let config = Config.defaultConfig(path: directory.appendingPathComponent("config.json"))
-        let badge = BadgeController(config: config, onOpenApp: {})
+        let badge = makeBadge(config: config)
         let command = ModeCycleCommand(
             config: config,
             onCommitted: { badge.confirmModeCycle($0) }
