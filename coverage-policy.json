@@ -100,6 +100,10 @@
       "reason": "Real WhisperKit model-loading and inference adapter"
     },
     {
+      "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Transcribe/FluidAudioStreamingManagers.swift",
+      "reason": "Thin FluidAudio streaming-manager boundary; snapshot mapping, attempt lifecycle, timing, and chunk conversion live in TranscriptStream, StreamingTranscriber, and StreamingAudioChunk"
+    },
+    {
       "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Transcribe/ASRModelLibraryStorage.swift",
       "reason": "Thin FluidAudio and WhisperKit network-storage boundary; mapping, progress, and availability policy live in covered adapters"
     }

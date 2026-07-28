@@ -30,8 +30,28 @@ extension AudioRecording {
 /// A Dictation session's captured transcription capability. Pipeline can use
 /// and release it without learning which model or engine the lifecycle owns.
 protocol ASRSessionHandle: AnyObject {
+    /// Whether this session's Effective ASR model transcribes while the user
+    /// speaks (ADR-0009). A yes/no question, never a model identity: capability
+    /// comes from the engine's type, not from the catalog's presentation flag.
+    var canStream: Bool { get }
+    /// Opens one live recognition attempt. Throws when the model cannot stream,
+    /// so a caller that skipped `canStream` fails loudly instead of silently
+    /// transcribing nothing.
+    func makeStream() async throws -> any TranscriptStreaming
     func transcribe(_ samples: [Float]) async throws -> String
     func release()
+}
+
+extension ASRSessionHandle {
+    /// A batch model's session answers "no" without implementing anything, which
+    /// is why streaming is a type refinement rather than a widened interface.
+    var canStream: Bool {
+        false
+    }
+
+    func makeStream() async throws -> any TranscriptStreaming {
+        throw TranscriptStreamError.streamingUnavailable
+    }
 }
 
 /// Captures the Effective ASR model when a Dictation session starts recording.
@@ -45,6 +65,33 @@ protocol ASRSessionHandleProviding: AnyObject {
 protocol Transcribing: AnyObject {
     func prepare() async throws
     func transcribe(_ samples: [Float]) async throws -> String
+}
+
+/// A Streaming ASR model's engine (ADR-0009). `Transcribing` is *refined* rather
+/// than widened, so batch engines need no streaming method and capability is a
+/// fact the type system checks instead of a nil every adapter must remember.
+protocol StreamCapableTranscribing: Transcribing {
+    /// Opens one live recognition attempt. Streaming sessions serialize, so the
+    /// engine drives at most one attempt at a time.
+    func makeStream() async throws -> any TranscriptStreaming
+}
+
+/// One live recognition attempt. Its `finish()` result is the transcript that
+/// Polish, History, and the single atomic insertion consume (ADR-0009).
+protocol TranscriptStreaming: AnyObject {
+    /// Subscribes the Transcript-snapshot consumer; `nil` detaches. Snapshots
+    /// never arrive on the audio render thread.
+    func deliverSnapshots(to consumer: ((TranscriptSnapshot) -> Void)?)
+    /// The latest snapshot. Its committed prefix is the text a twice-failed
+    /// session falls back to, and only as a last resort.
+    var snapshot: TranscriptSnapshot { get }
+    /// Timing points the streaming latency gate measures (PRD #351).
+    var timings: TranscriptStreamTimings { get }
+    func append(_ samples: [Float]) async throws
+    func finish() async throws -> String
+    /// Abandons the attempt and drops the engine it was driving. Idempotent, and
+    /// synchronous so releasing a Dictation session never waits on it.
+    func cancel()
 }
 
 enum PipelineState: Equatable {
