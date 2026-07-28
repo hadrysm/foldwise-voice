@@ -27,6 +27,10 @@
       "reason": "Declarative SwiftUI Badge composition"
     },
     {
+      "path": "Sources/FoldWiseVoiceKit/Features/LiveTranscript/LiveTranscriptCaptionView.swift",
+      "reason": "Declarative SwiftUI Live transcript caption composition; stage copy, span roles, truncation policy, accessibility text, motion, and geometry live in LiveTranscriptCaption"
+    },
+    {
       "path": "Sources/FoldWiseVoiceKit/Features/History/HistoryView.swift",
       "reason": "Declarative SwiftUI history composition"
     },

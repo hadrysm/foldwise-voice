@@ -24,6 +24,10 @@ final class BadgeController: NSObject {
     static let bottomMargin: CGFloat = 96
 
     let model = BadgeModel()
+    /// The Live transcript caption's own model. It rides on this controller
+    /// because the caption is tethered to the Badge: the same anchor, resize,
+    /// and drag events that move the pill have to move the caption with it.
+    let captionModel = LiveTranscriptCaptionModel()
     private let config: Config
     private let onOpenApp: () -> Void
     weak var recorder: AudioRecorder?
@@ -34,6 +38,8 @@ final class BadgeController: NSObject {
     var onRecord: (() -> Void)?
 
     private var panel: BadgePanel?
+    private var captionPanel: BadgePanel?
+    private var captionState = LiveTranscriptCaptionState()
     private weak var activeModeMenu: NSMenu?
     private var moveObserver: NSObjectProtocol?
     private var levelTimer: Timer?
@@ -133,9 +139,26 @@ final class BadgeController: NSObject {
         handle(.modeSelectionFailed)
     }
 
+    /// Fold one Dictation-session signal into the Live transcript caption. The
+    /// caption reads the ungated Pipeline state, unlike the Badge: a session's
+    /// outcome must dismiss the caption even while an ASR model operation is
+    /// holding the pill on a lifecycle message.
+    func applyLiveTranscript(_ event: LiveTranscriptCaptionEvent) {
+        captionState = LiveTranscriptCaptionReducer.reduce(captionState, event)
+        let presentation = captionState.presentation
+        guard presentation != captionModel.presentation else { return }
+        captionModel.presentation = presentation
+        if presentation == nil {
+            captionPanel?.orderOut(nil)
+        } else {
+            showCaption()
+        }
+    }
+
     func hide() {
         stopTimers()
         unhoverWork?.cancel()
+        captionPanel?.orderOut(nil)
         panel?.orderOut(nil)
     }
 
@@ -314,6 +337,69 @@ final class BadgeController: NSObject {
         setSize(rect.size, animate: false)
     }
 
+    // MARK: - Live transcript caption
+
+    /// A second non-activating panel rather than a bigger Badge: the validated
+    /// treatment (issue #346) keeps the pill's silhouette untouched. It ignores
+    /// mouse events entirely — the caption is presentation only, so there is
+    /// nothing on it to click and nothing that could pull focus from the app
+    /// being dictated into.
+    private func ensureCaptionPanel() -> BadgePanel {
+        if let captionPanel {
+            return captionPanel
+        }
+        let size = LiveTranscriptCaptionFramePolicy.size
+        let created = BadgePanel(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: false
+        )
+        created.level = .statusBar
+        created.isOpaque = false
+        created.backgroundColor = .clear
+        created.hasShadow = false
+        created.ignoresMouseEvents = true
+        created.hidesOnDeactivate = false
+        created.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        created.contentView = NSHostingView(
+            rootView: LiveTranscriptCaptionView(model: captionModel)
+        )
+        captionPanel = created
+        return created
+    }
+
+    private func showCaption() {
+        // The caption is positioned off the pill, so the pill has to exist first.
+        ensurePanel()
+        let caption = ensureCaptionPanel()
+        positionCaption()
+        guard !caption.isVisible else { return }
+        switch LiveTranscriptCaptionMotion.appearance(reduceMotion: reduceMotion) {
+        case .cut:
+            caption.alphaValue = 1
+            caption.orderFrontRegardless()
+        case let .fade(duration):
+            caption.alphaValue = 0
+            caption.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = duration
+                caption.animator().alphaValue = 1
+            }
+        }
+    }
+
+    /// Keeps the caption tethered to wherever the pill just went — a resize that
+    /// clamped at a screen edge, or a drag.
+    private func positionCaption(relativeTo movedTo: NSRect? = nil) {
+        guard let captionPanel, let badgeFrame = movedTo ?? panel?.frame else { return }
+        let placement = LiveTranscriptCaptionFramePolicy.placement(
+            badge: badgeFrame,
+            screen: screenFrame(at: CGPoint(x: badgeFrame.midX, y: badgeFrame.midY))
+        )
+        captionModel.tetherOffset = placement.tetherOffset
+        captionPanel.setFrame(placement.frame, display: true)
+    }
+
     private func applyReduceMotion(_ reduced: Bool) {
         reduceMotion = reduced
         handleModeCycle(.reduceMotionChanged(reduced))
@@ -397,6 +483,7 @@ final class BadgeController: NSObject {
             screen: screenFrame(at: a)
         )
         guard frame != panel.frame else { return }
+        positionCaption(relativeTo: frame)
         let moveRevision = programmaticMove.begin()
         if animate {
             NSAnimationContext.runAnimationGroup { ctx in
@@ -429,6 +516,9 @@ final class BadgeController: NSObject {
     // MARK: - drag persistence
 
     private func windowMoved() {
+        // The caption follows every move, programmatic or dragged, so its tether
+        // never lags behind the pill.
+        positionCaption()
         // Only user drags move the anchor. Programmatic resizes can be
         // clamped at a screen edge, which shifts midX — tracking those would
         // drift the anchor toward the screen center on every dictation.

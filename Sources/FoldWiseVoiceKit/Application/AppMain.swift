@@ -288,6 +288,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         }
         pipeline.onSessionEvent = ApplicationRunLoop.handler { [weak self] event in
             self?.lifecycleCoordinator?.sessionDidChange(event)
+            self?.badge.applyLiveTranscript(.session(event))
+        }
+        pipeline.onTranscript = { [weak self] transcript in
+            Task { @MainActor in self?.badge.applyLiveTranscript(.transcript(transcript)) }
         }
         Task { [weak self] in
             for await snapshot in await asrLifecycle.snapshots() {
@@ -326,6 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         if let badgeState = asrBadgePresentation.pipelineDidChange(state) {
             badge.apply(badgeState)
         }
+        badge.applyLiveTranscript(.pipeline(state))
         switch state {
         case .listening:
             menuBar.setIcon(.listening)
