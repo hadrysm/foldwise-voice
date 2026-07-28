@@ -14,6 +14,17 @@ protocol AudioRecording: AnyObject {
     func start() throws
     func stop() -> [Float]
     func close()
+    /// Incremental delivery beside the retained final buffer (ADR-0009): a
+    /// Streaming ASR model subscribes before `start()` and receives the
+    /// session's 16 kHz mono chunks in order as they are captured. Passing
+    /// `nil` detaches, including mid-session.
+    func deliverSamples(to consumer: (([Float]) -> Void)?)
+}
+
+extension AudioRecording {
+    /// Batch-only recorders keep `stop()` as their single authority, so they
+    /// opt out of incremental delivery by not implementing it.
+    func deliverSamples(to _: (([Float]) -> Void)?) {}
 }
 
 /// A Dictation session's captured transcription capability. Pipeline can use
