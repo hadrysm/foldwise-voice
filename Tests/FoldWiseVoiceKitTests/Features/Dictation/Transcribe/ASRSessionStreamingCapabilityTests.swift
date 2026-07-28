@@ -101,6 +101,56 @@ final class ASRSessionStreamingCapabilityTests: XCTestCase {
         }
     }
 
+    // MARK: - Reaching streaming through ordinary ASR model selection
+
+    /// Streaming becomes reachable the same way any other model does: the user
+    /// selects it, and the session the next Dictation captures answers yes.
+    func testSelectingAStreamingCatalogModelMakesTheNextSessionStream() async throws {
+        let lifecycle = mixedFamilyLifecycle()
+        await lifecycle.start()
+
+        await lifecycle.select("parakeet-eou-320")
+
+        XCTAssertTrue(try lifecycle.captureSession().canStream)
+    }
+
+    /// Switching back leaves the next Dictation session usable and non-streaming,
+    /// because exactly one engine stays resident (ADR-0005).
+    func testSwitchingBackToTheDefaultRestoresABatchSession() async throws {
+        let lifecycle = mixedFamilyLifecycle()
+        await lifecycle.start()
+        await lifecycle.select("parakeet-eou-320")
+
+        await lifecycle.select(ASRModelCatalog.defaultID)
+
+        let handle = try lifecycle.captureSession()
+        let streams = handle.canStream
+        let transcript = try await handle.transcribe([0.1])
+        XCTAssertEqual(
+            RestoredSession(streams: streams, transcript: transcript),
+            RestoredSession(streams: false, transcript: "batch")
+        )
+    }
+
+    func testDownloadingAStreamingModelDoesNotSelectIt() async throws {
+        let lifecycle = mixedFamilyLifecycle()
+        await lifecycle.start()
+
+        await lifecycle.download("parakeet-eou-320")
+
+        XCTAssertFalse(try lifecycle.captureSession().canStream)
+    }
+
+    private func mixedFamilyLifecycle() -> ASRModelLifecycle {
+        ASRModelLifecycle(
+            storedSelection: ASRModelCatalog.defaultID,
+            adapters: [
+                BatchCapabilityAdapter(),
+                StreamingCapabilityAdapter(modelIDs: ["parakeet-eou-320"]),
+            ]
+        )
+    }
+
     private func captureSession(
         from adapter: any ASRModelFamilyAdapting
     ) async throws -> any ASRSessionHandle {
@@ -111,6 +161,11 @@ final class ASRSessionStreamingCapabilityTests: XCTestCase {
         await lifecycle.start()
         return try lifecycle.captureSession()
     }
+}
+
+private struct RestoredSession: Equatable {
+    let streams: Bool
+    let transcript: String
 }
 
 private final class InertSessionHandle: ASRSessionHandle {

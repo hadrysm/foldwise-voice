@@ -23,7 +23,10 @@ enum ASRModelLibraryStorage {
         )
     }
 
-    static let downloadParakeet: @Sendable (
+    /// Every FluidAudio checkpoint — TDT and the streaming tiers alike — arrives
+    /// through this one call; which repository, destination, and precision variant
+    /// a model needs is the adapters' decision, not this seam's.
+    static let downloadRepository: @Sendable (
         Repo,
         URL,
         String?,
@@ -41,6 +44,18 @@ enum ASRModelLibraryStorage {
         ASRModelCatalog.ParakeetVariant
     ) async throws -> Void = { variant in
         try await delete(.parakeet(version: variant))
+    }
+
+    static let streamingModelDirectory: @Sendable (
+        ASRModelCatalog.StreamingVariant
+    ) -> URL? = { variant in
+        ASRModelStore.modelDirectory(for: .streaming(variant: variant))
+    }
+
+    static let deleteStreaming: @Sendable (
+        ASRModelCatalog.StreamingVariant
+    ) async throws -> Void = { variant in
+        try await delete(.streaming(variant: variant))
     }
 
     static let whisperModelDirectory: @Sendable (String) -> URL? = { variant in

@@ -7,6 +7,10 @@ struct ASRModelDescriptor: Identifiable, Equatable {
     let size: String
     let speed: Int
     let quality: Int
+    /// Carried so the Models pane can say in words that this model transcribes
+    /// while the user speaks (ADR-0009). Presentation only — what Dictation does
+    /// still comes from the captured session handle's own capability.
+    let streaming: Bool
     let blurb: String
     let isAvailable: Bool
     let isDefault: Bool
@@ -19,6 +23,7 @@ struct ASRModelDescriptor: Identifiable, Equatable {
         size = entry.size
         speed = entry.speed
         quality = entry.quality
+        streaming = entry.streaming
         blurb = entry.blurb
         self.isAvailable = isAvailable
         isDefault = entry.id == ASRModelCatalog.defaultID

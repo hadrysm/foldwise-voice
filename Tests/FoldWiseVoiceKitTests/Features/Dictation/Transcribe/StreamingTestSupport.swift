@@ -129,8 +129,12 @@ final class TestMonotonicClock: @unchecked Sendable {
 /// drive a real ASR lifecycle, a real captured session handle, and a real live
 /// attempt with only the FluidAudio boundary faked.
 final class StreamingCapabilityAdapter: ASRModelFamilyAdapting, @unchecked Sendable {
-    let modelIDs: Set<String> = [ASRModelCatalog.defaultID]
+    let modelIDs: Set<String>
     let manager = FakeStreamingASRManager()
+
+    init(modelIDs: Set<String> = [ASRModelCatalog.defaultID]) {
+        self.modelIDs = modelIDs
+    }
 
     func isModelDataAvailable(for _: String) -> Bool {
         true

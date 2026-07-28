@@ -232,7 +232,7 @@ final class ASRModelAdapterTests: XCTestCase {
 
     func testParakeetLibraryDownloadUsesStorageOnlyRepositoryPrimitive() async throws {
         let directory = try XCTUnwrap(directory)
-        let probe = ParakeetRepositoryDownloadProbe()
+        let probe = RepositoryDownloadProbe()
 
         try await ParakeetASRModelAdapter.downloadFromLibrary(
             .v3
@@ -249,7 +249,7 @@ final class ASRModelAdapterTests: XCTestCase {
 
         XCTAssertEqual(
             probe.state,
-            ParakeetRepositoryDownloadState(
+            RepositoryDownloadState(
                 repository: "parakeet-tdt-0.6b-v3",
                 directory: directory.appendingPathComponent("parakeet-v3")
                     .deletingLastPathComponent(),
@@ -261,7 +261,7 @@ final class ASRModelAdapterTests: XCTestCase {
 
     func testParakeetV2LibraryDownloadUsesItsRepositoryWithoutAPrecisionVariant() async throws {
         let directory = try XCTUnwrap(directory)
-        let probe = ParakeetRepositoryDownloadProbe()
+        let probe = RepositoryDownloadProbe()
         let modelDirectory: ParakeetASRModelAdapter.ModelDirectory = { _ in
             directory.appendingPathComponent("parakeet-v2")
         }
@@ -279,7 +279,7 @@ final class ASRModelAdapterTests: XCTestCase {
 
         XCTAssertEqual(
             probe.state,
-            ParakeetRepositoryDownloadState(
+            RepositoryDownloadState(
                 repository: "parakeet-tdt-0.6b-v2",
                 directory: directory.appendingPathComponent("parakeet-v2")
                     .deletingLastPathComponent(),
@@ -568,6 +568,185 @@ final class ASRModelAdapterTests: XCTestCase {
         )
     }
 
+    // MARK: - Streaming ASR models (ADR-0009)
+
+    func testStreamingReportsCompleteEouDataAsAvailable() throws {
+        let directory = try XCTUnwrap(directory)
+        try writeEouModelData(to: directory)
+        let adapter = makeStreamingAdapter(directory: directory)
+
+        XCTAssertTrue(adapter.isModelDataAvailable(for: "parakeet-eou-320"))
+    }
+
+    func testStreamingRequiresEveryEouArtifact() throws {
+        let directory = try XCTUnwrap(directory)
+        try writeEouModelData(to: directory)
+        let adapter = makeStreamingAdapter(directory: directory)
+
+        let complete = adapter.isModelDataAvailable(for: "parakeet-eou-320")
+        try FileManager.default.removeItem(
+            at: directory.appendingPathComponent("joint_decision.mlmodelc")
+        )
+
+        XCTAssertEqual(
+            [complete, adapter.isModelDataAvailable(for: "parakeet-eou-320")],
+            [true, false]
+        )
+    }
+
+    func testStreamingRejectsEouDataWithoutAUsableVocabulary() throws {
+        let directory = try XCTUnwrap(directory)
+        try writeEouModelData(to: directory)
+        try Data("not json".utf8).write(to: directory.appendingPathComponent("vocab.json"))
+        let adapter = makeStreamingAdapter(directory: directory)
+
+        XCTAssertFalse(adapter.isModelDataAvailable(for: "parakeet-eou-320"))
+    }
+
+    func testStreamingReportsUnresolvableModelDirectoryAsUnavailable() {
+        let adapter = StreamingASRModelAdapter(modelDirectory: { _ in nil }, download: { _, _ in })
+
+        XCTAssertFalse(adapter.isModelDataAvailable(for: "parakeet-eou-320"))
+    }
+
+    /// The pinned downloader re-appends `parakeet-eou-streaming/320ms`, so the
+    /// destination it is handed is the shared models root; passing the variant's
+    /// parent — as the TDT checkpoints do — would nest the tier twice.
+    func testStreamingLibraryDownloadTargetsTheEouRepositoryAtTheSharedRoot() async throws {
+        let probe = RepositoryDownloadProbe()
+        let download: StreamingASRModelAdapter.RepositoryDownload = { repo, root, variant, progress in
+            probe.record(repo: repo.folderName, directory: root, variant: variant)
+            progress(0.6)
+        }
+
+        try await StreamingASRModelAdapter.downloadFromLibrary(
+            .parakeetEou320,
+            { probe.recordProgress($0) },
+            downloadRepository: download
+        )
+
+        XCTAssertEqual(
+            probe.state,
+            RepositoryDownloadState(
+                repository: "parakeet-eou-streaming/320ms",
+                directory: ASRModelStore.streamingDownloadRoot(),
+                variant: nil,
+                progress: [0.6]
+            )
+        )
+    }
+
+    func testStreamingDeletionMapsCatalogIDToLibraryVariant() async throws {
+        let probe = DownloadProbe<ASRModelCatalog.StreamingVariant>()
+        let adapter = StreamingASRModelAdapter(
+            modelDirectory: { _ in nil },
+            availability: { _ in true },
+            download: { _, _ in },
+            delete: { probe.record($0) }
+        )
+
+        try await adapter.removeModelData(for: "parakeet-eou-320")
+
+        XCTAssertEqual(probe.values, [.parakeetEou320])
+    }
+
+    func testStreamingRejectsUnknownAndWrongFamilyIDs() async {
+        let adapter = StreamingASRModelAdapter(
+            modelDirectory: { _ in nil },
+            availability: { _ in true },
+            download: { _, _ in }
+        )
+
+        let error = await unknownModelError {
+            try await adapter.downloadModelData(for: "parakeet-v3") { _ in }
+        }
+        let deletionError = await unknownModelError {
+            try await adapter.removeModelData(for: "parakeet-v3")
+        }
+        XCTAssertEqual(
+            RejectionState(
+                unknownIsAvailable: adapter.isModelDataAvailable(for: "unknown"),
+                wrongFamilyIsAvailable: adapter.isModelDataAvailable(for: "parakeet-v3"),
+                error: error,
+                deletionError: deletionError
+            ),
+            RejectionState(
+                unknownIsAvailable: false,
+                wrongFamilyIsAvailable: false,
+                error: "Unknown ASR model: parakeet-v3",
+                deletionError: "Unknown ASR model: parakeet-v3"
+            )
+        )
+    }
+
+    /// The capability Dictation acts on is the engine's type, so EOU's engine has
+    /// to answer `StreamCapableTranscribing` — the catalog flag alone is copy.
+    func testStreamingEngineIsStreamCapable() throws {
+        let adapter = StreamingASRModelAdapter(
+            modelDirectory: { _ in URL(fileURLWithPath: "/tmp/eou") },
+            availability: { _ in true },
+            download: { _, _ in }
+        )
+
+        XCTAssertTrue(
+            try adapter.makeEngine(for: "parakeet-eou-320") is any StreamCapableTranscribing
+        )
+    }
+
+    func testStreamingEngineLoadsItsVariantFromTheModelDirectory() async throws {
+        let directory = try XCTUnwrap(directory)
+        let probe = DownloadProbe<StreamingManagerRequest>()
+        let manager = FakeStreamingASRManager()
+        let adapter = StreamingASRModelAdapter(
+            modelDirectory: { _ in directory },
+            availability: { _ in true },
+            download: { _, _ in },
+            makeManager: { variant, directory in
+                probe.record(StreamingManagerRequest(variant: variant, directory: directory))
+                return manager
+            }
+        )
+
+        try await adapter.makeEngine(for: "parakeet-eou-320").prepare()
+
+        XCTAssertEqual(
+            probe.values,
+            [StreamingManagerRequest(variant: .parakeetEou320, directory: directory)]
+        )
+    }
+
+    func testStreamingEngineFailsWhenTheModelDirectoryCannotResolve() {
+        let adapter = StreamingASRModelAdapter(
+            modelDirectory: { _ in nil },
+            availability: { _ in true },
+            download: { _, _ in }
+        )
+
+        XCTAssertThrowsError(try adapter.makeEngine(for: "parakeet-eou-320")) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Couldn't locate the ASR model directory."
+            )
+        }
+    }
+
+    private func makeStreamingAdapter(directory: URL) -> StreamingASRModelAdapter {
+        StreamingASRModelAdapter(
+            modelDirectory: { _ in directory },
+            compiledModelIsUsable: FakeCoreMLValidation.compiledModelIsUsable,
+            download: { _, _ in }
+        )
+    }
+
+    private func writeEouModelData(to directory: URL) throws {
+        for component in ["streaming_encoder", "decoder", "joint_decision"] {
+            try writeCompiledModel(named: component, to: directory)
+        }
+        try Data(#"{"0":"token"}"#.utf8).write(
+            to: directory.appendingPathComponent("vocab.json")
+        )
+    }
+
     private func unknownModelError(
         operation: () async throws -> Void
     ) async -> String? {
@@ -677,23 +856,23 @@ final class ASRModelAdapterTests: XCTestCase {
     }
 }
 
-private struct ParakeetRepositoryDownloadState: Equatable {
+private struct RepositoryDownloadState: Equatable {
     let repository: String?
     let directory: URL?
     let variant: String?
     let progress: [Double]
 }
 
-private final class ParakeetRepositoryDownloadProbe: @unchecked Sendable {
+private final class RepositoryDownloadProbe: @unchecked Sendable {
     private let lock = NSLock()
     private var repository: String?
     private var directory: URL?
     private var variant: String?
     private var progress: [Double] = []
 
-    var state: ParakeetRepositoryDownloadState {
+    var state: RepositoryDownloadState {
         lock.withLock {
-            ParakeetRepositoryDownloadState(
+            RepositoryDownloadState(
                 repository: repository,
                 directory: directory,
                 variant: variant,
@@ -778,6 +957,11 @@ private enum FakeCoreMLValidation {
 private struct DownloadMapping<Value: Equatable>: Equatable {
     let mappedValues: [Value]
     let progress: [Double]
+}
+
+private struct StreamingManagerRequest: Equatable {
+    let variant: ASRModelCatalog.StreamingVariant
+    let directory: URL
 }
 
 private struct ParakeetMappingState: Equatable {

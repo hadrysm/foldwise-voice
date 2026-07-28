@@ -157,7 +157,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         let recorder = AudioRecorder(config: config, hardware: CoreAudioHardware())
         let asrLifecycle = ASRModelLifecycle(
             storedSelection: config.asrModel,
-            adapters: [ParakeetASRModelAdapter(), WhisperASRModelAdapter()],
+            adapters: [
+                ParakeetASRModelAdapter(),
+                StreamingASRModelAdapter(),
+                WhisperASRModelAdapter(),
+            ],
             persistSelection: { [config] id in try config.setASRModel(id) }
         )
         // One store shared between the record seam and the History pane, so a

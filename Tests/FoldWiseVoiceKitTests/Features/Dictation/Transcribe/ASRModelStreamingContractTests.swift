@@ -7,7 +7,11 @@ import XCTest
 final class ASRModelStreamingContractTests: XCTestCase {
     func testShippedCatalogAgreesWithItsEngines() {
         let findings = ASRModelStreamingContract.audit(
-            adapters: [ParakeetASRModelAdapter(), WhisperASRModelAdapter()]
+            adapters: [
+                ParakeetASRModelAdapter(),
+                StreamingASRModelAdapter(),
+                WhisperASRModelAdapter(),
+            ]
         )
 
         XCTAssertEqual(findings, [], findings.map(\.description).joined(separator: "; "))

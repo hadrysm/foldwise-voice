@@ -1558,6 +1558,75 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
         )
     }
 
+    // MARK: - Streaming ASR model presentation (ADR-0009)
+
+    func testStreamingModelStatesItsCapabilityBesideLanguageCoverage() {
+        XCTAssertEqual(streamingRow()?.fit, "English · Live while you speak")
+    }
+
+    /// Copy, not a glyph or a tint: the capability has to survive VoiceOver.
+    func testStreamingCapabilityReachesTheRowAccessibilityLabel() {
+        XCTAssertEqual(
+            streamingRow()?.accessibilityLabel,
+            "Parakeet EOU 320, English · Live while you speak, Size 448 MB, "
+                + "Speed 5 out of 5, Quality 3 out of 5, Download, "
+                + "Not saved as the global ASR model selection"
+        )
+    }
+
+    func testStreamingRowExplainsItsLowercaseUnpunctuatedOutput() {
+        XCTAssertEqual(
+            streamingRow()?.description?.contains("lowercase and unpunctuated"),
+            true
+        )
+    }
+
+    func testStreamingCapabilityReachesTheInspector() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            installedPolishModels: [],
+            inspectedID: .speechRecognition("parakeet-eou-320")
+        )
+
+        XCTAssertEqual(projection.inspector?.fit, "English · Live while you speak")
+    }
+
+    func testNonStreamingModelKeepsLanguageCoverageAloneAsItsFit() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            installedPolishModels: [],
+            inspectedID: nil
+        )
+        let row = projection.sections
+            .flatMap(\.rows)
+            .first { $0.id == .speechRecognition("parakeet-v3") }
+
+        XCTAssertEqual(row?.fit, "25 languages")
+    }
+
+    private func streamingRow() -> ModelsRowPresentation? {
+        ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            installedPolishModels: [],
+            inspectedID: nil
+        )
+        .sections
+        .flatMap(\.rows)
+        .first { $0.id == .speechRecognition("parakeet-eou-320") }
+    }
+
     func testInitialInspectionUsesEffectiveFallbackForUnknownSavedModel() {
         let snapshot = snapshot(
             storedSelection: "retired-model",

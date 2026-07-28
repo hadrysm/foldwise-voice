@@ -867,7 +867,7 @@ struct ModelsWorkspaceProjection: Equatable {
             id: .speechRecognition(descriptor.id),
             family: .speechRecognition,
             name: descriptor.name,
-            fit: descriptor.languages,
+            fit: speechFit(descriptor),
             size: descriptor.size,
             speed: .rated(descriptor.speed),
             quality: .rated(descriptor.quality),
@@ -889,6 +889,15 @@ struct ModelsWorkspaceProjection: Equatable {
                 snapshot: snapshot
             ) ?? statusExplanation
         )
+    }
+
+    /// A Streaming ASR model states its capability in the row's own lead detail,
+    /// beside language coverage (ADR-0009). Words rather than a glyph or a tint,
+    /// so it survives VoiceOver — the fit detail is already part of every row's
+    /// accessibility label — and so the inspector says the same thing.
+    private static func speechFit(_ descriptor: ASRModelDescriptor) -> String {
+        guard descriptor.streaming else { return descriptor.languages }
+        return "\(descriptor.languages) · Live while you speak"
     }
 
     fileprivate static func speechFailure(

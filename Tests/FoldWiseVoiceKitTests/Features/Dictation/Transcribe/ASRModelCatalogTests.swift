@@ -78,8 +78,58 @@ final class ASRModelCatalogTests: XCTestCase {
     func testCatalogListsTheFullCuratedRoster() {
         XCTAssertEqual(
             ASRModelCatalog.entries.map(\.id),
-            ["parakeet-v3", "parakeet-v2", "whisper-large-v3-turbo", "whisper-small", "whisper-large-v3"]
+            [
+                "parakeet-v3", "parakeet-v2", "parakeet-eou-320",
+                "whisper-large-v3-turbo", "whisper-small", "whisper-large-v3",
+            ]
         )
+    }
+
+    // MARK: - EOU 320, the first Streaming ASR model (ADR-0009)
+
+    private var eou: ASRModelCatalog.Entry {
+        // Force-unwrap: the entry is a compile-time-constant catalog member.
+        // swiftlint:disable:next force_unwrapping
+        ASRModelCatalog.entry(for: "parakeet-eou-320")!
+    }
+
+    func testResolvesEouToItsStreamingCheckpoint() {
+        XCTAssertEqual(eou.engine, .streaming(variant: .parakeetEou320))
+    }
+
+    func testEouIsTheOnlyEntryAdvertisingStreaming() {
+        XCTAssertEqual(
+            ASRModelCatalog.entries.filter(\.streaming).map(\.id),
+            ["parakeet-eou-320"]
+        )
+    }
+
+    func testEouStatesItsEnglishOnlyCoverage() {
+        XCTAssertEqual(eou.languages, "English")
+    }
+
+    /// The pinned downloader transfers roughly twice EOU's ~224 MB logical
+    /// required set, and the size a user reads is what actually crosses the wire.
+    func testEouSizeIsWhatThePinnedDownloaderTransfers() {
+        XCTAssertEqual(eou.size, "448 MB")
+    }
+
+    func testEouBlurbCallsOutItsLowercaseUnpunctuatedOutput() {
+        XCTAssertTrue(
+            eou.blurb.contains("lowercase and unpunctuated"),
+            "EOU's honest raw output is not stated: \(eou.blurb)"
+        )
+    }
+
+    func testEouBlurbCallsOutTheDownloaderOverTransfer() {
+        XCTAssertTrue(
+            eou.blurb.contains("about 224 MB") && eou.blurb.contains("about 448 MB"),
+            "EOU's over-transfer is not stated: \(eou.blurb)"
+        )
+    }
+
+    func testDefaultRemainsANonStreamingModel() {
+        XCTAssertEqual(ASRModelCatalog.entry(for: ASRModelCatalog.defaultID)?.streaming, false)
     }
 
     /// No Whisper `.en` entries and no tiny/base tier: the roster stays

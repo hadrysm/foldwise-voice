@@ -81,7 +81,7 @@ struct ParakeetASRModelAdapter: ASRModelFamilyAdapting {
         _ variant: ASRModelCatalog.ParakeetVariant,
         _ progress: @escaping @Sendable (Double) -> Void,
         modelDirectory: @escaping ModelDirectory = ASRModelLibraryStorage.parakeetModelDirectory,
-        downloadRepository: @escaping RepositoryDownload = ASRModelLibraryStorage.downloadParakeet
+        downloadRepository: @escaping RepositoryDownload = ASRModelLibraryStorage.downloadRepository
     ) async throws {
         guard let directory = modelDirectory(variant) else {
             throw ASRModelAdapterError.modelDirectoryUnavailable
@@ -247,6 +247,167 @@ struct WhisperASRModelAdapter: ASRModelFamilyAdapting {
 
     private static func tokenizerRepository(for variant: String) -> String {
         variant.contains("small") ? "openai/whisper-small" : "openai/whisper-large-v3"
+    }
+}
+
+/// The engine-family adapter for Streaming ASR models (ADR-0009). It is the only
+/// adapter whose engines conform to `StreamCapableTranscribing`, which is what
+/// makes a catalog entry's `streaming` flag honest rather than decorative — a
+/// contract audit holds the two together for every entry.
+///
+/// It is a third family rather than a mode of `ParakeetASRModelAdapter` because
+/// nothing but the vendor is shared: different repository layout, different
+/// required artifacts, and an engine that answers a different protocol.
+struct StreamingASRModelAdapter: ASRModelFamilyAdapting {
+    typealias Availability = @Sendable (ASRModelCatalog.StreamingVariant) -> Bool
+    typealias ModelDirectory = @Sendable (ASRModelCatalog.StreamingVariant) -> URL?
+    typealias CompiledModelValidation = @Sendable (URL) -> Bool
+    typealias Download = @Sendable (
+        ASRModelCatalog.StreamingVariant,
+        @escaping @Sendable (Double) -> Void
+    ) async throws -> Void
+    typealias RepositoryDownload = @Sendable (
+        Repo,
+        URL,
+        String?,
+        @escaping @Sendable (Double) -> Void
+    ) async throws -> Void
+    typealias Delete = @Sendable (ASRModelCatalog.StreamingVariant) async throws -> Void
+    typealias MakeManager = @Sendable (
+        ASRModelCatalog.StreamingVariant,
+        URL
+    ) -> any StreamingASRManaging
+
+    let modelIDs: Set<String> = ["parakeet-eou-320"]
+    private let modelDirectory: ModelDirectory
+    private let availability: Availability
+    private let download: Download
+    private let delete: Delete
+    private let makeManager: MakeManager
+
+    init(
+        modelDirectory: @escaping ModelDirectory,
+        availability: @escaping Availability,
+        download: @escaping Download,
+        delete: @escaping Delete = { _ in throw ASRModelAdapterError.deletionUnavailable },
+        makeManager: @escaping MakeManager = Self.makeLibraryManager
+    ) {
+        self.modelDirectory = modelDirectory
+        self.availability = availability
+        self.download = download
+        self.delete = delete
+        self.makeManager = makeManager
+    }
+
+    init(
+        modelDirectory: @escaping ModelDirectory,
+        compiledModelIsUsable: @escaping CompiledModelValidation = {
+            ASRModelDataValidation.canLoadCompiledModel(at: $0)
+        },
+        download: @escaping Download,
+        delete: @escaping Delete = { _ in throw ASRModelAdapterError.deletionUnavailable },
+        makeManager: @escaping MakeManager = Self.makeLibraryManager
+    ) {
+        self.init(
+            modelDirectory: modelDirectory,
+            availability: { variant in
+                guard let directory = modelDirectory(variant) else { return false }
+                let required = StreamingASRModelAdapter.requiredArtifacts(for: variant)
+                return required.models.allSatisfy {
+                    ASRModelDataValidation.containsUsableCompiledModel(
+                        named: $0,
+                        under: directory,
+                        validate: compiledModelIsUsable
+                    )
+                } && ASRModelDataValidation.containsValidVocabulary(
+                    named: required.vocabulary,
+                    under: directory
+                )
+            },
+            download: download,
+            delete: delete,
+            makeManager: makeManager
+        )
+    }
+
+    init() {
+        self.init(
+            modelDirectory: ASRModelLibraryStorage.streamingModelDirectory,
+            download: { try await Self.downloadFromLibrary($0, $1) },
+            delete: ASRModelLibraryStorage.deleteStreaming
+        )
+    }
+
+    static func downloadFromLibrary(
+        _ variant: ASRModelCatalog.StreamingVariant,
+        _ progress: @escaping @Sendable (Double) -> Void,
+        downloadRepository: @escaping RepositoryDownload = ASRModelLibraryStorage.downloadRepository
+    ) async throws {
+        try await downloadRepository(
+            ASRModelStore.streamingRepository(variant),
+            ASRModelStore.streamingDownloadRoot(),
+            nil,
+            progress
+        )
+    }
+
+    func isModelDataAvailable(for id: String) -> Bool {
+        guard let variant = variant(for: id) else { return false }
+        return availability(variant)
+    }
+
+    func downloadModelData(
+        for id: String,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws {
+        guard let variant = variant(for: id) else { throw ASRModelAdapterError.unknownModel(id) }
+        try await download(variant, progress)
+    }
+
+    func makeEngine(for id: String) throws -> Transcribing {
+        guard let variant = variant(for: id) else { throw ASRModelAdapterError.unknownModel(id) }
+        guard let directory = modelDirectory(variant) else {
+            throw ASRModelAdapterError.modelDirectoryUnavailable
+        }
+        let makeManager = makeManager
+        return StreamingTranscriber(makeManager: { makeManager(variant, directory) })
+    }
+
+    func removeModelData(for id: String) async throws {
+        guard let variant = variant(for: id) else { throw ASRModelAdapterError.unknownModel(id) }
+        try await delete(variant)
+    }
+
+    /// What a complete download looks like on disk. The compiled models and the
+    /// vocabulary are separated because they are validated differently: one is
+    /// loaded, the other is parsed.
+    private static func requiredArtifacts(
+        for variant: ASRModelCatalog.StreamingVariant
+    ) -> (models: Set<String>, vocabulary: String) {
+        switch variant {
+        case .parakeetEou320:
+            (
+                [
+                    ModelNames.ParakeetEOU.encoderFile,
+                    ModelNames.ParakeetEOU.decoderFile,
+                    ModelNames.ParakeetEOU.jointFile,
+                ],
+                ModelNames.ParakeetEOU.vocab
+            )
+        }
+    }
+
+    private static let makeLibraryManager: MakeManager = { variant, directory in
+        switch variant {
+        case .parakeetEou320:
+            ParakeetEouStreamingManager(modelDirectory: directory, chunkSize: .ms320)
+        }
+    }
+
+    private func variant(for id: String) -> ASRModelCatalog.StreamingVariant? {
+        guard let entry = ASRModelCatalog.entry(for: id),
+              case let .streaming(variant) = entry.engine else { return nil }
+        return variant
     }
 }
 
