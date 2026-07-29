@@ -28,6 +28,21 @@ import { execSync, spawnSync } from "node:child_process";
 import { emitKeypressEvents } from "node:readline";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
+import {
+  DEFAULT_EFFORT,
+  PHASE_LABEL_WIDTH,
+  RUN_MODELS,
+  readStoredRunPlan,
+  writeStoredRunPlan,
+  type ModelID,
+  type Provider,
+  type RunConfiguration,
+  type RunEffort,
+  type RunModel,
+  type RunPlan,
+  type StoredSelection,
+  type VersionComponents,
+} from "./run-config.mts";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -36,38 +51,6 @@ import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 // Maximum number of implement→review cycles to run before stopping.
 // Each cycle works on one issue. Raise this to process more issues per run.
 const MAX_ITERATIONS = 10;
-
-type RunEffort = "low" | "medium" | "high" | "xhigh" | "max";
-type Provider = "claude-code" | "codex";
-type VersionComponents = readonly [number, number, number];
-type ModelID =
-  | "claude-fable-5"
-  | "claude-opus-4-8"
-  | "claude-sonnet-4-6"
-  | "gpt-5.6-sol"
-  | "gpt-5.5";
-
-interface MinimumVersion {
-  components: VersionComponents;
-  label: string;
-}
-
-interface RunModel {
-  id: ModelID;
-  label: string;
-  provider: Provider;
-  providerLabel: string;
-  description: string;
-  efforts: readonly RunEffort[];
-  minimumCliVersion?: MinimumVersion;
-}
-
-interface RunConfiguration {
-  model: RunModel;
-  effort: RunEffort;
-}
-
-const COMMON_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
 
 const PROVIDERS = {
   "claude-code": {
@@ -93,50 +76,6 @@ const PROVIDERS = {
     },
   },
 } as const;
-
-const RUN_MODELS: readonly RunModel[] = [
-  {
-    id: "claude-fable-5",
-    label: "Claude Fable 5",
-    provider: "claude-code",
-    providerLabel: "Anthropic · Claude Code",
-    description: "Current default · strong general-purpose coding",
-    efforts: COMMON_EFFORTS,
-  },
-  {
-    id: "claude-opus-4-8",
-    label: "Claude Opus 4.8",
-    provider: "claude-code",
-    providerLabel: "Anthropic · Claude Code",
-    description: "Deep reasoning for demanding changes",
-    efforts: [...COMMON_EFFORTS, "max"],
-  },
-  {
-    id: "claude-sonnet-4-6",
-    label: "Claude Sonnet 4.6",
-    provider: "claude-code",
-    providerLabel: "Anthropic · Claude Code",
-    description: "Fast, capable everyday engineering",
-    efforts: COMMON_EFFORTS,
-  },
-  {
-    id: "gpt-5.6-sol",
-    label: "GPT-5.6 Sol",
-    provider: "codex",
-    providerLabel: "OpenAI · Codex",
-    description: "OpenAI flagship · preview access may be required",
-    efforts: COMMON_EFFORTS,
-    minimumCliVersion: { components: [0, 144, 0], label: "0.144.0" },
-  },
-  {
-    id: "gpt-5.5",
-    label: "GPT-5.5",
-    provider: "codex",
-    providerLabel: "OpenAI · Codex",
-    description: "Frontier coding with broad availability",
-    efforts: COMMON_EFFORTS,
-  },
-];
 
 const EFFORT_LABELS: Readonly<Record<RunEffort, string>> = {
   low: "Low",
@@ -291,13 +230,24 @@ function executeProviderCommand(
   return `${result.stdout}\n${result.stderr}`.trim();
 }
 
-function availableEfforts(model: RunModel): readonly RunEffort[] {
-  const provider = PROVIDERS[model.provider];
+// `--help` output is per-provider and unchanging within a run, but the picker
+// now asks per phase — cache so choosing two models does not re-spawn the CLI.
+const providerHelpCache = new Map<Provider, string>();
+
+function providerHelp(model: RunModel): string {
+  const cached = providerHelpCache.get(model.provider);
+  if (cached !== undefined) return cached;
   const help = executeProviderCommand(
     model.provider,
-    provider.helpArgs,
+    PROVIDERS[model.provider].helpArgs,
     `${model.providerLabel} is not installed or is unavailable in PATH.`,
   );
+  providerHelpCache.set(model.provider, help);
+  return help;
+}
+
+function availableEfforts(model: RunModel): readonly RunEffort[] {
+  const help = providerHelp(model);
 
   if (model.provider !== "claude-code") return model.efforts;
 
@@ -311,7 +261,57 @@ function availableEfforts(model: RunModel): readonly RunEffort[] {
   return model.efforts.filter((effort) => supported.has(effort));
 }
 
-async function chooseRunConfiguration(): Promise<RunConfiguration | undefined> {
+/**
+ * Ask for one phase's model and effort. `remembered` only moves the initial
+ * cursor — the prompt is always shown, so replaying the last run is
+ * enter-enter rather than a silent skip.
+ */
+async function chooseConfiguration(
+  phaseLabel: string,
+  remembered: StoredSelection | undefined,
+): Promise<RunConfiguration | undefined> {
+  const rememberedIndex = RUN_MODELS.findIndex((candidate) => candidate.id === remembered?.model);
+  const model = await selectOption(
+    `Choose the ${phaseLabel} model`,
+    RUN_MODELS.map((candidate) => ({
+      label: candidate.label,
+      description: `${candidate.providerLabel} · ${candidate.description}`,
+      value: candidate,
+    })),
+    rememberedIndex === -1 ? 0 : rememberedIndex,
+  );
+  if (!model) return undefined;
+  process.stdout.write(
+    `${colors.green}◇${colors.reset} ${`${phaseLabel} model`.padEnd(PHASE_LABEL_WIDTH)}  ${model.label}\n`,
+  );
+
+  const efforts = availableEfforts(model);
+  if (!efforts.length) {
+    throw new Error(`${model.providerLabel} reports no supported reasoning efforts.`);
+  }
+  // Prefer the remembered effort, then the recommended default, then the first
+  // the CLI actually advertises.
+  const preferred = remembered?.model === model.id ? remembered.effort : DEFAULT_EFFORT;
+  const preferredIndex = efforts.indexOf(preferred);
+  const defaultIndex = preferredIndex === -1 ? efforts.indexOf(DEFAULT_EFFORT) : preferredIndex;
+  const effort = await selectOption(
+    `Choose ${phaseLabel} effort for ${model.label}`,
+    efforts.map((candidate) => ({
+      label: EFFORT_LABELS[candidate],
+      description: effortDescription(candidate),
+      value: candidate,
+    })),
+    defaultIndex === -1 ? 0 : defaultIndex,
+  );
+  if (!effort) return undefined;
+  process.stdout.write(
+    `${colors.green}◇${colors.reset} ${`${phaseLabel} effort`.padEnd(PHASE_LABEL_WIDTH)}  ${EFFORT_LABELS[effort]}\n`,
+  );
+
+  return { model, effort };
+}
+
+async function choosePlan(): Promise<RunPlan | undefined> {
   if (!process.stdin.isTTY || !process.stdout.isTTY || !process.stdin.setRawMode) {
     throw new Error("Sandcastle must be started from an interactive terminal.");
   }
@@ -321,46 +321,55 @@ async function chooseRunConfiguration(): Promise<RunConfiguration | undefined> {
   process.stdin.setRawMode(true);
   process.stdin.resume();
 
+  const remembered = readStoredRunPlan();
+
   try {
     process.stdout.write(
       `\n${colors.cyan}◆${colors.reset} ${colors.white}Sandcastle${colors.reset}\n` +
-        `${colors.dim}One model for implement → review.${colors.reset}\n\n`,
+        `${colors.dim}Pick the model and effort for each phase.${colors.reset}\n` +
+        (remembered
+          ? `${colors.dim}Defaults are your last run in this repo.${colors.reset}\n\n`
+          : "\n"),
     );
 
-    const model = await selectOption(
-      "Choose a Run model",
-      RUN_MODELS.map((candidate) => ({
-        label: candidate.label,
-        description: `${candidate.providerLabel} · ${candidate.description}`,
-        value: candidate,
-      })),
+    const sameForBoth = await selectOption(
+      "Use one model for both phases?",
+      [
+        {
+          label: "Same for both",
+          description: "One model and effort drives implement and review",
+          value: true,
+        },
+        {
+          label: "Configure separately",
+          description: "Pick a different model or effort per phase",
+          value: false,
+        },
+      ],
+      remembered?.sameForBoth === false ? 1 : 0,
     );
-    if (!model) return undefined;
-    process.stdout.write(`${colors.green}◇${colors.reset} Model   ${model.label}\n`);
+    if (sameForBoth === undefined) return undefined;
 
-    const efforts = availableEfforts(model);
-    if (!efforts.length) {
-      throw new Error(`${model.providerLabel} reports no supported reasoning efforts.`);
+    let implementer: RunConfiguration | undefined;
+    let reviewer: RunConfiguration | undefined;
+
+    if (sameForBoth) {
+      implementer = await chooseConfiguration("Run", remembered?.implementer);
+      if (!implementer) return undefined;
+      reviewer = implementer;
+    } else {
+      implementer = await chooseConfiguration("Implementer", remembered?.implementer);
+      if (!implementer) return undefined;
+      reviewer = await chooseConfiguration("Reviewer", remembered?.reviewer);
+      if (!reviewer) return undefined;
     }
-    const highIndex = efforts.indexOf("high");
-    const effort = await selectOption(
-      `Choose effort for ${model.label}`,
-      efforts.map((candidate) => ({
-        label: EFFORT_LABELS[candidate],
-        description: effortDescription(candidate),
-        value: candidate,
-      })),
-      highIndex === -1 ? 0 : highIndex,
-    );
-    if (!effort) return undefined;
-    process.stdout.write(`${colors.green}◇${colors.reset} Effort  ${EFFORT_LABELS[effort]}\n\n`);
 
     process.stdout.write(
-      `${colors.white}Ready to run Sandcastle${colors.reset}\n\n` +
-        `  Model     ${model.label}\n` +
-        `  Provider  ${model.providerLabel}\n` +
-        `  Effort    ${EFFORT_LABELS[effort]}\n` +
-        "  Workflow  Implement → Review\n\n",
+      `\n${colors.white}Ready to run Sandcastle${colors.reset}\n\n` +
+        `  Implement  ${implementer.model.label} · ${EFFORT_LABELS[implementer.effort]}\n` +
+        `             ${colors.dim}${implementer.model.providerLabel}${colors.reset}\n` +
+        `  Review     ${reviewer.model.label} · ${EFFORT_LABELS[reviewer.effort]}\n` +
+        `             ${colors.dim}${reviewer.model.providerLabel}${colors.reset}\n\n`,
     );
 
     const confirmed = await selectOption(
@@ -371,7 +380,7 @@ async function chooseRunConfiguration(): Promise<RunConfiguration | undefined> {
       ],
     );
 
-    return confirmed ? { model, effort } : undefined;
+    return confirmed ? { implementer, reviewer, sameForBoth } : undefined;
   } finally {
     process.stdin.setRawMode(wasRaw);
     process.stdin.pause();
@@ -419,6 +428,20 @@ function validateRunConfiguration(configuration: RunConfiguration): void {
   }
 }
 
+/**
+ * Validate every distinct model in the plan — the two phases may run different
+ * models, and even different providers. Checking by model id rather than by
+ * phase keeps the common "same for both" case to a single pass.
+ */
+function validateRunPlan(plan: RunPlan): void {
+  const validated = new Set<ModelID>();
+  for (const configuration of [plan.implementer, plan.reviewer]) {
+    if (validated.has(configuration.model.id)) continue;
+    validated.add(configuration.model.id);
+    validateRunConfiguration(configuration);
+  }
+}
+
 // Hooks run on the host checkout before the agent starts each phase.
 // Pre-resolving Swift dependencies keeps the agent's first build fast; the
 // command is idempotent, so running it once per phase is harmless.
@@ -431,19 +454,39 @@ const hooks = {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const configuration = await chooseRunConfiguration();
-  if (!configuration) {
+  const plan = await choosePlan();
+  if (!plan) {
     console.log(`${colors.dim}Sandcastle cancelled.${colors.reset}`);
     return;
   }
 
-  validateRunConfiguration(configuration);
-  const runAgent = PROVIDERS[configuration.model.provider].createAgent(
-    configuration.model.id,
-    configuration.effort,
+  validateRunPlan(plan);
+
+  // Remember the picks before the loop starts — well ahead of the first
+  // REVIEW_BASE capture, and outside the worktree, so nothing an agent commits
+  // can be affected by this write.
+  if (!writeStoredRunPlan(plan)) {
+    console.log(`${colors.dim}Could not save these picks for next time.${colors.reset}`);
+  }
+
+  const implementAgent = PROVIDERS[plan.implementer.model.provider].createAgent(
+    plan.implementer.model.id,
+    plan.implementer.effort,
   );
+  // Reuse the one agent when both phases match, so "same for both" behaves
+  // exactly as it did before the split.
+  const reviewAgent =
+    plan.implementer.model.id === plan.reviewer.model.id &&
+    plan.implementer.effort === plan.reviewer.effort
+      ? implementAgent
+      : PROVIDERS[plan.reviewer.model.provider].createAgent(
+          plan.reviewer.model.id,
+          plan.reviewer.effort,
+        );
+
   console.log(
-    `${colors.green}◆${colors.reset} Starting ${configuration.model.label} · ${EFFORT_LABELS[configuration.effort]}\n`,
+    `${colors.green}◆${colors.reset} Implement ${plan.implementer.model.label} · ${EFFORT_LABELS[plan.implementer.effort]}\n` +
+      `${colors.green}◆${colors.reset} Review    ${plan.reviewer.model.label} · ${EFFORT_LABELS[plan.reviewer.effort]}\n`,
   );
 
   for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
@@ -469,7 +512,7 @@ async function main(): Promise<void> {
       name: "implementer",
       sandbox: noSandbox(),
       branchStrategy: { type: "head" },
-      agent: runAgent,
+      agent: implementAgent,
       maxIterations: 1,
       hooks,
       promptFile: "./.sandcastle/implement-prompt.md",
@@ -495,7 +538,7 @@ async function main(): Promise<void> {
       name: "reviewer",
       sandbox: noSandbox(),
       branchStrategy: { type: "head" },
-      agent: runAgent,
+      agent: reviewAgent,
       maxIterations: 1,
       hooks,
       promptFile: "./.sandcastle/review-prompt.md",
