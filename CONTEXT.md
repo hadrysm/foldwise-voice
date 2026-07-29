@@ -19,6 +19,12 @@ revise while listening; the caption locks while Polish runs and never inserts
 partial text into the focused app.
 _Avoid_: Caption, transcript Badge, live insertion
 
+**Live chip** — The small inline `LIVE` label beside a Speech model's name in
+the Models ledger and inspector, marking a model that transcribes while you
+speak. Purely visual: the row and inspector state the capability in words for
+VoiceOver, so the chip itself is silent.
+_Avoid_: streaming badge, LIVE badge, live pill
+
 **Dictation row** — The compact presentation of one saved Dictation session
 used in both Home's recent list and the full History list. The two surfaces may
 offer different secondary actions, but the row's identity and visual language

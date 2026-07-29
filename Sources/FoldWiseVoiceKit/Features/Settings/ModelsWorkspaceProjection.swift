@@ -37,6 +37,43 @@ enum ModelsFocusTarget: Hashable {
     case inspectorCancel(ModelsRowID)
     case inspectorPrimary(ModelsRowID)
     case inspectorDestructive(ModelsRowID)
+
+    var isLedgerInspection: Bool {
+        if case .ledgerInspection = self {
+            return true
+        }
+        return false
+    }
+}
+
+/// How the ledger's current inspection was established. The ledger is a single
+/// focus stop, so clicking a row both inspects it and makes the ledger first
+/// responder — which would paint the keyboard focus ring for a mouse gesture.
+/// The ring is therefore drawn only for `.keyboard`, which also covers the
+/// programmatic focus moves a completed download makes: those the user must be
+/// able to see.
+enum ModelsInspectionOrigin {
+    case pointer
+    case keyboard
+
+    /// Whether the ledger row at `rowID` draws the keyboard focus ring.
+    func showsFocusRing(for rowID: ModelsRowID, focus: ModelsFocusTarget?) -> Bool {
+        focus == .ledgerInspection(rowID) && self == .keyboard
+    }
+
+    /// A click's claim on the ring lasts only while focus stays on the row it
+    /// inspected. Once focus leaves the ledger, tabbing back in is a keyboard
+    /// arrival and has to be visible again.
+    static func afterFocusMove(
+        from previous: ModelsFocusTarget?,
+        to current: ModelsFocusTarget?,
+        existing: ModelsInspectionOrigin
+    ) -> ModelsInspectionOrigin {
+        guard previous?.isLedgerInspection == true,
+              current?.isLedgerInspection != true
+        else { return existing }
+        return .keyboard
+    }
 }
 
 struct ModelsFocusTransition: Equatable {
@@ -567,11 +604,24 @@ enum ModelsPolishAnnouncementTransition {
     }
 }
 
+/// The one owner of how streaming capability is spoken. `ModelsLiveChip` is
+/// silent and purely visual, so the row and the inspector each have to say the
+/// capability in words — ADR-0009's requirement — in the same words.
+enum ModelsStreamingCopy {
+    static func spokenFit(_ fit: String, isStreaming: Bool) -> String {
+        isStreaming ? "\(fit), transcribes live while you speak" : fit
+    }
+}
+
 struct ModelsRowPresentation: Equatable {
     let id: ModelsRowID
     let family: ModelsFamilyID
     let name: String
     let fit: String
+    /// Whether this model transcribes while the user speaks (ADR-0009). A
+    /// structured fact rather than a clause inside `fit`, so the row can render
+    /// a Live chip and the accessibility label can still say it in words.
+    let isStreaming: Bool
     let size: String
     let speed: ModelsRating
     let quality: ModelsRating
@@ -592,6 +642,7 @@ struct ModelsRowPresentation: Equatable {
         family: ModelsFamilyID,
         name: String,
         fit: String,
+        isStreaming: Bool = false,
         size: String,
         speed: ModelsRating,
         quality: ModelsRating,
@@ -611,6 +662,7 @@ struct ModelsRowPresentation: Equatable {
         self.family = family
         self.name = name
         self.fit = fit
+        self.isStreaming = isStreaming
         self.size = size
         self.speed = speed
         self.quality = quality
@@ -634,7 +686,9 @@ struct ModelsRowPresentation: Equatable {
         let accessibleState = progress.map { "\($0.label) in progress" } ?? state
         var parts = [
             name,
-            fit,
+            // The visible chip is a glyph and four letters; VoiceOver gets the
+            // whole sentence, which is what ADR-0009 asked the row to guarantee.
+            ModelsStreamingCopy.spokenFit(fit, isStreaming: isStreaming),
             "Size \(size == "—" ? "Not available" : size)",
             "Speed \(speed.accessibilityText)",
             "Quality \(quality.accessibilityText)",
@@ -657,6 +711,7 @@ struct ModelsInspectorPresentation: Equatable {
     let semanticLabel: String
     let name: String
     let fit: String
+    let isStreaming: Bool
     let description: String?
     let status: String
     let familyExplanation: String
@@ -675,6 +730,7 @@ struct ModelsInspectorPresentation: Equatable {
         semanticLabel: String,
         name: String,
         fit: String,
+        isStreaming: Bool = false,
         description: String?,
         status: String,
         familyExplanation: String,
@@ -692,6 +748,7 @@ struct ModelsInspectorPresentation: Equatable {
         self.semanticLabel = semanticLabel
         self.name = name
         self.fit = fit
+        self.isStreaming = isStreaming
         self.description = description
         self.status = status
         self.familyExplanation = familyExplanation
@@ -879,7 +936,8 @@ struct ModelsWorkspaceProjection: Equatable {
             id: .speechRecognition(descriptor.id),
             family: .speechRecognition,
             name: descriptor.name,
-            fit: speechFit(descriptor),
+            fit: descriptor.languages,
+            isStreaming: descriptor.streaming,
             size: descriptor.size,
             speed: .rated(descriptor.speed),
             quality: .rated(descriptor.quality),
@@ -925,15 +983,6 @@ struct ModelsWorkspaceProjection: Equatable {
         }
         return requirement + " \(effectiveName) is handling Dictation, and your saved ASR "
             + "model selection stays as it is until you select another model."
-    }
-
-    /// A Streaming ASR model states its capability in the row's own lead detail,
-    /// beside language coverage (ADR-0009). Words rather than a glyph or a tint,
-    /// so it survives VoiceOver — the fit detail is already part of every row's
-    /// accessibility label — and so the inspector says the same thing.
-    private static func speechFit(_ descriptor: ASRModelDescriptor) -> String {
-        guard descriptor.streaming else { return descriptor.languages }
-        return "\(descriptor.languages) · Live while you speak"
     }
 
     fileprivate static func speechFailure(
@@ -1361,6 +1410,7 @@ struct ModelsWorkspaceProjection: Equatable {
             semanticLabel: semanticLabel,
             name: row.name,
             fit: row.fit,
+            isStreaming: row.isStreaming,
             description: row.description,
             status: row.state,
             familyExplanation: familyExplanation,

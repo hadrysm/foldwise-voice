@@ -1560,15 +1560,19 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
 
     // MARK: - Streaming ASR model presentation (ADR-0009)
 
-    func testStreamingModelStatesItsCapabilityBesideLanguageCoverage() {
-        XCTAssertEqual(streamingRow()?.fit, "English · Live while you speak")
+    /// The capability is a structured fact the row renders as a Live chip, so
+    /// `fit` carries language coverage alone rather than a clause spliced on.
+    func testStreamingModelReportsItsCapabilityAsAFlag() {
+        XCTAssertEqual(streamingRow()?.isStreaming, true)
+        XCTAssertEqual(streamingRow()?.fit, "English")
     }
 
-    /// Copy, not a glyph or a tint: the capability has to survive VoiceOver.
+    /// The Live chip is silent, so the capability has to survive VoiceOver in
+    /// the row's own label — what ADR-0009 required of the clause it replaced.
     func testStreamingCapabilityReachesTheRowAccessibilityLabel() {
         XCTAssertEqual(
             streamingRow()?.accessibilityLabel,
-            "Parakeet EOU 320, English · Live while you speak, Size 448 MB, "
+            "Parakeet EOU 320, English, transcribes live while you speak, Size 448 MB, "
                 + "Speed 5 out of 5, Quality 3 out of 5, Download, "
                 + "Not saved as the global ASR model selection"
         )
@@ -1592,7 +1596,44 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
             inspectedID: .speechRecognition("parakeet-eou-320")
         )
 
-        XCTAssertEqual(projection.inspector?.fit, "English · Live while you speak")
+        XCTAssertEqual(projection.inspector?.isStreaming, true)
+        XCTAssertEqual(projection.inspector?.fit, "English")
+    }
+
+    func testNonStreamingModelReportsNoStreamingCapability() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            installedPolishModels: [],
+            inspectedID: nil
+        )
+        let row = projection.sections
+            .flatMap(\.rows)
+            .first { $0.id == .speechRecognition("parakeet-v3") }
+
+        XCTAssertEqual(row?.isStreaming, false)
+    }
+
+    /// A non-streaming row's label must not gain the streaming sentence.
+    func testNonStreamingRowAccessibilityLabelOmitsTheStreamingClause() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            installedPolishModels: [],
+            inspectedID: nil
+        )
+        let label = projection.sections
+            .flatMap(\.rows)
+            .first { $0.id == .speechRecognition("parakeet-v3") }?
+            .accessibilityLabel
+
+        XCTAssertEqual(label?.contains("transcribes live while you speak"), false)
     }
 
     func testNonStreamingModelKeepsLanguageCoverageAloneAsItsFit() {
@@ -1627,6 +1668,74 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
         .first { $0.id == .speechRecognition("parakeet-eou-320") }
     }
 
+    // MARK: - The ledger focus ring belongs to the keyboard, not the mouse
+
+    private let firstRow = ModelsRowID.speechRecognition("parakeet-eou-320")
+
+    /// The ledger is a single focus stop, so a click both inspects a row and
+    /// makes the ledger first responder. That must not paint a keyboard ring.
+    func testClickingARowDoesNotShowTheFocusRing() {
+        XCTAssertFalse(
+            ModelsInspectionOrigin.pointer.showsFocusRing(
+                for: firstRow,
+                focus: .ledgerInspection(firstRow)
+            )
+        )
+    }
+
+    func testArrowKeyNavigationShowsTheFocusRing() {
+        XCTAssertTrue(
+            ModelsInspectionOrigin.keyboard.showsFocusRing(
+                for: firstRow,
+                focus: .ledgerInspection(firstRow)
+            )
+        )
+    }
+
+    func testAnUnfocusedRowShowsNoRingEvenAfterKeyboardNavigation() {
+        XCTAssertFalse(
+            ModelsInspectionOrigin.keyboard.showsFocusRing(
+                for: firstRow,
+                focus: .ledgerInspection(.speechRecognition("nemotron-560"))
+            )
+        )
+    }
+
+    /// Click, tab away, tab back: the return is a keyboard arrival, so the ring
+    /// comes back rather than staying suppressed by the stale click.
+    func testFocusLeavingTheLedgerEndsAClicksClaimOnTheRing() {
+        XCTAssertEqual(
+            ModelsInspectionOrigin.afterFocusMove(
+                from: .ledgerInspection(firstRow),
+                to: .inspectorPrimary(firstRow),
+                existing: .pointer
+            ),
+            .keyboard
+        )
+    }
+
+    func testMovingBetweenLedgerRowsKeepsTheExistingOrigin() {
+        XCTAssertEqual(
+            ModelsInspectionOrigin.afterFocusMove(
+                from: .ledgerInspection(firstRow),
+                to: .ledgerInspection(.speechRecognition("nemotron-560")),
+                existing: .pointer
+            ),
+            .pointer
+        )
+    }
+
+    func testFocusArrivingAtTheLedgerKeepsTheExistingOrigin() {
+        XCTAssertEqual(
+            ModelsInspectionOrigin.afterFocusMove(
+                from: nil,
+                to: .ledgerInspection(firstRow),
+                existing: .pointer
+            ),
+            .pointer
+        )
+    }
+
     // MARK: - Nemotron 560 on hardware that can and can't run it
 
     func testNemotronOffersItsDownloadOnAppleSilicon() {
@@ -1640,8 +1749,9 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
         )
     }
 
-    func testNemotronStatesItsStreamingCapabilityBesideLanguageCoverage() {
-        XCTAssertEqual(nemotronRow()?.fit, "English · Live while you speak")
+    func testNemotronReportsItsStreamingCapabilityAsAFlag() {
+        XCTAssertEqual(nemotronRow()?.isStreaming, true)
+        XCTAssertEqual(nemotronRow()?.fit, "English")
     }
 
     func testNemotronIsNotSelectableOnAnIntelMac() {
@@ -1668,7 +1778,7 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
     func testNemotronUnsupportedStateReachesTheRowAccessibilityLabel() {
         XCTAssertEqual(
             nemotronRow(hostIsAppleSilicon: false)?.accessibilityLabel,
-            "Nemotron 560, English · Live while you speak, Size 627 MB, "
+            "Nemotron 560, English, transcribes live while you speak, Size 627 MB, "
                 + "Speed 4 out of 5, Quality 4 out of 5, Unsupported, "
                 + "Not saved as the global ASR model selection"
         )
