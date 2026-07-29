@@ -363,21 +363,27 @@ def main() -> None:
         "--dictation-baseline-bundle-only", action="store_true",
         help="build the throwaway issue #349 Dictation baseline harness",
     )
+    parser.add_argument(
+        "--streaming-latency-bundle-only", action="store_true",
+        help="build the fixed-Mac streaming latency harness (issue #358)",
+    )
     args = parser.parse_args()
     selected_outputs = sum([
         args.dmg,
         args.bundle_only,
         args.development_bundle_only,
         args.dictation_baseline_bundle_only,
+        args.streaming_latency_bundle_only,
     ])
     if selected_outputs > 1:
         parser.error("choose only one output mode")
 
-    swift_defines = (
-        ("DICTATION_BASELINE_HARNESS",)
-        if args.dictation_baseline_bundle_only
-        else ()
-    )
+    if args.dictation_baseline_bundle_only:
+        swift_defines = ("DICTATION_BASELINE_HARNESS",)
+    elif args.streaming_latency_bundle_only:
+        swift_defines = ("STREAMING_LATENCY_HARNESS",)
+    else:
+        swift_defines = ()
     binary = build_binary(swift_defines=swift_defines)
     icon, background = render_assets()
 
@@ -385,6 +391,7 @@ def main() -> None:
         args.bundle_only
         or args.development_bundle_only
         or args.dictation_baseline_bundle_only
+        or args.streaming_latency_bundle_only
     ):
         if args.bundle_only:
             destination = DIST / "bundle"
@@ -392,6 +399,10 @@ def main() -> None:
             share_repo_config = False
         elif args.dictation_baseline_bundle_only:
             destination = DIST / "dictation-baseline-bundle"
+            name = APP_NAME
+            share_repo_config = False
+        elif args.streaming_latency_bundle_only:
+            destination = DIST / "streaming-latency-bundle"
             name = APP_NAME
             share_repo_config = False
         else:

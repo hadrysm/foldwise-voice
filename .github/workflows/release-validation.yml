@@ -147,3 +147,43 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
+
+  # The authoritative duration and residency lane for PRD #351. It is manual
+  # only: the run needs private voice fixtures and a separately measured
+  # Accessibility paste constant that no workflow can capture for itself. See
+  # docs/streaming-latency-harness.md. A failure is never retried to discard a
+  # bad sample.
+  streaming-latency:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: [self-hosted, macOS, ARM64, foldwise-streaming-reference]
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run fixed-Mac streaming latency release gate
+        env:
+          EVIDENCE: >-
+            ${{ runner.temp }}/streaming-latency-${{ github.run_id }}-${{ github.run_attempt }}
+        run: >-
+          python3 scripts/run_streaming_latency.py
+          --short-audio "$FOLDWISE_STREAMING_SHORT_FIXTURE"
+          --long-audio "$FOLDWISE_STREAMING_LONG_FIXTURE"
+          --insert-constant-milliseconds "$FOLDWISE_STREAMING_INSERT_CONSTANT_MS"
+          --output-directory "$EVIDENCE"
+      - name: Verify the retained report through XCTest
+        env:
+          FOLDWISE_STREAMING_LATENCY_REPORT: >-
+            ${{ runner.temp }}/streaming-latency-${{ github.run_id }}-${{ github.run_attempt }}/streaming-latency-report.json
+          FOLDWISE_STREAMING_LATENCY_BASELINES: >-
+            ${{ github.workspace }}/docs/streaming-latency-baselines.json
+        run: >-
+          swift test -c release
+          --filter StreamingLatencyGateTests/testFixedMacReportMeetsTheLockedLatencyBudget
+      - name: Preserve streaming latency evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: streaming-latency-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/streaming-latency-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

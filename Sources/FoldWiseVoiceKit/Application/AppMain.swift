@@ -79,6 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     #if DICTATION_BASELINE_HARNESS
         private var dictationBaselineApplication: DictationBaselineApplication?
     #endif
+    #if STREAMING_LATENCY_HARNESS
+        private var streamingLatencyApplication: StreamingLatencyApplication?
+    #endif
     #if FOLDWISE_UPDATE_ACCEPTANCE
         private var updateRuntimeAcceptance: UpdateRuntimeAcceptanceController?
     #endif
@@ -104,6 +107,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
                     )
                     let application = DictationBaselineApplication(plan: plan)
                     dictationBaselineApplication = application
+                    application.start()
+                } catch {
+                    FileHandle.standardError.write(
+                        Data("error: \(error.localizedDescription)\n".utf8)
+                    )
+                    NSApp.terminate(nil)
+                }
+                return
+            }
+        #endif
+
+        #if STREAMING_LATENCY_HARNESS
+            if let planPath = ProcessInfo.processInfo.environment[
+                "FOLDWISE_STREAMING_LATENCY_PLAN"
+            ] {
+                do {
+                    let plan = try StreamingLatencyPlan.load(
+                        from: URL(fileURLWithPath: planPath)
+                    )
+                    let application = StreamingLatencyApplication(plan: plan)
+                    streamingLatencyApplication = application
                     application.start()
                 } catch {
                     FileHandle.standardError.write(

@@ -42,6 +42,12 @@ or on floating CI timing. See
 [Pane navigation performance harness](pane-performance-harness.md) for its
 measurement contract, isolated fixtures, and evidence layout.
 
+`scripts/run_streaming_latency.py` is the fixed-Mac Release gate for the locked
+streaming perceived-latency budget. Its limits live in `StreamingLatencyGate`, so
+`swift test` pins all three everywhere while only the reference Mac produces an
+authoritative measurement. See
+[Streaming latency release gate](streaming-latency-harness.md).
+
 ## Coverage calculation and gates
 
 Only LLVM executable lines in `Sources/FoldWiseVoiceKit` count as production

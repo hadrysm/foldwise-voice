@@ -3,6 +3,7 @@
 // Every word, label, and role it draws comes from
 // LiveTranscriptCaptionPresentation; this file only renders.
 
+import AppKit
 import SwiftUI
 
 final class LiveTranscriptCaptionModel: ObservableObject {
@@ -10,6 +11,38 @@ final class LiveTranscriptCaptionModel: ObservableObject {
     /// Slides the tether so it keeps pointing at the Badge after the caption has
     /// been clamped to a screen edge.
     @Published var tetherOffset: CGFloat = 0
+    /// Fires from the caption's own AppKit draw. Nil in the shipping app, so the
+    /// production view tree is unchanged; the streaming latency gate (PRD #351)
+    /// refuses a first-feedback measurement that was not taken from a real
+    /// caption render, and this is where that render is observed.
+    var onRender: (@MainActor (LiveTranscriptCaptionPresentation) -> Void)?
+}
+
+@MainActor
+final class LiveTranscriptCaptionRenderView: NSView {
+    var presentation: LiveTranscriptCaptionPresentation
+    var onRender: @MainActor (LiveTranscriptCaptionPresentation) -> Void
+
+    init(
+        presentation: LiveTranscriptCaptionPresentation,
+        onRender: @escaping @MainActor (LiveTranscriptCaptionPresentation) -> Void
+    ) {
+        self.presentation = presentation
+        self.onRender = onRender
+        super.init(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let presentation = presentation
+        let onRender = onRender
+        DispatchQueue.main.async { onRender(presentation) }
+    }
 }
 
 struct LiveTranscriptCaptionView: View {
@@ -60,6 +93,17 @@ struct LiveTranscriptCaptionView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(presentation.accessibilityLabel)
         .accessibilityValue(presentation.accessibilityValue)
+        .overlay(alignment: .topLeading) {
+            if let onRender = model.onRender {
+                LiveTranscriptCaptionRenderMarker(
+                    presentation: presentation,
+                    onRender: onRender
+                )
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
     }
 
     private func header(_ presentation: LiveTranscriptCaptionPresentation) -> some View {
@@ -99,6 +143,24 @@ struct LiveTranscriptCaptionView: View {
                 .foregroundStyle(Theme.accent.opacity(0.72))
         )
         .font(Theme.ui(12.5, .medium))
+    }
+
+    /// A one-point draw marker inside the caption's own view tree — the same
+    /// mechanism the pane harness uses for first-meaningful-frame, so "the
+    /// caption appeared" means AppKit drew it rather than a snapshot arriving.
+    private struct LiveTranscriptCaptionRenderMarker: NSViewRepresentable {
+        let presentation: LiveTranscriptCaptionPresentation
+        let onRender: @MainActor (LiveTranscriptCaptionPresentation) -> Void
+
+        func makeNSView(context _: Context) -> LiveTranscriptCaptionRenderView {
+            LiveTranscriptCaptionRenderView(presentation: presentation, onRender: onRender)
+        }
+
+        func updateNSView(_ view: LiveTranscriptCaptionRenderView, context _: Context) {
+            view.presentation = presentation
+            view.onRender = onRender
+            view.needsDisplay = true
+        }
     }
 
     private var tether: some View {

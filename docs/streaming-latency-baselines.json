@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "referenceMac": "foldwise-streaming-reference",
+  "standaloneMaximumResidentBytes": 1227000000,
+  "standaloneMaximumResidentSource": "docs/research/streaming-asr-path-evaluation.md — Nemotron 560 standalone peak footprint / max RSS 1.092 / 1.227 GB, decimal GB as recorded in that artifact",
+  "acceptedRun": null,
+  "fixtures": {}
+}
