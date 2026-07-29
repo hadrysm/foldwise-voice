@@ -314,7 +314,7 @@ final class DictationRowHostedTests: XCTestCase {
             }
             NSApp.abortModal()
         }
-        NSApp.runModal(for: window)
+        runModalBounded(window)
         hostingLayout(window)
     }
 

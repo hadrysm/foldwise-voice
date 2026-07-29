@@ -12,6 +12,10 @@ enum Log {
     static let app = Logger(subsystem: subsystem, category: "app")
     static let audio = Logger(subsystem: subsystem, category: "audio")
     static let config = Logger(subsystem: subsystem, category: "config")
+    static let dictationPerformance = Logger(
+        subsystem: subsystem,
+        category: "dictation-performance"
+    )
     static let history = Logger(subsystem: subsystem, category: "history")
     static let hotkey = Logger(subsystem: subsystem, category: "hotkey")
     static let insert = Logger(subsystem: subsystem, category: "insert")

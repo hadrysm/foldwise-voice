@@ -20,6 +20,11 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
     private var isClosed = false
     private var startingFailure: AudioCaptureError?
     private var observationInstalled = false
+    private var samplesConsumer: (([Float]) -> Void)?
+    /// Identifies the capture session a queued chunk belongs to. Every site that
+    /// discards the active capture ends that session's delivery, so a chunk its
+    /// queue had already dequeued cannot reach the consumer afterwards.
+    private var deliverySession = 0
 
     private enum StartResolution {
         case alreadyActive
@@ -117,6 +122,14 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
         scheduleReset(generation: update.resetGeneration)
     }
 
+    /// A Dictation session captures this subscription when it begins, as it
+    /// already does for the ASR model selection, so subscribing applies to the
+    /// next session and capture with no consumer stays exactly as it was.
+    /// Detaching applies immediately, including mid-session.
+    func deliverSamples(to consumer: (([Float]) -> Void)?) {
+        lock.withLock { samplesConsumer = consumer }
+    }
+
     func start() throws {
         try ensureObservation()
         let freshSnapshot: AudioHardwareSnapshot
@@ -151,10 +164,19 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
             target = device
         }
 
+        // Installed only for a subscribed session, so batch-only capture keeps
+        // queueing nothing. The session delivers from its own queue, never from
+        // the render thread and never under a lock `stop()` holds.
+        let delivery: (([Float]) -> Void)? = lock.withLock {
+            guard samplesConsumer != nil else { return nil }
+            let session = deliverySession
+            return { [weak self] chunk in self?.deliver(chunk, from: session) }
+        }
         let session: any AudioCaptureSession
         do {
             session = try hardware.startCapture(
                 deviceUID: target.uid,
+                onSamples: delivery,
                 onFailure: { [weak self] error in self?.captureFailed(error) }
             )
         } catch let error as AudioCaptureError {
@@ -220,6 +242,7 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
             // concurrent preference and HAL changes remain deferred.
             let samples = session.stop()
             capture = nil
+            deliverySession += 1
             do {
                 snapshot = try hardware.snapshot()
             } catch {
@@ -243,11 +266,13 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
         ) in
             let session = capture
             capture = nil
+            deliverySession += 1
             isStarting = false
             isStopping = false
             isClosed = true
             startingFailure = nil
             pending = nil
+            samplesConsumer = nil
             observationInstalled = false
             statusGeneration += 1
             return (session, makeState())
@@ -255,6 +280,16 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
         update.session?.close()
         hardware.stopObserving()
         onInputStateChange?(update.state)
+    }
+
+    /// Copies the consumer out before calling it so a chunk never runs consumer
+    /// code under the routing lock, and so a consumer that detaches or stops the
+    /// recorder from inside the call cannot deadlock.
+    private func deliver(_ chunk: [Float], from session: Int) {
+        let consumer = lock.withLock {
+            deliverySession == session ? samplesConsumer : nil
+        }
+        consumer?(chunk)
     }
 
     private func hardwareChanged(_ change: AudioHardwareChange) {
@@ -283,6 +318,7 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
                 if capture != nil, let effective, snapshot.device(uid: effective.uid) == nil {
                     let failedSession = capture
                     capture = nil
+                    deliverySession += 1
                     pending = nil
                     let failedName = effective.name
                     self.effective = Self.resolve(preferredUID: preferredUID, snapshot: snapshot)
@@ -335,6 +371,7 @@ final class AudioRecorder: AudioRecording, AudioInputStateProviding {
             }
             guard let session = capture else { return (nil, nil) }
             capture = nil
+            deliverySession += 1
             pending = nil
             do {
                 snapshot = try hardware.snapshot()

@@ -13,6 +13,18 @@ idle ⇄ hover → recording → working → done/error and back; it never steal
 focus from the app being dictated into.
 _Avoid_: HUD, overlay, recording bar, floating window
 
+**Live transcript caption** — The transient, non-activating raw-transcript
+surface tethered to the Badge during a Dictation session. Tentative words may
+revise while listening; the caption locks while Polish runs and never inserts
+partial text into the focused app.
+_Avoid_: Caption, transcript Badge, live insertion
+
+**Live chip** — The small inline `LIVE` label beside a Speech model's name in
+the Models ledger and inspector, marking a model that transcribes while you
+speak. Purely visual: the row and inspector state the capability in words for
+VoiceOver, so the chip itself is silent.
+_Avoid_: streaming badge, LIVE badge, live pill
+
 **Dictation row** — The compact presentation of one saved Dictation session
 used in both Home's recent list and the full History list. The two surfaces may
 offer different secondary actions, but the row's identity and visual language
@@ -160,6 +172,20 @@ attempts to load its default ASR model without silently changing the selection.
 If that fallback cannot load, there is no effective ASR model and Dictation
 remains blocked.
 _Avoid_: runtime selection, resolved engine
+
+**Streaming ASR model** — An ASR model that transcribes while you are still
+speaking and finalizes within a few tens of milliseconds of your last word, so
+its own result is the transcript that gets polished, recorded, and inserted.
+Streaming is a property of the model, surfaced in the catalog beside language
+coverage and size; ordinary ASR model selection picks one, and the default does
+not stream (ADR-0009).
+_Avoid_: live model, realtime model, preview model
+
+**Transcript snapshot** — What a Streaming ASR model publishes as you speak: an
+append-only *committed* prefix plus a *tentative* suffix that later audio may
+still rewrite. The unit the Live transcript caption renders, distinguishing the
+two spans.
+_Avoid_: partial, interim result, preview text
 
 ## Batch workflow
 

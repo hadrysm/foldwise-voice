@@ -70,6 +70,27 @@ final class HistoryStoreRoundTripTests: XCTestCase {
         XCTAssertEqual(store.load().first?.modeID, modeID)
     }
 
+    func testDictationSessionTimingRoundTrips() {
+        let store = JSONLHistoryStore(url: storeURL)
+        var written = entry(secondsSince1970: 1_700_000_000, text: "measured")
+        written.timing = DictationSessionTiming(
+            totalMilliseconds: 412.5,
+            queuedMilliseconds: 2.5,
+            transcribeMilliseconds: 120,
+            polishMilliseconds: 220,
+            polishServerMilliseconds: 200,
+            polishModelLoadMilliseconds: 80,
+            polishPromptEvalMilliseconds: 20,
+            polishGenerationMilliseconds: 100,
+            insertMilliseconds: 52,
+            serialTailMilliseconds: 70
+        )
+
+        store.append(written)
+
+        XCTAssertEqual(store.load().first?.timing, written.timing)
+    }
+
     func testLegacyNameOnlyEntryWithoutModeIDStillLoads() throws {
         let legacy = entry(secondsSince1970: 1_700_000_000, text: "legacy")
         var line = try JSONEncoder().encode(legacy)

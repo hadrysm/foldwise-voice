@@ -18,25 +18,21 @@ extension OllamaClient {
         return max(floor, multiple * estimatedTranscriptTokens)
     }
 
-    /// Builds the Polish request body for the OpenAI-compatible
-    /// `/v1/chat/completions` endpoint. Kept pure — no network — so its shape is
-    /// directly assertable, mirroring `deleteOutcome`.
-    ///
-    /// `temperature` and `max_tokens` are TOP-LEVEL fields on purpose: this
-    /// endpoint silently ignores a nested `options` object (Ollama's native
-    /// `/api/chat` convention), so the old `options.temperature: 0` never
-    /// applied and Polish ran at Ollama's default (non-zero) temperature — a
-    /// direct driver of the off-task failures. If a future migration moves the
-    /// request to the native `/api/chat` endpoint, these fields move BACK under
-    /// an `options` object — do not carry the top-level form across that change.
+    /// Builds the Polish request body for Ollama's native `/api/chat` endpoint.
+    /// The native response exposes model-load, prompt-evaluation, and generation
+    /// durations, which the OpenAI-compatible endpoint omits. Kept pure — no
+    /// network — so its shape is directly assertable, mirroring `deleteOutcome`.
     static func chatRequestBody(
         model: String, system: String, user: String, maxTokens: Int
     ) -> [String: Any] {
         [
             "model": model,
             "stream": false,
-            "temperature": 0,
-            "max_tokens": maxTokens,
+            "keep_alive": keepAlive,
+            "options": [
+                "temperature": 0,
+                "num_predict": maxTokens,
+            ],
             "messages": [
                 ["role": "system", "content": system],
                 ["role": "user", "content": user],

@@ -948,7 +948,7 @@ final class StatsPaneHostedTests: XCTestCase {
             }
             NSApp.abortModal()
         }
-        NSApp.runModal(for: window)
+        runModalBounded(window)
         window.contentView?.layoutSubtreeIfNeeded()
     }
 

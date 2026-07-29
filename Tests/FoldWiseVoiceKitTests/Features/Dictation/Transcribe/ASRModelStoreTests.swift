@@ -42,6 +42,67 @@ final class ASRModelStoreTests: XCTestCase {
         XCTAssertNotEqual(v2, v3)
     }
 
+    func testStreamingResolvesToItsChunkTierFolder() throws {
+        let dir = try XCTUnwrap(
+            ASRModelStore.modelDirectory(for: .streaming(variant: .parakeetEou320))
+        )
+        XCTAssertTrue(
+            dir.path.hasSuffix("FluidAudio/Models/parakeet-eou-streaming/320ms"),
+            "unexpected EOU cache path: \(dir.path)"
+        )
+    }
+
+    /// The pinned downloader re-appends the repository's own nested folder name,
+    /// so the destination is the shared models root — one level above what the
+    /// Parakeet checkpoints pass, and getting it wrong nests the tier twice.
+    func testStreamingDownloadsIntoTheSharedModelsRoot() throws {
+        let dir = try XCTUnwrap(
+            ASRModelStore.modelDirectory(for: .streaming(variant: .parakeetEou320))
+        )
+        XCTAssertEqual(
+            ASRModelStore.streamingDownloadRoot().standardizedFileURL,
+            dir.deletingLastPathComponent().deletingLastPathComponent().standardizedFileURL
+        )
+    }
+
+    func testNemotronResolvesToItsChunkTierFolder() throws {
+        let dir = try XCTUnwrap(
+            ASRModelStore.modelDirectory(for: .streaming(variant: .nemotron560))
+        )
+        XCTAssertTrue(
+            dir.path.hasSuffix("FluidAudio/Models/nemotron-streaming/560ms"),
+            "unexpected Nemotron cache path: \(dir.path)"
+        )
+    }
+
+    func testNemotronDownloadsIntoTheSharedModelsRoot() throws {
+        let dir = try XCTUnwrap(
+            ASRModelStore.modelDirectory(for: .streaming(variant: .nemotron560))
+        )
+        XCTAssertEqual(
+            ASRModelStore.streamingDownloadRoot().standardizedFileURL,
+            dir.deletingLastPathComponent().deletingLastPathComponent().standardizedFileURL
+        )
+    }
+
+    func testStreamingVariantsResolveToDistinctFolders() throws {
+        let eou = try XCTUnwrap(
+            ASRModelStore.modelDirectory(for: .streaming(variant: .parakeetEou320))
+        )
+        let nemotron = try XCTUnwrap(
+            ASRModelStore.modelDirectory(for: .streaming(variant: .nemotron560))
+        )
+        XCTAssertNotEqual(eou, nemotron)
+    }
+
+    func testStreamingAndParakeetResolveToDistinctFolders() throws {
+        let streaming = try XCTUnwrap(
+            ASRModelStore.modelDirectory(for: .streaming(variant: .parakeetEou320))
+        )
+        let parakeet = try XCTUnwrap(ASRModelStore.modelDirectory(for: .parakeet(version: .v3)))
+        XCTAssertNotEqual(streaming, parakeet)
+    }
+
     func testDeleteReportsUnresolvableModelDirectory() {
         let error = ASRModelStore.delete(
             .whisper(variant: "missing"),

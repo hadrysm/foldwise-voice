@@ -56,6 +56,7 @@ final class CoreAudioHardware: AudioHardware {
 
     func startCapture(
         deviceUID: String,
+        onSamples: (([Float]) -> Void)?,
         onFailure: @escaping (AudioCaptureError) -> Void
     ) throws -> any AudioCaptureSession {
         let devices = try deviceRecords()
@@ -66,6 +67,7 @@ final class CoreAudioHardware: AudioHardware {
             engine: engine,
             deviceID: record.id,
             device: record.device,
+            onSamples: onSamples,
             configurationFailure: { [weak self] in
                 guard let self, let snapshot = try? snapshot() else {
                     return .configurationChanged
@@ -170,25 +172,24 @@ private final class AVAudioCaptureSession: AudioCaptureSession {
 
     private let engine: AVAudioEngine
     private let recovery = AudioCaptureRecoveryCoordinator()
+    private let sampleBuffer = CaptureSampleBuffer()
     private let lock = NSLock()
     private var converter: AVAudioConverter
     private let outputFormat: AVAudioFormat
     private let configurationFailure: () -> AudioCaptureError
     private let onFailure: (AudioCaptureError) -> Void
-    private var buffered: [Float] = []
-    private var latestLevel: Float = 0
-    private var running = true
     private var tapInstalled = false
     private var configurationObserver: NSObjectProtocol?
 
     var level: Float {
-        lock.withLock { latestLevel }
+        sampleBuffer.level
     }
 
     init(
         engine: AVAudioEngine,
         deviceID: AudioDeviceID,
         device: AudioInputDevice,
+        onSamples: (([Float]) -> Void)?,
         configurationFailure: @escaping () -> AudioCaptureError,
         onFailure: @escaping (AudioCaptureError) -> Void
     ) throws {
@@ -221,6 +222,7 @@ private final class AVAudioCaptureSession: AudioCaptureSession {
         self.outputFormat = outputFormat
         self.configurationFailure = configurationFailure
         self.onFailure = onFailure
+        sampleBuffer.deliver(to: onSamples)
         installTap(inputFormat: inputFormat)
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
@@ -237,27 +239,14 @@ private final class AVAudioCaptureSession: AudioCaptureSession {
     }
 
     func stop() -> [Float] {
-        let samples: [Float] = lock.withLock {
-            guard running else { return [] }
-            running = false
-            let samples = buffered
-            buffered.removeAll()
-            latestLevel = 0
-            return samples
-        }
+        let captured = sampleBuffer.finish() ?? []
         recovery.stop { shutDownEngine() }
-        return samples
+        return captured
     }
 
     func close() {
-        let shouldShutDown = lock.withLock {
-            guard running else { return false }
-            running = false
-            buffered.removeAll()
-            latestLevel = 0
-            return true
-        }
-        if shouldShutDown {
+        let wasCapturing = sampleBuffer.finish() != nil
+        if wasCapturing {
             recovery.stop { shutDownEngine() }
         }
     }
@@ -345,11 +334,10 @@ private final class AVAudioCaptureSession: AudioCaptureSession {
             sumOfSquares += channel[index] * channel[index]
         }
         let rms = sqrt(sumOfSquares / Float(frames))
-        lock.withLock {
-            guard running else { return }
-            buffered.append(contentsOf: UnsafeBufferPointer(start: channel, count: frames))
-            latestLevel = rms
-        }
+        // One copy serves both authorities: the retained buffer appends from it
+        // and a subscribed consumer receives it unchanged.
+        let chunk = [Float](UnsafeBufferPointer(start: channel, count: frames))
+        sampleBuffer.append(chunk, level: rms)
     }
 }
 

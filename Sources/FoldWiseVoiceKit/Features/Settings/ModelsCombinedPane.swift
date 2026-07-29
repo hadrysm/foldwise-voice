@@ -19,6 +19,7 @@ struct ModelsCombinedPane: View {
     @State private var inspectedID: ModelsRowID?
     @State private var pendingDestructiveAction: ModelsDestructiveAction?
     @State private var previousPolishRowIDs: [ModelsRowID] = []
+    @State private var inspectionOrigin: ModelsInspectionOrigin = .keyboard
     @FocusState private var focusedControl: ModelsFocusTarget?
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
@@ -66,6 +67,13 @@ struct ModelsCombinedPane: View {
         .onAppear { reconcileInspection(with: presentation) }
         .onChange(of: presentation) { _, updated in
             reconcileInspection(with: updated)
+        }
+        .onChange(of: focusedControl) { previous, current in
+            inspectionOrigin = .afterFocusMove(
+                from: previous,
+                to: current,
+                existing: inspectionOrigin
+            )
         }
         .onChange(of: interface.asrSnapshot) { previous, current in
             applyASRFocusTransition(from: previous, to: current)
@@ -148,6 +156,10 @@ struct ModelsCombinedPane: View {
         }
     }
 
+    private func showsFocusRing(for id: ModelsRowID) -> Bool {
+        inspectionOrigin.showsFocusRing(for: id, focus: focusedControl)
+    }
+
     private func familySection(
         _ section: ModelsFamilyPresentation,
         inspectedID: ModelsRowID?
@@ -174,14 +186,14 @@ struct ModelsCombinedPane: View {
                     placeholder,
                     family: section.id,
                     isInspected: inspectedID == .polishPlaceholder,
-                    isKeyboardFocused: focusedControl == .ledgerInspection(.polishPlaceholder)
+                    isKeyboardFocused: showsFocusRing(for: .polishPlaceholder)
                 )
             }
             ForEach(section.rows, id: \.id) { row in
                 ledgerRow(
                     row,
                     isInspected: row.id == inspectedID,
-                    isKeyboardFocused: focusedControl == .ledgerInspection(row.id)
+                    isKeyboardFocused: showsFocusRing(for: row.id)
                 )
             }
         }
@@ -195,6 +207,7 @@ struct ModelsCombinedPane: View {
     ) -> some View {
         Button {
             if family == .polish {
+                inspectionOrigin = .pointer
                 inspectedID = .polishPlaceholder
             }
         } label: {
@@ -275,6 +288,7 @@ struct ModelsCombinedPane: View {
         let showsInlineCancel = row.progress?.allowsCancellation == true
         return HStack(spacing: 8) {
             Button {
+                inspectionOrigin = .pointer
                 inspectedID = row.id
             } label: {
                 HStack(spacing: 8) {
@@ -329,6 +343,9 @@ struct ModelsCombinedPane: View {
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                    if row.isStreaming {
+                        ModelsLiveChip()
+                    }
                 }
                 Text(row.fit)
                     .font(Theme.ui(9))
@@ -445,14 +462,25 @@ struct ModelsCombinedPane: View {
                         .font(Theme.sectionLabel)
                         .tracking(Theme.sectionTracking)
                         .foregroundStyle(Theme.textTertiary)
-                    Text(presentation.name)
-                        .font(Theme.ui(19, .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Text(presentation.name)
+                            .font(Theme.ui(19, .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if presentation.isStreaming {
+                            ModelsLiveChip()
+                        }
+                    }
                     Text(presentation.fit)
                         .font(Theme.ui(11.5))
                         .foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(
+                            ModelsStreamingCopy.spokenFit(
+                                presentation.fit,
+                                isStreaming: presentation.isStreaming
+                            )
+                        )
                     Label(
                         presentation.status,
                         systemImage: presentation.primaryAction.statusSymbol
@@ -633,6 +661,12 @@ struct ModelsCombinedPane: View {
             Button("Retry") { interface.retryASRBootstrap() }
                 .buttonStyle(EmberButtonStyle(kind: .primary))
                 .focused($focusedControl, equals: .inspectorPrimary(id))
+        case .unsupportedASR:
+            Label("Not supported on this Mac", systemImage: "slash.circle")
+                .font(Theme.ui(10.5, .semibold))
+                .foregroundStyle(Theme.textSecondary)
+                .focusable()
+                .focused($focusedControl, equals: .inspectorPrimary(id))
         case .installed:
             Label("Installed", systemImage: "checkmark.circle")
                 .font(Theme.ui(10.5, .semibold))
@@ -749,6 +783,7 @@ struct ModelsCombinedPane: View {
             inspectedID: presentation.inspector?.id
         )
         guard let nextID = navigation.move(navigationDirection) else { return }
+        inspectionOrigin = .keyboard
         inspectedID = nextID
         focusedControl = .ledgerInspection(nextID)
         scrollProxy.scrollTo(nextID, anchor: .center)
@@ -767,6 +802,7 @@ struct ModelsCombinedPane: View {
                   inspectedID: currentInspection
               )
         else { return }
+        inspectionOrigin = .keyboard
         inspectedID = transition.inspectedID
         DispatchQueue.main.async {
             focusedControl = transition.target
@@ -799,6 +835,7 @@ struct ModelsCombinedPane: View {
                   inspectedID: currentInspection
               )
         else { return }
+        inspectionOrigin = .keyboard
         inspectedID = transition.inspectedID
         DispatchQueue.main.async {
             focusedControl = transition.target

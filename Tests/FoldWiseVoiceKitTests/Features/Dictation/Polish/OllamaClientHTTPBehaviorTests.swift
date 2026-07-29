@@ -7,7 +7,7 @@ final class OllamaClientHTTPBehaviorTests: XCTestCase {
 
     func testPolishReturnsValidOutput() async {
         let transport = FakeOllamaTransport(
-            data: Data(#"{"choices":[{"message":{"content":"We should meet at noon."}}]}"#.utf8),
+            data: Data(#"{"message":{"content":"We should meet at noon."}}"#.utf8),
             status: 200
         )
 
@@ -20,6 +20,92 @@ final class OllamaClientHTTPBehaviorTests: XCTestCase {
         )
 
         XCTAssertEqual(result, "We should meet at noon.")
+    }
+
+    func testPolishReturnsNativeLoadAndGenerationTiming() async {
+        let transport = FakeOllamaTransport(
+            data: Data(
+                """
+                {
+                  "message": {"content": "We should meet at noon."},
+                  "total_duration": 250000000,
+                  "load_duration": 80000000,
+                  "prompt_eval_duration": 20000000,
+                  "eval_duration": 100000000
+                }
+                """.utf8
+            ),
+            status: 200
+        )
+
+        let result = await OllamaClient(transport: transport).polishWithTiming(
+            transcript,
+            model: "qwen2.5:3b",
+            systemPrompt: nil,
+            vocab: [],
+            expands: false
+        )
+
+        XCTAssertEqual(
+            result.timing,
+            OllamaGenerationTiming(
+                totalMilliseconds: 250,
+                modelLoadMilliseconds: 80,
+                promptEvalMilliseconds: 20,
+                generationMilliseconds: 100
+            )
+        )
+    }
+
+    func testPolishUsesInjectedNativeChatEndpoint() async throws {
+        let transport = RecordingOllamaTransport(
+            data: Data(#"{"message":{"content":"We should meet at noon."}}"#.utf8),
+            status: 200
+        )
+        let chatURL = try XCTUnwrap(URL(string: "http://127.0.0.1:9999/custom-chat"))
+
+        _ = await OllamaClient(transport: transport, chatURL: chatURL).polish(
+            transcript,
+            model: "qwen2.5:3b",
+            systemPrompt: nil,
+            vocab: [],
+            expands: false
+        )
+
+        XCTAssertEqual(transport.lastDataRequest?.url, chatURL)
+    }
+
+    func testWarmUsesEmptyNativeChatRequest() async throws {
+        let transport = RecordingOllamaTransport(data: Data(), status: 200)
+        let chatURL = try XCTUnwrap(URL(string: "http://127.0.0.1:9999/custom-chat"))
+
+        await OllamaClient(transport: transport, chatURL: chatURL).warm(
+            model: "qwen2.5:3b"
+        )
+
+        let request = try XCTUnwrap(transport.lastDataRequest)
+        let bodyData = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: bodyData) as? [String: Any]
+        )
+        XCTAssertEqual(request.url, chatURL)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(body["model"] as? String, "qwen2.5:3b")
+        XCTAssertEqual(body["stream"] as? Bool, false)
+        XCTAssertNil(body["messages"])
+    }
+
+    func testWarmKeepsModelResidentForTenMinutes() async throws {
+        let transport = RecordingOllamaTransport(data: Data(), status: 200)
+
+        await OllamaClient(transport: transport).warm(model: "qwen2.5:3b")
+
+        let request = try XCTUnwrap(transport.lastDataRequest)
+        let bodyData = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: bodyData) as? [String: Any]
+        )
+        XCTAssertEqual(body["keep_alive"] as? String, "10m")
     }
 
     func testPolishReturnsRawTranscriptWhenTransportFails() async {
@@ -56,7 +142,7 @@ final class OllamaClientHTTPBehaviorTests: XCTestCase {
 
     func testPolishReturnsRawTranscriptForEmptyOutput() async {
         let transport = FakeOllamaTransport(
-            data: Data(#"{"choices":[{"message":{"content":"   "}}]}"#.utf8),
+            data: Data(#"{"message":{"content":"   "}}"#.utf8),
             status: 200
         )
 
@@ -290,6 +376,43 @@ private enum TestFailure: LocalizedError {
         case .unreachable:
             "Ollama is unreachable"
         }
+    }
+}
+
+private final class RecordingOllamaTransport: OllamaTransporting, @unchecked Sendable {
+    private let lock = NSLock()
+    private let data: Data
+    private let response: URLResponse
+    private var storedLastDataRequest: URLRequest?
+
+    var lastDataRequest: URLRequest? {
+        lock.withLock { storedLastDataRequest }
+    }
+
+    init(data: Data, status: Int) {
+        self.data = data
+        guard let response = HTTPURLResponse(
+            url: URL(string: "http://localhost")!,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: nil
+        ) else {
+            preconditionFailure("The canned HTTP response must be constructible")
+        }
+        self.response = response
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        lock.withLock {
+            storedLastDataRequest = request
+        }
+        return (data, response)
+    }
+
+    func lines(
+        for _: URLRequest
+    ) async throws -> (URLResponse, AsyncThrowingStream<String, Error>) {
+        preconditionFailure("This transport only records data requests")
     }
 }
 

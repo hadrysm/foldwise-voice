@@ -20,10 +20,29 @@ enum ASRModelStore {
         }
     }
 
+    /// Bridge our catalog tag to the FluidAudio repository holding a Streaming
+    /// ASR model's artifacts. Central for the same reason `fluidAudioVersion` is:
+    /// the adapter's download and this store's directory must name one repo.
+    static func streamingRepository(_ variant: ASRModelCatalog.StreamingVariant) -> Repo {
+        switch variant {
+        case .parakeetEou320: .parakeetEou320
+        case .nemotron560: .nemotronStreaming560
+        }
+    }
+
+    /// Where the pinned downloader writes a Streaming ASR model.
+    /// `DownloadUtils.downloadRepo` appends the repository's own nested folder
+    /// name (`parakeet-eou-streaming/320ms`, `nemotron-streaming/560ms`), so the
+    /// destination is FluidAudio's shared models root rather than the variant
+    /// directory's parent.
+    static func streamingDownloadRoot() -> URL {
+        MLModelConfigurationUtils.defaultModelsDirectory()
+    }
+
     /// The directory holding a catalog entry's downloaded weights, or nil if it
-    /// can't be resolved. Parakeet uses FluidAudio's public cache accessor;
-    /// Whisper follows WhisperKit's Hugging Face Hub default,
-    /// `~/Documents/huggingface/models/argmaxinc/whisperkit-coreml/<variant>`.
+    /// can't be resolved. Parakeet and the streaming checkpoints use FluidAudio's
+    /// public cache accessors; Whisper follows WhisperKit's Hugging Face Hub
+    /// default, `~/Documents/huggingface/models/argmaxinc/whisperkit-coreml/<variant>`.
     static func modelDirectory(
         for engine: ASRModelCatalog.Engine,
         userDocumentsDirectory: URL? = FileManager.default.urls(
@@ -38,6 +57,10 @@ enum ASRModelStore {
             return userDocumentsDirectory
                 .appendingPathComponent("huggingface/models/argmaxinc/whisperkit-coreml")
                 .appendingPathComponent(variant)
+        case let .streaming(variant):
+            return MLModelConfigurationUtils.defaultModelsDirectory(
+                for: streamingRepository(variant)
+            )
         }
     }
 

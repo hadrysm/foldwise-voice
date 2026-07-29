@@ -27,6 +27,10 @@
       "reason": "Declarative SwiftUI Badge composition"
     },
     {
+      "path": "Sources/FoldWiseVoiceKit/Features/LiveTranscript/LiveTranscriptCaptionView.swift",
+      "reason": "Declarative SwiftUI Live transcript caption composition; stage copy, span roles, truncation policy, accessibility text, motion, and geometry live in LiveTranscriptCaption"
+    },
+    {
       "path": "Sources/FoldWiseVoiceKit/Features/History/HistoryView.swift",
       "reason": "Declarative SwiftUI history composition"
     },
@@ -98,6 +102,10 @@
     {
       "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Transcribe/WhisperTranscriber.swift",
       "reason": "Real WhisperKit model-loading and inference adapter"
+    },
+    {
+      "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Transcribe/FluidAudioStreamingManagers.swift",
+      "reason": "Thin FluidAudio streaming-manager boundary; snapshot mapping, attempt lifecycle, timing, and chunk conversion live in TranscriptStream, StreamingTranscriber, and StreamingAudioChunk"
     },
     {
       "path": "Sources/FoldWiseVoiceKit/Features/Dictation/Transcribe/ASRModelLibraryStorage.swift",

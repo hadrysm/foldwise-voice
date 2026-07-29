@@ -76,6 +76,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     private var updaterController: SPUStandardUpdaterController?
     private var updaterAvailabilityObservation: NSKeyValueObservation?
     private var panePerformanceApplication: PanePerformanceApplication?
+    #if DICTATION_BASELINE_HARNESS
+        private var dictationBaselineApplication: DictationBaselineApplication?
+    #endif
+    #if STREAMING_LATENCY_HARNESS
+        private var streamingLatencyApplication: StreamingLatencyApplication?
+    #endif
     #if FOLDWISE_UPDATE_ACCEPTANCE
         private var updateRuntimeAcceptance: UpdateRuntimeAcceptanceController?
     #endif
@@ -91,6 +97,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DICTATION_BASELINE_HARNESS
+            if let planPath = ProcessInfo.processInfo.environment[
+                "FOLDWISE_DICTATION_BASELINE_PLAN"
+            ] {
+                do {
+                    let plan = try DictationBaselinePlan.load(
+                        from: URL(fileURLWithPath: planPath)
+                    )
+                    let application = DictationBaselineApplication(plan: plan)
+                    dictationBaselineApplication = application
+                    application.start()
+                } catch {
+                    FileHandle.standardError.write(
+                        Data("error: \(error.localizedDescription)\n".utf8)
+                    )
+                    NSApp.terminate(nil)
+                }
+                return
+            }
+        #endif
+
+        #if STREAMING_LATENCY_HARNESS
+            if let planPath = ProcessInfo.processInfo.environment[
+                "FOLDWISE_STREAMING_LATENCY_PLAN"
+            ] {
+                do {
+                    let plan = try StreamingLatencyPlan.load(
+                        from: URL(fileURLWithPath: planPath)
+                    )
+                    let application = StreamingLatencyApplication(plan: plan)
+                    streamingLatencyApplication = application
+                    application.start()
+                } catch {
+                    FileHandle.standardError.write(
+                        Data("error: \(error.localizedDescription)\n".utf8)
+                    )
+                    NSApp.terminate(nil)
+                }
+                return
+            }
+        #endif
+
         #if FOLDWISE_UPDATE_ACCEPTANCE
             if let updateRuntimeAcceptance = UpdateRuntimeAcceptanceController() {
                 self.updateRuntimeAcceptance = updateRuntimeAcceptance
@@ -133,7 +181,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         let recorder = AudioRecorder(config: config, hardware: CoreAudioHardware())
         let asrLifecycle = ASRModelLifecycle(
             storedSelection: config.asrModel,
-            adapters: [ParakeetASRModelAdapter(), WhisperASRModelAdapter()],
+            adapters: [
+                ParakeetASRModelAdapter(),
+                StreamingASRModelAdapter(),
+                WhisperASRModelAdapter(),
+            ],
             persistSelection: { [config] id in try config.setASRModel(id) }
         )
         // One store shared between the record seam and the History pane, so a
@@ -155,8 +207,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         historyStore.onAppend { entry in
             statsStore.advance(on: entry.createdAt, calendar: .current)
         }
+        let ollamaClient = OllamaClient()
         pipeline = Pipeline(
             config: config, recorder: recorder, sessionProvider: asrLifecycle,
+            warmPolishModel: { mode in
+                guard let model = mode.llmModel, !model.isEmpty else { return }
+                ollamaClient.scheduleWarm(model: model)
+            },
             record: { historyStore.append($0) }
         )
         dictationCommands = DictationCommandQueue(
@@ -255,6 +312,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         }
         pipeline.onSessionEvent = ApplicationRunLoop.handler { [weak self] event in
             self?.lifecycleCoordinator?.sessionDidChange(event)
+            self?.badge.applyLiveTranscript(.session(event))
+        }
+        pipeline.onTranscript = { [weak self] transcript in
+            Task { @MainActor in self?.badge.applyLiveTranscript(.transcript(transcript)) }
         }
         Task { [weak self] in
             for await snapshot in await asrLifecycle.snapshots() {
@@ -293,6 +354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         if let badgeState = asrBadgePresentation.pipelineDidChange(state) {
             badge.apply(badgeState)
         }
+        badge.applyLiveTranscript(.pipeline(state))
         switch state {
         case .listening:
             menuBar.setIcon(.listening)

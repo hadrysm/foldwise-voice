@@ -119,8 +119,11 @@ protocol AudioHardware: AnyObject {
     func snapshot() throws -> AudioHardwareSnapshot
     func observeChanges(_ observer: @escaping (AudioHardwareChange) -> Void) throws
     func stopObserving()
+    /// `onSamples` is the session's incremental delivery (ADR-0009), installed
+    /// only when a consumer is subscribed; `nil` keeps capture batch-only.
     func startCapture(
         deviceUID: String,
+        onSamples: (([Float]) -> Void)?,
         onFailure: @escaping (AudioCaptureError) -> Void
     ) throws -> any AudioCaptureSession
 }

@@ -7,22 +7,38 @@ struct ASRModelDescriptor: Identifiable, Equatable {
     let size: String
     let speed: Int
     let quality: Int
+    /// Carried so the Models pane can say in words that this model transcribes
+    /// while the user speaks (ADR-0009). Presentation only — what Dictation does
+    /// still comes from the captured session handle's own capability.
+    let streaming: Bool
     let blurb: String
     let isAvailable: Bool
     let isDefault: Bool
     let allowsDeletion: Bool
+    /// The requirement this Mac does not meet, or nil when it does. Separate
+    /// from `isAvailable` because the two are answered differently: unavailable
+    /// data is a download away, unmet hardware never is.
+    let unmetHardwareRequirement: ASRModelCatalog.HardwareRequirement?
 
-    init(entry: ASRModelCatalog.Entry, isAvailable: Bool) {
+    init(
+        entry: ASRModelCatalog.Entry,
+        isAvailable: Bool,
+        hostIsAppleSilicon: Bool = ASRModelCatalog.hostIsAppleSilicon
+    ) {
         id = entry.id
         name = entry.name
         languages = entry.languages
         size = entry.size
         speed = entry.speed
         quality = entry.quality
+        streaming = entry.streaming
         blurb = entry.blurb
         self.isAvailable = isAvailable
         isDefault = entry.id == ASRModelCatalog.defaultID
         allowsDeletion = !isDefault
+        unmetHardwareRequirement = entry.hardware.isMet(byAppleSilicon: hostIsAppleSilicon)
+            ? nil
+            : entry.hardware
     }
 }
 
@@ -858,6 +874,14 @@ private final class ASRLifecycleSessionHandle: ASRSessionHandle, @unchecked Send
         lease = ASRLifecycleSessionLease(engine: engine, onRelease: onRelease)
     }
 
+    var canStream: Bool {
+        lease.canStream
+    }
+
+    func makeStream() async throws -> any TranscriptStreaming {
+        try await lease.makeStream()
+    }
+
     func transcribe(_ samples: [Float]) async throws -> String {
         try await lease.transcribe(samples)
     }
@@ -877,10 +901,41 @@ private final class ASRLifecycleSessionLease: @unchecked Sendable {
     private let lock = NSLock()
     private var engine: Transcribing?
     private var onRelease: (() -> Void)?
+    /// The session's current live attempt, if it has one. At most one, because
+    /// streaming sessions serialize and every new attempt abandons the previous.
+    private var stream: (any TranscriptStreaming)?
 
     init(engine: Transcribing, onRelease: @escaping () -> Void) {
         self.engine = engine
         self.onRelease = onRelease
+    }
+
+    /// Runtime streaming capability is the engine's type (ADR-0009). A released
+    /// session answers `false` rather than promising an attempt it cannot open.
+    var canStream: Bool {
+        lock.withLock { engine } is any StreamCapableTranscribing
+    }
+
+    func makeStream() async throws -> any TranscriptStreaming {
+        guard let engine = lock.withLock({ engine }) else {
+            throw ASRModelLifecycleError.recognitionBlocked
+        }
+        guard let streaming = engine as? any StreamCapableTranscribing else {
+            throw TranscriptStreamError.streamingUnavailable
+        }
+        let stream = try await streaming.makeStream()
+        // A session released while the attempt was opening must not leave it
+        // driving the engine the lifecycle is already replacing.
+        let retained = lock.withLock { () -> Bool in
+            guard self.engine != nil else { return false }
+            self.stream = stream
+            return true
+        }
+        guard retained else {
+            stream.cancel()
+            throw ASRModelLifecycleError.recognitionBlocked
+        }
+        return stream
     }
 
     func transcribe(_ samples: [Float]) async throws -> String {
@@ -891,11 +946,21 @@ private final class ASRLifecycleSessionLease: @unchecked Sendable {
     }
 
     func release() {
-        let callback = lock.withLock { () -> (() -> Void)? in
+        let released = lock.withLock { () -> (
+            callback: (() -> Void)?,
+            stream: (any TranscriptStreaming)?
+        ) in
             engine = nil
-            defer { onRelease = nil }
-            return onRelease
+            defer {
+                onRelease = nil
+                stream = nil
+            }
+            return (onRelease, stream)
         }
-        callback?()
+        // Abandoning the attempt before the drain completes is what keeps exactly
+        // one engine resident (ADR-0005): the lifecycle may replace the model as
+        // soon as this returns.
+        released.stream?.cancel()
+        released.callback?()
     }
 }

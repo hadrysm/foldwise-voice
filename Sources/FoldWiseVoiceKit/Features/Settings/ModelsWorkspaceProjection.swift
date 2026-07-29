@@ -37,6 +37,43 @@ enum ModelsFocusTarget: Hashable {
     case inspectorCancel(ModelsRowID)
     case inspectorPrimary(ModelsRowID)
     case inspectorDestructive(ModelsRowID)
+
+    var isLedgerInspection: Bool {
+        if case .ledgerInspection = self {
+            return true
+        }
+        return false
+    }
+}
+
+/// How the ledger's current inspection was established. The ledger is a single
+/// focus stop, so clicking a row both inspects it and makes the ledger first
+/// responder — which would paint the keyboard focus ring for a mouse gesture.
+/// The ring is therefore drawn only for `.keyboard`, which also covers the
+/// programmatic focus moves a completed download makes: those the user must be
+/// able to see.
+enum ModelsInspectionOrigin {
+    case pointer
+    case keyboard
+
+    /// Whether the ledger row at `rowID` draws the keyboard focus ring.
+    func showsFocusRing(for rowID: ModelsRowID, focus: ModelsFocusTarget?) -> Bool {
+        focus == .ledgerInspection(rowID) && self == .keyboard
+    }
+
+    /// A click's claim on the ring lasts only while focus stays on the row it
+    /// inspected. Once focus leaves the ledger, tabbing back in is a keyboard
+    /// arrival and has to be visible again.
+    static func afterFocusMove(
+        from previous: ModelsFocusTarget?,
+        to current: ModelsFocusTarget?,
+        existing: ModelsInspectionOrigin
+    ) -> ModelsInspectionOrigin {
+        guard previous?.isLedgerInspection == true,
+              current?.isLedgerInspection != true
+        else { return existing }
+        return .keyboard
+    }
 }
 
 struct ModelsFocusTransition: Equatable {
@@ -242,6 +279,8 @@ enum ModelsPrimaryAction: Equatable {
     case downloadASR(String)
     case downloadAgainASR(String)
     case retryASRBootstrap
+    /// This Mac can't run the model at all, so the row offers nothing to press.
+    case unsupportedASR
     case installed
     case installPolish(String)
     case installCustomPolish
@@ -256,6 +295,7 @@ enum ModelsPrimaryAction: Equatable {
         case .downloadASR, .downloadAgainASR, .installPolish, .installCustomPolish:
             "arrow.down.circle"
         case .retryASRBootstrap, .retryPolish: "arrow.clockwise"
+        case .unsupportedASR: "slash.circle"
         }
     }
 }
@@ -564,11 +604,24 @@ enum ModelsPolishAnnouncementTransition {
     }
 }
 
+/// The one owner of how streaming capability is spoken. `ModelsLiveChip` is
+/// silent and purely visual, so the row and the inspector each have to say the
+/// capability in words — ADR-0009's requirement — in the same words.
+enum ModelsStreamingCopy {
+    static func spokenFit(_ fit: String, isStreaming: Bool) -> String {
+        isStreaming ? "\(fit), transcribes live while you speak" : fit
+    }
+}
+
 struct ModelsRowPresentation: Equatable {
     let id: ModelsRowID
     let family: ModelsFamilyID
     let name: String
     let fit: String
+    /// Whether this model transcribes while the user speaks (ADR-0009). A
+    /// structured fact rather than a clause inside `fit`, so the row can render
+    /// a Live chip and the accessibility label can still say it in words.
+    let isStreaming: Bool
     let size: String
     let speed: ModelsRating
     let quality: ModelsRating
@@ -589,6 +642,7 @@ struct ModelsRowPresentation: Equatable {
         family: ModelsFamilyID,
         name: String,
         fit: String,
+        isStreaming: Bool = false,
         size: String,
         speed: ModelsRating,
         quality: ModelsRating,
@@ -608,6 +662,7 @@ struct ModelsRowPresentation: Equatable {
         self.family = family
         self.name = name
         self.fit = fit
+        self.isStreaming = isStreaming
         self.size = size
         self.speed = speed
         self.quality = quality
@@ -631,7 +686,9 @@ struct ModelsRowPresentation: Equatable {
         let accessibleState = progress.map { "\($0.label) in progress" } ?? state
         var parts = [
             name,
-            fit,
+            // The visible chip is a glyph and four letters; VoiceOver gets the
+            // whole sentence, which is what ADR-0009 asked the row to guarantee.
+            ModelsStreamingCopy.spokenFit(fit, isStreaming: isStreaming),
             "Size \(size == "—" ? "Not available" : size)",
             "Speed \(speed.accessibilityText)",
             "Quality \(quality.accessibilityText)",
@@ -654,6 +711,7 @@ struct ModelsInspectorPresentation: Equatable {
     let semanticLabel: String
     let name: String
     let fit: String
+    let isStreaming: Bool
     let description: String?
     let status: String
     let familyExplanation: String
@@ -672,6 +730,7 @@ struct ModelsInspectorPresentation: Equatable {
         semanticLabel: String,
         name: String,
         fit: String,
+        isStreaming: Bool = false,
         description: String?,
         status: String,
         familyExplanation: String,
@@ -689,6 +748,7 @@ struct ModelsInspectorPresentation: Equatable {
         self.semanticLabel = semanticLabel
         self.name = name
         self.fit = fit
+        self.isStreaming = isStreaming
         self.description = description
         self.status = status
         self.familyExplanation = familyExplanation
@@ -821,7 +881,16 @@ struct ModelsWorkspaceProjection: Equatable {
         let action: ModelsPrimaryAction
         let state: String
         let statusExplanation: String?
-        if isSaved, !descriptor.isAvailable {
+        if let missingHardware = descriptor.unmetHardwareRequirement?.missingHardware {
+            action = .unsupportedASR
+            state = isSaved ? "Saved · unsupported" : "Unsupported"
+            statusExplanation = unsupportedHardwareExplanation(
+                descriptor,
+                missingHardware: missingHardware,
+                isSaved: isSaved,
+                snapshot: snapshot
+            )
+        } else if isSaved, !descriptor.isAvailable {
             action = .downloadAgainASR(descriptor.id)
             state = "Saved · unavailable"
             statusExplanation = effectiveModelName(in: snapshot).map {
@@ -868,6 +937,7 @@ struct ModelsWorkspaceProjection: Equatable {
             family: .speechRecognition,
             name: descriptor.name,
             fit: descriptor.languages,
+            isStreaming: descriptor.streaming,
             size: descriptor.size,
             speed: .rated(descriptor.speed),
             quality: .rated(descriptor.quality),
@@ -889,6 +959,30 @@ struct ModelsWorkspaceProjection: Equatable {
                 snapshot: snapshot
             ) ?? statusExplanation
         )
+    }
+
+    /// Unmet hardware is a fact about this Mac rather than something that failed,
+    /// so the row states it, offers no download to retry, and says what is still
+    /// handling Dictation — the pane stays usable instead of dead-ending on an
+    /// engine that cannot load here.
+    private static func unsupportedHardwareExplanation(
+        _ descriptor: ASRModelDescriptor,
+        missingHardware: String,
+        isSaved: Bool,
+        snapshot: ASRModelLifecycleSnapshot
+    ) -> String {
+        let requirement = "\(descriptor.name) needs a Mac with \(missingHardware), "
+            + "which this Mac doesn't have."
+        guard isSaved else {
+            return requirement + " It can't be downloaded or selected here; every other "
+                + "speech model still can be."
+        }
+        guard let effectiveName = effectiveModelName(in: snapshot) else {
+            return requirement + " Your saved ASR model selection stays as it is until you "
+                + "select another model."
+        }
+        return requirement + " \(effectiveName) is handling Dictation, and your saved ASR "
+            + "model selection stays as it is until you select another model."
     }
 
     fileprivate static func speechFailure(
@@ -1316,6 +1410,7 @@ struct ModelsWorkspaceProjection: Equatable {
             semanticLabel: semanticLabel,
             name: row.name,
             fit: row.fit,
+            isStreaming: row.isStreaming,
             description: row.description,
             status: row.state,
             familyExplanation: familyExplanation,

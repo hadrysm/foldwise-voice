@@ -1558,6 +1558,321 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
         )
     }
 
+    // MARK: - Streaming ASR model presentation (ADR-0009)
+
+    /// The capability is a structured fact the row renders as a Live chip, so
+    /// `fit` carries language coverage alone rather than a clause spliced on.
+    func testStreamingModelReportsItsCapabilityAsAFlag() {
+        XCTAssertEqual(streamingRow()?.isStreaming, true)
+        XCTAssertEqual(streamingRow()?.fit, "English")
+    }
+
+    /// The Live chip is silent, so the capability has to survive VoiceOver in
+    /// the row's own label — what ADR-0009 required of the clause it replaced.
+    func testStreamingCapabilityReachesTheRowAccessibilityLabel() {
+        XCTAssertEqual(
+            streamingRow()?.accessibilityLabel,
+            "Parakeet EOU 320, English, transcribes live while you speak, Size 448 MB, "
+                + "Speed 5 out of 5, Quality 3 out of 5, Download, "
+                + "Not saved as the global ASR model selection"
+        )
+    }
+
+    func testStreamingRowExplainsItsLowercaseUnpunctuatedOutput() {
+        XCTAssertEqual(
+            streamingRow()?.description?.contains("lowercase and unpunctuated"),
+            true
+        )
+    }
+
+    func testStreamingCapabilityReachesTheInspector() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            installedPolishModels: [],
+            inspectedID: .speechRecognition("parakeet-eou-320")
+        )
+
+        XCTAssertEqual(projection.inspector?.isStreaming, true)
+        XCTAssertEqual(projection.inspector?.fit, "English")
+    }
+
+    func testNonStreamingModelReportsNoStreamingCapability() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            installedPolishModels: [],
+            inspectedID: nil
+        )
+        let row = projection.sections
+            .flatMap(\.rows)
+            .first { $0.id == .speechRecognition("parakeet-v3") }
+
+        XCTAssertEqual(row?.isStreaming, false)
+    }
+
+    /// A non-streaming row's label must not gain the streaming sentence.
+    func testNonStreamingRowAccessibilityLabelOmitsTheStreamingClause() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            installedPolishModels: [],
+            inspectedID: nil
+        )
+        let label = projection.sections
+            .flatMap(\.rows)
+            .first { $0.id == .speechRecognition("parakeet-v3") }?
+            .accessibilityLabel
+
+        XCTAssertEqual(label?.contains("transcribes live while you speak"), false)
+    }
+
+    func testNonStreamingModelKeepsLanguageCoverageAloneAsItsFit() {
+        let projection = ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            installedPolishModels: [],
+            inspectedID: nil
+        )
+        let row = projection.sections
+            .flatMap(\.rows)
+            .first { $0.id == .speechRecognition("parakeet-v3") }
+
+        XCTAssertEqual(row?.fit, "25 languages")
+    }
+
+    private func streamingRow() -> ModelsRowPresentation? {
+        ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: "parakeet-v3",
+                effectiveSelection: "parakeet-v3",
+                availableIDs: ["parakeet-v3"]
+            ),
+            installedPolishModels: [],
+            inspectedID: nil
+        )
+        .sections
+        .flatMap(\.rows)
+        .first { $0.id == .speechRecognition("parakeet-eou-320") }
+    }
+
+    // MARK: - The ledger focus ring belongs to the keyboard, not the mouse
+
+    private let firstRow = ModelsRowID.speechRecognition("parakeet-eou-320")
+
+    /// The ledger is a single focus stop, so a click both inspects a row and
+    /// makes the ledger first responder. That must not paint a keyboard ring.
+    func testClickingARowDoesNotShowTheFocusRing() {
+        XCTAssertFalse(
+            ModelsInspectionOrigin.pointer.showsFocusRing(
+                for: firstRow,
+                focus: .ledgerInspection(firstRow)
+            )
+        )
+    }
+
+    func testArrowKeyNavigationShowsTheFocusRing() {
+        XCTAssertTrue(
+            ModelsInspectionOrigin.keyboard.showsFocusRing(
+                for: firstRow,
+                focus: .ledgerInspection(firstRow)
+            )
+        )
+    }
+
+    func testAnUnfocusedRowShowsNoRingEvenAfterKeyboardNavigation() {
+        XCTAssertFalse(
+            ModelsInspectionOrigin.keyboard.showsFocusRing(
+                for: firstRow,
+                focus: .ledgerInspection(.speechRecognition("nemotron-560"))
+            )
+        )
+    }
+
+    /// Click, tab away, tab back: the return is a keyboard arrival, so the ring
+    /// comes back rather than staying suppressed by the stale click.
+    func testFocusLeavingTheLedgerEndsAClicksClaimOnTheRing() {
+        XCTAssertEqual(
+            ModelsInspectionOrigin.afterFocusMove(
+                from: .ledgerInspection(firstRow),
+                to: .inspectorPrimary(firstRow),
+                existing: .pointer
+            ),
+            .keyboard
+        )
+    }
+
+    func testMovingBetweenLedgerRowsKeepsTheExistingOrigin() {
+        XCTAssertEqual(
+            ModelsInspectionOrigin.afterFocusMove(
+                from: .ledgerInspection(firstRow),
+                to: .ledgerInspection(.speechRecognition("nemotron-560")),
+                existing: .pointer
+            ),
+            .pointer
+        )
+    }
+
+    func testFocusArrivingAtTheLedgerKeepsTheExistingOrigin() {
+        XCTAssertEqual(
+            ModelsInspectionOrigin.afterFocusMove(
+                from: nil,
+                to: .ledgerInspection(firstRow),
+                existing: .pointer
+            ),
+            .pointer
+        )
+    }
+
+    // MARK: - Nemotron 560 on hardware that can and can't run it
+
+    func testNemotronOffersItsDownloadOnAppleSilicon() {
+        XCTAssertEqual(nemotronRow()?.state, "Download")
+    }
+
+    func testNemotronDescribesItsPunctuatedOutput() {
+        XCTAssertEqual(
+            nemotronRow()?.description?.contains("capitalized and punctuated"),
+            true
+        )
+    }
+
+    func testNemotronReportsItsStreamingCapabilityAsAFlag() {
+        XCTAssertEqual(nemotronRow()?.isStreaming, true)
+        XCTAssertEqual(nemotronRow()?.fit, "English")
+    }
+
+    func testNemotronIsNotSelectableOnAnIntelMac() {
+        XCTAssertEqual(
+            nemotronRow(hostIsAppleSilicon: false)?.primaryAction,
+            .unsupportedASR
+        )
+    }
+
+    func testNemotronReadsAsUnsupportedOnAnIntelMac() {
+        XCTAssertEqual(nemotronRow(hostIsAppleSilicon: false)?.state, "Unsupported")
+    }
+
+    func testNemotronExplainsWhatAnIntelMacIsMissing() {
+        XCTAssertEqual(
+            nemotronRow(hostIsAppleSilicon: false)?.statusExplanation,
+            "Nemotron 560 needs a Mac with Apple silicon, which this Mac doesn't have. "
+                + "It can't be downloaded or selected here; every other speech model still can be."
+        )
+    }
+
+    /// The pane has to stay usable: an unsupported row says so in words that
+    /// reach VoiceOver rather than only greying a button out.
+    func testNemotronUnsupportedStateReachesTheRowAccessibilityLabel() {
+        XCTAssertEqual(
+            nemotronRow(hostIsAppleSilicon: false)?.accessibilityLabel,
+            "Nemotron 560, English, transcribes live while you speak, Size 627 MB, "
+                + "Speed 4 out of 5, Quality 4 out of 5, Unsupported, "
+                + "Not saved as the global ASR model selection"
+        )
+    }
+
+    func testUnsupportedNemotronOffersNothingToDelete() {
+        XCTAssertNil(nemotronRow(hostIsAppleSilicon: false)?.destructiveAction)
+    }
+
+    func testEouStaysDownloadableOnAnIntelMac() {
+        let row = rows(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3"],
+            hostIsAppleSilicon: false
+        )
+        .first { $0.id == .speechRecognition("parakeet-eou-320") }
+
+        XCTAssertEqual(row?.state, "Download")
+    }
+
+    /// A configuration carried over from an Apple-silicon Mac keeps its stored
+    /// selection; only the Effective ASR model falls back.
+    func testSavedNemotronKeepsItsSelectionOnAnIntelMac() {
+        XCTAssertEqual(
+            nemotronRow(storedSelection: "nemotron-560", hostIsAppleSilicon: false)?
+                .isSavedASRSelection,
+            true
+        )
+    }
+
+    func testSavedNemotronReadsAsSavedAndUnsupportedOnAnIntelMac() {
+        XCTAssertEqual(
+            nemotronRow(storedSelection: "nemotron-560", hostIsAppleSilicon: false)?.state,
+            "Saved · unsupported"
+        )
+    }
+
+    func testSavedNemotronNamesWhatIsHandlingDictationOnAnIntelMac() {
+        XCTAssertEqual(
+            nemotronRow(storedSelection: "nemotron-560", hostIsAppleSilicon: false)?
+                .statusExplanation,
+            "Nemotron 560 needs a Mac with Apple silicon, which this Mac doesn't have. "
+                + "Parakeet TDT v3 is handling Dictation, and your saved ASR model selection "
+                + "stays as it is until you select another model."
+        )
+    }
+
+    func testSavedNemotronExplainsItselfWithNoEffectiveModelYet() {
+        XCTAssertEqual(
+            nemotronRow(
+                storedSelection: "nemotron-560",
+                effectiveSelection: nil,
+                hostIsAppleSilicon: false
+            )?.statusExplanation,
+            "Nemotron 560 needs a Mac with Apple silicon, which this Mac doesn't have. "
+                + "Your saved ASR model selection stays as it is until you select another model."
+        )
+    }
+
+    private func nemotronRow(
+        storedSelection: String = "parakeet-v3",
+        effectiveSelection: String? = "parakeet-v3",
+        hostIsAppleSilicon: Bool = true
+    ) -> ModelsRowPresentation? {
+        rows(
+            storedSelection: storedSelection,
+            effectiveSelection: effectiveSelection,
+            availableIDs: ["parakeet-v3"],
+            hostIsAppleSilicon: hostIsAppleSilicon
+        )
+        .first { $0.id == .speechRecognition("nemotron-560") }
+    }
+
+    private func rows(
+        storedSelection: String,
+        effectiveSelection: String?,
+        availableIDs: Set<String>,
+        hostIsAppleSilicon: Bool
+    ) -> [ModelsRowPresentation] {
+        ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: storedSelection,
+                effectiveSelection: effectiveSelection,
+                availableIDs: availableIDs,
+                hostIsAppleSilicon: hostIsAppleSilicon
+            ),
+            installedPolishModels: [],
+            inspectedID: nil
+        )
+        .sections
+        .flatMap(\.rows)
+    }
+
     func testInitialInspectionUsesEffectiveFallbackForUnknownSavedModel() {
         let snapshot = snapshot(
             storedSelection: "retired-model",
@@ -1784,11 +2099,18 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
         recovery: ASRModelLifecycleRecovery? = nil,
         operation: ASRModelLifecycleOperation? = nil,
         failure: ASRModelLifecycleFailure? = nil,
-        isDictationBlocked: Bool = false
+        isDictationBlocked: Bool = false,
+        // Pinned rather than read from the host, so a row's copy is the same
+        // assertion on every Mac the suite runs on.
+        hostIsAppleSilicon: Bool = true
     ) -> ASRModelLifecycleSnapshot {
         ASRModelLifecycleSnapshot(
             models: ASRModelCatalog.entries.map {
-                ASRModelDescriptor(entry: $0, isAvailable: availableIDs.contains($0.id))
+                ASRModelDescriptor(
+                    entry: $0,
+                    isAvailable: availableIDs.contains($0.id),
+                    hostIsAppleSilicon: hostIsAppleSilicon
+                )
             },
             storedSelection: storedSelection,
             effectiveSelection: effectiveSelection,
