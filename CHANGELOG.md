@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/hadrysm/foldwise-voice/compare/v0.18.3...v0.19.0) (2026-07-29)
+
+
+### Features
+
+* stream ASR transcripts live and gate dictation latency ([#368](https://github.com/hadrysm/foldwise-voice/issues/368)) ([f6f9858](https://github.com/hadrysm/foldwise-voice/commit/f6f985888fa9337eafc92a327d25a8d79ed9ff9d))
+
 ## [0.18.3](https://github.com/hadrysm/foldwise-voice/compare/v0.18.2...v0.18.3) (2026-07-27)
 
 
