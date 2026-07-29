@@ -29,13 +29,31 @@ final class ModelsLiveChipHostedTests: XCTestCase {
             bitmap.colorAt(x: Int(2 * scale), y: bitmap.pixelsHigh / 2)?
                 .usingColorSpace(.sRGB)
         )
-        let canvas = try XCTUnwrap(NSColor(Theme.canvas).usingColorSpace(.sRGB))
-        let accent = try XCTUnwrap(NSColor(Theme.accent).usingColorSpace(.sRGB))
+        let canvas = try resolved(Theme.canvas)
+        let accent = try resolved(Theme.accent)
 
         XCTAssertLessThan(distance(fill, canvas), distance(fill, accent))
     }
 
     private let chipSize = CGSize(width: 46, height: 16)
+
+    /// The appearance the chip is rendered in. The expectations resolve against
+    /// this same one, never the host's System Appearance preference.
+    private let appearanceName = NSAppearance.Name.darkAqua
+
+    /// `Theme` colors are dynamic, and `NSColor(_:)` resolves them against the
+    /// *current drawing* appearance — which outside a draw falls back to the
+    /// host's System Appearance. Read against `appearanceName` instead, so the
+    /// expectation describes the pixels that were actually rendered rather than
+    /// whichever mode the machine running the test happens to be in.
+    private func resolved(_ color: Color) throws -> NSColor {
+        let appearance = try XCTUnwrap(NSAppearance(named: appearanceName))
+        var resolvedColor: NSColor?
+        appearance.performAsCurrentDrawingAppearance {
+            resolvedColor = NSColor(color).usingColorSpace(.sRGB)
+        }
+        return try XCTUnwrap(resolvedColor)
+    }
 
     /// Pixels whose red channel dominates the way the accent's does — the chip's
     /// glyph, letters, and border all land here; `Theme.canvas` does not.
@@ -78,7 +96,7 @@ final class ModelsLiveChipHostedTests: XCTestCase {
             }
             .frame(width: chipSize.width, height: chipSize.height)
         )
-        controller.view.appearance = NSAppearance(named: .darkAqua)
+        controller.view.appearance = NSAppearance(named: appearanceName)
         controller.view.frame = NSRect(origin: .zero, size: chipSize)
         controller.view.layoutSubtreeIfNeeded()
         let bitmap = try XCTUnwrap(
