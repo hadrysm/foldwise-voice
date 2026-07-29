@@ -65,6 +65,36 @@ final class ASRModelStoreTests: XCTestCase {
         )
     }
 
+    func testNemotronResolvesToItsChunkTierFolder() throws {
+        let dir = try XCTUnwrap(
+            ASRModelStore.modelDirectory(for: .streaming(variant: .nemotron560))
+        )
+        XCTAssertTrue(
+            dir.path.hasSuffix("FluidAudio/Models/nemotron-streaming/560ms"),
+            "unexpected Nemotron cache path: \(dir.path)"
+        )
+    }
+
+    func testNemotronDownloadsIntoTheSharedModelsRoot() throws {
+        let dir = try XCTUnwrap(
+            ASRModelStore.modelDirectory(for: .streaming(variant: .nemotron560))
+        )
+        XCTAssertEqual(
+            ASRModelStore.streamingDownloadRoot().standardizedFileURL,
+            dir.deletingLastPathComponent().deletingLastPathComponent().standardizedFileURL
+        )
+    }
+
+    func testStreamingVariantsResolveToDistinctFolders() throws {
+        let eou = try XCTUnwrap(
+            ASRModelStore.modelDirectory(for: .streaming(variant: .parakeetEou320))
+        )
+        let nemotron = try XCTUnwrap(
+            ASRModelStore.modelDirectory(for: .streaming(variant: .nemotron560))
+        )
+        XCTAssertNotEqual(eou, nemotron)
+    }
+
     func testStreamingAndParakeetResolveToDistinctFolders() throws {
         let streaming = try XCTUnwrap(
             ASRModelStore.modelDirectory(for: .streaming(variant: .parakeetEou320))

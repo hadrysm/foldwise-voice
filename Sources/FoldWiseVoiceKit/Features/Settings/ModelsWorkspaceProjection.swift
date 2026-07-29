@@ -242,6 +242,8 @@ enum ModelsPrimaryAction: Equatable {
     case downloadASR(String)
     case downloadAgainASR(String)
     case retryASRBootstrap
+    /// This Mac can't run the model at all, so the row offers nothing to press.
+    case unsupportedASR
     case installed
     case installPolish(String)
     case installCustomPolish
@@ -256,6 +258,7 @@ enum ModelsPrimaryAction: Equatable {
         case .downloadASR, .downloadAgainASR, .installPolish, .installCustomPolish:
             "arrow.down.circle"
         case .retryASRBootstrap, .retryPolish: "arrow.clockwise"
+        case .unsupportedASR: "slash.circle"
         }
     }
 }
@@ -821,7 +824,16 @@ struct ModelsWorkspaceProjection: Equatable {
         let action: ModelsPrimaryAction
         let state: String
         let statusExplanation: String?
-        if isSaved, !descriptor.isAvailable {
+        if let missingHardware = descriptor.unmetHardwareRequirement?.missingHardware {
+            action = .unsupportedASR
+            state = isSaved ? "Saved · unsupported" : "Unsupported"
+            statusExplanation = unsupportedHardwareExplanation(
+                descriptor,
+                missingHardware: missingHardware,
+                isSaved: isSaved,
+                snapshot: snapshot
+            )
+        } else if isSaved, !descriptor.isAvailable {
             action = .downloadAgainASR(descriptor.id)
             state = "Saved · unavailable"
             statusExplanation = effectiveModelName(in: snapshot).map {
@@ -889,6 +901,30 @@ struct ModelsWorkspaceProjection: Equatable {
                 snapshot: snapshot
             ) ?? statusExplanation
         )
+    }
+
+    /// Unmet hardware is a fact about this Mac rather than something that failed,
+    /// so the row states it, offers no download to retry, and says what is still
+    /// handling Dictation — the pane stays usable instead of dead-ending on an
+    /// engine that cannot load here.
+    private static func unsupportedHardwareExplanation(
+        _ descriptor: ASRModelDescriptor,
+        missingHardware: String,
+        isSaved: Bool,
+        snapshot: ASRModelLifecycleSnapshot
+    ) -> String {
+        let requirement = "\(descriptor.name) needs a Mac with \(missingHardware), "
+            + "which this Mac doesn't have."
+        guard isSaved else {
+            return requirement + " It can't be downloaded or selected here; every other "
+                + "speech model still can be."
+        }
+        guard let effectiveName = effectiveModelName(in: snapshot) else {
+            return requirement + " Your saved ASR model selection stays as it is until you "
+                + "select another model."
+        }
+        return requirement + " \(effectiveName) is handling Dictation, and your saved ASR "
+            + "model selection stays as it is until you select another model."
     }
 
     /// A Streaming ASR model states its capability in the row's own lead detail,

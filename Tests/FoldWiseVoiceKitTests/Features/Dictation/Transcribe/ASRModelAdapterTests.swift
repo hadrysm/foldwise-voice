@@ -730,11 +730,167 @@ final class ASRModelAdapterTests: XCTestCase {
         }
     }
 
-    private func makeStreamingAdapter(directory: URL) -> StreamingASRModelAdapter {
+    // MARK: - Nemotron 560, the Apple-silicon Streaming ASR model
+
+    func testStreamingReportsCompleteNemotronDataAsAvailable() throws {
+        let directory = try XCTUnwrap(directory)
+        try writeNemotronModelData(to: directory)
+        let adapter = makeStreamingAdapter(directory: directory)
+
+        XCTAssertTrue(adapter.isModelDataAvailable(for: "nemotron-560"))
+    }
+
+    /// Nemotron's int8 encoder is the one artifact the library keeps in a nested
+    /// folder, so a validator that only looked beside the other models would call
+    /// an incomplete download usable.
+    func testStreamingRequiresNemotronsNestedInt8Encoder() throws {
+        let directory = try XCTUnwrap(directory)
+        try writeNemotronModelData(to: directory)
+        let adapter = makeStreamingAdapter(directory: directory)
+
+        let complete = adapter.isModelDataAvailable(for: "nemotron-560")
+        try FileManager.default.removeItem(at: directory.appendingPathComponent("encoder"))
+
+        XCTAssertEqual(
+            [complete, adapter.isModelDataAvailable(for: "nemotron-560")],
+            [true, false]
+        )
+    }
+
+    func testStreamingRejectsNemotronDataWithoutAUsableTokenizer() throws {
+        let directory = try XCTUnwrap(directory)
+        try writeNemotronModelData(to: directory)
+        try Data("not json".utf8).write(to: directory.appendingPathComponent("tokenizer.json"))
+        let adapter = makeStreamingAdapter(directory: directory)
+
+        XCTAssertFalse(adapter.isModelDataAvailable(for: "nemotron-560"))
+    }
+
+    func testNemotronIsUnavailableOnAnIntelMac() throws {
+        let directory = try XCTUnwrap(directory)
+        try writeNemotronModelData(to: directory)
+
+        XCTAssertFalse(
+            makeStreamingAdapter(directory: directory, hostIsAppleSilicon: false)
+                .isModelDataAvailable(for: "nemotron-560")
+        )
+    }
+
+    /// The requirement follows the engine, not the family: EOU runs anywhere.
+    func testEouStaysAvailableOnAnIntelMac() throws {
+        let directory = try XCTUnwrap(directory)
+        try writeEouModelData(to: directory)
+
+        XCTAssertTrue(
+            makeStreamingAdapter(directory: directory, hostIsAppleSilicon: false)
+                .isModelDataAvailable(for: "parakeet-eou-320")
+        )
+    }
+
+    func testNemotronDownloadIsRefusedOnAnIntelMac() async {
+        let probe = DownloadProbe<ASRModelCatalog.StreamingVariant>()
+        let adapter = StreamingASRModelAdapter(
+            modelDirectory: { _ in nil },
+            availability: { _ in true },
+            download: { variant, _ in probe.record(variant) },
+            hostIsAppleSilicon: false
+        )
+
+        let error = await unknownModelError {
+            try await adapter.downloadModelData(for: "nemotron-560") { _ in }
+        }
+
+        XCTAssertEqual(
+            DownloadRefusal(error: error, attempted: probe.values),
+            DownloadRefusal(error: "Nemotron 560 needs a Mac with Apple silicon.", attempted: [])
+        )
+    }
+
+    func testNemotronEngineIsRefusedOnAnIntelMac() {
+        let adapter = StreamingASRModelAdapter(
+            modelDirectory: { _ in URL(fileURLWithPath: "/tmp/nemotron") },
+            availability: { _ in true },
+            download: { _, _ in },
+            hostIsAppleSilicon: false
+        )
+
+        XCTAssertThrowsError(try adapter.makeEngine(for: "nemotron-560")) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Nemotron 560 needs a Mac with Apple silicon."
+            )
+        }
+    }
+
+    func testStreamingLibraryDownloadTargetsTheNemotronRepositoryAtTheSharedRoot() async throws {
+        let probe = RepositoryDownloadProbe()
+        let download: StreamingASRModelAdapter.RepositoryDownload = { repo, root, variant, progress in
+            probe.record(repo: repo.folderName, directory: root, variant: variant)
+            progress(0.4)
+        }
+
+        try await StreamingASRModelAdapter.downloadFromLibrary(
+            .nemotron560,
+            { probe.recordProgress($0) },
+            downloadRepository: download
+        )
+
+        XCTAssertEqual(
+            probe.state,
+            RepositoryDownloadState(
+                repository: "nemotron-streaming/560ms",
+                directory: ASRModelStore.streamingDownloadRoot(),
+                variant: nil,
+                progress: [0.4]
+            )
+        )
+    }
+
+    func testStreamingEngineLoadsNemotronFromItsModelDirectory() async throws {
+        let directory = try XCTUnwrap(directory)
+        let probe = DownloadProbe<StreamingManagerRequest>()
+        let manager = FakeStreamingASRManager()
+        let adapter = StreamingASRModelAdapter(
+            modelDirectory: { _ in directory },
+            availability: { _ in true },
+            download: { _, _ in },
+            makeManager: { variant, directory in
+                probe.record(StreamingManagerRequest(variant: variant, directory: directory))
+                return manager
+            }
+        )
+
+        try await adapter.makeEngine(for: "nemotron-560").prepare()
+
+        XCTAssertEqual(
+            probe.values,
+            [StreamingManagerRequest(variant: .nemotron560, directory: directory)]
+        )
+    }
+
+    func testNemotronDeletionMapsCatalogIDToLibraryVariant() async throws {
+        let probe = DownloadProbe<ASRModelCatalog.StreamingVariant>()
+        let adapter = StreamingASRModelAdapter(
+            modelDirectory: { _ in nil },
+            availability: { _ in true },
+            download: { _, _ in },
+            delete: { probe.record($0) }
+        )
+
+        try await adapter.removeModelData(for: "nemotron-560")
+
+        XCTAssertEqual(probe.values, [.nemotron560])
+    }
+
+    private func makeStreamingAdapter(
+        directory: URL,
+        hostIsAppleSilicon: Bool = true
+    ) -> StreamingASRModelAdapter {
         StreamingASRModelAdapter(
             modelDirectory: { _ in directory },
             compiledModelIsUsable: FakeCoreMLValidation.compiledModelIsUsable,
-            download: { _, _ in }
+            download: { _, _ in },
+            hostIsAppleSilicon: hostIsAppleSilicon
         )
     }
 
@@ -744,6 +900,21 @@ final class ASRModelAdapterTests: XCTestCase {
         }
         try Data(#"{"0":"token"}"#.utf8).write(
             to: directory.appendingPathComponent("vocab.json")
+        )
+    }
+
+    /// A complete Nemotron download as the pinned manager loads it: the encoder
+    /// nested under `encoder/`, and neither the fused `decoder_joint` nor
+    /// `metadata.json`, both of which the manager reads only when present.
+    private func writeNemotronModelData(to directory: URL) throws {
+        for component in ["preprocessor", "decoder", "joint"] {
+            try writeCompiledModel(named: component, to: directory)
+        }
+        let encoder = directory.appendingPathComponent("encoder")
+        try FileManager.default.createDirectory(at: encoder, withIntermediateDirectories: true)
+        try writeCompiledModel(named: "encoder_int8", to: encoder)
+        try Data(#"{"0":"token"}"#.utf8).write(
+            to: directory.appendingPathComponent("tokenizer.json")
         )
     }
 
@@ -957,6 +1128,11 @@ private enum FakeCoreMLValidation {
 private struct DownloadMapping<Value: Equatable>: Equatable {
     let mappedValues: [Value]
     let progress: [Double]
+}
+
+private struct DownloadRefusal: Equatable {
+    let error: String?
+    let attempted: [ASRModelCatalog.StreamingVariant]
 }
 
 private struct StreamingManagerRequest: Equatable {

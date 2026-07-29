@@ -15,8 +15,16 @@ struct ASRModelDescriptor: Identifiable, Equatable {
     let isAvailable: Bool
     let isDefault: Bool
     let allowsDeletion: Bool
+    /// The requirement this Mac does not meet, or nil when it does. Separate
+    /// from `isAvailable` because the two are answered differently: unavailable
+    /// data is a download away, unmet hardware never is.
+    let unmetHardwareRequirement: ASRModelCatalog.HardwareRequirement?
 
-    init(entry: ASRModelCatalog.Entry, isAvailable: Bool) {
+    init(
+        entry: ASRModelCatalog.Entry,
+        isAvailable: Bool,
+        hostIsAppleSilicon: Bool = ASRModelCatalog.hostIsAppleSilicon
+    ) {
         id = entry.id
         name = entry.name
         languages = entry.languages
@@ -28,6 +36,9 @@ struct ASRModelDescriptor: Identifiable, Equatable {
         self.isAvailable = isAvailable
         isDefault = entry.id == ASRModelCatalog.defaultID
         allowsDeletion = !isDefault
+        unmetHardwareRequirement = entry.hardware.isMet(byAppleSilicon: hostIsAppleSilicon)
+            ? nil
+            : entry.hardware
     }
 }
 

@@ -1627,6 +1627,142 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
         .first { $0.id == .speechRecognition("parakeet-eou-320") }
     }
 
+    // MARK: - Nemotron 560 on hardware that can and can't run it
+
+    func testNemotronOffersItsDownloadOnAppleSilicon() {
+        XCTAssertEqual(nemotronRow()?.state, "Download")
+    }
+
+    func testNemotronDescribesItsPunctuatedOutput() {
+        XCTAssertEqual(
+            nemotronRow()?.description?.contains("capitalized and punctuated"),
+            true
+        )
+    }
+
+    func testNemotronStatesItsStreamingCapabilityBesideLanguageCoverage() {
+        XCTAssertEqual(nemotronRow()?.fit, "English · Live while you speak")
+    }
+
+    func testNemotronIsNotSelectableOnAnIntelMac() {
+        XCTAssertEqual(
+            nemotronRow(hostIsAppleSilicon: false)?.primaryAction,
+            .unsupportedASR
+        )
+    }
+
+    func testNemotronReadsAsUnsupportedOnAnIntelMac() {
+        XCTAssertEqual(nemotronRow(hostIsAppleSilicon: false)?.state, "Unsupported")
+    }
+
+    func testNemotronExplainsWhatAnIntelMacIsMissing() {
+        XCTAssertEqual(
+            nemotronRow(hostIsAppleSilicon: false)?.statusExplanation,
+            "Nemotron 560 needs a Mac with Apple silicon, which this Mac doesn't have. "
+                + "It can't be downloaded or selected here; every other speech model still can be."
+        )
+    }
+
+    /// The pane has to stay usable: an unsupported row says so in words that
+    /// reach VoiceOver rather than only greying a button out.
+    func testNemotronUnsupportedStateReachesTheRowAccessibilityLabel() {
+        XCTAssertEqual(
+            nemotronRow(hostIsAppleSilicon: false)?.accessibilityLabel,
+            "Nemotron 560, English · Live while you speak, Size 627 MB, "
+                + "Speed 4 out of 5, Quality 4 out of 5, Unsupported, "
+                + "Not saved as the global ASR model selection"
+        )
+    }
+
+    func testUnsupportedNemotronOffersNothingToDelete() {
+        XCTAssertNil(nemotronRow(hostIsAppleSilicon: false)?.destructiveAction)
+    }
+
+    func testEouStaysDownloadableOnAnIntelMac() {
+        let row = rows(
+            storedSelection: "parakeet-v3",
+            effectiveSelection: "parakeet-v3",
+            availableIDs: ["parakeet-v3"],
+            hostIsAppleSilicon: false
+        )
+        .first { $0.id == .speechRecognition("parakeet-eou-320") }
+
+        XCTAssertEqual(row?.state, "Download")
+    }
+
+    /// A configuration carried over from an Apple-silicon Mac keeps its stored
+    /// selection; only the Effective ASR model falls back.
+    func testSavedNemotronKeepsItsSelectionOnAnIntelMac() {
+        XCTAssertEqual(
+            nemotronRow(storedSelection: "nemotron-560", hostIsAppleSilicon: false)?
+                .isSavedASRSelection,
+            true
+        )
+    }
+
+    func testSavedNemotronReadsAsSavedAndUnsupportedOnAnIntelMac() {
+        XCTAssertEqual(
+            nemotronRow(storedSelection: "nemotron-560", hostIsAppleSilicon: false)?.state,
+            "Saved · unsupported"
+        )
+    }
+
+    func testSavedNemotronNamesWhatIsHandlingDictationOnAnIntelMac() {
+        XCTAssertEqual(
+            nemotronRow(storedSelection: "nemotron-560", hostIsAppleSilicon: false)?
+                .statusExplanation,
+            "Nemotron 560 needs a Mac with Apple silicon, which this Mac doesn't have. "
+                + "Parakeet TDT v3 is handling Dictation, and your saved ASR model selection "
+                + "stays as it is until you select another model."
+        )
+    }
+
+    func testSavedNemotronExplainsItselfWithNoEffectiveModelYet() {
+        XCTAssertEqual(
+            nemotronRow(
+                storedSelection: "nemotron-560",
+                effectiveSelection: nil,
+                hostIsAppleSilicon: false
+            )?.statusExplanation,
+            "Nemotron 560 needs a Mac with Apple silicon, which this Mac doesn't have. "
+                + "Your saved ASR model selection stays as it is until you select another model."
+        )
+    }
+
+    private func nemotronRow(
+        storedSelection: String = "parakeet-v3",
+        effectiveSelection: String? = "parakeet-v3",
+        hostIsAppleSilicon: Bool = true
+    ) -> ModelsRowPresentation? {
+        rows(
+            storedSelection: storedSelection,
+            effectiveSelection: effectiveSelection,
+            availableIDs: ["parakeet-v3"],
+            hostIsAppleSilicon: hostIsAppleSilicon
+        )
+        .first { $0.id == .speechRecognition("nemotron-560") }
+    }
+
+    private func rows(
+        storedSelection: String,
+        effectiveSelection: String?,
+        availableIDs: Set<String>,
+        hostIsAppleSilicon: Bool
+    ) -> [ModelsRowPresentation] {
+        ModelsWorkspaceProjection.make(
+            asrSnapshot: snapshot(
+                storedSelection: storedSelection,
+                effectiveSelection: effectiveSelection,
+                availableIDs: availableIDs,
+                hostIsAppleSilicon: hostIsAppleSilicon
+            ),
+            installedPolishModels: [],
+            inspectedID: nil
+        )
+        .sections
+        .flatMap(\.rows)
+    }
+
     func testInitialInspectionUsesEffectiveFallbackForUnknownSavedModel() {
         let snapshot = snapshot(
             storedSelection: "retired-model",
@@ -1853,11 +1989,18 @@ final class ModelsWorkspaceProjectionTests: XCTestCase {
         recovery: ASRModelLifecycleRecovery? = nil,
         operation: ASRModelLifecycleOperation? = nil,
         failure: ASRModelLifecycleFailure? = nil,
-        isDictationBlocked: Bool = false
+        isDictationBlocked: Bool = false,
+        // Pinned rather than read from the host, so a row's copy is the same
+        // assertion on every Mac the suite runs on.
+        hostIsAppleSilicon: Bool = true
     ) -> ASRModelLifecycleSnapshot {
         ASRModelLifecycleSnapshot(
             models: ASRModelCatalog.entries.map {
-                ASRModelDescriptor(entry: $0, isAvailable: availableIDs.contains($0.id))
+                ASRModelDescriptor(
+                    entry: $0,
+                    isAvailable: availableIDs.contains($0.id),
+                    hostIsAppleSilicon: hostIsAppleSilicon
+                )
             },
             storedSelection: storedSelection,
             effectiveSelection: effectiveSelection,

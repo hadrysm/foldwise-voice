@@ -633,6 +633,12 @@ struct ModelsCombinedPane: View {
             Button("Retry") { interface.retryASRBootstrap() }
                 .buttonStyle(EmberButtonStyle(kind: .primary))
                 .focused($focusedControl, equals: .inspectorPrimary(id))
+        case .unsupportedASR:
+            Label("Not supported on this Mac", systemImage: "slash.circle")
+                .font(Theme.ui(10.5, .semibold))
+                .foregroundStyle(Theme.textSecondary)
+                .focusable()
+                .focused($focusedControl, equals: .inspectorPrimary(id))
         case .installed:
             Label("Installed", systemImage: "checkmark.circle")
                 .font(Theme.ui(10.5, .semibold))

@@ -11,10 +11,70 @@ final class ASRModelStreamingContractTests: XCTestCase {
                 ParakeetASRModelAdapter(),
                 StreamingASRModelAdapter(),
                 WhisperASRModelAdapter(),
+            ],
+            adaptersOnUnsupportedHardware: [
+                ParakeetASRModelAdapter(),
+                StreamingASRModelAdapter(hostIsAppleSilicon: false),
+                WhisperASRModelAdapter(),
             ]
         )
 
         XCTAssertEqual(findings, [], findings.map(\.description).joined(separator: "; "))
+    }
+
+    func testHardwareRestrictedEntryBuiltOnUnsupportedHardwareIsReported() {
+        let findings = ASRModelStreamingContract.audit(
+            entries: [restrictedEntry(id: "nemotron-560")],
+            adapters: [ContractAdapter(modelIDs: ["nemotron-560"], streams: true)],
+            adaptersOnUnsupportedHardware: [
+                ContractAdapter(modelIDs: ["nemotron-560"], streams: true),
+            ]
+        )
+
+        XCTAssertEqual(findings, [.hardwareRestrictionNotEnforced(modelID: "nemotron-560")])
+    }
+
+    func testHardwareRestrictedEntryRefusedOnUnsupportedHardwareIsNotReported() {
+        let findings = ASRModelStreamingContract.audit(
+            entries: [restrictedEntry(id: "nemotron-560")],
+            adapters: [ContractAdapter(modelIDs: ["nemotron-560"], streams: true)],
+            adaptersOnUnsupportedHardware: [
+                ContractAdapter(modelIDs: ["nemotron-560"], streams: true, failsToBuild: true),
+            ]
+        )
+
+        XCTAssertEqual(findings, [])
+    }
+
+    /// The restriction is the engine's, so an entry running on any Mac is not
+    /// expected to be refused anywhere.
+    func testUnrestrictedEntryBuiltOnUnsupportedHardwareIsNotReported() {
+        let findings = ASRModelStreamingContract.audit(
+            entries: [entry(id: "parakeet-eou-320", streaming: true)],
+            adapters: [ContractAdapter(modelIDs: ["parakeet-eou-320"], streams: true)],
+            adaptersOnUnsupportedHardware: [
+                ContractAdapter(modelIDs: ["parakeet-eou-320"], streams: true),
+            ]
+        )
+
+        XCTAssertEqual(findings, [])
+    }
+
+    /// Built from the shipped Apple-silicon-only entry, because the requirement
+    /// follows the engine the id names rather than anything a fixture can set.
+    private func restrictedEntry(id: String) -> ASRModelCatalog.Entry {
+        ASRModelCatalog.Entry(
+            id: id,
+            engine: .streaming(variant: .nemotron560),
+            name: id,
+            languages: "English",
+            size: "627 MB",
+            speed: 4,
+            quality: 4,
+            streaming: true,
+            translate: false,
+            blurb: "A fixture."
+        )
     }
 
     func testStreamingClaimOverABatchEngineIsReported() {

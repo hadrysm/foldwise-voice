@@ -278,25 +278,28 @@ struct StreamingASRModelAdapter: ASRModelFamilyAdapting {
         URL
     ) -> any StreamingASRManaging
 
-    let modelIDs: Set<String> = ["parakeet-eou-320"]
+    let modelIDs: Set<String> = ["parakeet-eou-320", "nemotron-560"]
     private let modelDirectory: ModelDirectory
     private let availability: Availability
     private let download: Download
     private let delete: Delete
     private let makeManager: MakeManager
+    private let hostIsAppleSilicon: Bool
 
     init(
         modelDirectory: @escaping ModelDirectory,
         availability: @escaping Availability,
         download: @escaping Download,
         delete: @escaping Delete = { _ in throw ASRModelAdapterError.deletionUnavailable },
-        makeManager: @escaping MakeManager = Self.makeLibraryManager
+        makeManager: @escaping MakeManager = Self.makeLibraryManager,
+        hostIsAppleSilicon: Bool = ASRModelCatalog.hostIsAppleSilicon
     ) {
         self.modelDirectory = modelDirectory
         self.availability = availability
         self.download = download
         self.delete = delete
         self.makeManager = makeManager
+        self.hostIsAppleSilicon = hostIsAppleSilicon
     }
 
     init(
@@ -306,7 +309,8 @@ struct StreamingASRModelAdapter: ASRModelFamilyAdapting {
         },
         download: @escaping Download,
         delete: @escaping Delete = { _ in throw ASRModelAdapterError.deletionUnavailable },
-        makeManager: @escaping MakeManager = Self.makeLibraryManager
+        makeManager: @escaping MakeManager = Self.makeLibraryManager,
+        hostIsAppleSilicon: Bool = ASRModelCatalog.hostIsAppleSilicon
     ) {
         self.init(
             modelDirectory: modelDirectory,
@@ -326,15 +330,17 @@ struct StreamingASRModelAdapter: ASRModelFamilyAdapting {
             },
             download: download,
             delete: delete,
-            makeManager: makeManager
+            makeManager: makeManager,
+            hostIsAppleSilicon: hostIsAppleSilicon
         )
     }
 
-    init() {
+    init(hostIsAppleSilicon: Bool = ASRModelCatalog.hostIsAppleSilicon) {
         self.init(
             modelDirectory: ASRModelLibraryStorage.streamingModelDirectory,
             download: { try await Self.downloadFromLibrary($0, $1) },
-            delete: ASRModelLibraryStorage.deleteStreaming
+            delete: ASRModelLibraryStorage.deleteStreaming,
+            hostIsAppleSilicon: hostIsAppleSilicon
         )
     }
 
@@ -351,8 +357,11 @@ struct StreamingASRModelAdapter: ASRModelFamilyAdapting {
         )
     }
 
+    /// Hardware the engine can't run on is reported the same way missing weights
+    /// are, so the lifecycle's existing gates — selection, fallback, and stored
+    /// selection left untouched — apply without knowing why a model is out.
     func isModelDataAvailable(for id: String) -> Bool {
-        guard let variant = variant(for: id) else { return false }
+        guard let variant = variant(for: id), meetsHardwareRequirement(variant) else { return false }
         return availability(variant)
     }
 
@@ -361,11 +370,13 @@ struct StreamingASRModelAdapter: ASRModelFamilyAdapting {
         progress: @escaping @Sendable (Double) -> Void
     ) async throws {
         guard let variant = variant(for: id) else { throw ASRModelAdapterError.unknownModel(id) }
+        try requireSupportedHardware(variant, id: id)
         try await download(variant, progress)
     }
 
     func makeEngine(for id: String) throws -> Transcribing {
         guard let variant = variant(for: id) else { throw ASRModelAdapterError.unknownModel(id) }
+        try requireSupportedHardware(variant, id: id)
         guard let directory = modelDirectory(variant) else {
             throw ASRModelAdapterError.modelDirectoryUnavailable
         }
@@ -380,7 +391,10 @@ struct StreamingASRModelAdapter: ASRModelFamilyAdapting {
 
     /// What a complete download looks like on disk. The compiled models and the
     /// vocabulary are separated because they are validated differently: one is
-    /// loaded, the other is parsed.
+    /// loaded, the other is parsed. Nemotron's optional fused `decoder_joint` and
+    /// its `metadata.json` are left out on purpose — the pinned manager loads
+    /// both only when present, so requiring them would call a usable download
+    /// incomplete.
     private static func requiredArtifacts(
         for variant: ASRModelCatalog.StreamingVariant
     ) -> (models: Set<String>, vocabulary: String) {
@@ -394,6 +408,19 @@ struct StreamingASRModelAdapter: ASRModelFamilyAdapting {
                 ],
                 ModelNames.ParakeetEOU.vocab
             )
+        case .nemotron560:
+            (
+                [
+                    ModelNames.NemotronStreaming.preprocessorFile,
+                    // The library names the int8 encoder by its nested path;
+                    // validation searches the download by file name.
+                    URL(fileURLWithPath: ModelNames.NemotronStreaming.encoderInt8File)
+                        .lastPathComponent,
+                    ModelNames.NemotronStreaming.decoderFile,
+                    ModelNames.NemotronStreaming.jointFile,
+                ],
+                ModelNames.NemotronStreaming.tokenizer
+            )
         }
     }
 
@@ -401,7 +428,22 @@ struct StreamingASRModelAdapter: ASRModelFamilyAdapting {
         switch variant {
         case .parakeetEou320:
             ParakeetEouStreamingManager(modelDirectory: directory, chunkSize: .ms320)
+        case .nemotron560:
+            NemotronStreamingManager(modelDirectory: directory, chunkSize: .ms560)
         }
+    }
+
+    private func meetsHardwareRequirement(_ variant: ASRModelCatalog.StreamingVariant) -> Bool {
+        variant.hardware.isMet(byAppleSilicon: hostIsAppleSilicon)
+    }
+
+    private func requireSupportedHardware(
+        _ variant: ASRModelCatalog.StreamingVariant,
+        id: String
+    ) throws {
+        guard !meetsHardwareRequirement(variant),
+              let missing = variant.hardware.missingHardware else { return }
+        throw ASRModelAdapterError.unsupportedHardware(modelID: id, missing: missing)
     }
 
     private func variant(for id: String) -> ASRModelCatalog.StreamingVariant? {
@@ -567,12 +609,15 @@ private enum ASRModelAdapterError: LocalizedError {
     case unknownModel(String)
     case modelDirectoryUnavailable
     case deletionUnavailable
+    case unsupportedHardware(modelID: String, missing: String)
 
     var errorDescription: String? {
         switch self {
         case let .unknownModel(id): "Unknown ASR model: \(id)"
         case .modelDirectoryUnavailable: "Couldn't locate the ASR model directory."
         case .deletionUnavailable: "ASR model deletion is unavailable."
+        case let .unsupportedHardware(modelID, missing):
+            "\(ASRModelCatalog.entry(for: modelID)?.name ?? modelID) needs a Mac with \(missing)."
         }
     }
 }

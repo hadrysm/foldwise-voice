@@ -26,13 +26,15 @@ enum ASRModelStore {
     static func streamingRepository(_ variant: ASRModelCatalog.StreamingVariant) -> Repo {
         switch variant {
         case .parakeetEou320: .parakeetEou320
+        case .nemotron560: .nemotronStreaming560
         }
     }
 
     /// Where the pinned downloader writes a Streaming ASR model.
     /// `DownloadUtils.downloadRepo` appends the repository's own nested folder
-    /// name (`parakeet-eou-streaming/320ms`), so the destination is FluidAudio's
-    /// shared models root rather than the variant directory's parent.
+    /// name (`parakeet-eou-streaming/320ms`, `nemotron-streaming/560ms`), so the
+    /// destination is FluidAudio's shared models root rather than the variant
+    /// directory's parent.
     static func streamingDownloadRoot() -> URL {
         MLModelConfigurationUtils.defaultModelsDirectory()
     }

@@ -22,7 +22,54 @@ enum ASRModelCatalog {
     /// different artifact set from EOU at 160 ms, not a runtime option.
     enum StreamingVariant: Equatable {
         case parakeetEou320
+        case nemotron560
+
+        /// Nemotron's int8 encoder is Neural-Engine only, so the pinned manager
+        /// refuses to load it anywhere else. Stating the same requirement here
+        /// is what lets the Models pane say so before a 627 MB download instead
+        /// of after a failed load.
+        var hardware: HardwareRequirement {
+            switch self {
+            case .parakeetEou320: .anyMac
+            case .nemotron560: .appleSilicon
+            }
+        }
     }
+
+    /// What an entry's engine needs from the Mac it runs on. Unlike downloaded
+    /// model data, an unmet requirement is permanent: no download, repair, or
+    /// retry can satisfy it, so it is presented as a fact rather than a failure.
+    enum HardwareRequirement: Equatable {
+        case anyMac
+        case appleSilicon
+
+        func isMet(byAppleSilicon isAppleSilicon: Bool) -> Bool {
+            switch self {
+            case .anyMac: true
+            case .appleSilicon: isAppleSilicon
+            }
+        }
+
+        /// What a Mac that fails this requirement is missing, in the words the
+        /// Models pane uses. Nil for `anyMac`, which no Mac can fail.
+        var missingHardware: String? {
+            switch self {
+            case .anyMac: nil
+            case .appleSilicon: "Apple silicon"
+            }
+        }
+    }
+
+    /// Whether this process runs on Apple silicon. Compile-time by design: it
+    /// matches the check the pinned engines make, so an x86_64 slice under
+    /// Rosetta is judged exactly as the engine that would refuse to load in it.
+    static let hostIsAppleSilicon: Bool = {
+        #if arch(arm64)
+            true
+        #else
+            false
+        #endif
+    }()
 
     /// Which ASR engine (ADR-0005) runs a catalog entry, and the model variant
     /// it needs. Each case maps through its family adapter to a lifecycle-owned
@@ -34,6 +81,13 @@ enum ASRModelCatalog {
         case parakeet(version: ParakeetVariant)
         case whisper(variant: String)
         case streaming(variant: StreamingVariant)
+
+        var hardware: HardwareRequirement {
+            switch self {
+            case .parakeet, .whisper: .anyMac
+            case let .streaming(variant): variant.hardware
+            }
+        }
     }
 
     struct Entry: Identifiable {
@@ -54,18 +108,26 @@ enum ASRModelCatalog {
         /// engines' docs, but no translate UI ships yet.
         let translate: Bool
         let blurb: String
+
+        /// Follows the engine rather than the row, so presentation can never
+        /// promise a model the engine will refuse to load.
+        var hardware: HardwareRequirement {
+            engine.hardware
+        }
     }
 
     /// The out-of-box default: Parakeet TDT v3, already warmed at launch.
     static let defaultID = "parakeet-v3"
 
-    /// Curated, all-honest roster (ADR-0006): Parakeet v3/v2, one Streaming ASR
-    /// model, plus a multilingual Whisper size tier. No Whisper `.en` variants and
+    /// Curated, all-honest roster (ADR-0006): Parakeet v3/v2, two Streaming ASR
+    /// models, plus a multilingual Whisper size tier. No Whisper `.en` variants and
     /// no tiny/base — they would only make Whisper look worse than Parakeet
     /// without adding language reach. Language lists and translate flags come from
     /// the engines' own docs; Parakeet has no X→English translate path, Whisper
     /// does. Sizes are decimal MB of what the pinned downloader actually
-    /// transfers, which for EOU 320 is roughly twice what it needs.
+    /// transfers, which for EOU 320 is roughly twice what it needs, and are
+    /// rounded up rather than down — Nemotron's measured 626.4 MB reads as
+    /// 627 MB so the number never promises a smaller transfer than it makes.
     static let entries: [Entry] = [
         Entry(
             id: "parakeet-v3", engine: .parakeet(version: .v3), name: "Parakeet TDT v3",
@@ -90,6 +152,17 @@ enum ASRModelCatalog {
                 + "Voice to Text inserts it exactly that way, and a Mode's Polish can "
                 + "restore capitalization. It needs about 224 MB of weights, but the "
                 + "downloader transfers about 448 MB."
+        ),
+        Entry(
+            id: "nemotron-560", engine: .streaming(variant: .nemotron560),
+            name: "Nemotron 560", languages: "English", size: "627 MB",
+            speed: 4, quality: 4, streaming: true, translate: false,
+            blurb: "Transcribes while you speak, and its raw output is already "
+                + "capitalized and punctuated — Voice to Text inserts finished-looking "
+                + "text without a Mode. English only. Needs a Mac with Apple silicon: "
+                + "its encoder runs on the Neural Engine and won't load on an Intel "
+                + "Mac. It is the heaviest model here — about 627 MB to download, and "
+                + "about 1.2 GB of memory while it is the selected speech model."
         ),
         Entry(
             id: "whisper-large-v3-turbo",
