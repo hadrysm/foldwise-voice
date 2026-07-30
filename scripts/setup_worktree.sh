@@ -10,8 +10,9 @@ Usage: ./scripts/setup_worktree.sh
 
 Prepares a fresh checkout or worktree for work on FoldWise Voice:
 
-  1. Points git at the tracked hooks in .githooks (per-worktree config, so
-     every new worktree needs this again).
+  1. Points git at the tracked hooks in .githooks. This writes shared repo
+     config, so it is only needed once per clone — new worktrees inherit it,
+     and the relative path resolves to each worktree's own .githooks.
   2. Pre-resolves the Swift package dependencies so the first build is fast.
   3. Installs the Sandcastle runner's dependencies.
 
