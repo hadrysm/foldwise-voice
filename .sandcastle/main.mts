@@ -5,27 +5,28 @@
 //   .sandcastle/node_modules/.bin/tsx .sandcastle/main.mts
 
 import { cancel, log } from "@clack/prompts";
-import { choosePlan, printRunHeader, rememberRunV1 } from "./cli/flow.mts";
+import { choosePlan, printRunHeader } from "./cli/flow.mts";
+import { writeStoredRun } from "./cli/store.mts";
 import { prepare } from "./runner.mts";
 
 async function main(): Promise<void> {
-  const chosen = await choosePlan();
-  if (!chosen) {
+  const plan = await choosePlan();
+  if (!plan) {
     cancel("Sandcastle cancelled.");
     return;
   }
 
-  const dispatch = prepare(chosen.plan);
+  const dispatch = prepare(plan);
 
   // Remember the picks before the first dispatch — outside the worktree, so
   // nothing an agent commits can be affected by this write.
-  if (!rememberRunV1(chosen)) {
+  if (!writeStoredRun(plan)) {
     log.warn("Could not save these picks for next time.");
   }
 
-  printRunHeader(chosen.plan);
+  printRunHeader(plan);
 
-  await chosen.plan.workflow.run({ dispatch, knobs: chosen.plan.knobs });
+  await plan.workflow.run({ dispatch, knobs: plan.knobs });
 
   console.log("\nAll done.");
 }

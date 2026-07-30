@@ -18,12 +18,7 @@ import type { Agent, Workflow } from "../contract.mts";
 import { availableEfforts } from "../providers/registry.mts";
 import { WORKFLOWS } from "../workflows/registry.mts";
 import { chooseOne, wasCancelled } from "./prompts.mts";
-import {
-  readStoredRunPlan,
-  writeStoredRunPlan,
-  type RunPlan,
-  type StoredSelection,
-} from "./store.mts";
+import { readStoredRun, type StoredPick, type StoredRun } from "./store.mts";
 
 const EFFORT_LABELS: Readonly<Record<RunEffort, string>> = {
   low: "Low",
@@ -73,7 +68,7 @@ export interface ResolvedPlan {
 async function chooseAgent(
   agent: Agent,
   promptLabel: string,
-  remembered: StoredSelection | undefined,
+  remembered: StoredPick | undefined,
 ): Promise<ResolvedAgent | undefined> {
   const modelId = await chooseOne(
     `Choose the ${promptLabel} model`,
@@ -127,15 +122,20 @@ function labelColumn(agents: readonly ResolvedAgent[]): number {
 }
 
 /**
- * The picked plan plus the flow's own "same for both" answer, which only the
- * v1 store still needs. `sameForBoth` retires with `rememberRunV1`.
+ * Whether every remembered agent was pointed at the same model and effort — the
+ * initial answer to "one model for both?", derived rather than stored, because
+ * the answer is a shape the picks already have. A pick the store dropped counts
+ * as a mismatch, which lands on "configure separately" and so shows every
+ * prompt rather than silently copying a surviving pick onto both agents.
  */
-export interface ChosenRun {
-  plan: ResolvedPlan;
-  sameForBoth: boolean;
+function remembersOneModelForAll(remembered: StoredRun, agents: readonly Agent[]): boolean {
+  const picks = agents.map((agent) => remembered.agents[agent.id]);
+  const [first] = picks;
+  if (!first) return false;
+  return picks.every((pick) => pick?.model === first.model && pick?.effort === first.effort);
 }
 
-export async function choosePlan(): Promise<ChosenRun | undefined> {
+export async function choosePlan(): Promise<ResolvedPlan | undefined> {
   // Clack drives the terminal in raw mode, so it needs a real TTY just as the
   // widget it replaced did. It calls `setRawMode` optionally, so without this
   // guard a stdin that lacks it would render a picker whose arrow keys do
@@ -148,7 +148,7 @@ export async function choosePlan(): Promise<ChosenRun | undefined> {
   const workflow = WORKFLOWS[0];
   if (!workflow) throw new Error("No workflows are registered.");
 
-  const remembered = readStoredRunPlan();
+  const remembered = readStoredRun();
 
   const introLines = ["Pick the model and effort for each phase."];
   if (remembered) introLines.push("Defaults are your last run in this repo.");
@@ -156,7 +156,7 @@ export async function choosePlan(): Promise<ChosenRun | undefined> {
   intro("Sandcastle");
   log.message(introLines);
 
-  const sameForBoth = await chooseOne(
+  const oneModelForBoth = await chooseOne(
     "Use one model for both phases?",
     [
       {
@@ -170,21 +170,22 @@ export async function choosePlan(): Promise<ChosenRun | undefined> {
         hint: "Pick a different model or effort per phase",
       },
     ],
-    remembered?.sameForBoth ?? true,
+    remembered ? remembersOneModelForAll(remembered, workflow.agents) : true,
   );
-  if (wasCancelled(sameForBoth)) return undefined;
+  if (wasCancelled(oneModelForBoth)) return undefined;
 
   const implementer = await chooseAgent(
     IMPLEMENTER,
-    sameForBoth ? "Run" : IMPLEMENTER.label,
-    remembered?.implementer,
+    oneModelForBoth ? "Run" : IMPLEMENTER.label,
+    remembered?.agents[IMPLEMENTER.id],
   );
   if (!implementer) return undefined;
   // "Same for both" is one answer covering two agents: same model and effort,
-  // still two entries, because the runner keys its providers by agent id.
-  const reviewer = sameForBoth
+  // still two entries, because the runner keys its providers by agent id — and
+  // because the store remembers one entry per agent, not one shared pick.
+  const reviewer = oneModelForBoth
     ? { ...implementer, agentId: REVIEWER.id, agentLabel: REVIEWER.label }
-    : await chooseAgent(REVIEWER, REVIEWER.label, remembered?.reviewer);
+    : await chooseAgent(REVIEWER, REVIEWER.label, remembered?.agents[REVIEWER.id]);
   if (!reviewer) return undefined;
 
   const agents = [implementer, reviewer];
@@ -206,14 +207,11 @@ export async function choosePlan(): Promise<ChosenRun | undefined> {
   if (wasCancelled(confirmed) || !confirmed) return undefined;
 
   return {
-    plan: {
-      workflow,
-      agents,
-      // Every declared knob at its default, so a workflow never reads a
-      // missing key. Asking about knobs is a later slice.
-      knobs: Object.fromEntries(workflow.knobs.map((knob) => [knob.id, knob.defaultValue])),
-    },
-    sameForBoth,
+    workflow,
+    agents,
+    // Every declared knob at its default, so a workflow never reads a missing
+    // key. Asking about knobs is a later slice.
+    knobs: Object.fromEntries(workflow.knobs.map((knob) => [knob.id, knob.defaultValue])),
   };
 }
 
@@ -223,24 +221,4 @@ export function printRunHeader(plan: ResolvedPlan): void {
   for (const resolved of plan.agents) {
     log.step(`${resolved.agentLabel.padEnd(column)}${describeAgent(resolved)}`);
   }
-}
-
-/**
- * THROWAWAY: adapts a `ResolvedPlan` back to the v1 store's two-role shape so
- * the picks survive this slice. The v2 store — agent ids and knobs, written as
- * upserts — deletes this function and `ChosenRun.sameForBoth` with it.
- */
-export function rememberRunV1(chosen: ChosenRun): boolean {
-  const find = (agentId: string): ResolvedAgent | undefined =>
-    chosen.plan.agents.find((resolved) => resolved.agentId === agentId);
-  const implementer = find(IMPLEMENTER.id);
-  const reviewer = find(REVIEWER.id);
-  if (!implementer || !reviewer) return false;
-
-  const plan: RunPlan = {
-    implementer: { model: implementer.model, effort: implementer.effort },
-    reviewer: { model: reviewer.model, effort: reviewer.effort },
-    sameForBoth: chosen.sameForBoth,
-  };
-  return writeStoredRunPlan(plan);
 }
