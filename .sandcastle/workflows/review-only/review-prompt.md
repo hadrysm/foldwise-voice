@@ -76,7 +76,8 @@ Plenty of branches carry zero `Closes #<n>` lines. That degrades this axis; it d
 Apply the coding standards inlined above. Then check correctness, which those standards do not cover:
 
 - Are edge cases handled? Is every new or changed behaviour covered by a test?
-- Are there force-unwraps, force-casts (`as!`) or force-tries (`try!`) in non-test code?
+- Are there force-unwraps, force-casts (`as` followed by an exclamation mark)
+  or force-tries (`try` followed by an exclamation mark) in non-test code?
 - Does the change introduce an injection vulnerability or leak a credential — a shell command built from unvalidated input, a token or key in a log line, a secret in a committed file?
 
 **Style-only changes must preserve exact functionality.** On this axis, never change what the code does — only how it does it.

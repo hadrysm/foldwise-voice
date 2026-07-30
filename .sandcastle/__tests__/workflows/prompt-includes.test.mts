@@ -104,4 +104,17 @@ describe("every workflow prompt", () => {
       );
     }
   });
+
+  it("puts every shell block on its own line", () => {
+    for (const prompt of everyPrompt()) {
+      for (const match of prompt.text.matchAll(SHELL_BLOCK)) {
+        const lineStart = prompt.text.lastIndexOf("\n", match.index) + 1;
+        assert.equal(
+          match.index,
+          lineStart,
+          `${prompt.name} contains an inline shell block: ${match[0]}`,
+        );
+      }
+    }
+  });
 });
