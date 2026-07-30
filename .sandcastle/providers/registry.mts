@@ -64,7 +64,7 @@ function executeProviderCommand(
 }
 
 // `--help` output is per-provider and unchanging within a run, but the picker
-// asks per phase — cache so choosing two models does not re-spawn the CLI.
+// asks per agent — cache so choosing two models does not re-spawn the CLI.
 const providerHelpCache = new Map<Provider, string>();
 
 function providerHelp(model: RunModel): string {

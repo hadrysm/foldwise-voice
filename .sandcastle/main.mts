@@ -5,7 +5,7 @@
 //   .sandcastle/node_modules/.bin/tsx .sandcastle/main.mts
 
 import { cancel, log } from "@clack/prompts";
-import { choosePlan, printRunHeader } from "./cli/flow.mts";
+import { choosePlan, printRunHeader } from "./cli/prompts.mts";
 import { writeStoredRun } from "./cli/store.mts";
 import { prepare } from "./runner.mts";
 
