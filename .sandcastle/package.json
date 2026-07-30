@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "check-types": "tsc --noEmit",
+    "sandcastle": "cd .. && .sandcastle/node_modules/.bin/tsx .sandcastle/main.mts",
     "test": "node --import tsx --test \"__tests__/**/*.test.mts\""
   },
   "dependencies": {
