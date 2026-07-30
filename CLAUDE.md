@@ -6,11 +6,11 @@ Guidance for agents working in this repository.
 
 ### Issue tracker
 
-Issues and PRDs live in GitHub Issues (via the `gh` CLI); external PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+Issues and SPECs live in GitHub Issues (via the `gh` CLI); external PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), plus `prd` for generated PRDs. See `docs/agents/triage-labels.md`.
+Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), plus `spec` for generated SPECs. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 

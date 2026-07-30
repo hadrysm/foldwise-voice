@@ -216,13 +216,13 @@ _Avoid_: partial, interim result, preview text
 
 ## Batch workflow
 
-**PRD** — a GitHub issue carrying the `prd` label that holds a product
-requirements document: the problem, the solution shape, and a planned
-breakdown into slices. A PRD parents its slices as native GitHub
-sub-issues.
+**SPEC** — a GitHub issue carrying the `spec` label that holds the problem,
+solution shape, and planned breakdown into slices. A SPEC parents its slices
+as native GitHub sub-issues.
+_Avoid_: PRD, product requirements document
 
-**Slice** — one sub-issue of a PRD: a single, independently implementable
-and reviewable unit of the PRD's work. Each slice states its own
+**Slice** — one sub-issue of a SPEC: a single, independently implementable
+and reviewable unit of the SPEC's work. Each slice states its own
 acceptance criteria; an agent works exactly one slice at a time.
 
 **Release gate** — the act of labeling a slice `ready-for-agent`. Drafting
@@ -230,7 +230,7 @@ a slice and releasing it are separate acts: a slice exists as soon as its
 sub-issue does, but joins the batch queue only once the maintainer applies
 the label.
 
-**Batch** — the set of issues one run works through: either a PRD's open,
+**Batch** — the set of issues one run works through: either a SPEC's open,
 released slices (a *scoped* run) or the whole `ready-for-agent` queue.
 
 **Run model** — The single coding model selected interactively when a
@@ -258,7 +258,7 @@ categorise it for the changelog and version bump. Each commit also carries a
 commits back to the slices they implement.
 
 **Handoff** — the end of a scoped run, when the batch returns to the
-maintainer. A drained PRD (every released slice closed) is labeled
+maintainer. A drained SPEC (every released slice closed) is labeled
 `code-review` and gets a per-slice summary; a stalled run gets a report of
 the slices that remain and why it stopped. Review of the resulting diff
 and the PR itself stay human, always.

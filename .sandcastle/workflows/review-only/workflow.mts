@@ -9,7 +9,7 @@
 //
 // No knobs, so `origin/main` is written into the prompt rather than passed in,
 // and this `run` sends no `promptArgs` at all. A knob for the branch's issue or
-// PRD number was considered and rejected: that is work selection wearing a
+// SPEC number was considered and rejected: that is work selection wearing a
 // different hat.
 
 import { REVIEWER } from "../../agents/catalog.mts";

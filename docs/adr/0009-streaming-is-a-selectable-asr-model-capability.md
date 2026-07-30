@@ -8,7 +8,7 @@ Accepted (2026-07-27). Decided by wayfinder ticket #347 on map #339.
 
 A Dictation session shows no text until the hotkey is released, and the batch
 transcribe that then runs costs roughly 89 ms per second of audio. It does not
-plateau: PRD #342 measured 1619 ms of transcription on the long fixture, making
+plateau: SPEC #342 measured 1619 ms of transcription on the long fixture, making
 ASR length-scaling the largest remaining cost against the locked
 perceived-latency budget.
 

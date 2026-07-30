@@ -39,7 +39,7 @@ Pick the highest-priority open issue that is not blocked by another open issue.
 
 ## Workflow
 
-1. **Explore** — read the issue carefully. Pull in the parent PRD if referenced. Read `CONTEXT.md` and `docs/adr/` if present (proceed silently if absent), then the relevant source files and tests before writing any code. The repo's conventions for reading and closing issues are in the **Issue-tracker conventions** section above.
+1. **Explore** — read the issue carefully. Pull in the parent SPEC if referenced. Read `CONTEXT.md` and `docs/adr/` if present (proceed silently if absent), then the relevant source files and tests before writing any code. The repo's conventions for reading and closing issues are in the **Issue-tracker conventions** section above.
 2. **Plan** — decide what to change and why. Keep the change as small as possible.
 3. **Execute** — use RGR (Red → Green → Repeat → Refactor): write a failing test first, then write the implementation to pass it. Follow the **Coding standards** section above.
 4. **Verify** — run, in order:
@@ -63,7 +63,7 @@ Pick the highest-priority open issue that is not blocked by another open issue.
 
      Keep the subject in the imperative mood, ~72 characters or fewer, with no trailing period.
    - Include a `Closes #<n>` line in the body referencing the issue this commit implements — the reviewer uses it to trace the commit back to the issue, and release-please uses it to link the changelog entry.
-   - In the body, record the task completed and any PRD reference, the key decisions made, the files changed, and any blockers for the next iteration.
+   - In the body, record the task completed and any SPEC reference, the key decisions made, the files changed, and any blockers for the next iteration.
 6. **Close** — close the issue with `gh issue close <ID> --comment "Completed by Sandcastle"` explaining what was done.
 
 ## Rules
