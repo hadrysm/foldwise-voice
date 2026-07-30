@@ -24,19 +24,11 @@
 // against process.cwd()):
 //   .sandcastle/node_modules/.bin/tsx .sandcastle/main.mts
 
-import { execSync, spawnSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { emitKeypressEvents } from "node:readline";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
-import {
-  DEFAULT_EFFORT,
-  RUN_MODELS,
-  type ModelID,
-  type Provider,
-  type RunEffort,
-  type RunModel,
-  type VersionComponents,
-} from "./agents/models.mts";
+import { DEFAULT_EFFORT, RUN_MODELS, type ModelID, type RunEffort } from "./agents/models.mts";
 import {
   readStoredRunPlan,
   writeStoredRunPlan,
@@ -44,6 +36,7 @@ import {
   type RunPlan,
   type StoredSelection,
 } from "./cli/store.mts";
+import { availableEfforts, PROVIDERS, validateModel } from "./providers/registry.mts";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -52,31 +45,6 @@ import {
 // Maximum number of implement→review cycles to run before stopping.
 // Each cycle works on one issue. Raise this to process more issues per run.
 const MAX_ITERATIONS = 10;
-
-const PROVIDERS = {
-  "claude-code": {
-    executable: "claude",
-    helpArgs: ["--help"],
-    authArgs: ["auth", "status"],
-    authHint: "Run `claude auth login` and try again.",
-    isAuthenticated: (output: string) => /"loggedIn"\s*:\s*true/.test(output),
-    createAgent: (model: ModelID, effort: RunEffort) =>
-      sandcastle.claudeCode(model, { effort }),
-  },
-  codex: {
-    executable: "codex",
-    helpArgs: ["exec", "--help"],
-    authArgs: ["login", "status"],
-    authHint: "Run `codex login` and try again.",
-    isAuthenticated: (output: string) => /logged in/i.test(output),
-    createAgent: (model: ModelID, effort: RunEffort) => {
-      if (effort === "max") {
-        throw new Error("Max effort is not supported by the installed Sandcastle Codex adapter.");
-      }
-      return sandcastle.codex(model, { effort });
-    },
-  },
-} as const;
 
 /** Width that keeps the picker's echoed "<phase> model/effort" values aligned. */
 const PHASE_LABEL_WIDTH = "Implementer effort".length;
@@ -221,50 +189,6 @@ function effortDescription(effort: RunEffort): string {
   }
 }
 
-function executeProviderCommand(
-  provider: Provider,
-  args: readonly string[],
-  failureMessage: string,
-): string {
-  const result = spawnSync(PROVIDERS[provider].executable, args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error || result.status !== 0) throw new Error(failureMessage);
-  return `${result.stdout}\n${result.stderr}`.trim();
-}
-
-// `--help` output is per-provider and unchanging within a run, but the picker
-// now asks per phase — cache so choosing two models does not re-spawn the CLI.
-const providerHelpCache = new Map<Provider, string>();
-
-function providerHelp(model: RunModel): string {
-  const cached = providerHelpCache.get(model.provider);
-  if (cached !== undefined) return cached;
-  const help = executeProviderCommand(
-    model.provider,
-    PROVIDERS[model.provider].helpArgs,
-    `${model.providerLabel} is not installed or is unavailable in PATH.`,
-  );
-  providerHelpCache.set(model.provider, help);
-  return help;
-}
-
-function availableEfforts(model: RunModel): readonly RunEffort[] {
-  const help = providerHelp(model);
-
-  if (model.provider !== "claude-code") return model.efforts;
-
-  const advertised = help.match(/Effort level[^\n]*\n?[^\n]*\(([^)]+)\)/)?.[1];
-  if (!advertised) {
-    throw new Error(
-      `Could not detect supported effort levels from ${model.providerLabel}. Update the CLI or choose another provider.`,
-    );
-  }
-  const supported = new Set(advertised.split(",").map((effort) => effort.trim()));
-  return model.efforts.filter((effort) => supported.has(effort));
-}
-
 /**
  * Ask for one phase's model and effort. `remembered` only moves the initial
  * cursor — the prompt is always shown, so replaying the last run is
@@ -391,47 +315,6 @@ async function choosePlan(): Promise<RunPlan | undefined> {
   }
 }
 
-function parseVersion(output: string): VersionComponents | undefined {
-  const match = output.match(/(\d+)\.(\d+)\.(\d+)/);
-  if (!match?.[1] || !match[2] || !match[3]) return undefined;
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function versionIsAtLeast(actual: VersionComponents, minimum: VersionComponents): boolean {
-  for (let index = 0; index < minimum.length; index++) {
-    const difference = (actual[index] ?? 0) - (minimum[index] ?? 0);
-    if (difference !== 0) return difference > 0;
-  }
-  return true;
-}
-
-function validateRunConfiguration(configuration: RunConfiguration): void {
-  const provider = PROVIDERS[configuration.model.provider];
-  const versionOutput = executeProviderCommand(
-    configuration.model.provider,
-    ["--version"],
-    `${configuration.model.providerLabel} is not installed or is unavailable in PATH.`,
-  );
-  const minimum = configuration.model.minimumCliVersion;
-  if (minimum) {
-    const installed = parseVersion(versionOutput);
-    if (!installed || !versionIsAtLeast(installed, minimum.components)) {
-      throw new Error(
-        `${configuration.model.label} requires ${configuration.model.providerLabel} ${minimum.label} or newer.\nInstalled: ${versionOutput}`,
-      );
-    }
-  }
-
-  const authOutput = executeProviderCommand(
-    configuration.model.provider,
-    provider.authArgs,
-    `Could not verify the ${configuration.model.providerLabel} login. ${provider.authHint}`,
-  );
-  if (!provider.isAuthenticated(authOutput)) {
-    throw new Error(`No active ${configuration.model.providerLabel} login. ${provider.authHint}`);
-  }
-}
-
 /**
  * Validate every distinct model in the plan — the two phases may run different
  * models, and even different providers. Checking by model id rather than by
@@ -442,7 +325,7 @@ function validateRunPlan(plan: RunPlan): void {
   for (const configuration of [plan.implementer, plan.reviewer]) {
     if (validated.has(configuration.model.id)) continue;
     validated.add(configuration.model.id);
-    validateRunConfiguration(configuration);
+    validateModel(configuration.model);
   }
 }
 
