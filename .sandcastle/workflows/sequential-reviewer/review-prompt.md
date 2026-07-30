@@ -17,12 +17,24 @@ You MUST end in exactly one of the three terminal states listed at the end of th
 
 !`git log {{REVIEW_BASE}}..HEAD`
 
+## Issue-tracker conventions
+
+````markdown
+!`cat docs/agents/issue-tracker.md`
+````
+
+## Coding standards
+
+````markdown
+!`cat docs/CODING_STANDARDS.md`
+````
+
 # REVIEW PROCESS
 
 ## Axis 1 — Spec: does the work do what was asked?
 
 1. **Trace the issue**: extract the issue number from the `Closes #<n>` line in the commit messages above.
-2. **Fetch the issue**: run `gh issue view <n> --comments` (the repo's read convention — see @docs/agents/issue-tracker.md).
+2. **Fetch the issue**: run `gh issue view <n> --comments` (the repo's read convention — see the **Issue-tracker conventions** section above).
 3. **Check every acceptance criterion** in the issue body against the diff — one by one, met or unmet. Where a criterion demands it (e.g. "`swift test` passes"), run the command and check the result.
 4. **Act on gaps**:
    - **Small gap you can fix**: fix it in place as part of this review.
@@ -32,7 +44,7 @@ You MUST end in exactly one of the three terminal states listed at the end of th
 
 ## Axis 2 — Standards: is the code clear and consistent?
 
-Apply the coding standards in @docs/CODING_STANDARDS.md. Look for opportunities to:
+Apply the coding standards from the **Coding standards** section above. Look for opportunities to:
 
 - Reduce unnecessary complexity and nesting
 - Eliminate redundant code and abstractions
