@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "check-types": "tsc --noEmit",
+    "prototype:scope-picker": "cd .. && .sandcastle/node_modules/.bin/tsx .sandcastle/PROTOTYPE-scope-first-picker/tui.mts",
     "sandcastle": "cd .. && .sandcastle/node_modules/.bin/tsx .sandcastle/main.mts",
     "test": "node --import tsx --test \"__tests__/**/*.test.mts\""
   },
