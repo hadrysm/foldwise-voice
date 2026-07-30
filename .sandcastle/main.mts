@@ -30,19 +30,20 @@ import * as sandcastle from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import {
   DEFAULT_EFFORT,
-  PHASE_LABEL_WIDTH,
   RUN_MODELS,
-  readStoredRunPlan,
-  writeStoredRunPlan,
   type ModelID,
   type Provider,
-  type RunConfiguration,
   type RunEffort,
   type RunModel,
+  type VersionComponents,
+} from "./agents/models.mts";
+import {
+  readStoredRunPlan,
+  writeStoredRunPlan,
+  type RunConfiguration,
   type RunPlan,
   type StoredSelection,
-  type VersionComponents,
-} from "./run-config.mts";
+} from "./cli/store.mts";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -76,6 +77,9 @@ const PROVIDERS = {
     },
   },
 } as const;
+
+/** Width that keeps the picker's echoed "<phase> model/effort" values aligned. */
+const PHASE_LABEL_WIDTH = "Implementer effort".length;
 
 const EFFORT_LABELS: Readonly<Record<RunEffort, string>> = {
   low: "Low",

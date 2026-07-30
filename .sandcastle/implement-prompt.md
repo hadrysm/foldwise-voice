@@ -35,6 +35,9 @@ Pick the highest-priority open issue that is not blocked by another open issue.
    2. `swiftlint --fix && swiftlint lint --strict`
    3. `swift build --build-tests` (compilation is the type check)
    4. `swift test --skip-build`
+   5. **Only if the change touches `.sandcastle/`** — `pnpm --dir .sandcastle run check-types`
+      then `pnpm --dir .sandcastle run test`. The Swift steps above never reach this
+      TypeScript, so a runner change is otherwise committed unverified.
 
    Fix any failures before proceeding — a commit that fails any of these will be rejected by CI.
 5. **Commit** — make a single git commit. The message MUST:
