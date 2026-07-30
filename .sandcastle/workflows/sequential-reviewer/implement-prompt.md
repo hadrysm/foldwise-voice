@@ -10,6 +10,18 @@ The list above has already been filtered to issues ready for work and is the sol
 
 !`git log --oneline --grep="Closes #" -10`
 
+## Issue-tracker conventions
+
+````markdown
+!`cat docs/agents/issue-tracker.md`
+````
+
+## Coding standards
+
+````markdown
+!`cat docs/CODING_STANDARDS.md`
+````
+
 # Task
 
 You are an autonomous coding agent working through issues one at a time.
@@ -27,14 +39,17 @@ Pick the highest-priority open issue that is not blocked by another open issue.
 
 ## Workflow
 
-1. **Explore** — read the issue carefully. Pull in the parent PRD if referenced. Read `CONTEXT.md` and `docs/adr/` if present (proceed silently if absent), then the relevant source files and tests before writing any code. Issue-tracker conventions live in @docs/agents/issue-tracker.md.
+1. **Explore** — read the issue carefully. Pull in the parent PRD if referenced. Read `CONTEXT.md` and `docs/adr/` if present (proceed silently if absent), then the relevant source files and tests before writing any code. The repo's conventions for reading and closing issues are in the **Issue-tracker conventions** section above.
 2. **Plan** — decide what to change and why. Keep the change as small as possible.
-3. **Execute** — use RGR (Red → Green → Repeat → Refactor): write a failing test first, then write the implementation to pass it. Follow the coding standards in @docs/CODING_STANDARDS.md.
+3. **Execute** — use RGR (Red → Green → Repeat → Refactor): write a failing test first, then write the implementation to pass it. Follow the **Coding standards** section above.
 4. **Verify** — run, in order:
    1. `swiftformat .`
    2. `swiftlint --fix && swiftlint lint --strict`
    3. `swift build --build-tests` (compilation is the type check)
    4. `swift test --skip-build`
+   5. **Only if the change touches `.sandcastle/`** — `pnpm --dir .sandcastle run check-types`
+      then `pnpm --dir .sandcastle run test`. The Swift steps above never reach this
+      TypeScript, so a runner change is otherwise committed unverified.
 
    Fix any failures before proceeding — a commit that fails any of these will be rejected by CI.
 5. **Commit** — make a single git commit. The message MUST:
