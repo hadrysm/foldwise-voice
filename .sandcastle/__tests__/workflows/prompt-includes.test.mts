@@ -23,6 +23,14 @@ const SHELL_BLOCK = /!`([^`]+)`/g;
 /** Claude Code's include syntax, the thing that must not come back. */
 const AT_MENTION = /(^|\s)@\S+\.md/;
 
+/**
+ * A slash command, the other thing only one provider understands. Skills are
+ * Claude Code's, so `/code-review` reaches a `gpt-5.x` agent as inert text and
+ * the work it names silently does not happen. Whatever a prompt needs, it has to
+ * say itself.
+ */
+const SKILL_CALL = /(^|\s)\/[a-z][a-z-]{2,}(\s|$|[.,)`])/;
+
 interface Prompt {
   name: string;
   text: string;
@@ -53,6 +61,13 @@ describe("every workflow prompt", () => {
     for (const prompt of everyPrompt()) {
       const mention = AT_MENTION.exec(prompt.text)?.[0].trim();
       assert.equal(mention, undefined, `${prompt.name} names a document by @ mention`);
+    }
+  });
+
+  it("asks for the work itself rather than delegating to a skill", () => {
+    for (const prompt of everyPrompt()) {
+      const call = SKILL_CALL.exec(prompt.text)?.[0].trim();
+      assert.equal(call, undefined, `${prompt.name} delegates to a skill`);
     }
   });
 

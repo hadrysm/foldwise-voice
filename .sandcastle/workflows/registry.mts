@@ -7,6 +7,7 @@
 // `readdir`'s alphabet.
 
 import type { Workflow } from "../contract.mts";
+import { reviewOnly } from "./review-only/workflow.mts";
 import { sequentialReviewer } from "./sequential-reviewer/workflow.mts";
 
-export const WORKFLOWS: readonly Workflow[] = [sequentialReviewer];
+export const WORKFLOWS: readonly Workflow[] = [sequentialReviewer, reviewOnly];

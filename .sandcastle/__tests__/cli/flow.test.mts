@@ -107,13 +107,24 @@ describe("the question sequence", () => {
     ]);
   });
 
-  it("asks the workflow even while the registry holds one, rather than assuming it", () => {
+  it("asks four questions for a single-agent, zero-knob workflow", () => {
+    // No knob screen because Review Only declares none, and no same-model screen
+    // because one agent has nobody to share a model with.
+    assert.deepEqual(walk({ workflow: "review-only" }).ids, [
+      "workflow",
+      "model:reviewer",
+      "effort:reviewer",
+      "confirm",
+    ]);
+  });
+
+  it("opens the workflow question on nothing, so a fresh clone lands on registry index 0", () => {
     const question = questionById(walk(), "workflow");
     assert.equal(question.kind, "select");
-    assert.deepEqual(
-      question.kind === "select" ? question.options.map((option) => option.value) : [],
-      ["sequential-reviewer"],
-    );
+    if (question.kind !== "select") return;
+    assert.equal(question.initialValue, undefined);
+    assert.equal(question.options[0].value, "sequential-reviewer");
+    assert.equal(walk().plan?.workflow.id, "sequential-reviewer");
   });
 
   it("does not mutate the state it folds an answer into", () => {
@@ -192,7 +203,11 @@ describe("storeIsReplayable", () => {
   });
 
   it("is false when the remembered workflow is not in the registry", () => {
-    assert.equal(storeIsReplayable(populatedStore({ lastWorkflowId: "review-only" })), false);
+    // What another branch's workflow looks like from here: the store is shared
+    // across every worktree of the clone, so an id this branch never declared is
+    // routine rather than corrupt.
+    const store = populatedStore({ lastWorkflowId: "another-branches-workflow" });
+    assert.equal(storeIsReplayable(store), false);
   });
 
   it("is false when an agent the workflow drives has no pick", () => {
@@ -382,6 +397,40 @@ describe("a chosen knob value", () => {
 
     assert.deepEqual(mergeStoredRun(undefined, plan).knobs, {
       "sequential-reviewer": { maxIterations: 3 },
+    });
+  });
+});
+
+describe("Review Only, chosen with an Implement & Review run remembered", () => {
+  function walkReviewOnly(): Walk {
+    return walk({ "fast-path": "change", workflow: "review-only" }, populatedStore());
+  }
+
+  it("opens on the reviewer's remembered pick, because the agent is the same one", () => {
+    const walked = walkReviewOnly();
+    const model = questionById(walked, "model:reviewer");
+    assert.equal(model.kind === "select" ? model.initialValue : undefined, "gpt-5.6-sol");
+    const effort = questionById(walked, "effort:reviewer");
+    assert.equal(effort.kind === "select" ? effort.initialValue : undefined, "high");
+  });
+
+  it("confirms with one agent row and Review Only's own run shape", () => {
+    assert.deepEqual(questionById(walkReviewOnly(), "confirm").note, [
+      "Reviewer  GPT-5.6 Sol · High",
+      "Runs      review once, origin/main...HEAD",
+    ]);
+  });
+
+  it("leaves the implementer's pick and the other workflow's knob bucket untouched", () => {
+    const plan = walkReviewOnly().plan;
+    assert.ok(plan);
+    assert.deepEqual(mergeStoredRun(populatedStore(), plan), {
+      lastWorkflowId: "review-only",
+      agents: {
+        implementer: { model: "claude-opus-5", effort: "xhigh" },
+        reviewer: { model: "gpt-5.6-sol", effort: "high" },
+      },
+      knobs: { "sequential-reviewer": { maxIterations: 5 } },
     });
   });
 });
