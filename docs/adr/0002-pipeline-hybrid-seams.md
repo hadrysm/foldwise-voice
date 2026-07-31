@@ -4,7 +4,7 @@
 
 Accepted (2026-07-03). Amended (2026-07-10): issue #123 extracted audio-duck
 coordination after an in-flight duck could outlive a superseding restore.
-Amended again (2026-07-18) by PRD #179: Pipeline captures opaque ASR session
+Amended again (2026-07-18) by SPEC #179: Pipeline captures opaque ASR session
 handles instead of observing a transcriber's loading lifecycle.
 
 ## Context

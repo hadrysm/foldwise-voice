@@ -219,7 +219,7 @@ replacement; it explicitly rejects owning two loaded engines
 ([ADR-0005:20-58](../adr/0005-second-asr-engine-behind-transcribing.md#L20-L58),
 [ADR-0005:78-86](../adr/0005-second-asr-engine-behind-transcribing.md#L78-L86),
 [ADR-0006:27-47](../adr/0006-global-asr-selection-over-revived-asr-model.md#L27-L47)).
-Consequently, a PRD must choose one of these honest policies:
+Consequently, a SPEC must choose one of these honest policies:
 
 - amend ADR-0005 to permit one measured, lifecycle-owned auxiliary preview model
   alongside the captured Effective ASR model;

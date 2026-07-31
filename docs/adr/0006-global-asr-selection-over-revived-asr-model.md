@@ -3,7 +3,7 @@
 ## Status
 
 Accepted (2026-07-07). Amended (2026-07-16) for the user-managed Mode schema and
-again (2026-07-18) by PRD #179.
+again (2026-07-18) by SPEC #179.
 
 ## Context
 

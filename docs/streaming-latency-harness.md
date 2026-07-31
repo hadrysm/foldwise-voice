@@ -2,7 +2,7 @@
 
 The issue #358 harness turns the locked perceived-latency budget (issue #342)
 into a permanent fixed-Mac Release gate for the streaming shape shipped by
-[PRD #351](https://github.com/hadrysm/foldwise-voice/issues/351).
+[SPEC #351](https://github.com/hadrysm/foldwise-voice/issues/351).
 
 Three limits are absolute, and they live in `StreamingLatencyGate` rather than in
 any file a run can edit:
@@ -14,7 +14,7 @@ any file a run can edit:
 | Hotkey release → completed insert effect | Long, Voice to Text | **1500 ms p95** |
 
 Long In-place and Expanding are measured and retained but **never gated**:
-long-form Polish generation is explicitly out of this PRD's budget. The report
+long-form Polish generation is explicitly out of this SPEC's budget. The report
 records `postReleaseLimitMilliseconds: null` for those two classes, and the gate
 re-derives that fact from the class rather than trusting the report.
 

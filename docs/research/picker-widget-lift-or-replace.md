@@ -109,9 +109,9 @@ Live frame at **48 columns, after one arrow-down**:
 
 ```
 +------------------------------------------------+
-|Which PRD should this run work through?         |
+|Which SPEC should this run work through?        |
 |                                                |
-|Which PRD should this run work through?         |   <-- stranded duplicate
+|Which SPEC should this run work through?        |   <-- stranded duplicate
 |                                                |
 |  Cut dictation latency so the first words appea|
 |r while you are still speaking                  |   <-- label not wrapped
@@ -138,7 +138,7 @@ completely:
 | 48 | **3** | **3** |
 | 80 | 0 | 0 |
 
-This is the "five copies of *Which PRD?*" report, reproduced deterministically.
+This is the "five copies of *Which SPEC?*" report, reproduced deterministically.
 It confirms the widget is correct only at wide terminals with short labels.
 
 ### Candidate — `@clack/prompts` 1.6.0
@@ -148,7 +148,7 @@ Same scenario, same widths, same driver. Live frame at **48 columns**:
 ```
 +------------------------------------------------+
 |│                                               |
-|◆  Which PRD should this run work               |
+|◆  Which SPEC should this run work              |
 |│  through?                                     |
 |│  ○ Cut dictation latency so the               |
 |│  first words appear while you are             |

@@ -16,9 +16,9 @@ Edit the right-hand column to match whatever vocabulary you actually use.
 
 ## Additional labels
 
-| Label         | Applied by            | Meaning                                                                  |
-| ------------- | --------------------- | ------------------------------------------------------------------------ |
-| `prd`         | `/to-spec`             | Issue holds a product requirements document (generated SPEC).            |
-| `code-review` | the Sandcastle runner | PRD batch drained; awaiting the maintainer's code review and manual PR. |
+| Label         | Applied by            | Meaning                                                               |
+| ------------- | --------------------- | --------------------------------------------------------------------- |
+| `spec`        | `/to-spec`            | Issue holds a generated product specification.                        |
+| `code-review` | the Sandcastle runner | SPEC batch drained; awaiting the maintainer's code review and manual PR. |
 
-Apply `prd` when a skill publishes a PRD to the issue tracker. The Sandcastle runner adds `code-review` to a PRD when every released slice is closed. Add more rows here as new conventions emerge.
+Apply `spec` when a skill publishes a SPEC to the issue tracker. The Sandcastle runner adds `code-review` to a SPEC when every released slice is closed. Add more rows here as new conventions emerge.
