@@ -10,7 +10,7 @@
 // prints two lines per dispatch without asking.
 
 import { styleText } from "node:util";
-import { ITEM_TIMEOUT_MS, type Outcome, titleOf } from "./script.mts";
+import { ITEM_TIMEOUT_MS, type Outcome, branchOf, titleOf } from "./script.mts";
 
 export interface Inflight {
   readonly number: number;
@@ -79,6 +79,19 @@ export const itemLine = (
   return `${head} ${styleText("dim", title)} ${word} ${bounce} ${styleText("dim", detail)}`;
 };
 
+/**
+ * Where to look next, on the one line that follows a failure or an alarm.
+ * Sandcastle prints this path once, at dispatch — an hour before the moment
+ * anyone wants it — so the driver repeats it exactly where it becomes useful,
+ * and nowhere else. An approved item never gets one: there is nothing to read.
+ */
+export const logHint = (number: number, agent: string): string =>
+  styleText("dim", `              tail -f .sandcastle/logs/${branchOf(number).replace(/\//g, "-")}-${agent}.log`);
+
+/** Outcomes worth opening a log for. */
+export const wantsLog = (outcome: Outcome): boolean =>
+  outcome === "crashed" || outcome === "timed out" || outcome === "no commits" || outcome === "conflict rewound";
+
 /** The in-flight line: elapsed against the timeout that will end it. */
 const inflightLine = (now: number, item: Inflight): string => {
   const elapsed = now - item.startedAt;
@@ -143,6 +156,7 @@ export const ledger = (heartbeat: Heartbeat = "metronome", heartbeatMs = HEARTBE
         console.log(
           `${styleText("dim", clock(now))}  ${styleText("yellow", "⚠")} #${item.number} silent for ${duration(silent)} · ${item.phase} ${duration(now - item.startedAt)} / ${duration(ITEM_TIMEOUT_MS)} · last ${styleText("dim", item.tool)}`,
         );
+        console.log(logHint(item.number, item.phase === "review" ? "reviewer" : "implementer"));
       }
       if (silent < STALE_MS && flagged.has(item.number)) {
         flagged.delete(item.number);

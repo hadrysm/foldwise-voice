@@ -12,13 +12,15 @@ a zero-commit item, a fan-in conflict, a transitive skip, a rejected plan and a
 provably skipped Merger.
 
 ```sh
-pnpm --dir .sandcastle prototype:wave-report -- --renderer=ledger
+pnpm --dir .sandcastle prototype:wave-report -- --renderer=ledger --heartbeat=both
 pnpm --dir .sandcastle prototype:wave-report -- --renderer=dashboard
 pnpm --dir .sandcastle prototype:wave-report -- --renderer=report
 ```
 
 `--speed=N` compresses the 84-minute run (default 150, so it replays in about
 34 seconds; `--speed=800` is a fast skim that still shows heartbeats).
+`--heartbeat=metronome|plain|alarm|both` switches between the rival liveness
+signals; `both` is the one the maintainer chose.
 
 ## What the two renderers are for
 
@@ -65,18 +67,37 @@ Read off the installed package, not the docs.
    #404 gives every item its own `sandcastle/<number>-<slug>` branch, so per-item
    log files are the default rather than something the driver has to arrange.
 
+## What was decided
+
+Both forks were put to the maintainer against these renderings.
+
+- **Append-only ledger**, not a repainting dashboard, because the run is AFK.
+  The maintainer starts a wave and leaves. What they need on return is a
+  scrollback they can read top to bottom, not a block showing only *now*. A
+  repainting block also has to share the cursor with fact 3 above, and it
+  degrades to nothing when the output is piped.
+- **Sparse metronome plus silence alarm** (`--heartbeat=both`). A one-line
+  metronome every ten minutes proves the *driver* has a pulse; a warning when an
+  item emits no stream event for five minutes, and a matching line when it
+  resumes, proves the *agents* do. Roughly fourteen heartbeat lines across an
+  84-minute run, and the loud ones are only the item that actually went quiet.
+  Rejected: a two-minute per-item metronome, which produces ~120 lines and
+  buries the record it lives in; and the alarm alone, which leaves a healthy run
+  silent for fifteen minutes at a stretch.
+
 ## The claims this prototype is making
 
-- **Append-only wins, because the run is AFK.** The maintainer starts a wave and
-  leaves. What they need on return is a scrollback they can read top to bottom,
-  not a dashboard showing only *now*. A repainting block also has to share the
-  cursor with fact 3 above, and it degrades to nothing when the output is piped.
 - **A heartbeat is not decoration, it is the liveness signal.** The body
   dispatches exactly twice, so a healthy item is silent for ten to fifteen
   minutes. Without a heartbeat that is indistinguishable from a hang.
 - **The heartbeat's clock is elapsed against the item timeout**, because the
   timeout is the only thing that will end a hang — so the one number worth
   showing is how far off it is.
+- **The log path is repeated where it becomes useful.** Sandcastle prints it
+  once, at dispatch, an hour before anyone wants it. The driver repeats it as an
+  indented line under a silence alarm and under every outcome worth opening a
+  log for — `crashed`, `timed out`, `no commits`, `conflict rewound` — and
+  nowhere else. An approved item never gets one: there is nothing to read.
 - **The denominator does not move.** Mid-run progress is `n/10 settled` against
   the frozen selection; a transitive skip settles an item rather than shrinking
   the total, so the fraction only ever grows.

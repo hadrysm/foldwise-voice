@@ -8,7 +8,7 @@
 // end-of-run artifact, so the two can be read side by side.
 
 import { styleText } from "node:util";
-import { type Heartbeat, type Inflight, type Renderer, clock, dashboard, itemLine, ledger } from "./render.mts";
+import { type Heartbeat, type Inflight, type Renderer, clock, dashboard, itemLine, ledger, logHint, wantsLog } from "./render.mts";
 import { type Event, type Outcome, ITEMS, SCRIPT, SKIPPED, branchOf, titleOf } from "./script.mts";
 
 const arg = (name: string, fallback: string): string =>
@@ -120,6 +120,7 @@ const emit = (render: Renderer, event: Event): void => {
       render.event(
         `${stamp(event.at)}  ${itemLine(event.number, event.outcome, event.detail, { bounced: event.bounced })}  ${progress()}`,
       );
+      if (wantsLog(event.outcome)) render.event(logHint(event.number, "implementer"));
       return;
     case "fan-in start":
       render.event(
@@ -130,6 +131,7 @@ const emit = (render: Renderer, event: Event): void => {
       const record = settled.find((entry) => entry.number === event.number);
       if (record) record.merge = { outcome: event.outcome, detail: event.detail };
       render.event(`${stamp(event.at)}  ${itemLine(event.number, event.outcome, event.detail)}`);
+      if (wantsLog(event.outcome)) render.event(logHint(event.number, "merger"));
       return;
     }
     case "merger":
@@ -186,6 +188,7 @@ const report = (): string => {
         ? `${record.loopDetail} · ${branchOf(item.number)}`
         : shown.detail;
     lines.push(` ${itemLine(item.number, shown.outcome, detail, { bounced: record.bounced })}`);
+    if (wantsLog(shown.outcome)) lines.push(logHint(item.number, "implementer"));
   }
 
   lines.push(
