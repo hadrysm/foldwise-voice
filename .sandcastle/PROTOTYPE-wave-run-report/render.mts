@@ -109,17 +109,20 @@ const STALE_MS = 5 * 60_000;
  * stream event for five minutes. It proves the *agents* are alive, at the cost
  * of a fully silent healthy run.
  */
-export type Heartbeat = "metronome" | "plain" | "alarm";
+export type Heartbeat = "metronome" | "plain" | "alarm" | "both";
 
 export const ledger = (heartbeat: Heartbeat = "metronome", heartbeatMs = HEARTBEAT_MS): Renderer => {
-  let nextBeat = heartbeatMs;
+  // A sparse cadence when the alarm carries the agent-level signal: the
+  // metronome is then only proving the driver still has a pulse.
+  const cadence = heartbeat === "both" ? 10 * 60_000 : heartbeatMs;
+  let nextBeat = cadence;
   const flagged = new Set<number>();
 
   const metronome = (now: number, inflight: readonly Inflight[]) => {
     if (now < nextBeat) return;
-    nextBeat = Math.ceil((now + 1) / heartbeatMs) * heartbeatMs;
+    nextBeat = Math.ceil((now + 1) / cadence) * cadence;
     if (inflight.length === 0) return;
-    if (heartbeat === "plain") {
+    if (heartbeat === "plain" || heartbeat === "both") {
       const summary = inflight
         .map((item) => `#${item.number} ${item.phase} ${duration(now - item.startedAt)}`)
         .join(" · ");
@@ -151,7 +154,10 @@ export const ledger = (heartbeat: Heartbeat = "metronome", heartbeatMs = HEARTBE
   return {
     event: (line) => console.log(line),
     foreign: (line) => console.log(styleText("dim", line)),
-    tick: (now, inflight) => (heartbeat === "alarm" ? alarm(now, inflight) : metronome(now, inflight)),
+    tick: (now, inflight) => {
+      if (heartbeat !== "metronome" && heartbeat !== "plain") alarm(now, inflight);
+      if (heartbeat !== "alarm") metronome(now, inflight);
+    },
     close: () => {},
   };
 };
