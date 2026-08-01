@@ -8,7 +8,7 @@
 // end-of-run artifact, so the two can be read side by side.
 
 import { styleText } from "node:util";
-import { type Inflight, type Renderer, clock, dashboard, itemLine, ledger } from "./render.mts";
+import { type Heartbeat, type Inflight, type Renderer, clock, dashboard, itemLine, ledger } from "./render.mts";
 import { type Event, type Outcome, ITEMS, SCRIPT, SKIPPED, branchOf, titleOf } from "./script.mts";
 
 const arg = (name: string, fallback: string): string =>
@@ -16,6 +16,7 @@ const arg = (name: string, fallback: string): string =>
 
 const SPEED = Number(arg("speed", "150"));
 const MODE = arg("renderer", "ledger");
+const HEARTBEAT = arg("heartbeat", "metronome") as Heartbeat;
 const TICK_MS = 80;
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
@@ -97,6 +98,7 @@ const emit = (render: Renderer, event: Event): void => {
         phase: event.phase,
         startedAt: inflight.get(event.number)?.startedAt ?? event.at,
         tool: "starting",
+        spokeAt: event.at,
       });
       if (event.phase === "review") {
         render.event(`${stamp(event.at)}  · #${event.number} implement done, reviewing`);
@@ -104,7 +106,7 @@ const emit = (render: Renderer, event: Event): void => {
       return;
     case "activity": {
       const current = inflight.get(event.number);
-      if (current) inflight.set(event.number, { ...current, tool: event.tool });
+      if (current) inflight.set(event.number, { ...current, tool: event.tool, spokeAt: event.at });
       return;
     }
     case "item settle":
@@ -199,7 +201,7 @@ const report = (): string => {
 // ── replay ──────────────────────────────────────────────────────────────────
 
 const main = async (): Promise<void> => {
-  const render = MODE === "dashboard" ? dashboard() : ledger();
+  const render = MODE === "dashboard" ? dashboard() : ledger(HEARTBEAT);
   const events = [...SCRIPT].sort((a, b) => a.at - b.at);
 
   if (MODE === "report") {

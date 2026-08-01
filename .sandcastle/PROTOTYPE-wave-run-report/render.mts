@@ -17,6 +17,8 @@ export interface Inflight {
   readonly phase: "implement" | "review";
   readonly startedAt: number;
   readonly tool: string;
+  /** When this item last produced an `onAgentStreamEvent`. */
+  readonly spokeAt: number;
 }
 
 export interface Renderer {
@@ -93,24 +95,63 @@ const inflightLine = (now: number, item: Inflight): string => {
 // ── ledger ──────────────────────────────────────────────────────────────────
 
 const HEARTBEAT_MS = 2 * 60_000;
+const STALE_MS = 5 * 60_000;
 
 /**
- * Append-only. The heartbeat exists because the body dispatches exactly twice:
- * without it a healthy run is silent for fifteen minutes, which is
- * indistinguishable from a hung one.
+ * The three rival heartbeats, all append-only.
+ *
+ * `metronome` and `plain` are metronomes — a fixed cadence that proves the
+ * *driver* is alive. `plain` says nothing about the agents, so it needs no
+ * `onAgentStreamEvent` at all; `metronome` adds the last tool call, which is
+ * the only per-agent signal available in log-to-file mode.
+ *
+ * `alarm` inverts it: no cadence, and a line only when an item has produced no
+ * stream event for five minutes. It proves the *agents* are alive, at the cost
+ * of a fully silent healthy run.
  */
-export const ledger = (heartbeatMs = HEARTBEAT_MS): Renderer => {
+export type Heartbeat = "metronome" | "plain" | "alarm";
+
+export const ledger = (heartbeat: Heartbeat = "metronome", heartbeatMs = HEARTBEAT_MS): Renderer => {
   let nextBeat = heartbeatMs;
+  const flagged = new Set<number>();
+
+  const metronome = (now: number, inflight: readonly Inflight[]) => {
+    if (now < nextBeat) return;
+    nextBeat = Math.ceil((now + 1) / heartbeatMs) * heartbeatMs;
+    if (inflight.length === 0) return;
+    if (heartbeat === "plain") {
+      const summary = inflight
+        .map((item) => `#${item.number} ${item.phase} ${duration(now - item.startedAt)}`)
+        .join(" · ");
+      console.log(`${styleText("dim", clock(now))}  ${styleText("dim", `─ ${inflight.length} running · ${summary}`)}`);
+      return;
+    }
+    console.log(`${styleText("dim", clock(now))}  ${styleText("dim", `─ ${inflight.length} running`)}`);
+    for (const item of inflight) console.log(`       ${inflightLine(now, item)}`);
+  };
+
+  const alarm = (now: number, inflight: readonly Inflight[]) => {
+    const live = new Set(inflight.map((item) => item.number));
+    for (const number of [...flagged]) if (!live.has(number)) flagged.delete(number);
+    for (const item of inflight) {
+      const silent = now - item.spokeAt;
+      if (silent >= STALE_MS && !flagged.has(item.number)) {
+        flagged.add(item.number);
+        console.log(
+          `${styleText("dim", clock(now))}  ${styleText("yellow", "⚠")} #${item.number} silent for ${duration(silent)} · ${item.phase} ${duration(now - item.startedAt)} / ${duration(ITEM_TIMEOUT_MS)} · last ${styleText("dim", item.tool)}`,
+        );
+      }
+      if (silent < STALE_MS && flagged.has(item.number)) {
+        flagged.delete(item.number);
+        console.log(`${styleText("dim", clock(now))}  ${styleText("green", "✓")} #${item.number} speaking again · ${styleText("dim", item.tool)}`);
+      }
+    }
+  };
+
   return {
     event: (line) => console.log(line),
     foreign: (line) => console.log(styleText("dim", line)),
-    tick: (now, inflight) => {
-      if (now < nextBeat) return;
-      nextBeat = Math.ceil((now + 1) / heartbeatMs) * heartbeatMs;
-      if (inflight.length === 0) return;
-      console.log(`${styleText("dim", clock(now))}  ${styleText("dim", `─ ${inflight.length} running`)}`);
-      for (const item of inflight) console.log(`       ${inflightLine(now, item)}`);
-    },
+    tick: (now, inflight) => (heartbeat === "alarm" ? alarm(now, inflight) : metronome(now, inflight)),
     close: () => {},
   };
 };
