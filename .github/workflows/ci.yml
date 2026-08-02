@@ -14,6 +14,8 @@ concurrency:
 jobs:
   lint:
     runs-on: macos-latest
+    # Normally ~30s; the ceiling only has to cover the brew fallback below.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       # Both tools are preinstalled on the GitHub macOS images; brew is a
@@ -29,6 +31,13 @@ jobs:
 
   test:
     runs-on: macos-latest
+    # The XCTest deadlock in #408 parks the suite on an expectation that never
+    # fulfils, so a hung run would otherwise sit on GitHub's 360-minute default
+    # before being killed — six hours of a required check stuck yellow. A warm
+    # run takes 2-4 minutes; the ceiling is sized for a cold cache after a
+    # toolchain bump invalidates the key above, and turns a deadlock into a
+    # prompt red failure instead of an all-afternoon stall.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
