@@ -7,6 +7,19 @@ struct StatsEnvironmentAdaptations: Equatable {
     let increaseContrast: Bool
 }
 
+/// The clock a `SettingsView` hands to its Stats pane.
+///
+/// Which month the calendar draws — and how much of it has already happened —
+/// depends entirely on `now`. Hosted layout tests pin this so their geometry
+/// doesn't quietly change with the day the suite runs.
+struct StatsClock {
+    var now: () -> Date = Date.init
+    var calendar: () -> Calendar = { .autoupdatingCurrent }
+    var locale: Locale?
+
+    static let system = StatsClock()
+}
+
 struct StatsPane: View {
     let interface: StatsPaneInterface
     @Environment(\.locale) private var environmentLocale

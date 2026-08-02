@@ -164,7 +164,7 @@ struct ModelsCombinedPane: View {
         _ section: ModelsFamilyPresentation,
         inspectedID: ModelsRowID?
     ) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: ModelsLedgerRowMetrics.interRowSpacing) {
             familyHeading(section)
             columnHeaders
             if let notice = section.recoveryNotice {
@@ -220,7 +220,7 @@ struct ModelsCombinedPane: View {
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, ModelsLedgerRowMetrics.horizontalInset)
             .frame(minHeight: 42)
             .background {
                 ModelsTraceRowChrome(
@@ -301,6 +301,16 @@ struct ModelsCombinedPane: View {
                         ledgerState(row)
                     }
                 }
+                // The card's padding belongs to the button, not to the chrome
+                // around it — otherwise the visible card is wider and taller
+                // than the thing that answers a click.
+                .padding(.leading, ModelsLedgerRowMetrics.horizontalInset)
+                .padding(
+                    .trailing,
+                    showsInlineCancel ? 0 : ModelsLedgerRowMetrics.horizontalInset
+                )
+                .padding(.vertical, ModelsLedgerRowMetrics.verticalInset)
+                .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
             }
             .buttonStyle(EmberPlainButtonStyle(cornerRadius: Theme.controlRadius))
@@ -317,6 +327,8 @@ struct ModelsCombinedPane: View {
             )
             if showsInlineCancel {
                 ledgerState(row)
+                    .padding(.trailing, ModelsLedgerRowMetrics.horizontalInset)
+                    .padding(.vertical, ModelsLedgerRowMetrics.verticalInset)
             }
         }
         .modelsLedgerRowChrome(
@@ -940,6 +952,18 @@ struct ModelsTraceInspectorHeader<Content: View>: View {
     }
 }
 
+/// Geometry shared between a ledger row's card and the controls inside it.
+///
+/// The insets live on the row's own controls rather than on the card, so the
+/// whole card — padding included — is a tap target. Anything that moves an
+/// inset out to the card carves a dead band back out of the row.
+enum ModelsLedgerRowMetrics {
+    static let horizontalInset: CGFloat = 10
+    static let verticalInset: CGFloat = 8
+    /// The canvas gap between adjacent cards in a family stack.
+    static let interRowSpacing: CGFloat = 7
+}
+
 private struct ModelsLedgerRowChrome: ViewModifier {
     let isInspected: Bool
     let isKeyboardFocused: Bool
@@ -948,8 +972,6 @@ private struct ModelsLedgerRowChrome: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 ModelsTraceRowChrome(

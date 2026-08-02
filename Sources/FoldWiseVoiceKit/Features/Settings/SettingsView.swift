@@ -251,6 +251,7 @@ private struct RenderBoxPrewarm: View {
 
 struct SettingsView: View {
     var model: SettingsModel
+    var statsClock = StatsClock.system
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var presentationResetGeneration = 0
     @FocusState private var focusedNavigationPane: SettingsModel.Pane?
@@ -726,7 +727,14 @@ struct SettingsView: View {
         case .history:
             paneScroll("History") { HistoryPane(interface: model.historyPaneInterface) }
         case .stats:
-            paneScroll("Stats") { StatsPane(interface: model.statsPaneInterface) }
+            paneScroll("Stats") {
+                StatsPane(
+                    interface: model.statsPaneInterface,
+                    now: statsClock.now,
+                    calendar: statsClock.calendar,
+                    locale: statsClock.locale
+                )
+            }
         case .settings:
             paneScroll("Settings") {
                 SettingsDestinationObservationScope(input: model.preferencesPaneInterface) {
