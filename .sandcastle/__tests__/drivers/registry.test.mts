@@ -262,6 +262,24 @@ describe("the handoff", () => {
     );
   });
 
+  it("reports a handoff read it could not make, rather than failing a finished run", async (t) => {
+    // Everything the run was launched to do has already happened and its report
+    // is already out, so a rate limit here must not make a completed run look
+    // like a failed one.
+    const before = process.exitCode;
+    const { writes, printed, report } = await driveChain(t, {
+      handoffFails: "GitHub returned 429",
+    });
+
+    assert.match(report, /completed {2}4/);
+    assert.ok(printed.some((line) => line.includes("GitHub returned 429")));
+    assert.deepEqual(
+      writes.map((write) => write.act),
+      ["comment"],
+    );
+    assert.equal(process.exitCode, before);
+  });
+
   it("writes no durable report at all when the scope named no anchor", async (t) => {
     const printed = silenceNarration(t);
     const { core } = fakeCore({ ...CHAIN, anchorNodeId: null }, chainWork());

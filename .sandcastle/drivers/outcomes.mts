@@ -361,6 +361,11 @@ function row(label: string, count: number, detail: readonly string[]): string {
  * Zero rows are omitted rather than printed as `0`, with one exception:
  * `completed` always appears, because a run that completed nothing has to say so
  * in the same place a run that completed everything does.
+ *
+ * **The rows are not a partition and are not meant to sum.** A bounce is an
+ * annotation rather than an outcome, so an item that bounced *and* was rewound
+ * at fan-in is named on both lines — which is what it was. Making them sum would
+ * mean choosing one of two true things to hide.
  */
 export function runReport(input: RunReportInput): string {
   const settled = input.records.flatMap((record) =>

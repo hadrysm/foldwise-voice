@@ -12,45 +12,35 @@
 // ordered and already truncated, and a failure now costs exactly what it should
 // — the item, and everything that was going to be built on top of it.
 //
-// Three properties this loop has and the old one did not:
+// Two properties this loop has and the old one did not:
 //
 //   1. **It observes rather than asks.** Committed or not comes from
 //      `git rev-list`, crashed from a rejected promise, bounced from re-reading
-//      the issue. The body returns `void` and is believed about nothing.
-//   2. **It corrects the tracker per item, at settle.** Not in an end-of-run
-//      sweep: nothing is auto-cleaned on abort and there is no resume, so a
-//      sweep never executes in precisely the run that went worst.
-//   3. **It says what it did.** Every skip carries its reason into the report,
-//      and the report goes to stdout and onto the anchor.
+//      the issue. The body returns `void` and is believed about nothing, which
+//      is what keeps the transitive skip set out of a workflow's hands.
+//   2. **It says what it did.** Every skip carries the foundation it lost, and
+//      every reason reaches the report — a run that quietly drops items is a run
+//      that lies about what it did.
 //
-// This module still imports no Sandcastle and no provider, and spawns nothing
-// itself: git, `gh` and the agents all arrive as values on `RunCore` and the
-// injected `Tracker`.
+// The judgment is `drivers/outcomes.mts`'s and the writes are
+// `drivers/tracker.mts`'s, so what is left here is the shape of the walk. This
+// module still imports no Sandcastle and no provider, and spawns nothing itself:
+// git, `gh` and the agents all arrive as values.
 
 import type { Workflow } from "../contract.mts";
-import {
-  CODE_REVIEW,
-  issueByNodeId,
-  SPEC,
-  type WorkItem,
-  type WorkScopeSnapshot,
-} from "../scope/snapshot.mts";
+import type { WorkItem } from "../scope/snapshot.mts";
 import type { RunCore } from "./core.mts";
 import {
   cascade,
-  correctionComment,
-  deservesCodeReview,
   driftAction,
   foundationExists,
   outcomeLabel,
-  runReport,
-  trackerActs,
   type ItemOutcome,
   type ItemRecord,
   type LoopOutcome,
   type Settlement,
 } from "./outcomes.mts";
-import { ghTracker, type Tracker } from "./tracker.mts";
+import { correctItem, ghTracker, handOff, type Tracker } from "./tracker.mts";
 
 export function driveSequential(core: RunCore, workflow: Workflow): Promise<void> {
   return driveSequentialWith(core, workflow, ghTracker());
@@ -61,8 +51,9 @@ export function driveSequential(core: RunCore, workflow: Workflow): Promise<void
  *
  * Exported so the whole of it — the cascade, the drift table, the corrections
  * and the handoff — is assertable against a fake core and a counting tracker,
- * without a network, a login or a git repository. What is faked is what is
- * expensive; the decisions themselves are pure and live in `outcomes.mts`.
+ * without a network, a login or a git repository. You only fake what is
+ * expensive: agents cost money, minutes and a provider login, and the decisions
+ * themselves are pure.
  */
 export async function driveSequentialWith(
   core: RunCore,
@@ -75,8 +66,8 @@ export async function driveSequentialWith(
   let aborted: string | null = null;
 
   const record = (item: WorkItem, outcome: ItemOutcome): void => {
-    // The sequential driver commits straight onto the workspace branch, so an
-    // item has no branch of its own to name. `wave-parallel` fills this in.
+    // This driver commits straight onto the workspace branch, so an item has no
+    // branch of its own to name. `wave-parallel` fills this in.
     records.set(item.nodeId, { item, outcome, branch: null });
   };
 
@@ -150,7 +141,18 @@ export async function driveSequentialWith(
     record(item, { kind: "settled", ...settlement });
     console.log(`  · #${item.number} ${outcomeLabel(settlement)}`);
 
-    correct(tracker, core, item, settlement, live.state === "closed");
+    correctItem(tracker, {
+      item,
+      settlement,
+      closed: live.state === "closed",
+      // This driver's reading of *unmerged* is *zero commits*, which catches an
+      // implementer that closed its issue without committing anything —
+      // something neither driver could previously detect.
+      merged: commits > 0,
+      workspaceBranch: core.git.branch,
+      branch: null,
+      logPath: null,
+    });
 
     // A reopened item is never eligible again in the run that reopened it, and
     // needs no rule of its own to say so: everything that reopens is something
@@ -162,92 +164,4 @@ export async function driveSequentialWith(
     records: core.work.flatMap((item) => records.get(item.nodeId) ?? []),
     aborted,
   });
-}
-
-/**
- * The two tracker acts for one settled item, on their different keys.
- *
- * `merged` for this driver is *commits exist*: an item that works in place and
- * commits has reached the workspace branch by definition. That reading is what
- * catches an `implement-prompt.md` violation neither driver could previously
- * detect — an issue closed by an implementer that committed nothing.
- */
-function correct(
-  tracker: Tracker,
-  core: RunCore,
-  item: WorkItem,
-  settlement: Settlement,
-  closed: boolean,
-): void {
-  const acts = trackerActs({ closed, commits: settlement.commits, merged: settlement.commits > 0 });
-  if (!acts.reopen && !acts.comment) return;
-
-  const body = correctionComment({
-    reopened: acts.reopen,
-    workspaceBranch: core.git.branch,
-    outcome: outcomeLabel(settlement),
-    branch: null,
-    commits: settlement.commits,
-    logPath: null,
-  });
-
-  // One act, not two: a reopen carries its comment, so an issue never gets the
-  // same paragraph twice.
-  if (acts.reopen) {
-    tracker.reopen(item.number, body);
-    console.log(`  ↻ #${item.number} reopened — its work never reached ${core.git.branch}`);
-  } else {
-    tracker.comment(item.number, body);
-    console.log(`  ✎ #${item.number} commented — its work never reached ${core.git.branch}`);
-  }
-}
-
-function anchorOf(scope: WorkScopeSnapshot): { number: number; isSpec: boolean } | null {
-  const anchor = scope.anchorNodeId === null ? undefined : issueByNodeId(scope, scope.anchorNodeId);
-  return anchor ? { number: anchor.number, isSpec: anchor.labels.includes(SPEC) } : null;
-}
-
-/**
- * What the run leaves behind: the report, and the one label it is allowed to
- * write.
- *
- * The order matters and is the whole payoff. Every per-item reopen has already
- * landed by the time the anchor's condition is evaluated against **live** state,
- * so a drained SPEC with a rewound slice correctly goes unlabelled — and neither
- * rule had to know about the other.
- *
- * An aborted run reports and labels nothing.
- */
-async function handOff(
-  tracker: Tracker,
-  core: RunCore,
-  run: { records: readonly ItemRecord[]; aborted: string | null },
-): Promise<void> {
-  const anchor = anchorOf(core.scope);
-  const report = runReport({
-    anchor,
-    records: run.records,
-    selected: core.work.length,
-    eligible: core.scope.executableNodeIds.length,
-    aborted: run.aborted,
-  });
-
-  console.log(`\n${report}`);
-  // The repository-wide scope gets no durable report: there is no anchor to
-  // comment on, and an invented home would be worse than none.
-  if (anchor) tracker.comment(anchor.number, report);
-
-  if (run.aborted !== null) {
-    // An unattended run that stopped on a changed contract did not do what it
-    // was asked, and whatever launched it has to be able to tell.
-    process.exitCode = 1;
-    return;
-  }
-
-  const handoff = await core.issues.handoff();
-  if (handoff === null || !deservesCodeReview(handoff)) return;
-  tracker.addLabel(handoff.anchor.number, CODE_REVIEW);
-  console.log(
-    `\n  ✓ #${handoff.anchor.number} labelled \`${CODE_REVIEW}\` — every released slice is closed.`,
-  );
 }

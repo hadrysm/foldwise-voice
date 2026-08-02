@@ -40,7 +40,11 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
+  // "Stopped" rather than "cannot start": a draining driver revalidates against
+  // GitHub before every item, so this is now reachable at item seven as well as
+  // at the first screen, and a run that did five items should not report itself
+  // as one that never began.
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`\nCannot start Sandcastle\n\n${message}\n`);
+  console.error(`\nSandcastle stopped\n\n${message}\n`);
   process.exitCode = 1;
 });

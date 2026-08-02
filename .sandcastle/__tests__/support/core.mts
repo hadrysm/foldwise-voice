@@ -60,6 +60,8 @@ export interface FakeCoreOptions {
   readonly commits?: Readonly<Record<number, number>>;
   /** What the end-of-run handoff read finds, or `null` for no anchor. */
   readonly handoff?: HandoffState | null;
+  /** Make that read fail instead, the way a rate limit would. */
+  readonly handoffFails?: string;
 }
 
 export interface FakeRunCore {
@@ -126,7 +128,10 @@ export function fakeCore(
             state: options.openAtSettle?.includes(item.number) ? "open" : "closed",
             labels: ["ready-for-agent"],
           }),
-        handoff: () => Promise.resolve(options.handoff ?? null),
+        handoff: () =>
+          options.handoffFails === undefined
+            ? Promise.resolve(options.handoff ?? null)
+            : Promise.reject(new Error(options.handoffFails)),
       },
     },
   };
