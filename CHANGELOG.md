@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.20.0](https://github.com/hadrysm/foldwise-voice/compare/v0.19.0...v0.20.0) (2026-08-02)
+
+
+### Features
+
+* **menu-bar:** tint one waveform icon across all states ([#439](https://github.com/hadrysm/foldwise-voice/issues/439)) ([c32e4dd](https://github.com/hadrysm/foldwise-voice/commit/c32e4dd2633ff1dcc74da021e88bfbd5eedde36f))
+* **sandcastle:** add selectable workflows and Review Only ([#388](https://github.com/hadrysm/foldwise-voice/issues/388)) ([a4d77f8](https://github.com/hadrysm/foldwise-voice/commit/a4d77f8578bfb710b0cc4dc3abc39d89d6147998))
+* **sandcastle:** add the Planner and the Merger to the wave-parallel driver ([#445](https://github.com/hadrysm/foldwise-voice/issues/445)) ([0c8fd9d](https://github.com/hadrysm/foldwise-voice/commit/0c8fd9d249222f12691dfbd4effa96901c6df078))
+* **sandcastle:** add the pure Work scope snapshot, ordering and level model ([#435](https://github.com/hadrysm/foldwise-voice/issues/435)) ([e6737f0](https://github.com/hadrysm/foldwise-voice/commit/e6737f0f72c2d243b01e01858c948462e7275bd0)), closes [#419](https://github.com/hadrysm/foldwise-voice/issues/419)
+* **sandcastle:** add the wave-parallel driver's worktrees, fan-in and cleanup ([#444](https://github.com/hadrysm/foldwise-voice/issues/444)) ([04c56bc](https://github.com/hadrysm/foldwise-voice/commit/04c56bc171bd40fd01aad85232ae17c68027ff84)), closes [#425](https://github.com/hadrysm/foldwise-voice/issues/425)
+* **sandcastle:** flip the contract to an allow-list and drive it ([#441](https://github.com/hadrysm/foldwise-voice/issues/441)) ([2fd81ee](https://github.com/hadrysm/foldwise-voice/commit/2fd81ee15581cac2bfdc113a5d4dc106287d47b2)), closes [#422](https://github.com/hadrysm/foldwise-voice/issues/422)
+* **sandcastle:** make the picker scope-first and teach the store to remember it ([#440](https://github.com/hadrysm/foldwise-voice/issues/440)) ([404e7ae](https://github.com/hadrysm/foldwise-voice/commit/404e7aeb1714b75cdb7508f0ad82b3e9c4a97a9b)), closes [#421](https://github.com/hadrysm/foldwise-voice/issues/421)
+* **sandcastle:** per-phase model selection, Claude Opus 5, and workflow-seam docs ([#384](https://github.com/hadrysm/foldwise-voice/issues/384)) ([9336d3a](https://github.com/hadrysm/foldwise-voice/commit/9336d3a17877b264b9fd53e58ad8537b418d17fd))
+* **sandcastle:** register the wave-parallel workflow and render the run ledger ([#446](https://github.com/hadrysm/foldwise-voice/issues/446)) ([eee1b58](https://github.com/hadrysm/foldwise-voice/commit/eee1b5875e6979dc9c3b8c6d86be53b8ce2708ec))
+* **sandcastle:** resolve Work scope against GitHub, with a schema canary ([#438](https://github.com/hadrysm/foldwise-voice/issues/438)) ([d6fb570](https://github.com/hadrysm/foldwise-voice/commit/d6fb570a5cfe28feac2a47b12f351253bb283bd0))
+* **sandcastle:** rewrite the three prompts for {{WORK}} and {{ANCHOR}} ([#443](https://github.com/hadrysm/foldwise-voice/issues/443)) ([0e53d81](https://github.com/hadrysm/foldwise-voice/commit/0e53d813edb7e368b3ca454ccbb68efd38a82619)), closes [#424](https://github.com/hadrysm/foldwise-voice/issues/424)
+* **sandcastle:** select a workflow first, and add cross-provider Review Only ([#386](https://github.com/hadrysm/foldwise-voice/issues/386)) ([2d8b8cb](https://github.com/hadrysm/foldwise-voice/commit/2d8b8cba683a15ae8b1a5b94fc3bc9f4e18cea81))
+* **sandcastle:** teach the draining driver outcomes, skips and the handoff ([#442](https://github.com/hadrysm/foldwise-voice/issues/442)) ([4d56106](https://github.com/hadrysm/foldwise-voice/commit/4d56106e597644f163b56c6ac832b454fbb8a769))
+
+
+### Bug Fixes
+
+* **sandcastle:** chain Review Only's reads onto their own fetch ([#449](https://github.com/hadrysm/foldwise-voice/issues/449)) ([6f8bb53](https://github.com/hadrysm/foldwise-voice/commit/6f8bb53e37b64ee85d1de1144ff667d349a9255a)), closes [#417](https://github.com/hadrysm/foldwise-voice/issues/417)
+* **settings:** make the whole model ledger card clickable ([#437](https://github.com/hadrysm/foldwise-voice/issues/437)) ([8ea4d2e](https://github.com/hadrysm/foldwise-voice/commit/8ea4d2e266a162a4947a7062ccd06f334e3646a8))
+
+
+### Refactoring
+
+* **sandcastle:** delete the inert completion signal from every prompt ([#450](https://github.com/hadrysm/foldwise-voice/issues/450)) ([20e78b2](https://github.com/hadrysm/foldwise-voice/commit/20e78b2cf25f842fb79972c5cc26ee718a273801)), closes [#418](https://github.com/hadrysm/foldwise-voice/issues/418) [#430](https://github.com/hadrysm/foldwise-voice/issues/430)
+* **sandcastle:** move repo-shaped configuration into repo.mts ([#434](https://github.com/hadrysm/foldwise-voice/issues/434)) ([d0f5c9c](https://github.com/hadrysm/foldwise-voice/commit/d0f5c9c3dec3447912bba7e87e4882173dd8a8a1)), closes [#433](https://github.com/hadrysm/foldwise-voice/issues/433)
+
+
+### Documentation
+
+* **adr:** amend ADR-0001 and ADR-0010 for Work scope and parallel worktrees ([#397](https://github.com/hadrysm/foldwise-voice/issues/397)) ([#414](https://github.com/hadrysm/foldwise-voice/issues/414)) ([c2cca85](https://github.com/hadrysm/foldwise-voice/commit/c2cca85b341f3227f712739b06ad97892ea984e8))
+* **adr:** record the reopen rule, the testing rules and the measurements ([#452](https://github.com/hadrysm/foldwise-voice/issues/452)) ([6e11a58](https://github.com/hadrysm/foldwise-voice/commit/6e11a58d5f58e0a173150d1fc7720564edba1ac6)), closes [#432](https://github.com/hadrysm/foldwise-voice/issues/432)
+* capture scope-first picker prototype ([#402](https://github.com/hadrysm/foldwise-voice/issues/402)) ([93bcdc0](https://github.com/hadrysm/foldwise-voice/commit/93bcdc0ca8494d03706b984a47710adc2b5cd0be)), closes [#391](https://github.com/hadrysm/foldwise-voice/issues/391)
+* **context:** refresh the Batch workflow glossary for drivers, levels and waves ([#451](https://github.com/hadrysm/foldwise-voice/issues/451)) ([3f070d1](https://github.com/hadrysm/foldwise-voice/commit/3f070d19662c9ae97a98261aa10157033a51156f)), closes [#418](https://github.com/hadrysm/foldwise-voice/issues/418) [#431](https://github.com/hadrysm/foldwise-voice/issues/431)
+* document GitHub work scope snapshots ([#400](https://github.com/hadrysm/foldwise-voice/issues/400)) ([134f5c8](https://github.com/hadrysm/foldwise-voice/commit/134f5c8c5ca84f711abc3e6735a5b5069c00226b)), closes [#390](https://github.com/hadrysm/foldwise-voice/issues/390)
+* rename PRD to SPEC across docs and agent prompts ([#399](https://github.com/hadrysm/foldwise-voice/issues/399)) ([002cb26](https://github.com/hadrysm/foldwise-voice/commit/002cb26b1d798e4ef7cef4355f36f297f3567b6b))
+* settle Guided setup design (vocabulary, ordering, Ollama, takeover prototype) ([#385](https://github.com/hadrysm/foldwise-voice/issues/385)) ([e8fa7a7](https://github.com/hadrysm/foldwise-voice/commit/e8fa7a7277c8a87109d4b2e667adc221446dd355))
+* settle the wave-parallel run display on an append-only ledger ([#413](https://github.com/hadrysm/foldwise-voice/issues/413)) ([cc61e90](https://github.com/hadrysm/foldwise-voice/commit/cc61e909e094217a2ab6ac88597dbb7d759d8474))
+
+
+### Maintenance
+
+* **scripts:** add worktree setup script ([#382](https://github.com/hadrysm/foldwise-voice/issues/382)) ([26232dd](https://github.com/hadrysm/foldwise-voice/commit/26232dd3c4d7f71ef9b5d1880743f8fc91a18875))
+
 ## [0.19.0](https://github.com/hadrysm/foldwise-voice/compare/v0.18.3...v0.19.0) (2026-07-29)
 
 
