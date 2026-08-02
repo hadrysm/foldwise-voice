@@ -8,6 +8,7 @@ import { cancel, log } from "@clack/prompts";
 import { runToRemember } from "./cli/flow.mts";
 import { choosePlan, printRunHeader } from "./cli/prompts.mts";
 import { writeStoredRun } from "./cli/store.mts";
+import { runnableDriver } from "./drivers/registry.mts";
 import { prepare } from "./runner.mts";
 
 async function main(): Promise<void> {
@@ -17,7 +18,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const dispatch = prepare(plan);
+  // Every preflight runs here, and the core it returns is the only value a
+  // dispatch can be reached through — so nothing below can run an agent that
+  // one of those checks would have refused.
+  const core = prepare(plan);
 
   // Remember the answers before the first dispatch — outside the worktree, so
   // nothing an agent commits can be affected by this write. The scope is
@@ -29,7 +33,7 @@ async function main(): Promise<void> {
 
   printRunHeader(plan);
 
-  await plan.workflow.run({ dispatch, knobs: plan.knobs, maxWorkItems: plan.maxWorkItems });
+  await runnableDriver(plan.workflow)(core, plan.workflow);
 
   console.log("\nAll done.");
 }

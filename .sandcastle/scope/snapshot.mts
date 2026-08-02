@@ -170,8 +170,9 @@ export interface SnapshotInput {
  * levels or its own order — the fourth instance of ADR-0010's rule that a
  * component able to read something will eventually branch on it.
  *
- * Not the `WorkItem` ADR-0010 once put on `DispatchOptions`; that type is gone
- * and nothing of this shape crosses the workflow seam.
+ * Not the `WorkItem` ADR-0010 once put on `DispatchOptions`; that type is gone.
+ * A driver hands this to the body it invokes, to *read* — but never to
+ * `dispatch`, which takes no work item at all.
  */
 export interface WorkItem {
   readonly nodeId: string;
@@ -421,6 +422,101 @@ function blockersWithin(
 
 function toWorkItem(issue: IssueSnapshot): WorkItem {
   return { nodeId: issue.nodeId, number: issue.number, title: issue.title, url: issue.url };
+}
+
+// ---------------------------------------------------------------------------
+// What a prompt is told
+// ---------------------------------------------------------------------------
+
+/**
+ * One issue as an agent reads it. The four fields the eligibility decision was
+ * made from, and nothing else: no node id, no `updatedAt`, and above all no
+ * edges — an implementer told what depends on it has a motive to widen its own
+ * work, and a reviewer told the same has a motive to judge work it was not shown.
+ */
+export interface IssueBrief {
+  readonly number: number;
+  readonly title: string;
+  readonly body: string;
+  readonly labels: readonly string[];
+}
+
+/**
+ * One work item as its implementer and its reviewer both read it: the brief,
+ * the comments that carry any earlier review bounce, and the ancestor SPEC the
+ * item sits inside, or `null`.
+ *
+ * Comments are bodies alone, which is the shape the shipped prompts have always
+ * been handed — the old `gh issue list` block projected `[.comments[].body]`.
+ * Run reports are already gone by this point: `normalizeIssue` drops every
+ * comment carrying `RUN_REPORT_MARKER`, so the fifth run of one SPEC does not
+ * read four previous run reports as evidence about the work.
+ */
+export interface WorkRecord extends IssueBrief {
+  readonly comments: readonly string[];
+  readonly spec: IssueBrief | null;
+}
+
+function toBrief(issue: IssueRecord): IssueBrief {
+  return { number: issue.number, title: issue.title, body: issue.body, labels: issue.labels };
+}
+
+/**
+ * The nearest ancestor of `nodeId` inside this snapshot that carries `spec`.
+ *
+ * Bounded by the snapshot rather than by GitHub: the fetch layer refuses a tree
+ * that reaches an issue twice, so the walk terminates — and an ancestor outside
+ * the scope was never read, so there is nothing here to guess at. Under a
+ * Specific SPEC run this is the anchor; under the other two scopes it is
+ * normally `undefined`, which is exactly the honest answer.
+ */
+export function ancestorSpec(
+  snapshot: WorkScopeSnapshot,
+  nodeId: string,
+): IssueSnapshot | undefined {
+  const seen = new Set<string>([nodeId]);
+  let parentNodeId = issueByNodeId(snapshot, nodeId)?.parentNodeId ?? null;
+
+  while (parentNodeId !== null && !seen.has(parentNodeId)) {
+    seen.add(parentNodeId);
+    const parent = issueByNodeId(snapshot, parentNodeId);
+    if (!parent) return undefined;
+    if (parent.labels.includes(SPEC)) return parent;
+    parentNodeId = parent.parentNodeId;
+  }
+  return undefined;
+}
+
+/**
+ * The record the runner substitutes into `{{WORK}}` — the exact issue its
+ * eligibility decision was made from, so what the agent reads is provably what
+ * the runner selected.
+ *
+ * Throws on a node the snapshot does not hold: a prompt arg built from an item
+ * outside the frozen allow-list is the one failure that must never degrade into
+ * an agent choosing its own work.
+ */
+export function workRecord(snapshot: WorkScopeSnapshot, nodeId: string): WorkRecord {
+  const issue = issueByNodeId(snapshot, nodeId);
+  if (!issue) throw new Error(`Built a work record for an item outside the snapshot: ${nodeId}`);
+  const spec = ancestorSpec(snapshot, nodeId);
+  return {
+    ...toBrief(issue),
+    comments: issue.comments.map((comment) => comment.body),
+    spec: spec ? toBrief(spec) : null,
+  };
+}
+
+/**
+ * The record the runner substitutes into `{{ANCHOR}}`, or `null` when the scope
+ * named no target. Always substituted, never an absent key — Sandcastle fails
+ * loudly on a `{{KEY}}` it has no value for, and a literal `null` is what routes
+ * a whole-branch prompt into its own no-anchor section.
+ */
+export function anchorRecord(snapshot: WorkScopeSnapshot): IssueBrief | null {
+  if (snapshot.anchorNodeId === null) return null;
+  const anchor = issueByNodeId(snapshot, snapshot.anchorNodeId);
+  return anchor ? toBrief(anchor) : null;
 }
 
 // ---------------------------------------------------------------------------

@@ -230,6 +230,29 @@ export function ghTransport(): GitHubTransport {
   };
 }
 
+/**
+ * That `gh` is installed and logged in, checked once before a run starts.
+ *
+ * Here rather than in `runner.mts` because this module owns the GitHub boundary
+ * — and it is the one exit code outside git's that this tool reads, which the
+ * framework-agnostic rule permits precisely because `gh` is the tracker, not the
+ * toolchain. The alternative is discovering at item seven that a token expired
+ * two items ago, with every close and every bounce silently lost.
+ */
+export function assertGitHubAuth(): void {
+  try {
+    execFileSync("gh", ["auth", "status"], { stdio: ["ignore", "ignore", "pipe"] });
+  } catch (error) {
+    const failure = error as SpawnFailure;
+    const detail =
+      String(failure.stderr ?? "")
+        .trim()
+        .split("\n")
+        .find((line) => line.trim() !== "") ?? failure.message ?? "gh could not be run";
+    throw new Error(`\`gh auth status\` failed, so this run could not read or write issues: ${detail}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Target parsing
 // ---------------------------------------------------------------------------

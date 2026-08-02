@@ -47,7 +47,6 @@ function v1Json(): string {
 function run(
   workflowId: string,
   agents: readonly { agentId: string; modelId: ModelID; effort: RunEffort }[],
-  knobs: Record<string, number> = {},
   overrides: Partial<{
     scope: { kind: string; target?: string };
     maxWorkItems: number;
@@ -64,7 +63,6 @@ function run(
       assert.ok(model, `fixture model ${agent.modelId} must exist`);
       return { agentId: agent.agentId, model, effort: agent.effort };
     }),
-    knobs,
     ...overrides,
   };
 }
@@ -93,8 +91,10 @@ describe("parseStoredRun", () => {
         implementer: { model: "claude-opus-5", effort: "xhigh" },
         reviewer: { model: "claude-sonnet-4-6", effort: "high" },
       },
-      knobs: { "sequential-reviewer": { maxIterations: 5 } },
-      passthrough: {},
+      // `knobs` is no longer parsed: `Knob` is gone, so the key retires into
+      // passthrough with no special case and is carried for whichever branch
+      // still writes one.
+      passthrough: { knobs: { "sequential-reviewer": { maxIterations: 5 } } },
     });
   });
 
@@ -179,49 +179,14 @@ describe("parseStoredRun", () => {
     }
   });
 
-  it("drops a knob value that is not an integer", () => {
-    const stored = parseStoredRun(
-      storedJson({
-        knobs: {
-          "sequential-reviewer": { maxIterations: 2.5, timeoutMs: "9", retries: null, width: 4 },
-        },
-      }),
-    );
-    assert.deepEqual(stored?.knobs["sequential-reviewer"], { width: 4 });
-  });
-
-  it("keeps a knob value outside the knob's bounds", () => {
-    // Bounds live on the `Knob` the workflow declares, which the store cannot
-    // see; an out-of-range value is dropped at the point of use.
-    assert.deepEqual(parseStoredRun(storedJson({ knobs: { "sequential-reviewer": { maxIterations: 9999 } } }))
-      ?.knobs["sequential-reviewer"], { maxIterations: 9999 });
-  });
-
-  it("keeps unknown knob ids and whole unknown workflow buckets", () => {
-    const stored = parseStoredRun(
-      storedJson({
-        knobs: {
-          "sequential-reviewer": { maxIterations: 5, timeoutMinutes: 30 },
-          "some-other-workflow": { depth: 3 },
-        },
-      }),
-    );
-    assert.deepEqual(stored?.knobs, {
-      "sequential-reviewer": { maxIterations: 5, timeoutMinutes: 30 },
-      "some-other-workflow": { depth: 3 },
-    });
-  });
-
-  it("drops a knob bucket that is not an object", () => {
-    const stored = parseStoredRun(
-      storedJson({ knobs: { "sequential-reviewer": 5, "review-only": { depth: 1 } } }),
-    );
-    assert.deepEqual(stored?.knobs, { "review-only": { depth: 1 } });
-  });
-
-  it("drops a knobs field that is not an object", () => {
-    for (const bad of [null, 42, [], "maxIterations"]) {
-      assert.deepEqual(parseStoredRun(storedJson({ knobs: bad }))?.knobs, {});
+  it("carries a knob bucket of any shape at all, now that nothing reads one", () => {
+    // Retired, not validated: a key this version does not interpret has no
+    // shape it could be wrong about, and pruning it would mean this branch
+    // garbage-collecting a sibling worktree's memory.
+    for (const bucket of [{ "sequential-reviewer": { maxIterations: 9999 } }, 42, null, []]) {
+      assert.deepEqual(parseStoredRun(storedJson({ knobs: bucket }))?.passthrough, {
+        knobs: bucket,
+      });
     }
   });
 
@@ -265,11 +230,17 @@ describe("parseStoredRun", () => {
 describe("top-level passthrough", () => {
   it("carries a key this version does not interpret", () => {
     const stored = parseStoredRun(storedJson({ lastPlanner: "opus", waves: [1, 2] }));
-    assert.deepEqual(stored?.passthrough, { lastPlanner: "opus", waves: [1, 2] });
+    assert.deepEqual(stored?.passthrough, {
+      lastPlanner: "opus",
+      waves: [1, 2],
+      knobs: { "sequential-reviewer": { maxIterations: 5 } },
+    });
   });
 
   it("carries none of the keys it writes for itself", () => {
-    assert.deepEqual(parseStoredRun(storedJson())?.passthrough, {});
+    // `knobs` is the exception that proves it: this version stopped writing it,
+    // so it stopped being one of its own keys and became one to carry.
+    assert.deepEqual(Object.keys(parseStoredRun(storedJson())?.passthrough ?? {}), ["knobs"]);
   });
 
   it("re-emits an unknown key on the next write, beside the known ones", () => {
@@ -286,10 +257,8 @@ describe("top-level passthrough", () => {
   });
 
   it("round-trips a v2 fixture holding `knobs` with `knobs` intact", () => {
-    // The retirement rehearsal: when `knobs` stops being parsed it becomes an
-    // unrecognised top-level key, and passthrough carries it with no special
-    // case. Today it is still parsed, so this pins that the field survives a
-    // write by a run that declares no knob at all.
+    // The retirement, now that it has happened: `knobs` is an unrecognised
+    // top-level key and passthrough carries it with no special case.
     const stored = parseStoredRun(storedJson());
     assert.ok(stored);
     const rewritten = serializeStoredRun(
@@ -313,7 +282,6 @@ describe("the v1 read-side adapter", () => {
         implementer: { model: "claude-opus-5", effort: "xhigh" },
         reviewer: { model: "claude-sonnet-4-6", effort: "high" },
       },
-      knobs: {},
       // v1's own keys are interpreted rather than carried: they *are* the v2
       // agent entries, so passing them through would duplicate them forever.
       passthrough: {},
@@ -337,12 +305,11 @@ describe("mergeStoredRun", () => {
     assert.ok(existing);
     const merged = mergeStoredRun(
       existing,
-      // A one-agent, zero-knob run of a different workflow: under v1's
-      // wholesale replace this erased the implementer and the knob bucket.
+      // A one-agent run of a different workflow: under v1's wholesale replace
+      // this erased the implementer and every key this version does not write.
       run(
         "review-only",
         [{ agentId: "reviewer", modelId: "gpt-5.5", effort: "low" }],
-        {},
         { scope: { kind: "all-ready-for-agent" }, maxWorkItems: 4, maxParallel: 2 },
       ),
       "/clone/.git",
@@ -356,17 +323,14 @@ describe("mergeStoredRun", () => {
         implementer: { model: "claude-opus-5", effort: "xhigh" },
         reviewer: { model: "gpt-5.5", effort: "low" },
       },
-      knobs: { "sequential-reviewer": { maxIterations: 5 } },
-      passthrough: {},
+      passthrough: { knobs: { "sequential-reviewer": { maxIterations: 5 } } },
     });
   });
 
   it("writes a store from nothing", () => {
     const merged = mergeStoredRun(
       undefined,
-      run("sequential-reviewer", [{ agentId: "implementer", modelId: "claude-opus-5", effort: "max" }], {
-        maxIterations: 3,
-      }),
+      run("sequential-reviewer", [{ agentId: "implementer", modelId: "claude-opus-5", effort: "max" }]),
       "/clone/.git/worktrees/perth",
     );
     assert.deepEqual(merged, {
@@ -379,7 +343,6 @@ describe("mergeStoredRun", () => {
       maxWorkItems: 10,
       maxParallel: 1,
       agents: { implementer: { model: "claude-opus-5", effort: "max" } },
-      knobs: { "sequential-reviewer": { maxIterations: 3 } },
       passthrough: {},
     });
   });
@@ -407,14 +370,12 @@ describe("mergeStoredRun", () => {
     const rewritten = serializeStoredRun(
       mergeStoredRun(
         first,
-        run("sequential-reviewer", [{ agentId: "implementer", modelId: "claude-opus-5", effort: "high" }], {
-          maxIterations: 5,
-        }),
+        run("sequential-reviewer", [{ agentId: "implementer", modelId: "claude-opus-5", effort: "high" }]),
       ),
     );
     const second = parseStoredRun(rewritten);
     assert.deepEqual(second?.agents.critic, { model: "gpt-5.5", effort: "low" });
-    assert.deepEqual(second?.knobs, {
+    assert.deepEqual(second?.passthrough.knobs, {
       "sequential-reviewer": { maxIterations: 5, timeoutMinutes: 30 },
       "some-other-workflow": { depth: 3 },
     });
@@ -428,7 +389,6 @@ describe("writeStoredRun", () => {
       { agentId: "implementer", modelId: "claude-opus-5", effort: "xhigh" },
       { agentId: "reviewer", modelId: "claude-sonnet-4-6", effort: "high" },
     ],
-    { maxIterations: 10 },
   );
 
   it("stamps this worktree's git dir as the origin by default", () => {
@@ -450,7 +410,6 @@ describe("writeStoredRun", () => {
       reviewer: { model: "claude-sonnet-4-6", effort: "high" },
     });
     assert.equal(stored.lastWorkflowId, "sequential-reviewer");
-    assert.deepEqual(stored.knobs, { "sequential-reviewer": { maxIterations: 10 } });
   });
 
   it("overwrites a present file it cannot read", () => {

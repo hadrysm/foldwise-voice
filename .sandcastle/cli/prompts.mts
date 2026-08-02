@@ -43,8 +43,8 @@ function wasCancelled<Value>(answer: Value | symbol): answer is symbol {
 }
 
 /**
- * Refuse a typed knob value rather than clamp it: a number outside the bounds is
- * a mistake to correct, and a silent clamp would run a count nobody chose. An
+ * Refuse a typed number rather than clamp it: a value outside the bounds is a
+ * mistake to correct, and a silent clamp would run a count nobody chose. An
  * empty field is valid — clack substitutes the default *after* validation runs,
  * so "" means "accept what the hint says enter accepts".
  */

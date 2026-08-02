@@ -26,7 +26,8 @@ import {
   type RunEffort,
   type RunModel,
 } from "../agents/models.mts";
-import type { Agent, Knob, Workflow } from "../contract.mts";
+import type { Agent, Workflow } from "../contract.mts";
+import { DRIVERS } from "../drivers/registry.mts";
 import { repo } from "../repo.mts";
 import type { ScopeErrorReason, ScopeOutcome } from "../scope/github.mts";
 import {
@@ -450,12 +451,11 @@ export interface FlowState {
   maxParallel?: number;
   sameModelForEveryAgent?: boolean;
   picks: Readonly<Record<string, Pick>>;
-  knobs: Readonly<Record<string, number>>;
   confirmed?: boolean;
 }
 
 export function initialState(store?: StoredRun, origin?: string): FlowState {
-  return { store, origin, picks: {}, knobs: {} };
+  return { store, origin, picks: {} };
 }
 
 function findWorkflow(
@@ -520,36 +520,6 @@ function boundedOr(
 }
 
 /**
- * A knob's remembered value if it is still one this workflow accepts, else its
- * declared default. Checked here rather than in the store because the store is
- * registry-blind and never holds a `Knob`.
- */
-function resolveKnob(knob: Knob, bucket: Record<string, number> | undefined): number {
-  return boundedOr(bucket?.[knob.id], knob, knob.defaultValue);
-}
-
-function knobsFor(workflow: Workflow, store: StoredRun | undefined): Record<string, number> {
-  const bucket = store?.knobs[workflow.id];
-  return Object.fromEntries(workflow.knobs.map((knob) => [knob.id, resolveKnob(knob, bucket)]));
-}
-
-/** The first knob this workflow declares that has no answer yet. */
-export function knobQuestion(state: FlowState, workflow: Workflow): NumberQuestion | undefined {
-  const pending = workflow.knobs.find((knob) => state.knobs[knob.id] === undefined);
-  if (!pending) return undefined;
-  const preferred = resolveKnob(pending, state.store?.knobs[workflow.id]);
-  return {
-    kind: "number",
-    id: `knob:${pending.id}`,
-    prompt: pending.prompt,
-    hint: `${pending.min}–${pending.max}  ·  enter accepts ${preferred}`,
-    defaultValue: preferred,
-    min: pending.min,
-    max: pending.max,
-  };
-}
-
-/**
  * Whether the run guard is a decision at all here. Asked whenever the driver
  * drains **and** more than one work item is eligible: with one item the guard
  * has exactly one meaningful value, and a Specific issue therefore never sees
@@ -560,7 +530,7 @@ export function knobQuestion(state: FlowState, workflow: Workflow): NumberQuesti
  * maintainer was never shown.
  */
 function guardIsAsked(workflow: Workflow, eligible: number): boolean {
-  return workflow.drains && eligible > 1;
+  return DRIVERS[workflow.driver].drains && eligible > 1;
 }
 
 /** The run guard, or nothing when there is no choice to make. */
@@ -584,7 +554,7 @@ export function maxParallelQuestion(
   state: FlowState,
   workflow: Workflow,
 ): NumberQuestion | undefined {
-  if (!workflow.concurrent || state.maxParallel !== undefined) return undefined;
+  if (!DRIVERS[workflow.driver].concurrent || state.maxParallel !== undefined) return undefined;
   const preferred = boundedOr(
     state.store?.maxParallel,
     PARALLEL_BOUNDS,
@@ -621,8 +591,9 @@ export function storeIsReplayable(
   if (!store) return false;
   const workflow = findWorkflow(store.lastWorkflowId, workflows);
   if (!workflow) return false;
-  if (workflow.drains && store.maxWorkItems === undefined) return false;
-  if (workflow.concurrent && store.maxParallel === undefined) return false;
+  const driver = DRIVERS[workflow.driver];
+  if (driver.drains && store.maxWorkItems === undefined) return false;
+  if (driver.concurrent && store.maxParallel === undefined) return false;
   return workflow.agents.every((agent) => {
     const pick: StoredPick | undefined = store.agents[agent.id];
     return pick?.effort !== undefined;
@@ -645,7 +616,6 @@ export interface ResolvedAgent {
 export interface ResolvedPlan {
   workflow: Workflow;
   agents: readonly ResolvedAgent[];
-  knobs: Readonly<Record<string, number>>;
   /** The frozen scope. The runner orders and truncates it; the picker never does. */
   scope: WorkScopeSnapshot;
   maxWorkItems: number;
@@ -663,16 +633,17 @@ function numbersFor(
   resolved: ResolvedScope,
   chosen: { maxWorkItems?: number; maxParallel?: number },
 ): { maxWorkItems: number; maxParallel: number } {
+  const driver = DRIVERS[workflow.driver];
   return {
-    maxWorkItems: workflow.drains ? (chosen.maxWorkItems ?? resolved.items.length) : resolved.items.length,
-    maxParallel: workflow.concurrent ? (chosen.maxParallel ?? 1) : 1,
+    maxWorkItems: driver.drains ? (chosen.maxWorkItems ?? resolved.items.length) : resolved.items.length,
+    maxParallel: driver.concurrent ? (chosen.maxParallel ?? 1) : 1,
   };
 }
 
 /**
- * The plan the walk adds up to, or `undefined` while any pick or knob is still
- * missing. A shared pick fans out here into one entry per agent, which is why
- * `*` cannot reach the runner or the store.
+ * The plan the walk adds up to, or `undefined` while any pick is still missing.
+ * A shared pick fans out here into one entry per agent, which is why `*` cannot
+ * reach the runner or the store.
  */
 function planFromWalk(
   state: FlowState,
@@ -692,14 +663,7 @@ function planFromWalk(
     });
   }
 
-  const knobs: Record<string, number> = {};
-  for (const knob of workflow.knobs) {
-    const value = state.knobs[knob.id];
-    if (value === undefined) return undefined;
-    knobs[knob.id] = value;
-  }
-
-  return { workflow, agents, knobs, scope: resolved.snapshot, ...numbersFor(workflow, resolved, state) };
+  return { workflow, agents, scope: resolved.snapshot, ...numbersFor(workflow, resolved, state) };
 }
 
 /** The remembered run as a plan, or `undefined` when it cannot be replayed. */
@@ -725,13 +689,7 @@ function replayPlan(
     });
   }
 
-  return {
-    workflow,
-    agents,
-    knobs: knobsFor(workflow, store),
-    scope: resolved.snapshot,
-    ...numbersFor(workflow, resolved, store),
-  };
+  return { workflow, agents, scope: resolved.snapshot, ...numbersFor(workflow, resolved, store) };
 }
 
 /** `Claude Opus 5 · High` — one agent's pick on a single line. */
@@ -773,14 +731,9 @@ export function summaryByAgent(plan: ResolvedPlan): readonly string[] {
 /** The fast path's own option line, which is why it needs no confirm screen. */
 function summariseReplay(plan: ResolvedPlan): string {
   const models = plan.agents.map(describeAgent).join(" / ");
-  const knobs = plan.workflow.knobs
-    .map((knob) => `${knob.summaryLabel.toLowerCase()} ${plan.knobs[knob.id]}`)
-    .join(", ");
   // Eligibility is stated here rather than left to a confirm screen the fast
   // path does not have — which is exactly what moving it after resolution buys.
-  return [plan.workflow.label, models, knobs, eligibleLine(plan.scope, plan.maxWorkItems)]
-    .filter(Boolean)
-    .join(" · ");
+  return [plan.workflow.label, models, eligibleLine(plan.scope, plan.maxWorkItems)].join(" · ");
 }
 
 /**
@@ -803,7 +756,6 @@ export function runToRemember(plan: ResolvedPlan): {
   maxWorkItems?: number;
   maxParallel?: number;
   agents: readonly ResolvedAgent[];
-  knobs: Readonly<Record<string, number>>;
 } {
   const anchor = anchorOf(plan.scope);
   const eligible = plan.scope.executableNodeIds.length;
@@ -813,9 +765,8 @@ export function runToRemember(plan: ResolvedPlan): {
       ? { kind: plan.scope.scopeKind, target: String(anchor.number) }
       : { kind: plan.scope.scopeKind },
     maxWorkItems: guardIsAsked(plan.workflow, eligible) ? plan.maxWorkItems : undefined,
-    maxParallel: plan.workflow.concurrent ? plan.maxParallel : undefined,
+    maxParallel: DRIVERS[plan.workflow.driver].concurrent ? plan.maxParallel : undefined,
     agents: plan.agents,
-    knobs: plan.knobs,
   };
 }
 
@@ -968,15 +919,12 @@ export function nextStep(
   const workflow = findWorkflow(state.workflowId, workflows);
   if (!workflow) return undefined;
 
-  // 6. The two numbers, then whatever knobs the workflow still declares.
+  // 6. The two numbers, each asked only where its driver makes it a decision.
   const guard = runGuardQuestion(state, workflow);
   if (guard) return guard;
 
   const parallel = maxParallelQuestion(state, workflow);
   if (parallel) return parallel;
-
-  const knob = knobQuestion(state, workflow);
-  if (knob) return knob;
 
   // 7. One model for every agent? Never asked of a single-agent workflow.
   if (workflow.agents.length > 1 && state.sameModelForEveryAgent === undefined) {
@@ -1128,8 +1076,6 @@ export function applyAnswer(state: FlowState, step: Step, value: Answer): FlowSt
       if (!effort) throw new Error(`Unknown ${key} effort: ${String(value)}`);
       return { ...state, picks: { ...state.picks, [key]: { ...pick, effort } } };
     }
-    case "knob":
-      return { ...state, knobs: { ...state.knobs, [key]: asNumber(step.id, value) } };
     case "confirm":
       return { ...state, confirmed: value === "start" };
     default:
