@@ -10,6 +10,7 @@ import {
   parseStoredRun,
   runStorePath,
   serializeStoredRun,
+  worktreeOrigin,
   writeStoredRun,
 } from "../../cli/store.mts";
 
@@ -20,6 +21,9 @@ function storedJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     version: 2,
     lastWorkflowId: "sequential-reviewer",
+    lastScope: { kind: "specific-spec", target: "418", origin: "/clone/.git/worktrees/perth" },
+    maxWorkItems: 10,
+    maxParallel: 3,
     agents: {
       implementer: { model: "claude-opus-5", effort: "xhigh" },
       reviewer: { model: "claude-sonnet-4-6", effort: "high" },
@@ -44,15 +48,24 @@ function run(
   workflowId: string,
   agents: readonly { agentId: string; modelId: ModelID; effort: RunEffort }[],
   knobs: Record<string, number> = {},
+  overrides: Partial<{
+    scope: { kind: string; target?: string };
+    maxWorkItems: number;
+    maxParallel: number;
+  }> = {},
 ) {
   return {
     workflow: { id: workflowId },
+    scope: { kind: "specific-spec", target: "418" },
+    maxWorkItems: 10,
+    maxParallel: 1,
     agents: agents.map((agent) => {
       const model = findModel(agent.modelId);
       assert.ok(model, `fixture model ${agent.modelId} must exist`);
       return { agentId: agent.agentId, model, effort: agent.effort };
     }),
     knobs,
+    ...overrides,
   };
 }
 
@@ -73,11 +86,15 @@ describe("parseStoredRun", () => {
   it("reads a well-formed store", () => {
     assert.deepEqual(parseStoredRun(storedJson()), {
       lastWorkflowId: "sequential-reviewer",
+      lastScope: { kind: "specific-spec", target: "418", origin: "/clone/.git/worktrees/perth" },
+      maxWorkItems: 10,
+      maxParallel: 3,
       agents: {
         implementer: { model: "claude-opus-5", effort: "xhigh" },
         reviewer: { model: "claude-sonnet-4-6", effort: "high" },
       },
       knobs: { "sequential-reviewer": { maxIterations: 5 } },
+      passthrough: {},
     });
   });
 
@@ -207,6 +224,84 @@ describe("parseStoredRun", () => {
       assert.deepEqual(parseStoredRun(storedJson({ knobs: bad }))?.knobs, {});
     }
   });
+
+  it("drops a lastScope that is not a usable object, keeping the rest", () => {
+    for (const bad of [null, 42, [], "specific-spec", {}, { target: "418" }, { kind: 7 }]) {
+      const stored = parseStoredRun(storedJson({ lastScope: bad }));
+      assert.equal(stored?.lastScope, undefined, `expected ${JSON.stringify(bad)} dropped`);
+      assert.equal(stored?.lastWorkflowId, "sequential-reviewer");
+    }
+  });
+
+  it("keeps a scope kind no picker declares", () => {
+    // Another worktree's branch may offer a scope this one does not. The picker
+    // looks up only the kinds it declares, so an unknown one is inert.
+    const stored = parseStoredRun(storedJson({ lastScope: { kind: "specific-milestone" } }));
+    assert.deepEqual(stored?.lastScope, { kind: "specific-milestone" });
+  });
+
+  it("drops a target or origin that is not a string, keeping the kind", () => {
+    const stored = parseStoredRun(
+      storedJson({ lastScope: { kind: "specific-issue", target: 418, origin: [] } }),
+    );
+    assert.deepEqual(stored?.lastScope, { kind: "specific-issue" });
+  });
+
+  it("drops either number when it is not an integer", () => {
+    for (const bad of [null, "10", 2.5, []]) {
+      const stored = parseStoredRun(storedJson({ maxWorkItems: bad, maxParallel: bad }));
+      assert.equal(stored?.maxWorkItems, undefined, `expected ${JSON.stringify(bad)} dropped`);
+      assert.equal(stored?.maxParallel, undefined);
+    }
+  });
+
+  it("keeps a number outside the question's bounds", () => {
+    // The bounds belong to the question, which this module cannot see; an
+    // out-of-range value is dropped at the point of use.
+    assert.equal(parseStoredRun(storedJson({ maxWorkItems: 9999 }))?.maxWorkItems, 9999);
+  });
+});
+
+describe("top-level passthrough", () => {
+  it("carries a key this version does not interpret", () => {
+    const stored = parseStoredRun(storedJson({ lastPlanner: "opus", waves: [1, 2] }));
+    assert.deepEqual(stored?.passthrough, { lastPlanner: "opus", waves: [1, 2] });
+  });
+
+  it("carries none of the keys it writes for itself", () => {
+    assert.deepEqual(parseStoredRun(storedJson())?.passthrough, {});
+  });
+
+  it("re-emits an unknown key on the next write, beside the known ones", () => {
+    const first = parseStoredRun(storedJson({ lastPlanner: "opus" }));
+    assert.ok(first);
+    const raw = serializeStoredRun(
+      mergeStoredRun(
+        first,
+        run("review-only", [{ agentId: "reviewer", modelId: "gpt-5.5", effort: "low" }]),
+      ),
+    );
+    assert.equal(JSON.parse(raw).lastPlanner, "opus");
+    assert.equal(JSON.parse(raw).lastWorkflowId, "review-only");
+  });
+
+  it("round-trips a v2 fixture holding `knobs` with `knobs` intact", () => {
+    // The retirement rehearsal: when `knobs` stops being parsed it becomes an
+    // unrecognised top-level key, and passthrough carries it with no special
+    // case. Today it is still parsed, so this pins that the field survives a
+    // write by a run that declares no knob at all.
+    const stored = parseStoredRun(storedJson());
+    assert.ok(stored);
+    const rewritten = serializeStoredRun(
+      mergeStoredRun(
+        stored,
+        run("review-only", [{ agentId: "reviewer", modelId: "gpt-5.5", effort: "low" }]),
+      ),
+    );
+    assert.deepEqual(JSON.parse(rewritten).knobs, {
+      "sequential-reviewer": { maxIterations: 5 },
+    });
+  });
 });
 
 describe("the v1 read-side adapter", () => {
@@ -219,6 +314,9 @@ describe("the v1 read-side adapter", () => {
         reviewer: { model: "claude-sonnet-4-6", effort: "high" },
       },
       knobs: {},
+      // v1's own keys are interpreted rather than carried: they *are* the v2
+      // agent entries, so passing them through would duplicate them forever.
+      passthrough: {},
     });
   });
 
@@ -241,15 +339,25 @@ describe("mergeStoredRun", () => {
       existing,
       // A one-agent, zero-knob run of a different workflow: under v1's
       // wholesale replace this erased the implementer and the knob bucket.
-      run("review-only", [{ agentId: "reviewer", modelId: "gpt-5.5", effort: "low" }]),
+      run(
+        "review-only",
+        [{ agentId: "reviewer", modelId: "gpt-5.5", effort: "low" }],
+        {},
+        { scope: { kind: "all-ready-for-agent" }, maxWorkItems: 4, maxParallel: 2 },
+      ),
+      "/clone/.git",
     );
     assert.deepEqual(merged, {
       lastWorkflowId: "review-only",
+      lastScope: { kind: "all-ready-for-agent", origin: "/clone/.git" },
+      maxWorkItems: 4,
+      maxParallel: 2,
       agents: {
         implementer: { model: "claude-opus-5", effort: "xhigh" },
         reviewer: { model: "gpt-5.5", effort: "low" },
       },
       knobs: { "sequential-reviewer": { maxIterations: 5 } },
+      passthrough: {},
     });
   });
 
@@ -259,12 +367,28 @@ describe("mergeStoredRun", () => {
       run("sequential-reviewer", [{ agentId: "implementer", modelId: "claude-opus-5", effort: "max" }], {
         maxIterations: 3,
       }),
+      "/clone/.git/worktrees/perth",
     );
     assert.deepEqual(merged, {
       lastWorkflowId: "sequential-reviewer",
+      lastScope: {
+        kind: "specific-spec",
+        target: "418",
+        origin: "/clone/.git/worktrees/perth",
+      },
+      maxWorkItems: 10,
+      maxParallel: 1,
       agents: { implementer: { model: "claude-opus-5", effort: "max" } },
       knobs: { "sequential-reviewer": { maxIterations: 3 } },
+      passthrough: {},
     });
+  });
+
+  it("stamps the writing worktree as the scope's origin, and nothing else", () => {
+    // `origin` is the only part of the remembered scope that does not come from
+    // the run. It gates the *target* alone, everywhere it is read.
+    const merged = mergeStoredRun(undefined, run("review-only", []), undefined);
+    assert.deepEqual(merged.lastScope, { kind: "specific-spec", target: "418" });
   });
 
   it("leaves unknown keys intact through a read-modify-write round trip", () => {
@@ -306,6 +430,12 @@ describe("writeStoredRun", () => {
     ],
     { maxIterations: 10 },
   );
+
+  it("stamps this worktree's git dir as the origin by default", () => {
+    const path = join(tempStoreDir(), "sandcastle-run.json");
+    writeStoredRun(plan, path);
+    assert.equal(parseStoredRun(readFileSync(path, "utf8"))?.lastScope?.origin, worktreeOrigin());
+  });
 
   it("migrates a v1 file on disk to v2, preserving both picks", () => {
     const path = join(tempStoreDir(), "sandcastle-run.json");

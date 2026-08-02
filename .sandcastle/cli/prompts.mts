@@ -15,20 +15,27 @@
 // declaration is the pin: there is no width regression test here, so the
 // dependency entry is what stops a transitive hoist from moving underneath us.
 
-import { intro, isCancel, log, note, select, text } from "@clack/prompts";
+import { intro, isCancel, log, note, select, spinner, text } from "@clack/prompts";
 import { availableEfforts } from "../providers/registry.mts";
+import { parseTarget, resolveScope } from "../scope/github.mts";
 import {
   applyAnswer,
   initialState,
-  nextQuestion,
+  nextStep,
   resolvePlan,
+  scopeSummary,
   summaryByAgent,
+  toWorkScope,
   type Answer,
   type NumberQuestion,
-  type Question,
   type ResolvedPlan,
+  type ResolveScope,
+  type ResolveStep,
+  type ScopeResolution,
+  type SelectQuestion,
+  type Step,
 } from "./flow.mts";
-import { readStoredRun } from "./store.mts";
+import { readStoredRun, worktreeOrigin } from "./store.mts";
 
 /** True when a question was cancelled rather than answered. Narrows the answer. */
 function wasCancelled<Value>(answer: Value | symbol): answer is symbol {
@@ -55,6 +62,22 @@ export function validateInteger(
   return undefined;
 }
 
+/**
+ * Refuse a target the resolver could not build a request path from, before a
+ * spinner starts. `parseTarget` is the same parser the fetch layer runs, so what
+ * this field accepts and what GitHub is asked for cannot drift apart.
+ */
+export function validateTarget(raw: string | undefined): string | undefined {
+  const typed = raw?.trim() ?? "";
+  if (!typed) return "Enter an issue number or a GitHub issue URL.";
+  try {
+    parseTarget(typed);
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
 async function askNumber(question: NumberQuestion): Promise<number | symbol> {
   const answer = await text({
     message: question.prompt,
@@ -66,12 +89,7 @@ async function askNumber(question: NumberQuestion): Promise<number | symbol> {
   return Number(answer);
 }
 
-/**
- * Draw one question. `initialValue` only moves the cursor: the question is always
- * shown, so the walk never silently answers for you.
- */
-function ask(question: Question): Promise<Answer | symbol> {
-  if (question.kind === "number") return askNumber(question);
+function askSelect(question: SelectQuestion): Promise<string | symbol> {
   return select<string>({
     message: question.prompt,
     options: [...question.options],
@@ -80,11 +98,63 @@ function ask(question: Question): Promise<Answer | symbol> {
 }
 
 /**
- * Walk the picker and return what to run, or `undefined` if it was cancelled.
- * Nothing here decides what comes next — that is `nextQuestion`, which is why
- * this loop is the same six screens for a workflow it has never seen.
+ * The one step that is not a question: ask for a target if this walk still needs
+ * one, then go to GitHub. The outcome — success or failure — folds back in as an
+ * answer, because the recovery it leads to is `cli/flow.mts`'s decision, not
+ * this module's.
  */
-export async function choosePlan(): Promise<ResolvedPlan | undefined> {
+async function askResolve(
+  step: ResolveStep,
+  resolve: ResolveScope,
+): Promise<ScopeResolution | symbol> {
+  let target = step.initialValue ?? "";
+  if (step.needsTarget) {
+    const typed = await text({
+      message: step.prompt,
+      // Deliberately not a URL literal: `scope/github.mts` is the only module
+      // allowed to spell an endpoint, and a sweep enforces it.
+      placeholder: "an issue number, or the issue URL from your browser",
+      initialValue: step.initialValue,
+      validate: validateTarget,
+    });
+    if (wasCancelled(typed)) return typed;
+    target = typed.trim();
+  }
+
+  const progress = spinner();
+  progress.start("Resolving this Work scope with GitHub");
+  const outcome = await resolve(toWorkScope(step.scope, target));
+  progress.stop(outcome.ok ? "Work scope resolved" : "Work scope not resolved");
+  return { target: step.needsTarget ? target : undefined, outcome };
+}
+
+/**
+ * Draw one step. `initialValue` only moves the cursor: the question is always
+ * shown, so the walk never silently answers for you.
+ */
+function ask(step: Step, resolve: ResolveScope): Promise<Answer | symbol> {
+  switch (step.kind) {
+    case "number":
+      return askNumber(step);
+    case "resolve":
+      return askResolve(step, resolve);
+    case "select":
+      return askSelect(step);
+  }
+}
+
+/**
+ * Walk the picker and return what to run, or `undefined` if it was cancelled.
+ * Nothing here decides what comes next — that is `nextStep`, which is why this
+ * loop is the same screens for a workflow it has never seen, and why the point
+ * at which GitHub is asked is not a decision made in this file.
+ *
+ * Cancellation is safe at every prompt: nothing has been dispatched, and the
+ * store is only written after `prepare()` succeeds.
+ */
+export async function choosePlan(
+  resolve: ResolveScope = resolveScope,
+): Promise<ResolvedPlan | undefined> {
   // Clack drives the terminal in raw mode, so it needs a real TTY just as the
   // widget it replaced did. It calls `setRawMode` optionally, so without this
   // guard a stdin that lacks it would render a picker whose arrow keys do
@@ -97,19 +167,28 @@ export async function choosePlan(): Promise<ResolvedPlan | undefined> {
 
   intro("Sandcastle");
   log.message([
-    "Pick a workflow, then the model and effort for each of its agents.",
+    "Choose what this run works on, then the workflow and the model behind each agent.",
     ...(store ? ["Defaults are your last run in this repo."] : []),
   ]);
 
-  let state = initialState(store);
+  let state = initialState(store, worktreeOrigin());
+  let announced: string | undefined;
   for (;;) {
-    const question = nextQuestion(state, availableEfforts);
-    if (!question) break;
-    if (question.note) note(question.note.join("\n"), "Ready to run Sandcastle");
+    const step = nextStep(state, availableEfforts);
+    if (!step) break;
+    if (step.note) note(step.note.join("\n"), step.noteTitle ?? "Sandcastle");
 
-    const answer = await ask(question);
+    const answer = await ask(step, resolve);
     if (wasCancelled(answer)) return undefined;
-    state = applyAnswer(state, question, answer);
+    state = applyAnswer(state, step, answer);
+
+    // Said once per resolution, and only for a scope that survived judgment —
+    // the failed ones speak for themselves, on the recovery screen.
+    const resolved = state.resolved;
+    if (resolved && resolved.snapshot.snapshotId !== announced) {
+      announced = resolved.snapshot.snapshotId;
+      note(scopeSummary(resolved).join("\n"), "Work scope");
+    }
   }
 
   return resolvePlan(state);

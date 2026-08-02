@@ -22,6 +22,10 @@ export const reviewOnly: Workflow = {
   dir: import.meta.dirname,
   agents: [REVIEWER],
   knobs: [],
+  // No work items at all: this workflow reviews a branch, so neither the run
+  // guard nor a wave width has anything to bound.
+  drains: false,
+  concurrent: false,
 
   runShape: () => "review once, origin/main...HEAD",
 

@@ -21,23 +21,19 @@ export const sequentialReviewer: Workflow = {
   description: "Work through open issues one at a time, reviewing each before the next",
   dir: import.meta.dirname,
   agents: [IMPLEMENTER, REVIEWER],
-  knobs: [
-    {
-      id: "maxIterations",
-      prompt: "How many issues should this run work through?",
-      summaryLabel: "Iterations",
-      defaultValue: 10,
-      min: 1,
-      max: 50,
-    },
-  ],
+  // The `maxIterations` knob is gone: the universal run guard is the same
+  // parameter asked once, for every scope and every workflow that drains. Two
+  // number questions for one number must never both be on screen.
+  knobs: [],
+  drains: true,
+  concurrent: false,
 
-  runShape: (knobs) =>
-    `implement → review, up to ${knobs.maxIterations} issue${knobs.maxIterations === 1 ? "" : "s"}`,
+  runShape: (workItems) =>
+    `implement → review, up to ${workItems} issue${workItems === 1 ? "" : "s"}`,
 
-  run: async ({ dispatch, knobs }) => {
-    for (let iteration = 1; iteration <= knobs.maxIterations; iteration++) {
-      console.log(`\n=== Iteration ${iteration}/${knobs.maxIterations} ===\n`);
+  run: async ({ dispatch, maxWorkItems }) => {
+    for (let iteration = 1; iteration <= maxWorkItems; iteration++) {
+      console.log(`\n=== Iteration ${iteration}/${maxWorkItems} ===\n`);
 
       const implement = await dispatch(IMPLEMENTER, { promptFile: "implement-prompt.md" });
 

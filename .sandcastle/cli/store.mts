@@ -1,5 +1,11 @@
-// The store that remembers the last run: which workflow ran, what model and
-// effort each of its agents used, and where its knobs were set.
+// The store that remembers the last run: which Work scope it was pointed at,
+// which workflow ran, what model and effort each of its agents used, and where
+// its two numbers were set.
+//
+// **Answers only, never outcomes.** The snapshot, its id, any wave plan, the
+// run report and what each item did are all deliberately absent, because GitHub
+// is the single source of truth about what is done and a second copy of it here
+// would be a stale one.
 //
 // The store lives in the git *common* directory rather than the worktree. This
 // repo is driven from Conductor, where every workspace is a separate worktree
@@ -45,37 +51,103 @@ export interface StoredPick {
 }
 
 /**
+ * The Work scope the last run was pointed at.
+ *
+ * `kind` is a bare string, never checked against a list: this module is a leaf
+ * and has nothing to check one against, exactly as it has nothing to check an
+ * agent id against. The picker looks up the kinds it declares and a kind it
+ * does not know is inert.
+ *
+ * `origin` is the git dir of the worktree that wrote it, and it gates `target`
+ * alone. The store lives in the git *common* dir, so every Conductor workspace
+ * shares it — and every Conductor workspace is a different piece of work, so a
+ * target pre-filled from a sibling would start an unattended run against a SPEC
+ * this worktree has nothing to do with. `kind` is a habit and pre-fills
+ * everywhere; a wrong one costs one arrow key.
+ */
+export interface StoredScope {
+  kind: string;
+  target?: string;
+  origin?: string;
+}
+
+/**
  * The last run, as far as it can still be trusted. Agent picks key globally —
  * `IMPLEMENTER` and `REVIEWER` are single shared objects — while knobs key per
  * workflow, because two workflows declaring `maxIterations` declare two
  * different parameters that happen to share a spelling.
+ *
+ * `knobs` and `maxWorkItems` are deliberately *not* the same field. They are
+ * different parameters that happen to both be integers, and migrating one into
+ * the other on that strength alone would run a number nobody chose.
  */
 export interface StoredRun {
   lastWorkflowId?: string;
+  lastScope?: StoredScope;
+  /** The run guard: how many work items an unattended run may drain. */
+  maxWorkItems?: number;
+  /** How many work items a concurrent driver runs at once. */
+  maxParallel?: number;
   agents: Record<string, StoredPick>;
   knobs: Record<string, Record<string, number>>;
+  /**
+   * Every *top-level* key this version does not interpret, carried through a
+   * read-modify-write untouched.
+   *
+   * The same argument that makes an agent id survive, one level up. Worktrees
+   * of one clone sit on different branches, so a branch that predates a field
+   * would otherwise erase it on its next write, and a branch that has dropped
+   * one would erase the branch that still uses it. Passthrough also absorbs a
+   * *retired* key with no special case: when `knobs` stops being parsed, it
+   * simply becomes an unrecognised top-level key and keeps being carried.
+   */
+  passthrough: Record<string, unknown>;
 }
 
 /**
- * What the store needs from a run it is asked to remember: a `ResolvedPlan`
- * satisfies it structurally. Declared here rather than imported so the store
- * stays a leaf and the picker keeps depending on the store, not the reverse.
+ * What the store needs from a run it is asked to remember. Declared here rather
+ * than imported so the store stays a leaf and the picker keeps depending on the
+ * store, not the reverse.
+ *
+ * `scope` is the maintainer's *answer* — the kind they chose and the target
+ * that resolved — not the snapshot it produced. The snapshot is an outcome.
+ *
+ * Both numbers are optional for the same reason: a run that was never asked for
+ * one carries a number derived from what it resolved, and the caller leaves it
+ * out rather than passing a fact off as a choice.
  */
 interface RunToRemember {
   workflow: { id: string };
+  scope: { kind: string; target?: string };
+  maxWorkItems?: number;
+  maxParallel?: number;
   agents: readonly { agentId: string; model: { id: ModelID }; effort: RunEffort }[];
   knobs: Readonly<Record<string, number>>;
 }
 
-export function runStorePath(cwd: string = process.cwd()): string {
+function gitDir(flag: "--git-common-dir" | "--git-dir", cwd: string): string {
   // Relative in a primary worktree (".git"), absolute in a linked one — resolve
   // covers both.
-  const commonDir = execSync("git rev-parse --git-common-dir", {
+  const path = execSync(`git rev-parse ${flag}`, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   }).trim();
-  return resolve(cwd, commonDir, STORE_FILENAME);
+  return resolve(cwd, path);
+}
+
+export function runStorePath(cwd: string = process.cwd()): string {
+  return resolve(gitDir("--git-common-dir", cwd), STORE_FILENAME);
+}
+
+/**
+ * Which worktree is asking. A free sibling of the `--git-common-dir` call
+ * `runStorePath` already makes, and unique where a branch name is not: the
+ * common dir is shared by every workspace of the clone, the per-worktree git
+ * dir is not.
+ */
+export function worktreeOrigin(cwd: string = process.cwd()): string {
+  return gitDir("--git-dir", cwd);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -132,6 +204,46 @@ function parseKnobs(value: unknown): Record<string, Record<string, number>> {
 }
 
 /**
+ * One remembered Work scope. Only the shape is checked — a `kind` no picker
+ * declares is kept for the same reason an unknown agent id is, and it is inert
+ * because nothing looks it up.
+ */
+function parseScope(value: unknown): StoredScope | undefined {
+  if (!isRecord(value)) return undefined;
+  if (typeof value.kind !== "string") return undefined;
+  const scope: StoredScope = { kind: value.kind };
+  if (typeof value.target === "string") scope.target = value.target;
+  if (typeof value.origin === "string") scope.origin = value.origin;
+  return scope;
+}
+
+/**
+ * One remembered number. Integers only, and no bounds check: the bounds belong
+ * to the question that asks, which this module cannot see, so an out-of-range
+ * value is dropped at the point of use.
+ */
+function parseCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) ? value : undefined;
+}
+
+/** Every top-level key this version writes for itself, and so never carries. */
+const KNOWN_KEYS: ReadonlySet<string> = new Set([
+  "version",
+  "lastWorkflowId",
+  "lastScope",
+  "maxWorkItems",
+  "maxParallel",
+  "agents",
+  "knobs",
+]);
+
+function parsePassthrough(candidate: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(candidate).filter(([key]) => !KNOWN_KEYS.has(key)),
+  );
+}
+
+/**
  * v1 read as v2, which is nearly free because v1's keys already are the v2
  * agent ids. `sameForBoth` is dropped rather than migrated: "one model for
  * every agent?" is a question the picker derives, not a fact worth storing.
@@ -145,7 +257,7 @@ function parseV1(candidate: Record<string, unknown>): StoredRun {
     const pick = parsePick(candidate[agentId]);
     if (pick) agents[agentId] = pick;
   }
-  return { agents, knobs: {} };
+  return { agents, knobs: {}, passthrough: {} };
 }
 
 /**
@@ -169,10 +281,21 @@ export function parseStoredRun(raw: string): StoredRun | undefined {
   const run: StoredRun = {
     agents: parseAgents(parsed.agents),
     knobs: parseKnobs(parsed.knobs),
+    passthrough: parsePassthrough(parsed),
   };
   // Kept even when no registry knows it — the flow falls back to index 0, and
   // pruning it would mean this branch garbage-collecting another's memory.
   if (typeof parsed.lastWorkflowId === "string") run.lastWorkflowId = parsed.lastWorkflowId;
+
+  const scope = parseScope(parsed.lastScope);
+  if (scope) run.lastScope = scope;
+
+  const maxWorkItems = parseCount(parsed.maxWorkItems);
+  if (maxWorkItems !== undefined) run.maxWorkItems = maxWorkItems;
+
+  const maxParallel = parseCount(parsed.maxParallel);
+  if (maxParallel !== undefined) run.maxParallel = maxParallel;
+
   return run;
 }
 
@@ -188,10 +311,18 @@ export function readStoredRun(storePath: string = runStorePath()): StoredRun | u
 /**
  * Fold this run into what was already remembered, key by key. The entries this
  * run did not touch — another agent's model, another workflow's knobs, a knob
- * this workflow no longer declares — are carried across untouched, because a
- * one-agent, zero-knob run replacing the file wholesale would erase them.
+ * this workflow no longer declares, a top-level field this branch has never
+ * heard of — are carried across untouched, because a one-agent, zero-knob run
+ * replacing the file wholesale would erase them.
+ *
+ * `origin` is the worktree doing the writing, and is the only part of the
+ * remembered scope that does not come from the run itself.
  */
-export function mergeStoredRun(existing: StoredRun | undefined, run: RunToRemember): StoredRun {
+export function mergeStoredRun(
+  existing: StoredRun | undefined,
+  run: RunToRemember,
+  origin?: string,
+): StoredRun {
   const agents: Record<string, StoredPick> = { ...existing?.agents };
   for (const agent of run.agents) {
     agents[agent.agentId] = { model: agent.model.id, effort: agent.effort };
@@ -201,7 +332,21 @@ export function mergeStoredRun(existing: StoredRun | undefined, run: RunToRememb
   const bucket = { ...existing?.knobs[run.workflow.id], ...run.knobs };
   if (Object.keys(bucket).length) knobs[run.workflow.id] = bucket;
 
-  return { lastWorkflowId: run.workflow.id, agents, knobs };
+  const lastScope: StoredScope = { kind: run.scope.kind };
+  if (run.scope.target !== undefined) lastScope.target = run.scope.target;
+  if (origin !== undefined) lastScope.origin = origin;
+
+  return {
+    lastWorkflowId: run.workflow.id,
+    lastScope,
+    // Upsert, like every other key: a run that was not asked for one of these
+    // leaves the last answered value standing rather than erasing it.
+    maxWorkItems: run.maxWorkItems ?? existing?.maxWorkItems,
+    maxParallel: run.maxParallel ?? existing?.maxParallel,
+    agents,
+    knobs,
+    passthrough: { ...existing?.passthrough },
+  };
 }
 
 export function serializeStoredRun(run: StoredRun): string {
@@ -209,8 +354,14 @@ export function serializeStoredRun(run: StoredRun): string {
     {
       version: STORE_VERSION,
       lastWorkflowId: run.lastWorkflowId,
+      lastScope: run.lastScope,
+      maxWorkItems: run.maxWorkItems,
+      maxParallel: run.maxParallel,
       agents: run.agents,
       knobs: run.knobs,
+      // Last, and by construction disjoint from every key above: whatever this
+      // version does not interpret goes back out exactly as it came in.
+      ...run.passthrough,
     },
     null,
     2,
@@ -223,8 +374,12 @@ export function serializeStoredRun(run: StoredRun): string {
  * otherwise one corrupt file would freeze the store forever. Returns false only
  * if the write itself failed; never throws.
  */
-export function writeStoredRun(run: RunToRemember, storePath: string = runStorePath()): boolean {
-  const merged = mergeStoredRun(readStoredRun(storePath), run);
+export function writeStoredRun(
+  run: RunToRemember,
+  storePath: string = runStorePath(),
+  origin: string = worktreeOrigin(),
+): boolean {
+  const merged = mergeStoredRun(readStoredRun(storePath), run, origin);
   try {
     writeFileSync(storePath, serializeStoredRun(merged), "utf8");
     return true;

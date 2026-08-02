@@ -36,7 +36,7 @@ describe("the review-only run", () => {
   it("dispatches the reviewer exactly once", async () => {
     const { calls, dispatch } = fakeDispatch();
 
-    await reviewOnly.run({ dispatch, knobs: {} });
+    await reviewOnly.run({ dispatch, knobs: {}, maxWorkItems: 1 });
 
     assert.deepEqual(
       calls.map((call) => call.agent.id),
@@ -50,7 +50,7 @@ describe("the review-only run", () => {
     // filled in.
     const { calls, dispatch } = fakeDispatch();
 
-    await reviewOnly.run({ dispatch, knobs: {} });
+    await reviewOnly.run({ dispatch, knobs: {}, maxWorkItems: 1 });
 
     const options = calls[0]?.options;
     assert.ok(options);
@@ -60,7 +60,7 @@ describe("the review-only run", () => {
   it("names its prompt by bare filename, for the runner to anchor", async () => {
     const { calls, dispatch } = fakeDispatch();
 
-    await reviewOnly.run({ dispatch, knobs: {} });
+    await reviewOnly.run({ dispatch, knobs: {}, maxWorkItems: 1 });
 
     assert.deepEqual(
       calls.map((call) => call.options.promptFile),
@@ -77,7 +77,7 @@ describe("the review-only folder", () => {
   it("holds the prompt the run dispatches", async () => {
     const { calls, dispatch } = fakeDispatch();
 
-    await reviewOnly.run({ dispatch, knobs: {} });
+    await reviewOnly.run({ dispatch, knobs: {}, maxWorkItems: 1 });
 
     for (const call of calls) {
       const promptPath = resolve(reviewOnly.dir, call.options.promptFile);
@@ -95,7 +95,15 @@ describe("what review-only declares", () => {
     assert.deepEqual(reviewOnly.knobs, []);
   });
 
-  it("reads as the run it describes", () => {
-    assert.equal(reviewOnly.runShape({}), "review once, origin/main...HEAD");
+  it("reads as the run it describes, whatever it is handed", () => {
+    // It walks no work items, so the one number `runShape` now takes says
+    // nothing about this workflow and appears nowhere in its line.
+    assert.equal(reviewOnly.runShape(0), "review once, origin/main...HEAD");
+    assert.equal(reviewOnly.runShape(12), "review once, origin/main...HEAD");
+  });
+
+  it("neither drains work items nor runs them side by side", () => {
+    assert.equal(reviewOnly.drains, false);
+    assert.equal(reviewOnly.concurrent, false);
   });
 });

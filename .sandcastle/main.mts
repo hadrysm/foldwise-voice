@@ -5,6 +5,7 @@
 //   .sandcastle/node_modules/.bin/tsx .sandcastle/main.mts
 
 import { cancel, log } from "@clack/prompts";
+import { runToRemember } from "./cli/flow.mts";
 import { choosePlan, printRunHeader } from "./cli/prompts.mts";
 import { writeStoredRun } from "./cli/store.mts";
 import { prepare } from "./runner.mts";
@@ -18,15 +19,17 @@ async function main(): Promise<void> {
 
   const dispatch = prepare(plan);
 
-  // Remember the picks before the first dispatch — outside the worktree, so
-  // nothing an agent commits can be affected by this write.
-  if (!writeStoredRun(plan)) {
+  // Remember the answers before the first dispatch — outside the worktree, so
+  // nothing an agent commits can be affected by this write. The scope is
+  // remembered as the answer that was given, never as the snapshot it produced:
+  // a snapshot is an outcome, and GitHub is the only source of truth for those.
+  if (!writeStoredRun(runToRemember(plan))) {
     log.warn("Could not save these picks for next time.");
   }
 
   printRunHeader(plan);
 
-  await plan.workflow.run({ dispatch, knobs: plan.knobs });
+  await plan.workflow.run({ dispatch, knobs: plan.knobs, maxWorkItems: plan.maxWorkItems });
 
   console.log("\nAll done.");
 }
