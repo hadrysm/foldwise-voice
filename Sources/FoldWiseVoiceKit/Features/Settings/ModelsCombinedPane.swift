@@ -643,11 +643,12 @@ struct ModelsCombinedPane: View {
             .font(Theme.ui(10.5, .medium))
             .foregroundStyle(Theme.textSecondary)
         case .selected:
-            Label("Selected", systemImage: "checkmark.circle.fill")
-                .font(Theme.ui(10.5, .semibold))
-                .foregroundStyle(Theme.accent)
-                .focusable()
-                .focused($focusedControl, equals: .inspectorPrimary(id))
+            inspectorStatus(
+                "Selected",
+                systemImage: "checkmark.circle.fill",
+                tint: Theme.accent,
+                id: id
+            )
         case let .selectASR(modelID):
             asrActionButton(
                 "Select",
@@ -674,17 +675,19 @@ struct ModelsCombinedPane: View {
                 .buttonStyle(EmberButtonStyle(kind: .primary))
                 .focused($focusedControl, equals: .inspectorPrimary(id))
         case .unsupportedASR:
-            Label("Not supported on this Mac", systemImage: "slash.circle")
-                .font(Theme.ui(10.5, .semibold))
-                .foregroundStyle(Theme.textSecondary)
-                .focusable()
-                .focused($focusedControl, equals: .inspectorPrimary(id))
+            inspectorStatus(
+                "Not supported on this Mac",
+                systemImage: "slash.circle",
+                tint: Theme.textSecondary,
+                id: id
+            )
         case .installed:
-            Label("Installed", systemImage: "checkmark.circle")
-                .font(Theme.ui(10.5, .semibold))
-                .foregroundStyle(Theme.textSecondary)
-                .focusable()
-                .focused($focusedControl, equals: .inspectorPrimary(id))
+            inspectorStatus(
+                "Installed",
+                systemImage: "checkmark.circle",
+                tint: Theme.textSecondary,
+                id: id
+            )
         case let .installPolish(name):
             Button("Install") { interface.installPolishModel(name) }
                 .buttonStyle(EmberButtonStyle(kind: .primary))
@@ -704,6 +707,29 @@ struct ModelsCombinedPane: View {
                 .buttonStyle(EmberButtonStyle(kind: .primary))
                 .focused($focusedControl, equals: .inspectorPrimary(id))
         }
+    }
+
+    /// The inspector's primary slot stays a focus stop even when the state it
+    /// reports has no control to press — a finished download moves focus here,
+    /// and the arrival has to be visible. Static text has nothing to press,
+    /// though, so it refuses the pointer: `.focusable()` alone lets a click make
+    /// a word first responder, and macOS then paints its own focus ring around
+    /// it. Keyboard arrivals still show a ring, drawn the way every other
+    /// control here draws one.
+    private func inspectorStatus(
+        _ title: String,
+        systemImage: String,
+        tint: Color,
+        id: ModelsRowID
+    ) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(Theme.ui(10.5, .semibold))
+            .foregroundStyle(tint)
+            .focusable()
+            .focused($focusedControl, equals: .inspectorPrimary(id))
+            .focusEffectDisabled()
+            .emberFocusRing(focusedControl == .inspectorPrimary(id))
+            .allowsHitTesting(false)
     }
 
     private func asrActionButton(
