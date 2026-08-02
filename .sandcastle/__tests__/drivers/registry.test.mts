@@ -1,113 +1,46 @@
-// The drivers, driven against a fake core.
+// The driver registry, and the shape that walks no work items.
 //
-// Nothing here spawns: `RunCore` is the whole of a driver's reach, so a plain
-// object with a counting `forItem` is a complete substitute for the runner. That
-// is the payoff #405 predicted for moving the loop off the workflow — the loop
-// is now observable without a workflow, a network or a git repository.
+// A registry rather than a literal list at each use site, because the sweeps
+// that keep this tool framework-agnostic have to enumerate from one. The
+// sequential driver's own walk is `sequential.test.mts`'s.
 
 import assert from "node:assert/strict";
-import { describe, it, type TestContext } from "node:test";
-import { IMPLEMENTER } from "../../agents/catalog.mts";
-import type { Dispatch, DriverId, Workflow } from "../../contract.mts";
-import type { RunCore } from "../../drivers/core.mts";
+import { describe, it } from "node:test";
 import { DRIVERS, runnableDriver } from "../../drivers/registry.mts";
-import { repo } from "../../repo.mts";
-import type { WorkItem } from "../../scope/snapshot.mts";
+import { runOrder, type WorkItem } from "../../scope/snapshot.mts";
 import { reviewOnly } from "../../workflows/review-only/workflow.mts";
 import { sequentialReviewer } from "../../workflows/sequential-reviewer/workflow.mts";
-import { fakeItem } from "../support/scope.mts";
+import {
+  captureNarration,
+  fakeCore,
+  fakeTracker,
+  recording,
+  type BodyCall,
+} from "../support/core.mts";
+import { specSnapshot } from "../support/scope.mts";
 
-/** What the body was handed, in the order the driver handed it over. */
-interface BodyCall {
-  readonly item: WorkItem | null;
-  /** Which dispatch it was given: `item:419`, or `branch`. */
-  readonly scope: string;
+const SPEC_TREE = specSnapshot({ number: 418 }, [{ number: 419 }, { number: 420 }]);
+
+function specWork(): readonly WorkItem[] {
+  const order = runOrder(SPEC_TREE);
+  assert.ok(order.ok);
+  return order.items;
 }
-
-function fakeCore(work: readonly WorkItem[]): { core: RunCore; calls: BodyCall[] } {
-  const calls: BodyCall[] = [];
-  const scoped = (scope: string): Dispatch => {
-    return () => {
-      const last = calls[calls.length - 1];
-      assert.ok(last, "a dispatch was reached before any body ran");
-      assert.equal(last.scope, scope, "a body dispatched through another item's dispatch");
-      return Promise.resolve({ commits: [{ sha: "commit-1" }], baseSha: "sha-1" });
-    };
-  };
-  return {
-    calls,
-    core: {
-      work,
-      repo,
-      forItem: (item) => scoped(`item:${item.number}`),
-      forBranch: () => scoped("branch"),
-    },
-  };
-}
-
-/** A workflow that records what its body was given and dispatches once. */
-function recording(driver: DriverId, calls: BodyCall[]): Workflow {
-  return {
-    ...sequentialReviewer,
-    id: `recording-${driver}`,
-    driver,
-    run: async ({ item, dispatch }) => {
-      calls.push({ item, scope: item ? `item:${item.number}` : "branch" });
-      await dispatch(IMPLEMENTER, { promptFile: "implement-prompt.md" });
-    },
-  };
-}
-
-/** The driver narrates each item; the test suite does not need to hear it. */
-function silenceNarration(t: TestContext): void {
-  t.mock.method(console, "log", () => undefined);
-}
-
-describe("the sequential driver", () => {
-  it("runs the body once per work item, in the order it was given them", async (t) => {
-    silenceNarration(t);
-    const { core, calls } = fakeCore([fakeItem(419), fakeItem(420), fakeItem(421)]);
-
-    await DRIVERS.sequential.drive?.(core, recording("sequential", calls));
-
-    assert.deepEqual(
-      calls.map((call) => call.item?.number),
-      [419, 420, 421],
-    );
-  });
-
-  it("scopes each body's dispatch to that body's own item", async (t) => {
-    // The item is passed to the body to read and never to `dispatch`, so this
-    // is what "the driver decided which one before the body ran" comes to: the
-    // fake core refuses a dispatch that belongs to a different item.
-    silenceNarration(t);
-    const { core, calls } = fakeCore([fakeItem(419), fakeItem(420)]);
-
-    await DRIVERS.sequential.drive?.(core, recording("sequential", calls));
-
-    assert.deepEqual(
-      calls.map((call) => call.scope),
-      ["item:419", "item:420"],
-    );
-  });
-
-  it("runs nothing when there is nothing to run", async (t) => {
-    silenceNarration(t);
-    const { core, calls } = fakeCore([]);
-
-    await DRIVERS.sequential.drive?.(core, recording("sequential", calls));
-
-    assert.deepEqual(calls, []);
-  });
-});
 
 describe("the whole-branch driver", () => {
-  it("runs the body once, with no work item and the branch dispatch", async () => {
-    const { core, calls } = fakeCore([fakeItem(419), fakeItem(420)]);
+  it("runs the body once, with no work item and the branch dispatch", async (t) => {
+    captureNarration(t);
+    const calls: BodyCall[] = [];
+    const { core, dispatches } = fakeCore(SPEC_TREE, specWork());
+    const { tracker, writes } = fakeTracker();
 
     await DRIVERS["whole-branch"].drive?.(core, recording("whole-branch", calls));
 
-    assert.deepEqual(calls, [{ item: null, scope: "branch" }]);
+    assert.deepEqual(calls, [{ item: null }]);
+    assert.deepEqual(dispatches, [{ issueNumber: 0, agentId: "implementer" }]);
+    // It drains nothing, so it corrects nothing and hands nothing off — the
+    // tracker it never received could not have been written to anyway.
+    assert.deepEqual(writes, []);
   });
 });
 

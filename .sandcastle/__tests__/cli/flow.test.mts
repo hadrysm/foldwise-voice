@@ -22,14 +22,14 @@ import {
   type Step,
 } from "../../cli/flow.mts";
 import { mergeStoredRun, serializeStoredRun, type StoredRun } from "../../cli/store.mts";
-import type { Agent, Dispatch, Workflow } from "../../contract.mts";
-import { driveSequential } from "../../drivers/sequential.mts";
-import { repo } from "../../repo.mts";
+import type { Workflow } from "../../contract.mts";
+import { driveSequentialWith } from "../../drivers/sequential.mts";
 import { workList } from "../../runner.mts";
 import type { ScopeOutcome } from "../../scope/github.mts";
 import type { WorkScopeSnapshot } from "../../scope/snapshot.mts";
 import { WORKFLOWS } from "../../workflows/registry.mts";
 import { sequentialReviewer } from "../../workflows/sequential-reviewer/workflow.mts";
+import { fakeCore, fakeTracker } from "../support/core.mts";
 import { issueSnapshot, queueSnapshot, specSnapshot } from "../support/scope.mts";
 
 /**
@@ -825,16 +825,6 @@ describe("the confirmation", () => {
 });
 
 describe("the run guard bounding the driver's loop", () => {
-  /** A dispatch that runs no CLI and touches no git; it only counts its calls. */
-  function countingDispatch(): { calls: Agent[]; dispatch: Dispatch } {
-    const calls: Agent[] = [];
-    const dispatch: Dispatch = (agent) => {
-      calls.push(agent);
-      return Promise.resolve({ commits: [{ sha: "commit-1" }], baseSha: `sha-${calls.length}` });
-    };
-    return { calls, dispatch };
-  }
-
   it("cuts the list the driver walks, and is remembered as the run guard", async (t) => {
     // End to end from the answer to the loop: the number the picker collected is
     // what `workList` truncates to, and the driver runs the body once per item —
@@ -844,12 +834,13 @@ describe("the run guard bounding the driver's loop", () => {
     assert.ok(plan);
     assert.equal(plan.maxWorkItems, 2);
 
-    const { calls, dispatch } = countingDispatch();
     const work = workList(plan.scope, plan.maxWorkItems);
-    await driveSequential({ work, repo, forItem: () => dispatch, forBranch: () => dispatch }, plan.workflow);
+    const { core, dispatches } = fakeCore(plan.scope, work);
+    const { tracker } = fakeTracker();
+    await driveSequentialWith(core, plan.workflow, tracker);
 
     assert.equal(work.length, 2);
-    assert.equal(calls.filter((agent) => agent.id === "implementer").length, 2);
+    assert.equal(dispatches.filter((call) => call.agentId === "implementer").length, 2);
     assert.equal(mergeStoredRun(undefined, runToRemember(plan)).maxWorkItems, 2);
   });
 });

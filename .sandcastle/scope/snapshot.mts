@@ -30,6 +30,13 @@ export const READY_FOR_HUMAN = "ready-for-human";
 /** Marks a SPEC. Only a Specific SPEC target requires it. */
 export const SPEC = "spec";
 /**
+ * The one label this runner ever writes: a drained SPEC awaiting the
+ * maintainer's code review and manual pull request. Never read as a gate — it is
+ * a handoff to a human, and `docs/agents/triage-labels.md` is the contract it
+ * makes true.
+ */
+export const CODE_REVIEW = "code-review";
+/**
  * The first line of every comment a run writes about itself. Normalization drops
  * any comment carrying it, so the fifth run of one SPEC does not read four
  * previous run reports as evidence about the work (#394).
@@ -132,6 +139,35 @@ export interface IssueRecord {
 export type Eligibility =
   | { readonly status: "eligible" }
   | { readonly status: "excluded"; readonly reasons: readonly ExclusionReason[] };
+
+/**
+ * An issue as GitHub answers for it *right now*, rather than as this run froze
+ * it. Three fields, because every live re-read a run makes — the settle-time
+ * bounce check and the end-of-run handoff — asks only whether it is open and
+ * what it carries.
+ *
+ * Deliberately not an `IssueRecord`: a live read is never allowed to widen
+ * membership or to replace a frozen record, and a type that could not carry a
+ * body or an edge cannot be mistaken for one that does.
+ */
+export interface LiveIssueState {
+  readonly number: number;
+  readonly state: "open" | "closed";
+  readonly labels: readonly string[];
+}
+
+/**
+ * The anchor's tree as GitHub answers for it at the end of a run — the only
+ * input the `code-review` handoff is decided from.
+ *
+ * Live rather than frozen, deliberately: the whole question is whether the
+ * tracker now says every released slice is closed, and the snapshot is by
+ * definition the state before the run did anything about it.
+ */
+export interface HandoffState {
+  readonly anchor: LiveIssueState;
+  readonly descendants: readonly LiveIssueState[];
+}
 
 /** A normalized issue, plus what this scope makes of it. */
 export interface IssueSnapshot extends IssueRecord {
@@ -407,8 +443,12 @@ export function issueByNodeId(
  * question — a blocker nobody is going to run is not an ordering constraint,
  * it is either an exclusion (at build time) or already satisfied (at a wave
  * boundary).
+ *
+ * Exported for `drivers/outcomes.mts`, which asks it a fourth way: whose
+ * foundation did this failure just remove? That is the same edge read, and
+ * re-deriving it there would be one more place for the in-set rule to drift.
  */
-function blockersWithin(
+export function blockersWithin(
   snapshot: WorkScopeSnapshot,
   nodeId: string,
   within: ReadonlySet<string>,

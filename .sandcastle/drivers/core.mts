@@ -18,7 +18,47 @@
 
 import type { Dispatch, DriverId, Workflow } from "../contract.mts";
 import type { RepoConfig } from "../repo.mts";
-import type { WorkItem } from "../scope/snapshot.mts";
+import type { Revalidation } from "../scope/github.mts";
+import type {
+  HandoffState,
+  LiveIssueState,
+  WorkItem,
+  WorkScopeSnapshot,
+} from "../scope/snapshot.mts";
+
+/**
+ * The tracker reads a driver makes *while it runs*, as opposed to the frozen
+ * snapshot it was handed. Three, and each answers a question the snapshot
+ * cannot: has this moved under us, was it bounced, and is the SPEC drained?
+ *
+ * Bound to this run's snapshot by `prepare()` rather than reached for by the
+ * driver, which is what keeps a driver testable against a fake core — and what
+ * keeps `revalidate` from ever being asked about an item outside the allow-list.
+ */
+export interface IssueReads {
+  /** Immediately before dispatch, so stale or newly ineligible work never runs. */
+  readonly revalidate: (item: WorkItem) => Promise<Revalidation>;
+  /** At settle. This is where a bounce is observed, and the only place. */
+  readonly liveState: (item: WorkItem) => Promise<LiveIssueState>;
+  /** At end of run, after every correction has landed. `null` with no anchor. */
+  readonly handoff: () => Promise<HandoffState | null>;
+}
+
+/**
+ * What a driver may ask git about the workspace branch.
+ *
+ * Deliberately reads only. Git is the one toolchain this runner is allowed to
+ * branch on — it is framework-neutral — and these two are how *committed* and
+ * *no commits* are observed from outside the workflow, which is what stops a
+ * body from holding the transitive skip set.
+ */
+export interface WorkspaceGit {
+  /** The branch every item's work is expected to reach, by name. */
+  readonly branch: string;
+  readonly headSha: () => string;
+  /** `git rev-list --count <sha>..HEAD`. */
+  readonly commitsSince: (sha: string) => number;
+}
 
 /**
  * Everything a driver may reach, and the only value from which a `Dispatch` can
@@ -36,11 +76,23 @@ export interface RunCore {
    */
   readonly work: readonly WorkItem[];
   /**
+   * The frozen snapshot `work` was cut from — the dependency edges, the
+   * membership and the anchor.
+   *
+   * A driver may read this and a workflow may not, and that is the whole of the
+   * split: the driver owns the skip set, the levels and the order, so it is the
+   * one component that has to see an edge. Everything it does with them lives in
+   * `drivers/outcomes.mts`, where it is pure and asserted.
+   */
+  readonly scope: WorkScopeSnapshot;
+  /**
    * This repository's shape. A driver passes these commands through and never
    * reads their output — it may run a command whose result it discards, and
    * never one whose exit code it branches on, git excepted.
    */
   readonly repo: RepoConfig;
+  readonly issues: IssueReads;
+  readonly git: WorkspaceGit;
   /**
    * A dispatch on the host checkout already scoped to one work item, with
    * `{{WORK}}` written for it. `item` must be one of `work`.

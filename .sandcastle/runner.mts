@@ -28,11 +28,17 @@ import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import type { RunModel } from "./agents/models.mts";
 import type { ResolvedPlan } from "./cli/flow.mts";
 import type { Dispatch, DispatchOptions } from "./contract.mts";
-import type { RunCore } from "./drivers/core.mts";
+import type { IssueReads, RunCore, WorkspaceGit } from "./drivers/core.mts";
 import { runnableDriver } from "./drivers/registry.mts";
 import { PROVIDERS, validateModel } from "./providers/registry.mts";
 import { repo } from "./repo.mts";
-import { assertGitHubAuth } from "./scope/github.mts";
+import {
+  assertGitHubAuth,
+  ghTransport,
+  readHandoffState,
+  readLiveState,
+  revalidate,
+} from "./scope/github.mts";
 import {
   anchorRecord,
   runOrder,
@@ -201,6 +207,43 @@ function assertWorkspaceIsClean(): void {
 }
 
 // ---------------------------------------------------------------------------
+// What a driver may read while it runs
+// ---------------------------------------------------------------------------
+
+/**
+ * The workspace branch, and the two commit counts that turn *did anything
+ * happen* into a fact.
+ *
+ * Git's exit code is the one this runner is allowed to branch on, because git
+ * is framework-neutral — it says nothing about what language this repository is
+ * written in. Everything about the toolchain is `repo.mts`'s, and it is passed
+ * through rather than interpreted.
+ */
+function workspaceGit(): WorkspaceGit {
+  return {
+    branch: git("rev-parse --abbrev-ref HEAD").trim(),
+    headSha: () => git("rev-parse HEAD").trim(),
+    commitsSince: (sha) => Number(git(`rev-list --count ${sha}..HEAD`).trim()),
+  };
+}
+
+/**
+ * The three live tracker reads, each bound to this run's frozen snapshot.
+ *
+ * Bound here rather than reached for by the driver, so an item outside the
+ * allow-list cannot be revalidated into one — and so the whole of a driver's
+ * GitHub access is a value a test can substitute.
+ */
+function issueReads(scope: WorkScopeSnapshot): IssueReads {
+  const transport = ghTransport();
+  return {
+    revalidate: (item) => revalidate(scope, item.nodeId, transport),
+    liveState: (item) => readLiveState(item.number, transport),
+    handoff: () => readHandoffState(scope, transport),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Prompt args
 // ---------------------------------------------------------------------------
 
@@ -292,7 +335,10 @@ export function prepare(plan: ResolvedPlan): RunCore {
 
   return {
     work,
+    scope: plan.scope,
     repo,
+    issues: issueReads(plan.scope),
+    git: workspaceGit(),
     // JSON, never markdown: an item body containing a fenced block would break
     // straight out of a markdown splice, while JSON escapes every newline and
     // can never start a line with a fence.
