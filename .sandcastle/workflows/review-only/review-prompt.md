@@ -18,6 +18,8 @@ Do not delegate any part of this review to a skill, a slash command or a sub-age
 
 ## Refreshing the remote's main
 
+<!-- sandcastle-known-defect: 417 — this block mutates git state and stops there, so the two reads below are racing it rather than following it. Declared so the sweep that catches it can ship green; the fix, which chains each read onto the fetch, is slice 12 of SPEC 418. -->
+
 !`git fetch origin main`
 
 The fetch above ran before you started. A stale remote-tracking ref would diff this branch against the wrong base and quietly review the wrong changes, so if it failed, this run has already stopped.

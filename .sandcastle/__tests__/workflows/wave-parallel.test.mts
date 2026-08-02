@@ -1,21 +1,21 @@
-// What the parallel workflow declares, and the two claims its folder rests on.
+// What the parallel workflow declares, and the claim its body rests on.
 //
-// The claims are the interesting part, and both are file comparisons rather than
-// prose. The pair of item prompts are copies of the sequential pair — a copy
-// keeps ADR-0010's folder seam absolute at the cost of a fix applied twice, and
-// that cost is only payable if the divergence is *detectable*. The body is a
-// copy for a stronger reason: if the same six lines run one item at a time under
-// one driver and three at a time under another, then the execution shape is
-// entirely the driver's, which is the whole claim of the seam.
+// The claim is the interesting part, and it is a comparison rather than prose:
+// the body is a copy of the sequential one, and if the same six lines run one
+// item at a time under one driver and three at a time under another, then the
+// execution shape is entirely the driver's — which is the whole claim of the
+// seam. The matching claim about the *prompts* is the same shape one level up,
+// and it is enumerated from `WORKFLOWS` in `__tests__/sweeps/prompts.test.mts`
+// rather than asserted here about two filenames.
 
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { MERGER, PLANNER } from "../../agents/catalog.mts";
 import type { Agent, Dispatch, DispatchOptions, Workflow } from "../../contract.mts";
-import { MERGE_PROMPT, MERGE_TAG } from "../../drivers/merger.mts";
-import { PLAN_PROMPT, PLAN_TAG } from "../../drivers/planner.mts";
+import { MERGE_PROMPT } from "../../drivers/merger.mts";
+import { PLAN_PROMPT } from "../../drivers/planner.mts";
 import { sequentialReviewer } from "../../workflows/sequential-reviewer/workflow.mts";
 import { waveParallelReviewer } from "../../workflows/wave-parallel/workflow.mts";
 import { fakeItem } from "../support/scope.mts";
@@ -89,33 +89,16 @@ describe("the wave-parallel body", () => {
   });
 });
 
+// Two claims this folder used to make for itself now belong to
+// `__tests__/sweeps/prompts.test.mts`, and the move is the point rather than a
+// tidy-up: *this pair is a byte-identical copy* and *each consulted prompt
+// emits its tag* were written here as two literal lists — the pair of
+// filenames, and the pair of `(prompt, tag)` constants. Written that way they
+// stop covering the third copy and the third consult the day either is added,
+// while the suite stays green. Enumerated from `WORKFLOWS` and from the
+// `core.consult` calls themselves, they cover both today and whatever lands
+// next. What stays below is what is genuinely about *this* workflow.
 describe("the wave-parallel folder", () => {
-  it("holds a byte-identical copy of the sequential pair", () => {
-    for (const file of ["implement-prompt.md", "review-prompt.md"]) {
-      assert.equal(
-        promptIn(waveParallelReviewer, file),
-        promptIn(sequentialReviewer, file),
-        `${file} has drifted from the sequential-reviewer copy it was lifted from`,
-      );
-    }
-  });
-
-  it("holds the two prompts the driver consults, and each emits its own tag", () => {
-    // `run()` throws `output tag <x> not found in the resolved prompt`, an hour
-    // into a wave, so the literal tag is asserted here instead.
-    for (const [file, tag] of [
-      [PLAN_PROMPT, PLAN_TAG],
-      [MERGE_PROMPT, MERGE_TAG],
-    ] as const) {
-      const promptPath = resolve(waveParallelReviewer.dir, file);
-      assert.ok(existsSync(promptPath), `missing prompt: ${promptPath}`);
-      assert.ok(
-        promptIn(waveParallelReviewer, file).includes(`<${tag}>`),
-        `${file} never opens the <${tag}> block its dispatch reads`,
-      );
-    }
-  });
-
   it("asks the Planner for exactly the two arguments the driver writes", () => {
     const plan = promptIn(waveParallelReviewer, PLAN_PROMPT);
     assert.match(plan, /\{\{READY\}\}/);
