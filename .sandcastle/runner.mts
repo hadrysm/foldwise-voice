@@ -1,11 +1,15 @@
 // The only module that calls `sandcastle.run()`, and therefore the only place
 // ADR-0001's constraint is written down: agents run unsandboxed
-// (`noSandbox()`, because the macOS-only Swift package cannot build in a Linux
+// (`noSandbox()`, because this repository's toolchain cannot build in a Linux
 // container) and in place on the current branch (`head`, because this runner is
 // launched inside Conductor, where the workspace is already an isolated
 // worktree on its own branch, so Sandcastle adds no isolation of its own). See
 // docs/adr/0001-sandcastle-in-place-not-sandboxed.md. A workflow cannot
 // contradict either one, because `DispatchOptions` omits the keys that could.
+//
+// Nothing here knows what this repository is written in. The commands that do
+// live in `.sandcastle/repo.mts`, and the runner only ever passes them through
+// — it never reads their output and never branches on their exit code.
 //
 // Split by side effect. `resolveAgents` is pure — every provider factory is an
 // object literal — so the memoisation that makes "same model for both agents"
@@ -24,12 +28,15 @@ import type { RunModel } from "./agents/models.mts";
 import type { ResolvedPlan } from "./cli/flow.mts";
 import type { Dispatch } from "./contract.mts";
 import { PROVIDERS, validateModel } from "./providers/registry.mts";
+import { repo } from "./repo.mts";
 
-// Hooks run on the host checkout before each agent starts. Pre-resolving Swift
-// dependencies keeps the agent's first build fast; the command is idempotent,
-// so running it once per dispatch is harmless.
+// Under `noSandbox()` the "sandbox" *is* the host checkout, so this is where
+// `repo.onHostReady` lands. Every command it names is idempotent by contract,
+// which is what makes running them once per dispatch harmless.
+// `repo.onWorktreeReady` has no site on this path: `createWorktree` executes
+// `host.onWorktreeReady`, and that path arrives with the wave-parallel driver.
 const HOOKS = {
-  sandbox: { onSandboxReady: [{ command: "swift package resolve" }] },
+  sandbox: { onSandboxReady: repo.onHostReady },
 };
 
 /**
