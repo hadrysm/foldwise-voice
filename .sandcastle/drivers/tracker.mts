@@ -40,6 +40,7 @@ import {
   trackerActs,
   type ItemRecord,
   type Settlement,
+  type TrackerActs,
 } from "./outcomes.mts";
 
 /**
@@ -109,14 +110,19 @@ export interface Correction {
  * aborts the run, nothing is auto-cleaned on abort and there is no resume — so a
  * sweep would never execute in precisely the run that went worst. Per-item
  * correction is abort-safe by construction.
+ *
+ * Returns what it did rather than narrating it. The two drivers say it
+ * differently — `sequential` writes a line of its own and `wave-parallel` folds
+ * the reopen into its item line as a `↻ reopened` annotation — and a module that
+ * printed for both would force one of them to print twice.
  */
-export function correctItem(tracker: Tracker, correction: Correction): void {
+export function correctItem(tracker: Tracker, correction: Correction): TrackerActs {
   const acts = trackerActs({
     closed: correction.closed,
     commits: correction.settlement.commits,
     merged: correction.merged,
   });
-  if (!acts.reopen && !acts.comment) return;
+  if (!acts.reopen && !acts.comment) return acts;
 
   const body = correctionComment({
     reopened: acts.reopen,
@@ -127,17 +133,11 @@ export function correctItem(tracker: Tracker, correction: Correction): void {
     logPath: correction.logPath,
   });
 
-  const number = correction.item.number;
-  const missed = `its work never reached ${correction.workspaceBranch}`;
   // One act, not two: a reopen carries its comment, so an issue never gets the
   // same paragraph twice.
-  if (acts.reopen) {
-    tracker.reopen(number, body);
-    console.log(`  ↻ #${number} reopened — ${missed}`);
-  } else {
-    tracker.comment(number, body);
-    console.log(`  ✎ #${number} commented — ${missed}`);
-  }
+  if (acts.reopen) tracker.reopen(correction.item.number, body);
+  else tracker.comment(correction.item.number, body);
+  return acts;
 }
 
 // ---------------------------------------------------------------------------

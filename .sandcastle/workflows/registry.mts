@@ -9,5 +9,10 @@
 import type { Workflow } from "../contract.mts";
 import { reviewOnly } from "./review-only/workflow.mts";
 import { sequentialReviewer } from "./sequential-reviewer/workflow.mts";
+import { waveParallelReviewer } from "./wave-parallel/workflow.mts";
 
-export const WORKFLOWS: readonly Workflow[] = [sequentialReviewer, reviewOnly];
+export const WORKFLOWS: readonly Workflow[] = [
+  sequentialReviewer,
+  waveParallelReviewer,
+  reviewOnly,
+];

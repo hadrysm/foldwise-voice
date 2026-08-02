@@ -653,3 +653,88 @@ describe("what a wave-parallel run reports", () => {
     assert.match(run.report, /completed {2}4/);
   });
 });
+
+/** Every `n/m settled` the run printed, in the order it printed them. */
+function fractions(printed: readonly string[]): readonly (readonly [number, number])[] {
+  return printed.flatMap((line) => {
+    const match = /(\d+)\/(\d+) settled/.exec(stripColour(line));
+    return match ? [[Number(match[1]), Number(match[2])] as const] : [];
+  });
+}
+
+function stripColour(line: string): string {
+  return line.replace(/\u001b\[[0-9;]*m/g, "");
+}
+
+describe("the ledger a wave-parallel run writes", () => {
+  it("advances the fraction once per item and never moves the denominator", async (t) => {
+    // The property, on the run that stresses it: #419 crashes and #420 is
+    // skipped transitively. Membership is frozen and truncation is a prefix, so
+    // a skip **settles** an item rather than shrinking the total — the fraction
+    // only ever grows, which is what makes it readable at a glance.
+    const run = await drive(t, {
+      issues: CHAINED,
+      maxParallel: 3,
+      scripts: { 419: crashesWith("the provider hung up") },
+    });
+
+    const seen = fractions(run.printed);
+    assert.deepEqual(
+      seen.map(([, total]) => total),
+      seen.map(() => 3),
+      run.printed.join("\n"),
+    );
+    for (const [index, [settled]] of seen.entries()) {
+      const previous = seen[index - 1]?.[0] ?? 0;
+      assert.ok(settled > previous, `${previous} → ${settled}\n${run.printed.join("\n")}`);
+    }
+    assert.deepEqual(seen.at(-1), [3, 3]);
+  });
+
+  it("says the same thing about an item live and in the end-of-run block", async (t) => {
+    const run = await drive(t, { maxParallel: 3 });
+
+    // One `itemLine`, called twice: a line the maintainer learned to read at
+    // 02:00 reads the same in the morning, minus the clock and the fraction —
+    // which are the two things that only mean anything while the run is moving.
+    const live = run.printed.map(stripColour).find((line) => /^\d\d:\d\d.+#419/.test(line));
+    assert.ok(live, run.printed.join("\n"));
+    const core = live.replace(/^\d\d:\d\d\s\s/, "").replace(/\s\s\d+\/\d+ settled$/, "");
+
+    const everyLine = run.printed
+      .map(stripColour)
+      .flatMap((printed) => printed.split("\n"))
+      .filter((line) => !/^\d\d:\d\d/.test(line));
+    assert.ok(
+      everyLine.some((line) => line === `  ${core}`),
+      `the end-of-run block never repeated:\n  ${core}\n\n${everyLine.join("\n")}`,
+    );
+  });
+
+  it("repeats the log path under a failure and never under a success", async (t) => {
+    const run = await drive(t, {
+      maxParallel: 3,
+      scripts: { 419: COMMITS_NOTHING },
+    });
+
+    const hints = run.printed.map(stripColour).filter((line) => line.includes("tail -f"));
+    // Sandcastle prints the path once, at dispatch, an hour before anyone wants
+    // it. The driver repeats it exactly where it becomes useful — and an
+    // approved item never gets one, because there is nothing to read.
+    assert.equal(hints.length, 1, hints.join("\n"));
+    assert.match(hints[0] ?? "", /419/);
+  });
+
+  it("annotates a bounced item without changing what became of it", async (t) => {
+    const run = await drive(t, { maxParallel: 3, openAtSettle: [420] });
+
+    const line = run.printed
+      .map(stripColour)
+      .find((printed) => /^\d\d:\d\d.+#420/.test(printed));
+    assert.ok(line, run.printed.join("\n"));
+    // A bounce is an annotation, never an outcome: it merges like a success and
+    // its dependents proceed.
+    assert.ok(line.includes("↩ bounced"), line);
+    assert.ok(line.includes("merged"), line);
+  });
+});

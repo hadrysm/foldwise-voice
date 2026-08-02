@@ -141,7 +141,7 @@ export async function driveSequentialWith(
     record(item, { kind: "settled", ...settlement });
     console.log(`  · #${item.number} ${outcomeLabel(settlement)}`);
 
-    correctItem(tracker, {
+    const acts = correctItem(tracker, {
       item,
       settlement,
       closed: live.state === "closed",
@@ -153,6 +153,11 @@ export async function driveSequentialWith(
       branch: null,
       logPath: null,
     });
+    // Said here rather than by the tracker: what a correction *is* belongs to
+    // that module, and how a run says it belongs to the driver that ran it.
+    const missed = `its work never reached ${core.git.branch}`;
+    if (acts.reopen) console.log(`  ↻ #${item.number} reopened — ${missed}`);
+    else if (acts.comment) console.log(`  ✎ #${item.number} commented — ${missed}`);
 
     // A reopened item is never eligible again in the run that reopened it, and
     // needs no rule of its own to say so: everything that reopens is something

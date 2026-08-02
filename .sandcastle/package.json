@@ -5,8 +5,6 @@
   "private": true,
   "scripts": {
     "check-types": "tsc --noEmit",
-    "prototype:scope-picker": "cd .. && .sandcastle/node_modules/.bin/tsx .sandcastle/PROTOTYPE-scope-first-picker/tui.mts",
-    "prototype:wave-report": "cd .. && .sandcastle/node_modules/.bin/tsx .sandcastle/PROTOTYPE-wave-run-report/run.mts",
     "sandcastle": "cd .. && .sandcastle/node_modules/.bin/tsx .sandcastle/main.mts",
     "test": "node --import tsx --test \"__tests__/**/*.test.mts\""
   },
