@@ -12,7 +12,9 @@
 // asserted directly in `__tests__/drivers/outcomes.test.mts`.
 
 import assert from "node:assert/strict";
-import type { Dispatch } from "../../contract.mts";
+import type { TestContext } from "node:test";
+import { IMPLEMENTER } from "../../agents/catalog.mts";
+import type { Dispatch, DriverId, Workflow } from "../../contract.mts";
 import type { RunCore } from "../../drivers/core.mts";
 import type { Tracker } from "../../drivers/tracker.mts";
 import { repo } from "../../repo.mts";
@@ -23,8 +25,40 @@ import {
   type WorkItem,
   type WorkScopeSnapshot,
 } from "../../scope/snapshot.mts";
+import { sequentialReviewer } from "../../workflows/sequential-reviewer/workflow.mts";
 
 export const FAKE_WORKSPACE_BRANCH = "t3code/fake-workspace";
+
+/** What a body was handed, in the order the driver handed it over. */
+export interface BodyCall {
+  readonly item: WorkItem | null;
+}
+
+/** A workflow that records what its body was given and dispatches once. */
+export function recording(driver: DriverId, calls: BodyCall[]): Workflow {
+  return {
+    ...sequentialReviewer,
+    id: `recording-${driver}`,
+    driver,
+    run: async ({ item, dispatch }) => {
+      calls.push({ item });
+      await dispatch(IMPLEMENTER, { promptFile: "implement-prompt.md" });
+    },
+  };
+}
+
+/**
+ * Capture the driver's narration instead of printing it. A driver narrates each
+ * item and prints its run report, and the report is the only way to assert what
+ * a run concluded — so this returns the lines rather than discarding them.
+ */
+export function captureNarration(t: TestContext): string[] {
+  const printed: string[] = [];
+  t.mock.method(console, "log", (line: unknown) => {
+    printed.push(String(line));
+  });
+  return printed;
+}
 
 /** One write the run made to the tracker. */
 export interface TrackerWrite {
