@@ -20,6 +20,8 @@ You were not given a queue and there is no next item to move to. Do not query th
 !`cat docs/agents/issue-tracker.md`
 ````
 
+That document is shared with the humans and the planning agents who use this tracker, so it also records how work is *found* — a listing recipe and a frontier query. Neither is yours. It is included here for the writes you make against the one item above: comment, and close.
+
 ## Coding standards
 
 ````markdown
