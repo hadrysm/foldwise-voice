@@ -34,11 +34,12 @@ describe("every shipped prompt", () => {
     // against whatever base it happened to get.
     //
     // Reconciled against the defects the prompts declare for themselves rather
-    // than asserted flat. One prompt is #417, which slice 12 of this SPEC fixes:
-    // this slice owns the rule and that one owns the instance, so the rule ships
-    // reconciled rather than either reaching over to fix the file or going in
-    // red. The reconciliation is two-way, so the fix cannot leave the
-    // declaration behind.
+    // than asserted flat. The register is empty today — #417 was the one entry,
+    // and the slice that chained each read onto its own fetch had to delete the
+    // declaration to stay green, because the reconciliation is two-way. It is
+    // kept for the next rule that lands before its instance is fixed: that is
+    // the case where the alternatives are a sweep shipped silent or a suite
+    // shipped red, and both are worse than a declaration in the file itself.
     const prompts = everyPrompt();
     assertClean(reconcileKnownDefects(shellBlocksLeaveGitAlone(prompts), knownDefects(prompts)));
   });
