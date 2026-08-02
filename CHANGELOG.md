@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.20.1](https://github.com/hadrysm/foldwise-voice/compare/v0.20.0...v0.20.1) (2026-08-02)
+
+
+### Bug Fixes
+
+* **history:** move Clear all above the lazily loaded list ([#455](https://github.com/hadrysm/foldwise-voice/issues/455)) ([9109bc6](https://github.com/hadrysm/foldwise-voice/commit/9109bc6fa0009a291a0ab27ea843d6c0ecdf8996))
+* **settings:** keep the Models ledger still when a row is clicked ([#454](https://github.com/hadrysm/foldwise-voice/issues/454)) ([27f30c3](https://github.com/hadrysm/foldwise-voice/commit/27f30c332289b3bba3dfdfeb2c40454488e793da))
+* **settings:** stop clicks focusing Models inspector status text ([#457](https://github.com/hadrysm/foldwise-voice/issues/457)) ([c5240fd](https://github.com/hadrysm/foldwise-voice/commit/c5240fdd15e1e7db91c4744cf11bb09e56f7eb6f))
+
 ## [0.20.0](https://github.com/hadrysm/foldwise-voice/compare/v0.19.0...v0.20.0) (2026-08-02)
 
 
