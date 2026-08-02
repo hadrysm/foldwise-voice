@@ -409,7 +409,7 @@ export function prepare(plan: ResolvedPlan): RunCore {
    * injects `SOURCE_BRANCH`/`TARGET_BRANCH` as this item's branch and rejects
    * any override, and the agent's cwd *is* the worktree.
    */
-  const openWorktree: RunCore["openWorktree"] = async (item, branch, signal) => {
+  const openWorktree: RunCore["openWorktree"] = async (item, branch, signal, onActivity) => {
     const worktree = await sandcastle.createWorktree({
       // `CreateWorktreeOptions.branchStrategy` excludes `head` at the type
       // level, so ADR-0001's in-place strategy is a compile error here rather
@@ -440,7 +440,17 @@ export function prepare(plan: ResolvedPlan): RunCore {
         hooks: WORKTREE_HOOKS,
         // Not a preference. `stdout` resolves to a cursor-owning Clack display,
         // and three concurrent dispatches would fight over one cursor.
-        logging: { type: "file", path: logPath },
+        //
+        // `onAgentStreamEvent` exists only on this variant, which is the whole
+        // reason the driver has a silence alarm at all. Narrowed to a string on
+        // the way through: the driver is told *that* the agent spoke and roughly
+        // what it was doing, never handed a Sandcastle type to branch on.
+        logging: {
+          type: "file",
+          path: logPath,
+          onAgentStreamEvent: (event) =>
+            onActivity(event.type === "toolCall" ? event.name : "thinking"),
+        },
         // The item's wall-clock bound, held by the driver. There is no key on
         // `DispatchOptions` that reaches it.
         signal,

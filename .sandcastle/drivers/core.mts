@@ -186,11 +186,19 @@ export interface RunCore {
    * steps only (copy, git setup, commit collection), never the agent run, so
    * without this a wedged item stalls its wave until the 600-second idle timeout
    * kills a silent agent, and orphaned test processes may outlive even that.
+   *
+   * `onActivity` is the *only* live signal a concurrent item can produce, and it
+   * exists for exactly one reason: an item that has gone quiet is flagged five
+   * minutes later instead of thirty minutes after that, when its timeout finally
+   * fires. It arrives here too, and as a plain string rather than Sandcastle's
+   * `AgentStreamEvent`, because the callback it feeds hangs off `logging`, which
+   * is the runner's — and log-to-file mode is the only mode concurrency permits.
    */
   readonly openWorktree: (
     item: WorkItem,
     branch: string,
     signal: AbortSignal,
+    onActivity: (what: string) => void,
   ) => Promise<ItemWorktree>;
 }
 

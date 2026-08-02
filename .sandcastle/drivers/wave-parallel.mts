@@ -47,6 +47,14 @@ import type { Workflow } from "../contract.mts";
 import { levels, type WorkItem } from "../scope/snapshot.mts";
 import type { ItemWorktree, RunCore } from "./core.mts";
 import { waveGit, type MergeAttempt } from "./git.mts";
+import {
+  itemLine,
+  ledgerOutcome,
+  liveness,
+  logHint,
+  wantsLog,
+  type LedgerItem,
+} from "./ledger.mts";
 import { askMerger, mergeLine, mergerAction, type WavePayload } from "./merger.mts";
 import {
   cascade,
@@ -54,7 +62,6 @@ import {
   foundationExists,
   itemBranch,
   mergerSkip,
-  outcomeLabel,
   type ItemOutcome,
   type ItemRecord,
   type LoopOutcome,
@@ -63,6 +70,16 @@ import {
 } from "./outcomes.mts";
 import { selectWave } from "./planner.mts";
 import { correctItem, ghTracker, handOff, type Tracker } from "./tracker.mts";
+
+/**
+ * How often the heartbeat is *asked*, which is not how often it speaks.
+ *
+ * The metronome is on a ten-minute grid and the alarm fires five minutes into a
+ * silence; this is only the resolution at which either is noticed, so it is
+ * short enough that an alarm is not stale and long enough that an idle run wakes
+ * twice a minute.
+ */
+const TICK_MS = 30_000;
 
 /** What the driver needs that is neither the run's core nor its workflow. */
 export interface WaveDeps {
@@ -84,6 +101,15 @@ export function driveWaveParallel(core: RunCore, workflow: Workflow): Promise<vo
     repoRoot: process.cwd(),
     tracker: ghTracker(),
   });
+}
+
+/**
+ * The two the ledger composes on one line, because they are facts about
+ * different things — the reviewer's ruling, and where the code ended up.
+ */
+interface Annotations {
+  readonly bounced?: boolean;
+  readonly reopened?: boolean;
 }
 
 /** One item's attempt, from the branch it was given to what git said about it. */
@@ -109,6 +135,16 @@ interface Settled {
   readonly closed: boolean;
   /** What git said at fan-in, kept for the Merger's payload. */
   readonly attempted: MergeAttempt | null;
+  /**
+   * What this particular failure said, when the outcome alone does not say it —
+   * the exception's message, or the paths git refused over. `null` when the
+   * outcome is the whole story.
+   *
+   * Not `readonly`, for the same reason `settlement` is not: a branch git refused
+   * and the Merger then merged by hand is no longer a rewind, and a note that
+   * said so would contradict the outcome on its own line.
+   */
+  note: string | null;
 }
 
 export async function driveWaveParallelWith(
@@ -122,14 +158,51 @@ export async function driveWaveParallelWith(
   // Everything the run has an answer about, settled or drifted. Membership is
   // frozen, so this only ever grows and the total never shrinks.
   const answered = new Set<string>();
+  // The ledger line each item was given, kept so the end-of-run block can render
+  // *that* line rather than recompute one. Structural rather than tested: there
+  // is no second derivation to drift from the first, so a line the maintainer
+  // learned to read at 02:00 cannot read differently in the morning.
+  const lines = new Map<string, LedgerItem>();
   const total = core.work.length;
   const timeoutMs = Math.round(core.repo.itemTimeout.minutes * 60_000);
+  const startedAt = Date.now();
+  const beat = liveness(timeoutMs);
   let aborted: string | null = null;
   let waveNumber = 0;
 
   const record = (item: WorkItem, outcome: ItemOutcome, branch: string | null): void => {
     records.set(item.nodeId, { item, outcome, branch });
     answered.add(item.nodeId);
+  };
+
+  /**
+   * One item's line, written once, the moment the run has an answer about it.
+   *
+   * Called after `record`, always: the fraction it carries counts this item, so
+   * a run that printed first would say `0/4 settled` beside its first answer.
+   */
+  const announce = (
+    item: WorkItem,
+    outcome: ItemOutcome,
+    detail: string | null,
+    logPath: string | null,
+    annotations: Annotations = {},
+  ): void => {
+    const rendered = ledgerOutcome(outcome);
+    const line: LedgerItem = {
+      number: item.number,
+      title: item.title,
+      outcome: rendered.outcome,
+      detail: detail ?? rendered.detail,
+      ...annotations,
+    };
+    lines.set(item.nodeId, line);
+    console.log(
+      itemLine(line, { elapsedMs: Date.now() - startedAt, settled: answered.size, total }),
+    );
+    // Only where it becomes useful. An approved item never gets one: there is
+    // nothing to read.
+    if (logPath !== null && wantsLog(rendered.outcome)) console.log(logHint(logPath));
   };
 
   /**
@@ -145,11 +218,21 @@ export async function driveWaveParallelWith(
       // A dependent the run guard already cut is skipped without being reported:
       // it was never part of this run to begin with.
       if (!item) continue;
-      record(item, { kind: "skipped", reason: drop.reason }, null);
-      console.log(`  ↷ #${item.number} skipped — ${drop.reason}`);
+      const outcome: ItemOutcome = { kind: "skipped", reason: drop.reason };
+      record(item, outcome, null);
+      // A transitive skip **settles** an item rather than shrinking the total:
+      // membership was frozen before the run began, so the fraction grows here
+      // exactly as it does for an item that ran.
+      announce(item, outcome, null, null);
     }
     skipped.add(failed.nodeId);
   };
+
+  const heartbeat = setInterval(() => {
+    for (const line of beat.tick(Date.now() - startedAt)) console.log(line);
+  }, TICK_MS);
+  // A display must not be the reason a finished run keeps the process alive.
+  heartbeat.unref();
 
   while (aborted === null) {
     const pending = core.work.filter(
@@ -187,8 +270,9 @@ export async function driveWaveParallelWith(
         abort(check.detail);
         break;
       }
-      console.log(`\n· #${item.number} — drift: ${check.detail}`);
-      record(item, { kind: "drift", detail: check.detail }, null);
+      const outcome: ItemOutcome = { kind: "drift", detail: check.detail };
+      record(item, outcome, null);
+      announce(item, outcome, `drift — ${check.detail}`, null);
       if (action === "skip-transitively") dropDependents(item);
     }
 
@@ -209,11 +293,24 @@ export async function driveWaveParallelWith(
     // ordinary rather than exceptional — the survivors merge and the run goes on.
     const outcomes = await Promise.allSettled(
       wave.map(async (attempt) => {
-        const worktree = await core.openWorktree(attempt.item, attempt.branch, attempt.signal);
+        const number = attempt.item.number;
+        const worktree = await core.openWorktree(
+          attempt.item,
+          attempt.branch,
+          attempt.signal,
+          (what) => beat.spoke(number, what, Date.now() - startedAt),
+        );
         attempt.worktree = worktree;
-        // The dispatch already *is* this item; the body is handed the item to
-        // read and can neither name another nor learn that a sibling exists.
-        await workflow.run({ item: attempt.item, dispatch: worktree.dispatch });
+        beat.enter({ number, logPath: worktree.logPath }, Date.now() - startedAt);
+        try {
+          // The dispatch already *is* this item; the body is handed the item to
+          // read and can neither name another nor learn that a sibling exists.
+          await workflow.run({ item: attempt.item, dispatch: worktree.dispatch });
+        } finally {
+          // In a `finally`, because a crashed item that stayed in the heartbeat
+          // would be reported as silent for the rest of the run.
+          beat.leave(number);
+        }
       }),
     );
 
@@ -233,9 +330,10 @@ export async function driveWaveParallelWith(
     for (const entry of settled) {
       const { attempt, settlement } = entry;
       record(attempt.item, { kind: "settled", ...settlement }, attempt.branch);
-      console.log(`  · #${attempt.item.number} ${outcomeLabel(settlement)}`);
 
-      correctItem(deps.tracker, {
+      // Before the line rather than after it: the reopen is one of the two
+      // annotations the line carries, and an item's whole answer is one line.
+      const acts = correctItem(deps.tracker, {
         item: attempt.item,
         settlement,
         closed: entry.closed,
@@ -244,15 +342,24 @@ export async function driveWaveParallelWith(
         branch: attempt.branch,
         logPath: attempt.worktree?.logPath ?? null,
       });
+      announce(
+        attempt.item,
+        { kind: "settled", ...settlement },
+        entry.note,
+        attempt.worktree?.logPath ?? null,
+        { bounced: settlement.bounced, reopened: acts.reopen },
+      );
 
       // Nothing is ever auto-cleaned on abort. The items themselves still get
       // their record and their tracker correction — they settled, and what
       // stopped the run was the combination rather than any one of them.
       if (aborted === null) cleanUp(attempt, settlement.merge === "merged");
       if (!foundationExists(settlement)) dropDependents(attempt.item);
-      console.log(`  ${answered.size}/${total} settled`);
     }
   }
+
+  clearInterval(heartbeat);
+  console.log(`\n${finalLedger()}`);
 
   await handOff(deps.tracker, core, {
     records: core.work.flatMap((item) => records.get(item.nodeId) ?? []),
@@ -273,15 +380,16 @@ export async function driveWaveParallelWith(
     waveBase: string,
   ): Promise<Settled> {
     let loop: LoopOutcome = "committed";
+    // What this failure said, kept rather than printed: an item's whole answer
+    // is one line, and that line is written once, after the fan-in has decided
+    // the second half of it.
+    let note: string | null = null;
     if (outcome?.status === "rejected") {
       // The signal is the discriminator, and it has to be: a hang is not
       // evidence about the work item, and every stop condition turns on *does
       // the foundation exist* — which a timeout answers neither way.
       loop = attempt.signal.aborted ? "timed-out" : "crashed";
-      const detail =
-        outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
-      const label = loop === "timed-out" ? "timed out" : "crashed";
-      console.log(`  ✖ #${attempt.item.number} ${label}: ${detail}`);
+      note = outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
     }
 
     const commits = git.commitsOn(attempt.branch, waveBase);
@@ -294,7 +402,7 @@ export async function driveWaveParallelWith(
       merge = attempted.kind === "merged" ? "merged" : "conflict-rewound";
       if (attempted.kind === "conflict-rewound") {
         const where = attempted.paths.join(", ") || "the merge itself";
-        console.log(`  ⤺ #${attempt.item.number} rewound — ${attempt.branch} conflicts on ${where}`);
+        note = `rewound — ${attempt.branch} conflicts on ${where}`;
       }
     }
 
@@ -302,6 +410,7 @@ export async function driveWaveParallelWith(
     return {
       attempt,
       attempted,
+      note,
       settlement: {
         loop,
         merge,
@@ -382,7 +491,7 @@ export async function driveWaveParallelWith(
       if (entry.settlement.merge !== "conflict-rewound") continue;
       if (git.isMerged(entry.attempt.branch)) {
         entry.settlement = { ...entry.settlement, merge: "merged" };
-        console.log(`  ⤻ #${entry.attempt.item.number} merged by the Merger`);
+        entry.note = "merged by hand by the Merger";
       } else {
         stillUnmerged.push(entry.attempt.item.number);
       }
@@ -390,6 +499,25 @@ export async function driveWaveParallelWith(
 
     const action = mergerAction(verdict, stillUnmerged);
     if (action.kind === "abort") abort(action.detail);
+  }
+
+  /**
+   * Every item the run has an answer about, in run order, replaying the *same*
+   * line the maintainer already read live.
+   *
+   * Nothing here is report-only and nothing is recomputed — the lines are the
+   * ones `announce` wrote, minus the clock and the fraction, which are the two
+   * things that only mean something while the run is still moving. An item the
+   * run never reached is absent rather than invented: what became of it is the
+   * run summary's `aborted` row, which counts them.
+   */
+  function finalLedger(): string {
+    return core.work
+      .flatMap((item) => {
+        const line = lines.get(item.nodeId);
+        return line ? [itemLine(line)] : [];
+      })
+      .join("\n");
   }
 
   function abort(detail: string): void {
