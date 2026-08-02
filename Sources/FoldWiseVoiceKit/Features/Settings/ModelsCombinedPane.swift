@@ -75,6 +75,13 @@ struct ModelsCombinedPane: View {
                 existing: inspectionOrigin
             )
         }
+        .onChange(of: interface.requestedPolishInspection) { _, current in
+            // A Mode deep-linking into the ledger moves the inspection for the
+            // user, so the row it names still has to be scrolled into view.
+            if current != nil {
+                inspectionOrigin = .keyboard
+            }
+        }
         .onChange(of: interface.asrSnapshot) { previous, current in
             applyASRFocusTransition(from: previous, to: current)
             announceASRTransition(from: previous, to: current)
@@ -148,6 +155,12 @@ struct ModelsCombinedPane: View {
             }
             .onChange(of: presentation.inspector?.id) { previous, current in
                 guard previous != current, let current else { return }
+                // A click lands on a row the user can already see, so centring
+                // it just yanks the ledger out from under the pointer — and
+                // once the row sits past the halfway mark the centre clamps to
+                // the very bottom of the list. Only an inspection the app moved
+                // on its own has to be brought into view.
+                guard inspectionOrigin != .pointer else { return }
                 scrollProxy.scrollTo(current, anchor: .center)
             }
             .accessibilityElement(children: .contain)
