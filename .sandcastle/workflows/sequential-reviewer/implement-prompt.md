@@ -1,10 +1,14 @@
 # Context
 
-## Open issues
+## Your work item
 
-!`gh issue list --state open --label ready-for-agent --limit 100 --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'`
+```json
+{{WORK}}
+```
 
-The list above has already been filtered to issues ready for work and is the sole source of truth for what work exists. Do not run your own unfiltered query to find more issues — if the list is empty, there is nothing to do.
+That record is your assignment, chosen for you before this prompt was written, and it is the only work this iteration exists to do. `number`, `title`, `body`, `labels` and `comments` are the issue as it stood when the run selected it; `comments` includes any review bounce, which is why a reopened item arrives with the reason it bounced. `spec`, when it is not `null`, is the ancestor SPEC this item belongs to — read it for the contract the item sits inside, and treat the item's own acceptance criteria as authoritative where the two differ.
+
+You were not given a queue and there is no next item to move to. Do not query the issue tracker for other work — not to look for something better suited, not to check whether this item is still the right one, and not to see what depends on it. Someone else already decided; that decision is above.
 
 ## Recent completed slices (last 10)
 
@@ -16,6 +20,8 @@ The list above has already been filtered to issues ready for work and is the sol
 !`cat docs/agents/issue-tracker.md`
 ````
 
+That document is shared with the humans and the planning agents who use this tracker, so it also records how work is *found* — a listing recipe and a frontier query. Neither is yours. It is included here for the writes you make against the one item above: comment, and close.
+
 ## Coding standards
 
 ````markdown
@@ -24,22 +30,11 @@ The list above has already been filtered to issues ready for work and is the sol
 
 # Task
 
-You are an autonomous coding agent working through issues one at a time.
-
-## Priority order
-
-Work on issues in this order:
-
-1. **Bug fixes** — broken behaviour affecting users
-2. **Tracer bullets** — thin end-to-end slices that prove an approach works
-3. **Polish** — improving existing functionality (error messages, UX, docs)
-4. **Refactors** — internal cleanups with no user-visible change
-
-Pick the highest-priority open issue that is not blocked by another open issue.
+You are an autonomous coding agent implementing exactly one work item: the one in **Your work item** above.
 
 ## Workflow
 
-1. **Explore** — read the issue carefully. Pull in the parent SPEC if referenced. Read `CONTEXT.md` and `docs/adr/` if present (proceed silently if absent), then the relevant source files and tests before writing any code. The repo's conventions for reading and closing issues are in the **Issue-tracker conventions** section above.
+1. **Explore** — read the work item carefully, then its `spec` if it has one. Read `CONTEXT.md` and `docs/adr/` if present (proceed silently if absent), then the relevant source files and tests before writing any code. The repo's conventions for reading and closing issues are in the **Issue-tracker conventions** section above.
 2. **Plan** — decide what to change and why. Keep the change as small as possible.
 3. **Execute** — use RGR (Red → Green → Repeat → Refactor): write a failing test first, then write the implementation to pass it. Follow the **Coding standards** section above.
 4. **Verify** — run, in order:
@@ -62,20 +57,20 @@ Pick the highest-priority open issue that is not blocked by another open issue.
      - `chore:` — anything that fits none of the above
 
      Keep the subject in the imperative mood, ~72 characters or fewer, with no trailing period.
-   - Include a `Closes #<n>` line in the body referencing the issue this commit implements — the reviewer uses it to trace the commit back to the issue, and release-please uses it to link the changelog entry.
-   - In the body, record the task completed and any SPEC reference, the key decisions made, the files changed, and any blockers for the next iteration.
-6. **Close** — close the issue with `gh issue close <ID> --comment "Completed by Sandcastle"` explaining what was done.
+   - Include a `Closes #<n>` line in the body, where `<n>` is the `number` field of your work item and nothing else. The reviewer compares that line against the item it was given, and release-please uses it to link the changelog entry, so a number that names any other issue is a defect in this commit.
+   - In the body, record the task completed and the ancestor SPEC if the item has one, the key decisions made, the files changed, and any blockers for the next iteration.
+6. **Close** — close your work item with `gh issue close <number> --comment "Completed by Sandcastle"` explaining what was done. Close that issue and no other — never its `spec`, and never anything the work reminded you of.
 
 ## Rules
 
-- Work on **one issue per iteration**. Do not attempt multiple issues in a single iteration.
-- Do not close an issue until you have committed the fix and verified tests pass.
+- Implement **only your work item**. Fixing an adjacent bug you noticed, or a second issue the work touches, puts changes in this commit that the reviewer has no criteria to judge.
+- Do not close the issue until you have committed the fix and verified tests pass.
 - Do not leave commented-out code or TODO comments in committed code.
 - Never push and never open a pull request — commits stay on the current branch for human review.
-- If you are blocked (missing context, failing tests you cannot fix, external dependency), leave a comment on the issue and move on — do not close it.
+- If you are blocked (missing context, failing tests you cannot fix, external dependency), comment on the issue saying exactly what blocks you, then finish: close nothing, and **commit nothing**. Never make a commit to signal progress — an empty or token commit is worse than no commit at all, because it reports work that did not happen.
 
 # Done
 
-When all actionable issues are complete (or you are blocked on all remaining ones), or the open-issues block at the top of this prompt is empty, output the completion signal:
+When your work item is implemented and committed, or you are blocked on it and have left the comment, output the completion signal:
 
 <promise>COMPLETE</promise>

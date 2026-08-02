@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { describe, it } from "node:test";
 import type { Agent, Dispatch, DispatchOptions } from "../../contract.mts";
@@ -39,12 +39,24 @@ describe("the review-only body", () => {
     );
   });
 
-  it("sends no promptArgs key at all, not an empty object", async () => {
-    // `{{ANCHOR}}` is the runner's to write, and there is nothing else to
-    // substitute: an empty `promptArgs` would imply a key this body owns.
+  it("leaves the anchor to the runner, and the prompt asks for it", async () => {
+    // No `promptArgs` key at all rather than an empty object: `{{ANCHOR}}` is
+    // the runner's to write and there is nothing else to substitute, so an
+    // empty object would imply a key this body owns.
+    //
+    // What that absence is worth depends on the prompt's side of it. The runner
+    // writes `ANCHOR` on every path, a literal `null` included, and an arg
+    // written into a prompt that never names it is dropped in silence — this
+    // reviewer would then judge the branch with no idea what it was for.
     const options = (await runBody())[0]?.options;
     assert.ok(options);
+
     assert.equal("promptArgs" in options, false);
+    assert.match(
+      readFileSync(resolve(reviewOnly.dir, options.promptFile), "utf8"),
+      /\{\{ANCHOR\}\}/,
+      `${options.promptFile} never asks for the anchor the runner writes`,
+    );
   });
 
   it("names its prompt by bare filename, for the runner to anchor", async () => {
