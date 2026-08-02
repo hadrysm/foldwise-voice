@@ -133,8 +133,13 @@ standing.
   ([#408](https://github.com/hadrysm/foldwise-voice/issues/408)), with two more
   tests failing under load
   ([#409](https://github.com/hadrysm/foldwise-voice/issues/409)). Measurements
-  and method are recorded on
-  [#406](https://github.com/hadrysm/foldwise-voice/issues/406).
+  and method are recorded in
+  [`docs/worktree-parallelism-measurements.md`](../worktree-parallelism-measurements.md)
+  — the N=1..4 throughput series, the deadlock trigger table and the
+  `copyToWorktree` finding, summarised for
+  [#406](https://github.com/hadrysm/foldwise-voice/issues/406). *(Amendment,
+  2026-08-01: this cited the issue alone until the measurements landed at a path
+  that resolves.)*
 
   Three things substitute for the isolation, and they are framework-neutral by
   intent — Sandcastle is meant to drive web and mobile repos too, so these are

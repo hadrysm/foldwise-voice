@@ -6,9 +6,10 @@ Accepted (2026-07-29). Amended (2026-08-01): the runner gained **Work scope** �
 universal work selection, asked before the workflow — and the seam grew a
 **driver** layer so a third, wave-parallel workflow can run one loop per work
 item concurrently. `Knob` retires, `DispatchOptions` becomes an allow-list,
-`.sandcastle/repo.mts` appears, and "Rejected alternative: parallel or
-containerised workflows" is superseded on its first half. Every amended
-passage is marked *Amendment, 2026-08-01*.
+`.sandcastle/repo.mts` appears, the runner gains one tracker correction and
+three rules about how `.sandcastle/` is tested, and "Rejected alternative:
+parallel or containerised workflows" is superseded on its first half. Every
+amended passage is marked *Amendment, 2026-08-01*.
 
 This decision **does not amend
 [ADR-0001](0001-sandcastle-in-place-not-sandboxed.md)** on host execution: no
@@ -204,6 +205,23 @@ restatements:
   to it — and its own comment normalization drops marker-bearing comments, so
   run N does not read runs 1…N-1's bookkeeping as evidence. The runner never
   *closes* an anchor; that judgment stays human.
+
+  The second tracker write is a **correction**, and it is the only one that
+  reaches a work item's own state:
+
+  > **The runner reopens an item it closed falsely.** When a dispatched item's
+  > issue is closed but nothing of its work reached the workspace branch, the
+  > driver reopens it with a marked comment naming the branch. The runner never
+  > closes an issue and never reopens one to schedule work — a reopen is a
+  > correction to the tracker, never an act of work selection, and a reopened
+  > item is not eligible again in the run that reopened it.
+
+  The trigger is a **predicate over live state** — *closed, yet unmerged* —
+  never an outcome, because the fact that would make it an outcome (did the
+  implementer reach its close step) is precisely what the driver cannot observe
+  and may not ask the workflow for. The last clause is what keeps the reopen
+  outside work selection: were a reopened item eligible again, the correction
+  would be indistinguishable from the runner scheduling itself more work.
 - **`scope/` is a new pair of modules, not part of `runner.mts`.** GitHub
   resolution is a third side effect and it must run *during the picker walk*,
   before `prepare()` exists, so it cannot live behind the runner's
@@ -451,6 +469,50 @@ blocks expand at the worktree, `SOURCE_BRANCH`/`TARGET_BRANCH` are injected and
 cannot be overridden, and the agent's cwd is the worktree — so the folder seam
 stays absolute at the cost of a fix applied twice, which a plain file
 comparison detects.
+
+### Three rules govern how `.sandcastle/` is tested
+
+*Amendment, 2026-08-01.*
+
+The tier matrix that put each seam above under a test is consumed once, and
+after that the tests are their own record. Three of its rules are not: they
+constrain code nobody has written yet, which makes them decisions rather than
+descriptions of today's suite.
+
+> **A sweep enumerates from a registry or the filesystem, never from a literal
+> list of today's cases.**
+
+A sweep whose subjects are typed out by hand asserts a property of the day it
+was written, and the next driver, workflow or prompt folder is admitted
+silently and untested. This is the rule that forced `DRIVERS` into existence —
+"every driver upholds X" had no referent until the drivers were a value — and
+`WORKFLOWS` plus a `readdir` over `workflows/*` are the other two enumerable
+roots. A rule with that much reach over unwritten code is an ADR's, not a test
+file's.
+
+> **The driver takes its repo root as an explicit parameter.**
+
+Honest rather than test-only: a driver operates on *the workspace repo*, so
+naming it beats reading `process.cwd()` implicitly at the point of use. The
+production entry point passes `process.cwd()` once, in one line a reader can
+find, and the parameter is what lets the next rule work at all.
+
+> **Fake only what is expensive.**
+
+Agents cost money, minutes and a provider login, so `dispatch` is faked. Real
+git costs a temp directory, so it is not. The asymmetry is the whole rule, and
+the second half is the load-bearing one: this ADR's safety claims — no force
+flag anywhere, `--no-ff` fan-in, a merge that leaves the workspace branch where
+it started — are claims *about git*. Asserted against an injected `Git` port
+they would be asserted against a fake written by whoever wrote the assumption,
+which is not evidence.
+
+These three live here, and not in `docs/TESTING.md`. That document mentions
+Sandcastle zero times — it is a FoldWise Voice document about XCTest and
+SwiftPM coverage, and putting a portable tool's strategy in it welds the tool
+to this repo. A `.sandcastle/TESTING.md` would be righter in principle, but ADR-0001 and
+ADR-0010 already govern Sandcastle from `docs/adr/`, and a second location costs
+more in split-brain than it buys.
 
 ## Rejected alternative: a declarative phase list
 
