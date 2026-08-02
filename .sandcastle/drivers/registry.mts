@@ -26,10 +26,9 @@ export const DRIVERS: Readonly<Record<DriverId, Driver>> = {
     id: "wave-parallel",
     drains: true,
     concurrent: true,
-    // Its worktrees, per-item timeout, fan-in and cleanup are built; the Planner
-    // and the Merger arrive in slice 9, and until then every wave is the first
-    // `MAX_PARALLEL` of the ready level — which is also the wave a rejected plan
-    // falls back to. Reachable only once a workflow declares it (slice 10).
+    // Whole: worktrees, the per-item timeout, fan-in, cleanup, the Planner and
+    // the Merger. Reachable only once a workflow declares it, which is the
+    // folder and its four prompts (slice 10).
     drive: driveWaveParallel,
   },
   "whole-branch": {

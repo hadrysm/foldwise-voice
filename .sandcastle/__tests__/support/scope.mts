@@ -33,6 +33,7 @@ export function fakeItem(issueNumber: number): WorkItem {
 export interface FixtureIssue {
   number: number;
   title?: string;
+  body?: string;
   labels?: readonly string[];
   state?: "open" | "closed";
   /** Open blockers, by issue number. A number no fixture issue carries is out of scope. */
@@ -50,7 +51,7 @@ export function fixtureRecord(issue: FixtureIssue): IssueRecord {
     repository: FIXTURE_REPOSITORY,
     url: `https://github.com/${FIXTURE_REPOSITORY}/issues/${issue.number}`,
     title: issue.title ?? `Issue ${issue.number}`,
-    body: "",
+    body: issue.body ?? "",
     state: issue.state ?? "open",
     stateReason: null,
     labels: issue.labels ?? ["ready-for-agent"],

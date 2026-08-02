@@ -12,9 +12,11 @@
 // a partial wave and a completion order that differs from run order are both
 // deterministic.
 
-import { IMPLEMENTER, REVIEWER } from "../../agents/catalog.mts";
+import { IMPLEMENTER, PLANNER, REVIEWER } from "../../agents/catalog.mts";
 import type { Dispatch, Workflow } from "../../contract.mts";
 import type { RunCore } from "../../drivers/core.mts";
+import type { WavePayload } from "../../drivers/merger.mts";
+import type { ReadyRecord } from "../../drivers/planner.mts";
 import { repo } from "../../repo.mts";
 import type { WorkItem, WorkScopeSnapshot } from "../../scope/snapshot.mts";
 import { sequentialReviewer } from "../../workflows/sequential-reviewer/workflow.mts";
@@ -88,12 +90,37 @@ export interface WaveDispatch {
   readonly baseSha: string;
 }
 
+/** One driver-internal consult, and everything the driver wrote into it. */
+export interface Consultation {
+  readonly agentId: string;
+  readonly promptFile: string;
+  readonly promptArgs: Readonly<Record<string, string>>;
+}
+
+/**
+ * What a scripted agent answers with, **before validation**.
+ *
+ * `unknown` rather than a `Plan` or a `MergeVerdict` on purpose: a test that can
+ * only script a well-formed answer cannot reach the path where a model returns
+ * something else, which is the path the fallback exists for. The fake runs the
+ * real schema over whatever this returns, so a malformed answer fails here
+ * exactly where it would fail in production.
+ */
+export type PlannerScript = (ready: readonly number[]) => unknown;
+export type MergerScript = (wave: WavePayload) => unknown;
+
 export interface WaveCoreOptions extends FakeCoreOptions {
   /** What each item's implementer does, by issue number. Unlisted commits once. */
   readonly scripts?: Readonly<Record<number, ItemScript>>;
   readonly maxParallel?: number;
   /** Minutes, as `repo.itemTimeout` carries it. Fractions keep a hang cheap. */
   readonly itemTimeoutMinutes?: number;
+  /** What the Planner answers, wave by wave. Unlisted waves plan the computed wave. */
+  readonly plans?: readonly PlannerScript[];
+  /** What the Merger answers, wave by wave. Unlisted waves come back verified. */
+  readonly verdicts?: readonly MergerScript[];
+  /** Make a consult reject instead, by agent id — a provider that hung up. */
+  readonly consultFails?: Readonly<Record<string, string>>;
 }
 
 export interface WaveCore {
@@ -101,6 +128,8 @@ export interface WaveCore {
   readonly dispatches: WaveDispatch[];
   /** Worktree paths in the order the driver asked for them. */
   readonly opened: string[];
+  /** Every Planner and Merger consult, in the order the driver made them. */
+  readonly consultations: Consultation[];
 }
 
 /** A promise that rejects when the item's timeout fires, and never otherwise. */
@@ -114,6 +143,61 @@ function whenAborted(signal: AbortSignal): Promise<never> {
   return rejection;
 }
 
+/**
+ * The two driver-internal agents, scripted, with the real schemas in front of
+ * them.
+ *
+ * The defaults are deliberately the answers a *working* Planner and Merger give
+ * — the whole ready level up to `MAX_PARALLEL`, and a verified tree — so a test
+ * that says nothing about them exercises the accepted path rather than the
+ * fallback. A test that wants the fallback has to ask for it, which is the right
+ * way round: the fallback is what a bug looks like.
+ */
+function scriptedConsult(options: WaveCoreOptions, consultations: Consultation[]): RunCore["consult"] {
+  const asked = new Map<string, number>();
+
+  return (agent, consultOptions) => {
+    consultations.push({
+      agentId: agent.id,
+      promptFile: consultOptions.promptFile,
+      promptArgs: { ...consultOptions.promptArgs },
+    });
+
+    const failure = options.consultFails?.[agent.id];
+    if (failure) return Promise.reject(new Error(failure));
+
+    const turn = asked.get(agent.id) ?? 0;
+    asked.set(agent.id, turn + 1);
+
+    let answer: unknown;
+    if (agent.id === PLANNER.id) {
+      const ready = (JSON.parse(consultOptions.promptArgs["READY"] ?? "[]") as ReadyRecord[]).map(
+        (record) => record.number,
+      );
+      const scripted = options.plans?.[turn];
+      answer = scripted
+        ? scripted(ready)
+        : { wave: ready.slice(0, Number(consultOptions.promptArgs["MAX_PARALLEL"])), deferrals: [] };
+    } else {
+      const wave = JSON.parse(consultOptions.promptArgs["WAVE"] ?? "null") as WavePayload;
+      const scripted = options.verdicts?.[turn];
+      answer = scripted
+        ? scripted(wave)
+        : { verified: true, unresolved: [], notes: "the fake tree builds" };
+    }
+
+    // The real validator, so a scripted answer of the wrong shape fails the way
+    // Sandcastle's own extraction does — after its one retry, as a rejection.
+    const validated = consultOptions.schema["~standard"].validate(answer);
+    if ("issues" in validated) {
+      return Promise.reject(
+        new Error(`structured output <${consultOptions.tag}> did not validate: ${validated.issues[0]?.message}`),
+      );
+    }
+    return Promise.resolve(validated.value);
+  };
+}
+
 export function waveCore(
   temp: TempRepo,
   scope: WorkScopeSnapshot,
@@ -122,11 +206,14 @@ export function waveCore(
 ): WaveCore {
   const dispatches: WaveDispatch[] = [];
   const opened: string[] = [];
+  const consultations: Consultation[] = [];
 
   return {
     dispatches,
     opened,
+    consultations,
     core: {
+      consult: scriptedConsult(options, consultations),
       work,
       scope,
       repo: {

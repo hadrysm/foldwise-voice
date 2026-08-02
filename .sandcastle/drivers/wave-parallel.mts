@@ -7,9 +7,10 @@
 //   a wave is what actually does. Levels are never frozen — they are recomputed
 //   from `(pending, accumulated skip set)` at every wave boundary, because a
 //   transitive skip shrinks what is ready, and a frozen level would dispatch a
-//   dependent onto a foundation that was never laid. Slice 9 puts a Planner in
-//   front of the narrowing; until then the wave is the first `MAX_PARALLEL` of
-//   the ready level, which is also the fallback a bad plan lands on.
+//   dependent onto a foundation that was never laid. The **Planner** does the
+//   narrowing and may only subset the ready level; when it has nothing usable to
+//   say, the wave is the first `MAX_PARALLEL` of that level, which is the
+//   fallback every bad plan lands on.
 //
 //   **Wave size *is* concurrency.** No semaphore drains a wider plan through a
 //   narrower gate: that would let two items the Planner deliberately separated
@@ -25,7 +26,11 @@
 //   only what git gives it free — merging, conflict detection from an exit code,
 //   the rewind, cleanup and the timeout. Whether the merged tree *builds* is a
 //   question whose answer has to be interpreted and repaired, which is judgment,
-//   and it belongs to the Merger in slice 9. No toolchain command reaches here.
+//   so it belongs to the **Merger**. No toolchain command reaches here.
+//
+//   **The Planner and the Merger are not `Dispatch` calls.** They are this
+//   driver's own, made through `core.consult` on the host — which is what lets
+//   them answer in a shape, and what keeps a workflow from ever reaching one.
 //
 //   **A conflict rewinds one item; a broken tree aborts the run.** The asymmetry
 //   is attribution: a conflict belongs to exactly one branch, and a tree that
@@ -41,12 +46,14 @@
 import type { Workflow } from "../contract.mts";
 import { levels, type WorkItem } from "../scope/snapshot.mts";
 import type { ItemWorktree, RunCore } from "./core.mts";
-import { waveGit } from "./git.mts";
+import { waveGit, type MergeAttempt } from "./git.mts";
+import { askMerger, mergeLine, mergerAction, type WavePayload } from "./merger.mts";
 import {
   cascade,
   driftAction,
   foundationExists,
   itemBranch,
+  mergerSkip,
   outcomeLabel,
   type ItemOutcome,
   type ItemRecord,
@@ -54,6 +61,7 @@ import {
   type MergeOutcome,
   type Settlement,
 } from "./outcomes.mts";
+import { selectWave } from "./planner.mts";
 import { correctItem, ghTracker, handOff, type Tracker } from "./tracker.mts";
 
 /** What the driver needs that is neither the run's core nor its workflow. */
@@ -85,6 +93,22 @@ interface Attempt {
   /** Fires at `repo.itemTimeout`, and is how `timed out` is told from `crashed`. */
   readonly signal: AbortSignal;
   worktree: ItemWorktree | null;
+}
+
+/**
+ * One item once its loop has finished and git has been asked about its branch.
+ *
+ * `settlement` is not `readonly`, and that is the Merger: a branch git refused
+ * can still be merged by hand, and when it is, the item's outcome changes before
+ * anything is recorded about it. Everything else here is already decided.
+ */
+interface Settled {
+  readonly attempt: Attempt;
+  settlement: Settlement;
+  /** The issue's live state when the item settled — where a bounce is observed. */
+  readonly closed: boolean;
+  /** What git said at fan-in, kept for the Merger's payload. */
+  readonly attempted: MergeAttempt | null;
 }
 
 export async function driveWaveParallelWith(
@@ -136,9 +160,15 @@ export async function driveWaveParallelWith(
     // Recomputed here and nowhere else: wave one's items left `pending` when
     // they merged, which is precisely what makes their dependents ready.
     const [ready = []] = levels(core.scope, pending, skipped);
+    // The Planner may narrow this level and may do nothing else. Its line is
+    // rendered whichever way it went — a run in which every wave silently fell
+    // back has proven nothing about the Planner, and only this can tell that run
+    // from one where the plan was taken.
+    const choice = await selectWave(core, ready, waveNumber + 1);
+    if (choice.line !== null) console.log(`\n${choice.line}`);
     const wave: Attempt[] = [];
 
-    for (const item of ready.slice(0, core.maxParallel)) {
+    for (const item of choice.wave) {
       const check = await core.issues.revalidate(item);
       if (check.status === "ok") {
         wave.push({
@@ -154,8 +184,7 @@ export async function driveWaveParallelWith(
         // The controlling contract is gone, so there is no per-item answer to
         // give — and nothing is cleaned up, because nothing is ever cleaned up
         // on an abort.
-        aborted = check.detail;
-        console.log(`\n✖ Aborting the run — ${check.detail}`);
+        abort(check.detail);
         break;
       }
       console.log(`\n· #${item.number} — drift: ${check.detail}`);
@@ -191,22 +220,35 @@ export async function driveWaveParallelWith(
     // Fan-in, in **run order** rather than completion order. Without it the
     // merge commits are ordered by whichever agent happened to finish first, and
     // they are the only per-item boundary in an otherwise flat diff.
+    const settled: Settled[] = [];
     for (const [index, attempt] of wave.entries()) {
-      const { settlement, closed } = await settle(attempt, outcomes[index], waveBase);
+      settled.push(await settle(attempt, outcomes[index], waveBase));
+    }
+
+    // Between the merges and the record, because it can change one: a branch git
+    // refused may still be merged by hand, and an item recorded before the
+    // Merger ran would be recorded as rewound when its work is on the branch.
+    await verifyCombination(settled, waveBase, waveNumber);
+
+    for (const entry of settled) {
+      const { attempt, settlement } = entry;
       record(attempt.item, { kind: "settled", ...settlement }, attempt.branch);
       console.log(`  · #${attempt.item.number} ${outcomeLabel(settlement)}`);
 
       correctItem(deps.tracker, {
         item: attempt.item,
         settlement,
-        closed,
+        closed: entry.closed,
         merged: settlement.merge === "merged",
         workspaceBranch: core.git.branch,
         branch: attempt.branch,
         logPath: attempt.worktree?.logPath ?? null,
       });
 
-      cleanUp(attempt, settlement.merge === "merged");
+      // Nothing is ever auto-cleaned on abort. The items themselves still get
+      // their record and their tracker correction — they settled, and what
+      // stopped the run was the combination rather than any one of them.
+      if (aborted === null) cleanUp(attempt, settlement.merge === "merged");
       if (!foundationExists(settlement)) dropDependents(attempt.item);
       console.log(`  ${answered.size}/${total} settled`);
     }
@@ -229,7 +271,7 @@ export async function driveWaveParallelWith(
     attempt: Attempt,
     outcome: PromiseSettledResult<void> | undefined,
     waveBase: string,
-  ): Promise<{ readonly settlement: Settlement; readonly closed: boolean }> {
+  ): Promise<Settled> {
     let loop: LoopOutcome = "committed";
     if (outcome?.status === "rejected") {
       // The signal is the discriminator, and it has to be: a hang is not
@@ -245,9 +287,10 @@ export async function driveWaveParallelWith(
     const commits = git.commitsOn(attempt.branch, waveBase);
     if (loop === "committed" && commits === 0) loop = "no-commits";
 
+    let attempted: MergeAttempt | null = null;
     let merge: MergeOutcome | null = null;
     if (loop === "committed") {
-      const attempted = git.merge(attempt.branch);
+      attempted = git.merge(attempt.branch);
       merge = attempted.kind === "merged" ? "merged" : "conflict-rewound";
       if (attempted.kind === "conflict-rewound") {
         const where = attempted.paths.join(", ") || "the merge itself";
@@ -257,6 +300,8 @@ export async function driveWaveParallelWith(
 
     const live = await core.issues.liveState(attempt.item);
     return {
+      attempt,
+      attempted,
       settlement: {
         loop,
         merge,
@@ -268,6 +313,88 @@ export async function driveWaveParallelWith(
       },
       closed: live.state === "closed",
     };
+  }
+
+  /**
+   * Hand the wave's combination to the Merger, and act on what git says
+   * afterwards.
+   *
+   * The runner merged what git could merge; what is left is a conflicted branch
+   * to finish by hand, a merged tree nothing has ever built, or both. Whether
+   * that tree builds is the one question this driver may not answer for itself —
+   * it may run a command whose output it discards and never one whose exit code
+   * it branches on, git excepted — so the verdict has to come back from an agent.
+   *
+   * **What merged is still git's answer.** The verdict is read for `verified`
+   * and printed for its notes; which branches reached the workspace branch is
+   * re-observed, so an agent that claims a merge it did not make cannot record
+   * one.
+   */
+  async function verifyCombination(
+    settled: readonly Settled[],
+    waveBase: string,
+    wave: number,
+  ): Promise<void> {
+    if (mergerSkip(settled.map((entry) => entry.settlement.merge))) return;
+
+    const payload: WavePayload = {
+      branch: core.git.branch,
+      base: waveBase,
+      merged: settled.flatMap((entry) =>
+        entry.attempted?.kind === "merged"
+          ? [
+              {
+                number: entry.attempt.item.number,
+                branch: entry.attempt.branch,
+                commit: entry.attempted.sha,
+              },
+            ]
+          : [],
+      ),
+      unmerged: settled.flatMap((entry) =>
+        entry.attempted?.kind === "conflict-rewound"
+          ? [
+              {
+                number: entry.attempt.item.number,
+                branch: entry.attempt.branch,
+                paths: entry.attempted.paths,
+              },
+            ]
+          : [],
+      ),
+    };
+
+    let verdict;
+    try {
+      verdict = await askMerger(core, payload);
+    } catch (error) {
+      // Unlike a rejected plan, this has no safe fallback: the run would be
+      // cutting wave two from a tree nothing ever verified, and every later
+      // item would inherit the doubt.
+      const detail = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      abort(`the merged tree was never verified — ${detail}`);
+      return;
+    }
+    console.log(mergeLine(wave, verdict));
+
+    const stillUnmerged: number[] = [];
+    for (const entry of settled) {
+      if (entry.settlement.merge !== "conflict-rewound") continue;
+      if (git.isMerged(entry.attempt.branch)) {
+        entry.settlement = { ...entry.settlement, merge: "merged" };
+        console.log(`  ⤻ #${entry.attempt.item.number} merged by the Merger`);
+      } else {
+        stillUnmerged.push(entry.attempt.item.number);
+      }
+    }
+
+    const action = mergerAction(verdict, stillUnmerged);
+    if (action.kind === "abort") abort(action.detail);
+  }
+
+  function abort(detail: string): void {
+    aborted = detail;
+    console.log(`\n✖ Aborting the run — ${detail}`);
   }
 
   /**

@@ -81,6 +81,33 @@ export function foundationExists(settlement: Settlement): boolean {
   return settlement.merge !== "conflict-rewound" && settlement.merge !== "skipped-upstream";
 }
 
+/**
+ * Is this wave's merged tree already gated by something that ran?
+ *
+ * A pure function of a wave's merge outcomes, and the whole of the Merger skip.
+ * Two cases, on one argument:
+ *
+ * - **Exactly one branch merged into an unmoved base.** The merged tree is then
+ *   identical to that branch's tree, which that item's own implement→review loop
+ *   already gated — a git fact rather than a guess about the toolchain. On a
+ *   narrow SPEC, or any wave the Planner splits down to one, this is the common
+ *   case.
+ * - **Nothing merged at all.** The tip is untouched, so there is no new
+ *   combination in existence to verify. The same argument, only stronger.
+ *
+ * A conflicted branch forces the dispatch however little merged: merging by hand
+ * is the Merger's first job, and skipping over a rewound branch would abandon it
+ * without anyone deciding to.
+ *
+ * Items that never reached a merge phase at all — crashed, timed out, committed
+ * nothing — arrive as `null` and change nothing: they put no code in the tree
+ * and leave no branch to merge.
+ */
+export function mergerSkip(merges: readonly (MergeOutcome | null)[]): boolean {
+  if (merges.some((merge) => merge === "conflict-rewound")) return false;
+  return merges.filter((merge) => merge === "merged").length <= 1;
+}
+
 /** How the report and the tracker comment both name one settled item. */
 export function outcomeLabel(settlement: Settlement): string {
   switch (settlement.loop) {

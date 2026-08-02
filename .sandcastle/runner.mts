@@ -29,7 +29,7 @@ import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import type { RunModel } from "./agents/models.mts";
 import type { ResolvedPlan } from "./cli/flow.mts";
 import type { Dispatch, DispatchOptions } from "./contract.mts";
-import type { IssueReads, ItemWorktree, RunCore, WorkspaceGit } from "./drivers/core.mts";
+import type { Consult, IssueReads, ItemWorktree, RunCore, WorkspaceGit } from "./drivers/core.mts";
 import { SANDCASTLE_BRANCH_PREFIX } from "./drivers/outcomes.mts";
 import { runnableDriver } from "./drivers/registry.mts";
 import { PROVIDERS, validateModel } from "./providers/registry.mts";
@@ -359,6 +359,40 @@ export function prepare(plan: ResolvedPlan): RunCore {
     };
   };
 
+  /**
+   * A driver's own agent, on the host, answering in a shape the runner can read.
+   *
+   * The same `run()` as a host dispatch with two differences, and both are the
+   * point: it carries `output`, which no workflow path can (`WorktreeRunOptions`
+   * has no such key and `DispatchOptions` is a two-key allow-list), and it
+   * returns that answer instead of a commit count.
+   *
+   * `maxRetries: 1` is written here rather than passed in. It is a **shape**
+   * retry — Sandcastle resumes the agent's own session and asks for a corrected
+   * tag — and it is safe for every provider the registry offers, because
+   * `claude-code` and `codex` both resume and `run()` fails at entry against one
+   * that cannot. The retry a plan must never get is the semantic one, and that
+   * one is unreachable from here: the schema does not know the ready set.
+   */
+  const consult: Consult = async (agent, options) => {
+    const result = await sandcastle.run({
+      promptArgs: options.promptArgs,
+      name: agent.id,
+      agent: providerFor(agent.id),
+      sandbox: noSandbox(),
+      branchStrategy: { type: "head" },
+      maxIterations: 1,
+      hooks: HOOKS,
+      output: sandcastle.Output.object({
+        tag: options.tag,
+        schema: options.schema,
+        maxRetries: 1,
+      }),
+      promptFile: resolve(plan.workflow.dir, options.promptFile),
+    });
+    return result.output;
+  };
+
   // JSON, never markdown: an item body containing a fenced block would break
   // straight out of a markdown splice, while JSON escapes every newline and can
   // never start a line with a fence.
@@ -428,6 +462,7 @@ export function prepare(plan: ResolvedPlan): RunCore {
     git: workspaceGit(),
     forItem: (item) => dispatchWith(workArgs(item)),
     forBranch: () => dispatchWith({ ANCHOR: JSON.stringify(anchorRecord(plan.scope)) }),
+    consult,
     openWorktree,
   };
 }

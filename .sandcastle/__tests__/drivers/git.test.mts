@@ -103,6 +103,32 @@ describe("fan-in", () => {
   });
 });
 
+describe("what reached the workspace branch", () => {
+  it("tells a branch the Merger merged by hand from one it left behind", async (t) => {
+    const repo = tempRepo(t);
+    itemBranchWith(repo, "sandcastle/419-one", "from 419");
+    itemBranchWith(repo, "sandcastle/420-two", "from 420");
+    const git = waveGit(repo.root);
+    assert.equal(git.merge("sandcastle/419-one").kind, "merged");
+    assert.equal(git.merge("sandcastle/420-two").kind, "conflict-rewound");
+
+    assert.equal(git.isMerged("sandcastle/419-one"), true);
+    assert.equal(git.isMerged("sandcastle/420-two"), false);
+
+    // What the Merger does to a rewound branch, done by hand here: after it, git
+    // says merged whatever the verdict claimed — which is why the driver asks
+    // git and not the agent.
+    repo.git(["merge", "--no-ff", "--no-edit", "-X", "ours", "sandcastle/420-two"]);
+    assert.equal(git.isMerged("sandcastle/420-two"), true);
+  });
+
+  it("answers no for a branch that never existed", async (t) => {
+    const repo = tempRepo(t);
+
+    assert.equal(waveGit(repo.root).isMerged("sandcastle/999-never-cut"), false);
+  });
+});
+
 describe("cleanup, which git itself enforces", () => {
   it("refuses to delete an unmerged branch, and says so rather than throwing", async (t) => {
     const repo = tempRepo(t);
