@@ -1,4 +1,4 @@
-// Menu-bar status item: SF Symbol mic icon (red while listening, waveform
+// Menu-bar status item: SF Symbol waveform icon (red while listening, orange
 // while working), mode switcher, Settings, Quit.
 
 import AppKit
@@ -55,14 +55,19 @@ final class MenuBarController: NSObject {
 
     func setIcon(_ icon: Icon) {
         guard let button = statusItem.button else { return }
-        let (symbol, tint): (String, NSColor?) =
+        // One shape across all three states — the tint carries the state, the
+        // way the Badge's accent does. Untinted it stays a template image, so
+        // macOS inverts it for a Light menu bar.
+        let tint: NSColor? =
             switch icon {
-            case .idle: ("mic", nil)
-            case .listening: ("mic.fill", .systemRed)
-            case .working: ("waveform", .systemOrange)
+            case .idle: nil
+            case .listening: .systemRed
+            case .working: .systemOrange
             }
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "FoldWise Voice")?
+        let image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "FoldWise Voice")?
             .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))
+        image?.isTemplate = true
+        button.image = image
         button.contentTintColor = tint
     }
 
