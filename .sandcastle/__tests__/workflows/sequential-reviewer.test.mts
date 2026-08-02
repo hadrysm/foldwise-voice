@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { describe, it } from "node:test";
 import type { Agent, Dispatch, DispatchOptions } from "../../contract.mts";
@@ -45,6 +45,10 @@ function reviewBase(call: DispatchCall): unknown {
   return call.options.promptArgs?.["REVIEW_BASE"];
 }
 
+function promptText(call: DispatchCall): string {
+  return readFileSync(resolve(sequentialReviewer.dir, call.options.promptFile), "utf8");
+}
+
 describe("the sequential-reviewer body", () => {
   it("implements one item, then reviews it", async () => {
     const calls = await runBody(alwaysCommits);
@@ -80,9 +84,26 @@ describe("the sequential-reviewer body", () => {
     assert.equal(calls.filter((call) => call.agent.id === "implementer").length, 1);
   });
 
-  it("sends the implementer no promptArgs — the runner writes the scope's own", async () => {
-    const calls = await runBody(() => 0);
+  it("leaves the work item to the runner, and every prompt asks for it", async () => {
+    // Half of this is structural already: `withScopeArgs` throws on a reserved
+    // key, so a body that wrote `WORK` could not run at all, and the implement
+    // dispatch carries no args of its own.
+    //
+    // The other half is not, and only fails one way. Sandcastle throws at
+    // startup on a `{{WORK}}` it has no value for, but an arg written into a
+    // prompt that never names it is substituted nowhere and reported by nobody
+    // — leaving an agent with the assignment it was selected for and no way to
+    // read it, which is the one condition under which it goes looking.
+    const calls = await runBody(alwaysCommits);
+
     assert.equal(calls[0]?.options.promptArgs, undefined);
+    for (const call of calls) {
+      assert.match(
+        promptText(call),
+        /\{\{WORK\}\}/,
+        `${call.options.promptFile} never asks for the work item the runner writes`,
+      );
+    }
   });
 
   it("names each agent's prompt by bare filename, for the runner to anchor", async () => {
