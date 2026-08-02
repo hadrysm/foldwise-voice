@@ -12,6 +12,7 @@
 import type { DriverId, Workflow } from "../contract.mts";
 import type { Drive, Driver } from "./core.mts";
 import { driveSequential } from "./sequential.mts";
+import { driveWaveParallel } from "./wave-parallel.mts";
 import { driveWholeBranch } from "./whole-branch.mts";
 
 export const DRIVERS: Readonly<Record<DriverId, Driver>> = {
@@ -25,10 +26,11 @@ export const DRIVERS: Readonly<Record<DriverId, Driver>> = {
     id: "wave-parallel",
     drains: true,
     concurrent: true,
-    // Decided, not built. The picker needs the shape to know that this run has a
-    // guard *and* a wave width; the worktrees, per-item timeout, fan-in, Planner
-    // and Merger arrive in slices 8–10 of SPEC #418.
-    drive: null,
+    // Its worktrees, per-item timeout, fan-in and cleanup are built; the Planner
+    // and the Merger arrive in slice 9, and until then every wave is the first
+    // `MAX_PARALLEL` of the ready level — which is also the wave a rejected plan
+    // falls back to. Reachable only once a workflow declares it (slice 10).
+    drive: driveWaveParallel,
   },
   "whole-branch": {
     id: "whole-branch",

@@ -16,8 +16,10 @@ import {
   deservesCodeReview,
   driftAction,
   foundationExists,
+  itemBranch,
   outcomeLabel,
   runReport,
+  SANDCASTLE_BRANCH_PREFIX,
   trackerActs,
   type ItemRecord,
   type Settlement,
@@ -358,5 +360,41 @@ describe("the run report", () => {
       aborted: null,
     });
     assert.match(report, /Run summary — #419, 1 of 1 eligible/);
+  });
+});
+
+describe("the branch one work item's commits land on", () => {
+  it("names the issue and slugs its title", () => {
+    assert.equal(
+      itemBranch({ number: 425, title: "Add the wave-parallel driver's worktrees" }),
+      "sandcastle/425-add-the-wave-parallel-drivers-worktrees",
+    );
+  });
+
+  it("carries the prefix the workspace preflight refuses a leftover of", () => {
+    // One definition, so the branch a run cuts and the branch the next run's
+    // `prepare()` refuses to start over cannot drift apart.
+    assert.ok(itemBranch({ number: 419, title: "Anything" }).startsWith(SANDCASTLE_BRANCH_PREFIX));
+  });
+
+  it("collapses every run of non-alphanumerics into one dash", () => {
+    assert.equal(
+      itemBranch({ number: 1, title: "  Fix `main.mts`: the — bare  'All done.' " }),
+      "sandcastle/1-fix-main-mts-the-bare-all-done",
+    );
+  });
+
+  it("truncates a long title without leaving a trailing dash", () => {
+    const branch = itemBranch({
+      number: 418,
+      title: "Give the runner Work scope and the driver the loop, across fifteen slices",
+    });
+
+    assert.equal(branch, "sandcastle/418-give-the-runner-work-scope-and-the-driver-the");
+    assert.ok(!branch.endsWith("-"));
+  });
+
+  it("falls back to the number alone when a title slugs to nothing", () => {
+    assert.equal(itemBranch({ number: 420, title: "— … —" }), "sandcastle/420");
   });
 });

@@ -21,6 +21,7 @@
 // can surface at item seven.
 
 import { execSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import * as sandcastle from "@ai-hero/sandcastle";
 import type { AgentProvider } from "@ai-hero/sandcastle";
@@ -28,7 +29,8 @@ import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import type { RunModel } from "./agents/models.mts";
 import type { ResolvedPlan } from "./cli/flow.mts";
 import type { Dispatch, DispatchOptions } from "./contract.mts";
-import type { IssueReads, RunCore, WorkspaceGit } from "./drivers/core.mts";
+import type { IssueReads, ItemWorktree, RunCore, WorkspaceGit } from "./drivers/core.mts";
+import { SANDCASTLE_BRANCH_PREFIX } from "./drivers/outcomes.mts";
 import { runnableDriver } from "./drivers/registry.mts";
 import { PROVIDERS, validateModel } from "./providers/registry.mts";
 import { repo } from "./repo.mts";
@@ -51,11 +53,22 @@ import {
 // Under `noSandbox()` the "sandbox" *is* the host checkout, so this is where
 // `repo.onHostReady` lands. Every command it names is idempotent by contract,
 // which is what makes running them once per dispatch harmless.
-// `repo.onWorktreeReady` has no site on this path: `createWorktree` executes
-// `host.onWorktreeReady`, and that path arrives with the wave-parallel driver.
 const HOOKS = {
   sandbox: { onSandboxReady: repo.onHostReady },
 };
+
+// `createWorktree` accepts hooks but executes only `host.onWorktreeReady`, and
+// that is exactly the seam the pre-warm needs: it fires once, at worktree
+// creation time, before the item's agent starts. This repository's pre-warm is
+// also its substitute for the isolation ADR-0001 denies — #408's deadlock needs
+// *both* concurrency and a freshly-linked test bundle, so linking it here
+// disarms the trigger before three agents start building at once.
+const WORKTREE_HOOKS = {
+  host: { onWorktreeReady: repo.onWorktreeReady },
+};
+
+/** Per-item agent output. Gitignored, and the sole record of an item that left no commits. */
+const LOG_DIR = resolve(import.meta.dirname, "logs");
 
 /**
  * The prompt-arg names the runner and its drivers write. Five, and disjoint from
@@ -151,7 +164,6 @@ export interface WorkspaceState {
   readonly worktrees: string;
 }
 
-const SANDCASTLE_BRANCH_PREFIX = "sandcastle/";
 const WORKTREE_BRANCH_LINE = `branch refs/heads/${SANDCASTLE_BRANCH_PREFIX}`;
 
 /**
@@ -298,18 +310,32 @@ export function prepare(plan: ResolvedPlan): RunCore {
 
   const providers = resolveAgents(plan);
 
+  /** The agent behind one id, refused loudly rather than run as somebody else. */
+  const providerFor = (agentId: string): AgentProvider => {
+    const provider = providers.get(agentId);
+    if (!provider) {
+      throw new Error(`The ${plan.workflow.label} workflow drives an unresolved agent: ${agentId}`);
+    }
+    return provider;
+  };
+
+  /**
+   * The SHA a dispatch started from, read where that dispatch will run.
+   *
+   * Captured immediately before the run, so the SHA a workflow gets back cannot
+   * be older or newer than the dispatch it came from — which is what makes "the
+   * reviewer diffed the wrong range" impossible to write rather than merely
+   * tested. On the worktree path this reads the *worktree's* HEAD, so each
+   * item's reviewer sees its own item's commits and nothing a sibling wave
+   * member produced.
+   */
+  const baseShaAt = (cwd?: string): string =>
+    execSync("git rev-parse HEAD", { encoding: "utf8", cwd }).trim();
+
   const dispatchWith = (reserved: Readonly<Record<string, string>>): Dispatch => {
     return async (agent, options: DispatchOptions) => {
-      const provider = providers.get(agent.id);
-      if (!provider) {
-        throw new Error(
-          `The ${plan.workflow.label} workflow drives an unresolved agent: ${agent.id}`,
-        );
-      }
-
-      // Captured here, immediately before the run, so the SHA a workflow gets
-      // back cannot be older or newer than the dispatch it came from.
-      const baseSha = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
+      const provider = providerFor(agent.id);
+      const baseSha = baseShaAt();
 
       const result = await sandcastle.run({
         promptArgs: withScopeArgs(reserved, options.promptArgs),
@@ -333,17 +359,75 @@ export function prepare(plan: ResolvedPlan): RunCore {
     };
   };
 
+  // JSON, never markdown: an item body containing a fenced block would break
+  // straight out of a markdown splice, while JSON escapes every newline and can
+  // never start a line with a fence.
+  const workArgs = (item: WorkItem): Record<string, string> => ({
+    WORK: JSON.stringify(workRecord(plan.scope, item.nodeId)),
+  });
+
+  /**
+   * One item, alone in a worktree cut from the workspace branch's current tip.
+   *
+   * Beyond `{{WORK}}` a worktree dispatch needs no argument of its own, which is
+   * why the wave-parallel prompts can be byte-identical copies of the sequential
+   * pair: `preprocessPrompt` expands shell blocks at the worktree, `Worktree.run`
+   * injects `SOURCE_BRANCH`/`TARGET_BRANCH` as this item's branch and rejects
+   * any override, and the agent's cwd *is* the worktree.
+   */
+  const openWorktree: RunCore["openWorktree"] = async (item, branch, signal) => {
+    const worktree = await sandcastle.createWorktree({
+      // `CreateWorktreeOptions.branchStrategy` excludes `head` at the type
+      // level, so ADR-0001's in-place strategy is a compile error here rather
+      // than a convention. The name is the runner's, composed from the frozen
+      // snapshot — nothing a model returns can redirect it.
+      branchStrategy: { type: "branch", branch },
+      copyToWorktree: [...repo.copyToWorktree],
+      hooks: WORKTREE_HOOKS,
+    });
+
+    mkdirSync(LOG_DIR, { recursive: true });
+    const logPath = resolve(LOG_DIR, `${branch.replaceAll("/", "-")}.log`);
+
+    const dispatch: Dispatch = async (agent, options: DispatchOptions) => {
+      const provider = providerFor(agent.id);
+      const baseSha = baseShaAt(worktree.worktreePath);
+
+      const result = await worktree.run({
+        promptArgs: withScopeArgs(workArgs(item), options.promptArgs),
+        name: agent.id,
+        agent: provider,
+        // `WorktreeRunOptions.sandbox` is required and does not default — the
+        // defaulting belongs to `Worktree.interactive()`, which this runner
+        // never calls. ADR-0001's rejection of containers is unchanged by
+        // parallelism: the macOS-only toolchain cannot build on Linux.
+        sandbox: noSandbox(),
+        maxIterations: 1,
+        hooks: WORKTREE_HOOKS,
+        // Not a preference. `stdout` resolves to a cursor-owning Clack display,
+        // and three concurrent dispatches would fight over one cursor.
+        logging: { type: "file", path: logPath },
+        // The item's wall-clock bound, held by the driver. There is no key on
+        // `DispatchOptions` that reaches it.
+        signal,
+        promptFile: resolve(plan.workflow.dir, options.promptFile),
+      });
+
+      return { commits: result.commits, baseSha };
+    };
+
+    return { branch, path: worktree.worktreePath, logPath, dispatch };
+  };
+
   return {
     work,
     scope: plan.scope,
     repo,
+    maxParallel: plan.maxParallel,
     issues: issueReads(plan.scope),
     git: workspaceGit(),
-    // JSON, never markdown: an item body containing a fenced block would break
-    // straight out of a markdown splice, while JSON escapes every newline and
-    // can never start a line with a fence.
-    forItem: (item) =>
-      dispatchWith({ WORK: JSON.stringify(workRecord(plan.scope, item.nodeId)) }),
+    forItem: (item) => dispatchWith(workArgs(item)),
     forBranch: () => dispatchWith({ ANCHOR: JSON.stringify(anchorRecord(plan.scope)) }),
+    openWorktree,
   };
 }
