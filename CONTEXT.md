@@ -227,11 +227,22 @@ acceptance criteria; an agent works exactly one slice at a time.
 
 **Release gate** — the act of labeling a slice `ready-for-agent`. Drafting
 a slice and releasing it are separate acts: a slice exists as soon as its
-sub-issue does, but joins the batch queue only once the maintainer applies
-the label.
+sub-issue does, but becomes eligible for a run only once the maintainer
+applies the label.
+_Avoid_: AFK-ready label
 
-**Batch** — the set of issues one run works through: either a SPEC's open,
-released slices (a *scoped* run) or the whole `ready-for-agent` queue.
+**Work scope** — which GitHub issues one run may touch: a SPEC and its
+eligible descendants, one specific issue, or the whole `ready-for-agent`
+queue. It is the run's universal first input, asked before the workflow, and
+the runner resolves it to a frozen, ordered, guard-truncated work list before
+any workflow sees it (ADR-0010).
+
+**Level** — one topological level of a run's order: the work items whose
+blockers are all satisfied at the same point in the run.
+
+**Wave** — the set of work items a driver dispatches concurrently. A wave is
+a subset of one level and never spans two, and wave size *is* concurrency.
+_Avoid_: stack, layer
 
 **Run model** — The single coding model selected interactively when a
 Sandcastle run starts. The implementer and reviewer use the same Run model for
@@ -245,20 +256,45 @@ reviewer for the entire run. The picker offers only efforts supported by the
 selected model; unsupported effort is never silently downgraded.
 _Avoid_: thinking level, phase effort
 
-**Implement→review loop** — the run's repeating cycle: an implementer
-agent picks one slice from the batch, implements it test-first, and
-commits; then a reviewer agent reviews exactly that slice's changes and
-either approves, fixes small gaps in place, or reopens the slice with a
-bounce comment for the next cycle.
+**Driver** — the runner-side module that turns work items into dispatches
+(`sequential`, `wave-parallel`, or `whole-branch`), owning worktrees,
+concurrency, fan-in, skips, and cleanup. A workflow declares the driver it
+wants and supplies its **body**, the per-item implement→review sequence;
+driver capability is strictly non-increasing (ADR-0010).
+
+**Implement→review loop** — the body a work-item driver runs for each item
+the runner selected: an implementer implements that item test-first and
+commits, then a reviewer reviews exactly that item's changes and either
+approves, fixes small gaps in place, or reopens the item with a bounce
+comment. There is exactly one loop over work items per run and it belongs to
+the driver; no agent chooses what to work on.
+
+**Planner** — the agent handed the current ready level, which may only
+*subset* it into a wave. It cannot discover an item, widen a wave, cross a
+level, or name a branch, and omitting an item defers it to the next wave.
+
+**Merger** — the per-wave agent that verifies the merged tree once a wave has
+fanned in, and repairs a conflict or a breakage. It does not do the merging;
+that is the runner's.
+
+**Fan-in** — the runner merging a settled wave's branches back into the
+workspace branch with `git merge --no-ff`, in run order rather than in
+completion order.
 
 **Commit convention** — every commit an agent makes uses a Conventional
 Commit subject (`feat:`, `fix:`, `refactor:`, …) so release-please can
 categorise it for the changelog and version bump. Each commit also carries a
-`Closes #<n>` line naming its slice — the line that traces a batch's
+`Closes #<n>` line naming its slice — the line that traces a run's
 commits back to the slices they implement.
 
-**Handoff** — the end of a scoped run, when the batch returns to the
-maintainer. A drained SPEC (every released slice closed) is labeled
-`code-review` and gets a per-slice summary; a stalled run gets a report of
-the slices that remain and why it stopped. Review of the resulting diff
-and the PR itself stay human, always.
+**Repo config** — `.sandcastle/repo.mts`, the single per-repo file: hooks,
+`copyToWorktree`, the `MAX_PARALLEL` default, and the per-item timeout.
+Every other module in `.sandcastle/` is portable across repos.
+
+**Handoff** — the end of a run with an anchor, when the work returns to the
+maintainer. The runner comments a per-item report on the anchor, and labels
+it `code-review` when the anchor is open, carries `spec`, and every released
+slice is closed; an aborted run labels nothing, and the repository-wide
+scope, having no anchor, gets no durable report. The runner never closes an
+anchor, and review of the resulting diff and the PR itself stay human,
+always.
