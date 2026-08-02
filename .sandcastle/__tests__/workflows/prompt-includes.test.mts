@@ -6,12 +6,19 @@
 // reports it. A shell block is provider-neutral by construction, but only if it
 // is well formed and its path resolves: a wrong path aborts the run at startup,
 // and a stray backtick silently truncates the command.
+//
+// Hygiene only. What a block *does* — whether it mutates git state that another
+// block is silently racing — is `__tests__/sweeps/prompts.test.mts`'s, which is
+// a different question about the same text: this file has no notion of one
+// block depending on another block's effect. Both read the same enumeration, so
+// a workflow added to the registry is covered by both at once.
 
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it } from "node:test";
-import { WORKFLOWS } from "../../workflows/registry.mts";
+import { everyPrompt } from "../support/corpus.mts";
+import type { Prompt } from "../support/sweeps.mts";
 
 // Shell blocks are executed with the runner's cwd, which is the repo root —
 // three levels above this file, whatever folder a workflow itself lives in.
@@ -30,22 +37,6 @@ const AT_MENTION = /(^|\s)@\S+\.md/;
  * say itself.
  */
 const SKILL_CALL = /(^|\s)\/[a-z][a-z-]{2,}(\s|$|[.,)`])/;
-
-interface Prompt {
-  name: string;
-  text: string;
-}
-
-function everyPrompt(): readonly Prompt[] {
-  return WORKFLOWS.flatMap((workflow) =>
-    readdirSync(workflow.dir)
-      .filter((entry) => entry.endsWith(".md"))
-      .map((entry) => ({
-        name: `${workflow.id}/${entry}`,
-        text: readFileSync(join(workflow.dir, entry), "utf8"),
-      })),
-  );
-}
 
 function shellBlocks(prompt: Prompt): readonly string[] {
   return [...prompt.text.matchAll(SHELL_BLOCK)].map((match) => match[1] ?? "");
