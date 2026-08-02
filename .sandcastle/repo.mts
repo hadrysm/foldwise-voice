@@ -21,6 +21,13 @@
 // to the Merger, never to a driver.
 
 export interface RepoConfig {
+  /**
+   * `owner/name`, and the only place it is written down. `scope/github.mts`
+   * builds every API path from this plus a locally parsed issue number, and
+   * accepts a pasted URL only when it names this repository — so a target can
+   * never redirect a read somewhere else.
+   */
+  readonly repository: string;
   /** Run on the host checkout before each dispatch that works in place. */
   readonly onHostReady: readonly { readonly command: string }[];
   /** Run inside a freshly cut worktree, before that item's agent starts. */
@@ -34,6 +41,8 @@ export interface RepoConfig {
 }
 
 export const repo: RepoConfig = {
+  repository: "hadrysm/foldwise-voice",
+
   // Idempotent, and its output is discarded: pre-resolving dependencies keeps
   // the agent's first build fast and tells the runner nothing.
   onHostReady: [{ command: "swift package resolve" }],

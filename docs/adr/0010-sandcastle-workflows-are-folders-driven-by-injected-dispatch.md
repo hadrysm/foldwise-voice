@@ -379,8 +379,9 @@ later is a two-line contract addition, and this section documents the design.
 The original runner hardcoded `swift package resolve` as a sandbox hook.
 Sandcastle is meant to drive web and mobile repos too, so the line this seam
 actually needs is not *runner vs workflow* but **portable vs per-repo**. One
-module holds everything per-repo — `onHostReady`, `onWorktreeReady`,
-`copyToWorktree`, the `MAX_PARALLEL` default, the per-item timeout — and
+module holds everything per-repo — the `owner/name` repository, `onHostReady`,
+`onWorktreeReady`, `copyToWorktree`, the `MAX_PARALLEL` default, the per-item
+timeout — and
 everything else in `.sandcastle/` becomes portable. Dropping Sandcastle into
 another repo is one file to edit, plus whatever prompts differ. It is a typed
 module rather than JSON or TOML, which keeps the defaults typed and adds no
@@ -411,7 +412,7 @@ runner core rather than a bare `Dispatch`.*
   main.mts                      entry point only: pick → execute → print error
   runner.mts                    preflight → memoise providers → runner core; hands off to a driver
   contract.mts                  Agent, Workflow, WorkflowContext, Dispatch, DispatchOptions, DispatchResult
-  repo.mts                      the only per-repo module: hooks, copyToWorktree, MAX_PARALLEL default, item timeout
+  repo.mts                      the only per-repo module: repository, hooks, copyToWorktree, MAX_PARALLEL default, item timeout
   scope/snapshot.mts            pure: WorkScope, WorkScopeSnapshot, eligibility, ordering, digest
   scope/github.mts              the only module that talks to GitHub
   drivers/                      sequential, wave-parallel, whole-branch; outcomes, fan-in, skips, cleanup, the ledger
