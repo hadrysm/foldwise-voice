@@ -104,6 +104,40 @@ export interface FakeRunCore {
 }
 
 /**
+ * The three live tracker reads, scripted.
+ *
+ * Shared by every fake core, because *when* a driver asks each one is the
+ * question under test and *what it answers* is not — two copies of this would
+ * let one driver's suite drift into asserting a different tracker.
+ */
+export function fakeIssueReads(
+  scope: WorkScopeSnapshot,
+  options: FakeCoreOptions = {},
+): RunCore["issues"] {
+  return {
+    revalidate: (item) => {
+      const scripted = options.revalidations?.[item.number];
+      if (scripted) return Promise.resolve(scripted);
+      const frozen = issueByNodeId(scope, item.nodeId);
+      assert.ok(frozen, `revalidated an item outside the snapshot: #${item.number}`);
+      return Promise.resolve({ status: "ok", issue: frozen });
+    },
+    liveState: (item) =>
+      Promise.resolve({
+        number: item.number,
+        // Closed by default: the implementer closes its own issue, so an open
+        // one at settle is the reviewer's bounce.
+        state: options.openAtSettle?.includes(item.number) ? "open" : "closed",
+        labels: ["ready-for-agent"],
+      }),
+    handoff: () =>
+      options.handoffFails === undefined
+        ? Promise.resolve(options.handoff ?? null)
+        : Promise.reject(new Error(options.handoffFails)),
+  };
+}
+
+/**
  * A core over a hand-authored snapshot.
  *
  * `commitsSince` answers for whichever item the driver most recently asked a
@@ -133,6 +167,13 @@ export function fakeCore(
       work,
       scope,
       repo,
+      // The picker asks a non-concurrent driver neither question, and the two
+      // shapes this core stands in for are why: a worktree here would be a
+      // driver reaching for a shape it did not declare.
+      maxParallel: 1,
+      openWorktree: () => {
+        assert.fail("a driver that does not run items side by side cut a worktree");
+      },
       forItem: (item) => {
         current = item;
         return scoped(item);
@@ -146,27 +187,7 @@ export function fakeCore(
           return options.commits?.[current.number] ?? 1;
         },
       },
-      issues: {
-        revalidate: (item) => {
-          const scripted = options.revalidations?.[item.number];
-          if (scripted) return Promise.resolve(scripted);
-          const frozen = issueByNodeId(scope, item.nodeId);
-          assert.ok(frozen, `revalidated an item outside the snapshot: #${item.number}`);
-          return Promise.resolve({ status: "ok", issue: frozen });
-        },
-        liveState: (item) =>
-          Promise.resolve({
-            number: item.number,
-            // Closed by default: the implementer closes its own issue, so an
-            // open one at settle is the reviewer's bounce.
-            state: options.openAtSettle?.includes(item.number) ? "open" : "closed",
-            labels: ["ready-for-agent"],
-          }),
-        handoff: () =>
-          options.handoffFails === undefined
-            ? Promise.resolve(options.handoff ?? null)
-            : Promise.reject(new Error(options.handoffFails)),
-      },
+      issues: fakeIssueReads(scope, options),
     },
   };
 }

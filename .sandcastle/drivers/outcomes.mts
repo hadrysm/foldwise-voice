@@ -104,6 +104,49 @@ export function outcomeLabel(settlement: Settlement): string {
 }
 
 // ---------------------------------------------------------------------------
+// The branch one item's commits land on
+// ---------------------------------------------------------------------------
+
+/**
+ * The namespace every branch a run cuts lives in, and the one the workspace
+ * preflight refuses to start a run over a leftover of.
+ *
+ * One definition rather than two matching literals: the branch a driver cuts
+ * and the branch the next run's `prepare()` refuses are the same fact, and a
+ * rename that reached only one of them would leave a run unable to see its own
+ * leftovers.
+ */
+export const SANDCASTLE_BRANCH_PREFIX = "sandcastle/";
+
+/** How much of the title a branch name carries. */
+const SLUG_LIMIT = 48;
+
+/**
+ * `sandcastle/<issue-number>-<slug>`, composed by the runner from the frozen
+ * snapshot's title.
+ *
+ * Deterministic and never negotiated: the Planner carries numbers only, so
+ * nothing a model returns can name, widen or redirect a branch. The number
+ * leads because it is the part that has to survive truncation — the slug is
+ * there for the human reading `git log --merges`, and a merge commit that named
+ * only a slug would be a merge commit nobody could trace back to an issue.
+ */
+export function itemBranch(item: { readonly number: number; readonly title: string }): string {
+  const words = item.title
+    .toLowerCase()
+    // Apostrophes close rather than separate, so `driver's` is one word.
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  // Cut on a word boundary when there is one, so a truncated branch reads as
+  // words rather than ending mid-syllable.
+  const cut = words.length > SLUG_LIMIT ? words.slice(0, SLUG_LIMIT) : words;
+  const boundary = words.length > SLUG_LIMIT ? cut.lastIndexOf("-") : -1;
+  const slug = (boundary > 0 ? cut.slice(0, boundary) : cut).replace(/-+$/, "");
+  return `${SANDCASTLE_BRANCH_PREFIX}${item.number}${slug ? `-${slug}` : ""}`;
+}
+
+// ---------------------------------------------------------------------------
 // What the run records about one item
 // ---------------------------------------------------------------------------
 

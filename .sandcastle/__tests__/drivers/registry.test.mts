@@ -61,14 +61,19 @@ describe("the driver registry", () => {
     );
   });
 
-  it("refuses a workflow whose shape this build cannot run yet", () => {
-    // Registered so the picker can ask `MAX_PARALLEL`, unbuilt until slices
-    // 8–10 — and refused before `prepare()` reaches anything that dispatches.
-    assert.equal(DRIVERS["wave-parallel"].drive, null);
-    assert.throws(
-      () => runnableDriver({ ...sequentialReviewer, driver: "wave-parallel" }),
-      /cannot run yet/,
-    );
+  it("runs every shape it describes", () => {
+    // The guard stays: a shape can be added to the vocabulary — so the picker
+    // can describe it — a slice before it can run, and `prepare()` refuses such
+    // a plan before it reaches anything that dispatches. Nothing is unbuilt
+    // today, which is the state this asserts.
+    for (const driver of Object.values(DRIVERS)) {
+      assert.equal(typeof driver.drive, "function", driver.id);
+      assert.equal(
+        runnableDriver({ ...sequentialReviewer, driver: driver.id }),
+        driver.drive,
+        driver.id,
+      );
+    }
   });
 
   it("hands every shipped workflow a driver that runs", () => {

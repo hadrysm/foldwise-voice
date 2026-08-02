@@ -61,6 +61,31 @@ export interface WorkspaceGit {
 }
 
 /**
+ * One item's own worktree, cut from the workspace branch's tip, and the dispatch
+ * that runs inside it.
+ *
+ * A handle deliberately narrower than Sandcastle's `Worktree`, which carries
+ * `.close()`, `.createSandbox()` and `.interactive()` — a driver has no business
+ * opening an interactive session, and **closing is not a driver's call either**:
+ * cleanup is merge-gated and done with `git worktree remove` and `git branch -d`,
+ * so git itself refuses to destroy anything unmerged. `path` and `branch` are
+ * here so the driver can hand them to git and name them in the report.
+ */
+export interface ItemWorktree {
+  readonly branch: string;
+  readonly path: string;
+  /**
+   * Where this item's agent output is being written. Concurrency *forces* a log
+   * file: Sandcastle's `stdout` logging is a cursor-owning Clack UI, and three
+   * dispatches would fight over one cursor. It is also the sole record of an
+   * item that timed out, crashed or committed nothing — those leave no git trace
+   * at all.
+   */
+  readonly logPath: string;
+  readonly dispatch: Dispatch;
+}
+
+/**
  * Everything a driver may reach, and the only value from which a `Dispatch` can
  * be obtained. `prepare()` is the sole producer, and it returns nothing until
  * every preflight has passed — which is what makes eager validation structural
@@ -91,6 +116,14 @@ export interface RunCore {
    * never one whose exit code it branches on, git excepted.
    */
   readonly repo: RepoConfig;
+  /**
+   * How many work items a concurrent driver may run at once, and therefore how
+   * wide a wave may be — **wave size *is* concurrency; there is no semaphore.**
+   * A semaphore would silently undo the Planner's one real power, since two
+   * items it deliberately separated could still overlap while a wide plan
+   * drains. One for a driver the picker never asked the question of.
+   */
+  readonly maxParallel: number;
   readonly issues: IssueReads;
   readonly git: WorkspaceGit;
   /**
@@ -103,6 +136,22 @@ export interface RunCore {
    * `{{ANCHOR}}` written — literally `null` under a repository-wide scope.
    */
   readonly forBranch: () => Dispatch;
+  /**
+   * Cut `branch` as a worktree of its own and hand back a dispatch that runs
+   * inside it, with `{{WORK}}` written for `item`.
+   *
+   * `signal` is the item's wall-clock bound, and it arrives **here** rather than
+   * on `DispatchOptions` — a workflow that could reach the signal could defeat
+   * the one thing that ends a hang. Sandcastle's own `Timeouts` covers lifecycle
+   * steps only (copy, git setup, commit collection), never the agent run, so
+   * without this a wedged item stalls its wave until the 600-second idle timeout
+   * kills a silent agent, and orphaned test processes may outlive even that.
+   */
+  readonly openWorktree: (
+    item: WorkItem,
+    branch: string,
+    signal: AbortSignal,
+  ) => Promise<ItemWorktree>;
 }
 
 /** How a driver runs one workflow to completion. */
