@@ -6,6 +6,7 @@ import type { ResolvedAgent, ResolvedPlan } from "../cli/flow.mts";
 import type { Agent } from "../contract.mts";
 import { distinctModels, resolveAgents } from "../runner.mts";
 import { sequentialReviewer } from "../workflows/sequential-reviewer/workflow.mts";
+import { specSnapshot } from "./support/scope.mts";
 
 // No fakes: every provider factory is a plain object literal, so building the
 // real ones costs nothing and spawns nothing.
@@ -16,7 +17,14 @@ function pick(agent: Agent, modelId: string, effort: RunEffort): ResolvedAgent {
 }
 
 function planFor(agents: readonly ResolvedAgent[]): ResolvedPlan {
-  return { workflow: sequentialReviewer, agents, knobs: { maxIterations: 1 } };
+  return {
+    workflow: sequentialReviewer,
+    agents,
+    knobs: {},
+    scope: specSnapshot({ number: 418 }, [{ number: 419 }]),
+    maxWorkItems: 1,
+    maxParallel: 1,
+  };
 }
 
 describe("resolveAgents", () => {

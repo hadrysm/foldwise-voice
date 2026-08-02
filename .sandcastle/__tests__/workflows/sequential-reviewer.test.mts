@@ -52,7 +52,7 @@ describe("the sequential-reviewer loop", () => {
     silenceNarration(t);
     const { calls, dispatch } = fakeDispatch(alwaysCommits);
 
-    await sequentialReviewer.run({ dispatch, knobs: { maxIterations: 3 } });
+    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 3 });
 
     assert.deepEqual(
       calls.map((call) => call.agent.id),
@@ -64,7 +64,7 @@ describe("the sequential-reviewer loop", () => {
     silenceNarration(t);
     const { calls, dispatch } = fakeDispatch(alwaysCommits);
 
-    await sequentialReviewer.run({ dispatch, knobs: { maxIterations: 2 } });
+    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 2 });
 
     // Iteration 1 implements on call 1 and iteration 2 on call 3, so a
     // reviewer holding "sha-1" in the second iteration would be re-reviewing
@@ -79,7 +79,7 @@ describe("the sequential-reviewer loop", () => {
     silenceNarration(t);
     const { calls, dispatch } = fakeDispatch(() => 0);
 
-    await sequentialReviewer.run({ dispatch, knobs: { maxIterations: 10 } });
+    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 10 });
 
     assert.deepEqual(
       calls.map((call) => call.agent.id),
@@ -92,7 +92,7 @@ describe("the sequential-reviewer loop", () => {
     // Calls 1 and 2 are iteration 1; call 3 is iteration 2's implement.
     const { calls, dispatch } = fakeDispatch((call) => (call >= 3 ? 0 : 1));
 
-    await sequentialReviewer.run({ dispatch, knobs: { maxIterations: 10 } });
+    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 10 });
 
     assert.deepEqual(
       calls.map((call) => call.agent.id),
@@ -104,7 +104,7 @@ describe("the sequential-reviewer loop", () => {
     silenceNarration(t);
     const { calls, dispatch } = fakeDispatch(() => 0);
 
-    await sequentialReviewer.run({ dispatch, knobs: { maxIterations: 1 } });
+    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 1 });
 
     assert.equal(calls[0]?.options.promptArgs, undefined);
   });
@@ -113,7 +113,7 @@ describe("the sequential-reviewer loop", () => {
     silenceNarration(t);
     const { calls, dispatch } = fakeDispatch(alwaysCommits);
 
-    await sequentialReviewer.run({ dispatch, knobs: { maxIterations: 1 } });
+    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 1 });
 
     assert.deepEqual(
       calls.map((call) => call.options.promptFile),
@@ -131,7 +131,7 @@ describe("the sequential-reviewer folder", () => {
     silenceNarration(t);
     const { calls, dispatch } = fakeDispatch(alwaysCommits);
 
-    await sequentialReviewer.run({ dispatch, knobs: { maxIterations: 1 } });
+    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 1 });
 
     for (const call of calls) {
       const promptPath = resolve(sequentialReviewer.dir, call.options.promptFile);
@@ -142,16 +142,23 @@ describe("the sequential-reviewer folder", () => {
 
 describe("runShape", () => {
   it("reads as the run it describes", () => {
-    assert.equal(
-      sequentialReviewer.runShape({ maxIterations: 10 }),
-      "implement → review, up to 10 issues",
-    );
+    assert.equal(sequentialReviewer.runShape(10), "implement → review, up to 10 issues");
   });
 
   it("stays grammatical for a single issue", () => {
-    assert.equal(
-      sequentialReviewer.runShape({ maxIterations: 1 }),
-      "implement → review, up to 1 issue",
-    );
+    assert.equal(sequentialReviewer.runShape(1), "implement → review, up to 1 issue");
+  });
+});
+
+describe("the work this workflow declares it does", () => {
+  it("drains work items, one at a time", () => {
+    // The run guard is asked because it drains; `MAX_PARALLEL` is not, because
+    // this loop is a `for` over one item at a time.
+    assert.equal(sequentialReviewer.drains, true);
+    assert.equal(sequentialReviewer.concurrent, false);
+  });
+
+  it("declares no knob, because the run guard replaced the only one", () => {
+    assert.deepEqual(sequentialReviewer.knobs, []);
   });
 });

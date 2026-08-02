@@ -80,6 +80,14 @@ export interface WorkflowContext {
   dispatch: Dispatch;
   /** Every declared knob, defaults already filled — never a missing key. */
   knobs: Readonly<Record<string, number>>;
+  /**
+   * The run guard: how many work items this run may drain. Interim — the loop
+   * belongs to a driver from slice 5 of SPEC #418 onward, and this field goes
+   * with it. It exists now so the guard can replace `maxIterations` in the same
+   * slice that deletes that knob: two number questions for one parameter must
+   * never both be on screen.
+   */
+  maxWorkItems: number;
 }
 
 export interface Workflow {
@@ -91,10 +99,22 @@ export interface Workflow {
   agents: readonly Agent[];
   knobs: readonly Knob[];
   /**
-   * The one line the confirmation screen leads with, e.g.
-   * `implement → review, up to 10 issues`. A function because only the
-   * workflow knows its knob means a repeat count rather than a timeout.
+   * Whether this workflow works through a list of work items, and whether it
+   * works through more than one at a time.
+   *
+   * Interim. Both are *driver* properties from slice 5 of SPEC #418 onward, and
+   * both die with `Workflow.driver` — but the picker needs them one slice
+   * earlier, because the run guard is asked only of a workflow that drains and
+   * `MAX_PARALLEL` only of one that runs items side by side.
    */
-  runShape: (knobs: Readonly<Record<string, number>>) => string;
+  drains: boolean;
+  concurrent: boolean;
+  /**
+   * The one line the confirmation screen leads with, e.g.
+   * `implement → review, up to 10 issues`. One number, because the anchor, the
+   * scope kind and the eligible counts belong to `cli/flow.mts` — a workflow
+   * that could read them would eventually branch on them.
+   */
+  runShape: (workItems: number) => string;
   run: (context: WorkflowContext) => Promise<void>;
 }
