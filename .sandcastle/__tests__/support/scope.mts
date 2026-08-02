@@ -9,6 +9,7 @@
 import {
   buildSnapshot,
   type IssueRecord,
+  type WorkItem,
   type WorkScopeSnapshot,
 } from "../../scope/snapshot.mts";
 
@@ -16,6 +17,16 @@ export const FIXTURE_REPOSITORY = "hadrysm/foldwise-voice";
 
 export function fixtureNodeId(issueNumber: number): string {
   return `I_${issueNumber}`;
+}
+
+/** The item a driver would hand a body, for the tests that only need one. */
+export function fakeItem(issueNumber: number): WorkItem {
+  return {
+    nodeId: fixtureNodeId(issueNumber),
+    number: issueNumber,
+    title: `Issue ${issueNumber}`,
+    url: `https://github.com/${FIXTURE_REPOSITORY}/issues/${issueNumber}`,
+  };
 }
 
 /** One issue of a literal. Everything unstated takes an open, released default. */

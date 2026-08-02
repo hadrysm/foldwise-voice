@@ -1,10 +1,10 @@
-import type { RunResult } from "@ai-hero/sandcastle";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { describe, it, type TestContext } from "node:test";
+import { describe, it } from "node:test";
 import type { Agent, Dispatch, DispatchOptions } from "../../contract.mts";
 import { sequentialReviewer } from "../../workflows/sequential-reviewer/workflow.mts";
+import { fakeItem } from "../support/scope.mts";
 
 interface DispatchCall {
   agent: Agent;
@@ -24,62 +24,47 @@ function fakeDispatch(commitsPerCall: (call: number) => number): {
   const dispatch: Dispatch = (agent, options) => {
     calls.push({ agent, options });
     const commits = commitsPerCall(calls.length);
-    const result: RunResult & { baseSha: string } = {
-      iterations: [],
-      stdout: "",
+    return Promise.resolve({
       commits: Array.from({ length: commits }, (_unused, index) => ({ sha: `commit-${index}` })),
-      branch: "feature",
       baseSha: `sha-${calls.length}`,
-    };
-    return Promise.resolve(result);
+    });
   };
   return { calls, dispatch };
 }
 
 const alwaysCommits = (): number => 1;
 
-/** The loop narrates with `console.log`; the test suite does not need to hear it. */
-function silenceNarration(t: TestContext): void {
-  t.mock.method(console, "log", () => undefined);
+/** One item's body, run the way its driver runs it. */
+async function runBody(commitsPerCall: (call: number) => number): Promise<DispatchCall[]> {
+  const { calls, dispatch } = fakeDispatch(commitsPerCall);
+  await sequentialReviewer.run({ dispatch, item: fakeItem(419) });
+  return calls;
 }
 
 function reviewBase(call: DispatchCall): unknown {
   return call.options.promptArgs?.["REVIEW_BASE"];
 }
 
-describe("the sequential-reviewer loop", () => {
-  it("runs one implement-then-review pair per iteration", async (t) => {
-    silenceNarration(t);
-    const { calls, dispatch } = fakeDispatch(alwaysCommits);
-
-    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 3 });
+describe("the sequential-reviewer body", () => {
+  it("implements one item, then reviews it", async () => {
+    const calls = await runBody(alwaysCommits);
 
     assert.deepEqual(
       calls.map((call) => call.agent.id),
-      ["implementer", "reviewer", "implementer", "reviewer", "implementer", "reviewer"],
+      ["implementer", "reviewer"],
     );
   });
 
-  it("hands each reviewer the base captured before that iteration's implement", async (t) => {
-    silenceNarration(t);
-    const { calls, dispatch } = fakeDispatch(alwaysCommits);
+  it("hands the reviewer the base captured before the implement it is paired with", async () => {
+    const calls = await runBody(alwaysCommits);
 
-    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 2 });
-
-    // Iteration 1 implements on call 1 and iteration 2 on call 3, so a
-    // reviewer holding "sha-1" in the second iteration would be re-reviewing
-    // work that already passed.
-    assert.deepEqual(
-      calls.filter((call) => call.agent.id === "reviewer").map(reviewBase),
-      ["sha-1", "sha-3"],
-    );
+    assert.deepEqual(calls.filter((call) => call.agent.id === "reviewer").map(reviewBase), [
+      "sha-1",
+    ]);
   });
 
-  it("stops without reviewing when the implementer makes no commits", async (t) => {
-    silenceNarration(t);
-    const { calls, dispatch } = fakeDispatch(() => 0);
-
-    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 10 });
+  it("does not review an item the implementer left no commits for", async () => {
+    const calls = await runBody(() => 0);
 
     assert.deepEqual(
       calls.map((call) => call.agent.id),
@@ -87,33 +72,21 @@ describe("the sequential-reviewer loop", () => {
     );
   });
 
-  it("stops mid-run once the backlog empties", async (t) => {
-    silenceNarration(t);
-    // Calls 1 and 2 are iteration 1; call 3 is iteration 2's implement.
-    const { calls, dispatch } = fakeDispatch((call) => (call >= 3 ? 0 : 1));
-
-    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 10 });
-
-    assert.deepEqual(
-      calls.map((call) => call.agent.id),
-      ["implementer", "reviewer", "implementer"],
-    );
+  it("runs exactly one pair, however many items the run has", async () => {
+    // The body has no loop and no count to loop over: the run guard, the list
+    // and the stopping belong to the driver, and a body that could count items
+    // could bound a second loop inside the one the driver owns.
+    const calls = await runBody(alwaysCommits);
+    assert.equal(calls.filter((call) => call.agent.id === "implementer").length, 1);
   });
 
-  it("sends the implementer no promptArgs", async (t) => {
-    silenceNarration(t);
-    const { calls, dispatch } = fakeDispatch(() => 0);
-
-    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 1 });
-
+  it("sends the implementer no promptArgs — the runner writes the scope's own", async () => {
+    const calls = await runBody(() => 0);
     assert.equal(calls[0]?.options.promptArgs, undefined);
   });
 
-  it("names each agent's prompt by bare filename, for the runner to anchor", async (t) => {
-    silenceNarration(t);
-    const { calls, dispatch } = fakeDispatch(alwaysCommits);
-
-    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 1 });
+  it("names each agent's prompt by bare filename, for the runner to anchor", async () => {
+    const calls = await runBody(alwaysCommits);
 
     assert.deepEqual(
       calls.map((call) => call.options.promptFile),
@@ -127,13 +100,8 @@ describe("the sequential-reviewer folder", () => {
     assert.equal(basename(sequentialReviewer.dir), sequentialReviewer.id);
   });
 
-  it("holds every prompt the loop dispatches", async (t) => {
-    silenceNarration(t);
-    const { calls, dispatch } = fakeDispatch(alwaysCommits);
-
-    await sequentialReviewer.run({ dispatch, knobs: {}, maxWorkItems: 1 });
-
-    for (const call of calls) {
+  it("holds every prompt the body dispatches", async () => {
+    for (const call of await runBody(alwaysCommits)) {
       const promptPath = resolve(sequentialReviewer.dir, call.options.promptFile);
       assert.ok(existsSync(promptPath), `missing prompt: ${promptPath}`);
     }
@@ -151,14 +119,10 @@ describe("runShape", () => {
 });
 
 describe("the work this workflow declares it does", () => {
-  it("drains work items, one at a time", () => {
-    // The run guard is asked because it drains; `MAX_PARALLEL` is not, because
-    // this loop is a `for` over one item at a time.
-    assert.equal(sequentialReviewer.drains, true);
-    assert.equal(sequentialReviewer.concurrent, false);
-  });
-
-  it("declares no knob, because the run guard replaced the only one", () => {
-    assert.deepEqual(sequentialReviewer.knobs, []);
+  it("declares a driver rather than a shape of its own", () => {
+    // Whether the run drains and whether it is concurrent are the *driver's*
+    // properties, read by the picker from `DRIVERS` — a workflow that declared
+    // them could contradict the driver that actually runs it.
+    assert.equal(sequentialReviewer.driver, "sequential");
   });
 });

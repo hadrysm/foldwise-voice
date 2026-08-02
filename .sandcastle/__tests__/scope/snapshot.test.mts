@@ -10,6 +10,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  anchorRecord,
+  ancestorSpec,
   buildSnapshot,
   canonicalJson,
   issueByNodeId,
@@ -18,6 +20,7 @@ import {
   runOrder,
   transitiveSkip,
   truncate,
+  workRecord,
   type ExclusionReason,
   type IssueRecord,
   type ScopeKind,
@@ -529,3 +532,113 @@ function reverseKeys(value: unknown): unknown {
   const entries = Object.entries(value as Record<string, unknown>).reverse();
   return Object.fromEntries(entries.map(([key, entry]) => [key, reverseKeys(entry)]));
 }
+
+// ---------------------------------------------------------------------------
+// What a prompt is told
+// ---------------------------------------------------------------------------
+
+const SPEC_TREE: TreeNode = {
+  number: 418,
+  title: "Universal Work scope",
+  body: "## Acceptance criteria\n\n- [ ] every slice closed",
+  labels: ["ready-for-agent", "spec"],
+  kids: [
+    {
+      number: 422,
+      title: "Flip the contract",
+      body: "Fenced prose:\n\n```ts\nconst x = 1;\n```",
+      comments: [
+        { id: 10, body: "Review bounce: criterion 3 is unmet" },
+        { id: 11, body: `${RUN_REPORT_MARKER}\nRun report: 4 of 15 settled` },
+      ],
+    },
+  ],
+};
+
+describe("the record a work item's prompt is handed", () => {
+  const snapshot = specSnapshot(SPEC_TREE);
+  const item = workRecord(snapshot, nodeIdFor(422));
+
+  it("carries the issue exactly as the eligibility decision saw it", () => {
+    assert.equal(item.number, 422);
+    assert.equal(item.title, "Flip the contract");
+    assert.equal(item.body, "Fenced prose:\n\n```ts\nconst x = 1;\n```");
+    assert.deepEqual(item.labels, ["ready-for-agent"]);
+  });
+
+  it("carries comment bodies, so a bounce reaches the next attempt", () => {
+    assert.deepEqual(item.comments, ["Review bounce: criterion 3 is unmet"]);
+  });
+
+  it("drops the run's own reports, so a fifth run does not read four of them", () => {
+    assert.equal(
+      item.comments.some((comment) => comment.includes(RUN_REPORT_MARKER)),
+      false,
+    );
+  });
+
+  it("nests the ancestor SPEC, which is the contract the item sits inside", () => {
+    assert.deepEqual(item.spec, {
+      number: 418,
+      title: "Universal Work scope",
+      body: "## Acceptance criteria\n\n- [ ] every slice closed",
+      labels: ["ready-for-agent", "spec"],
+    });
+  });
+
+  it("names no edge at all, in the item or in its SPEC", () => {
+    // An implementer told what depends on it has a motive to widen its own work,
+    // and a reviewer told the same has a motive to judge work it was not shown.
+    for (const record of [item, item.spec]) {
+      assert.deepEqual(Object.keys(record ?? {}).filter((key) => key.includes("Node")), []);
+      assert.equal("openBlockers" in (record ?? {}), false);
+    }
+  });
+
+  it("survives a splice into a fenced block, because it is JSON", () => {
+    // The item's own body carries a fence; encoded, every string value is one
+    // line with escaped newlines, so no ``` can start a line of the arg.
+    const encoded = JSON.stringify(item);
+    assert.equal(
+      encoded.split("\n").some((line) => line.startsWith("```")),
+      false,
+    );
+  });
+
+  it("finds the SPEC through an intermediate parent that is not one", () => {
+    const nested = specSnapshot({
+      ...SPEC_TREE,
+      kids: [{ number: 430, labels: ["ready-for-agent"], kids: [{ number: 431 }] }],
+    });
+    assert.equal(workRecord(nested, nodeIdFor(431)).spec?.number, 418);
+  });
+
+  it("says `null` rather than guessing at a SPEC nobody read", () => {
+    // The repository-wide queue has no tree, so an ancestor that was never
+    // fetched is not one this module may invent.
+    assert.equal(workRecord(queueSnapshot([{ number: 419 }]), nodeIdFor(419)).spec, null);
+    assert.equal(ancestorSpec(snapshot, nodeIdFor(418)), undefined);
+  });
+
+  it("refuses an item outside the frozen snapshot", () => {
+    assert.throws(() => workRecord(snapshot, nodeIdFor(999)), /outside the snapshot/);
+  });
+});
+
+describe("the record a whole-branch prompt is handed", () => {
+  it("is the anchor's brief when the scope named a target", () => {
+    assert.deepEqual(anchorRecord(specSnapshot(SPEC_TREE)), {
+      number: 418,
+      title: "Universal Work scope",
+      body: "## Acceptance criteria\n\n- [ ] every slice closed",
+      labels: ["ready-for-agent", "spec"],
+    });
+  });
+
+  it("is `null` under a repository-wide scope, which has no anchor", () => {
+    assert.equal(anchorRecord(queueSnapshot([{ number: 419 }])), null);
+    // Substituted as a literal, never as an absent key: Sandcastle fails loudly
+    // on a `{{KEY}}` it has no value for.
+    assert.equal(JSON.stringify(anchorRecord(queueSnapshot([{ number: 419 }]))), "null");
+  });
+});

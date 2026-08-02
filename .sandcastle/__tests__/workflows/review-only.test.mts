@@ -1,4 +1,3 @@
-import type { RunResult } from "@ai-hero/sandcastle";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
@@ -20,50 +19,37 @@ function fakeDispatch(): { calls: DispatchCall[]; dispatch: Dispatch } {
   const calls: DispatchCall[] = [];
   const dispatch: Dispatch = (agent, options) => {
     calls.push({ agent, options });
-    const result: RunResult & { baseSha: string } = {
-      iterations: [],
-      stdout: "",
-      commits: [],
-      branch: "feature",
-      baseSha: "sha-1",
-    };
-    return Promise.resolve(result);
+    return Promise.resolve({ commits: [], baseSha: "sha-1" });
   };
   return { calls, dispatch };
 }
 
-describe("the review-only run", () => {
+/** The body, run the way `whole-branch` runs it: once, with no work item. */
+async function runBody(): Promise<DispatchCall[]> {
+  const { calls, dispatch } = fakeDispatch();
+  await reviewOnly.run({ dispatch, item: null });
+  return calls;
+}
+
+describe("the review-only body", () => {
   it("dispatches the reviewer exactly once", async () => {
-    const { calls, dispatch } = fakeDispatch();
-
-    await reviewOnly.run({ dispatch, knobs: {}, maxWorkItems: 1 });
-
     assert.deepEqual(
-      calls.map((call) => call.agent.id),
+      (await runBody()).map((call) => call.agent.id),
       ["reviewer"],
     );
   });
 
   it("sends no promptArgs key at all, not an empty object", async () => {
-    // The prompt writes `origin/main...HEAD` literally, so there is no base to
-    // substitute. An empty `promptArgs` would imply there is one and none was
-    // filled in.
-    const { calls, dispatch } = fakeDispatch();
-
-    await reviewOnly.run({ dispatch, knobs: {}, maxWorkItems: 1 });
-
-    const options = calls[0]?.options;
+    // `{{ANCHOR}}` is the runner's to write, and there is nothing else to
+    // substitute: an empty `promptArgs` would imply a key this body owns.
+    const options = (await runBody())[0]?.options;
     assert.ok(options);
     assert.equal("promptArgs" in options, false);
   });
 
   it("names its prompt by bare filename, for the runner to anchor", async () => {
-    const { calls, dispatch } = fakeDispatch();
-
-    await reviewOnly.run({ dispatch, knobs: {}, maxWorkItems: 1 });
-
     assert.deepEqual(
-      calls.map((call) => call.options.promptFile),
+      (await runBody()).map((call) => call.options.promptFile),
       ["review-prompt.md"],
     );
   });
@@ -74,12 +60,8 @@ describe("the review-only folder", () => {
     assert.equal(basename(reviewOnly.dir), reviewOnly.id);
   });
 
-  it("holds the prompt the run dispatches", async () => {
-    const { calls, dispatch } = fakeDispatch();
-
-    await reviewOnly.run({ dispatch, knobs: {}, maxWorkItems: 1 });
-
-    for (const call of calls) {
+  it("holds the prompt the body dispatches", async () => {
+    for (const call of await runBody()) {
       const promptPath = resolve(reviewOnly.dir, call.options.promptFile);
       assert.ok(existsSync(promptPath), `missing prompt: ${promptPath}`);
     }
@@ -87,23 +69,18 @@ describe("the review-only folder", () => {
 });
 
 describe("what review-only declares", () => {
-  it("drives one agent and declares no knobs", () => {
+  it("drives one agent, on the driver that walks no work items", () => {
     assert.deepEqual(
       reviewOnly.agents.map((agent) => agent.id),
       ["reviewer"],
     );
-    assert.deepEqual(reviewOnly.knobs, []);
+    assert.equal(reviewOnly.driver, "whole-branch");
   });
 
   it("reads as the run it describes, whatever it is handed", () => {
-    // It walks no work items, so the one number `runShape` now takes says
-    // nothing about this workflow and appears nowhere in its line.
+    // It walks no work items, so the one number `runShape` takes says nothing
+    // about this workflow and appears nowhere in its line.
     assert.equal(reviewOnly.runShape(0), "review once, origin/main...HEAD");
     assert.equal(reviewOnly.runShape(12), "review once, origin/main...HEAD");
-  });
-
-  it("neither drains work items nor runs them side by side", () => {
-    assert.equal(reviewOnly.drains, false);
-    assert.equal(reviewOnly.concurrent, false);
   });
 });

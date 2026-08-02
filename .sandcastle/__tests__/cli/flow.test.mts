@@ -1,4 +1,3 @@
-import type { RunResult } from "@ai-hero/sandcastle";
 import assert from "node:assert/strict";
 import { describe, it, type TestContext } from "node:test";
 import { IMPLEMENTER, REVIEWER } from "../../agents/catalog.mts";
@@ -6,7 +5,6 @@ import type { RunModel } from "../../agents/models.mts";
 import {
   applyAnswer,
   initialState,
-  knobQuestion,
   maxParallelQuestion,
   nextStep,
   rememberedFor,
@@ -25,6 +23,9 @@ import {
 } from "../../cli/flow.mts";
 import { mergeStoredRun, serializeStoredRun, type StoredRun } from "../../cli/store.mts";
 import type { Agent, Dispatch, Workflow } from "../../contract.mts";
+import { driveSequential } from "../../drivers/sequential.mts";
+import { repo } from "../../repo.mts";
+import { workList } from "../../runner.mts";
 import type { ScopeOutcome } from "../../scope/github.mts";
 import type { WorkScopeSnapshot } from "../../scope/snapshot.mts";
 import { WORKFLOWS } from "../../workflows/registry.mts";
@@ -82,40 +83,25 @@ function populatedStore(overrides: Partial<StoredRun> = {}): StoredRun {
       implementer: { model: "claude-opus-5", effort: "xhigh" },
       reviewer: { model: "gpt-5.6-sol", effort: "high" },
     },
-    knobs: {},
     passthrough: {},
     ...overrides,
   };
 }
 
-/** The one workflow shape no shipped workflow has yet: a driver that runs waves. */
+/**
+ * The one shape no shipped workflow declares yet: the driver that runs waves.
+ * Registered in `DRIVERS` as draining *and* concurrent from this slice on, which
+ * is what lets the picker ask `MAX_PARALLEL` before slices 8-10 build it.
+ */
 const waveParallel: Workflow = {
   id: "wave-parallel",
   label: "Waves",
   description: "Plan a wave, work it, merge it",
   dir: sequentialReviewer.dir,
   agents: [IMPLEMENTER, REVIEWER],
-  knobs: [],
-  drains: true,
-  concurrent: true,
+  driver: "wave-parallel",
   runShape: (workItems) => `plan → implement → review, up to ${workItems} issues`,
   run: async () => undefined,
-};
-
-/** A workflow that still declares a knob, which no shipped one does any more. */
-const knobbed: Workflow = {
-  ...sequentialReviewer,
-  id: "knobbed",
-  knobs: [
-    {
-      id: "depth",
-      prompt: "How deep?",
-      summaryLabel: "Depth",
-      defaultValue: 4,
-      min: 1,
-      max: 9,
-    },
-  ],
 };
 
 interface WalkOptions {
@@ -268,11 +254,6 @@ describe("the step sequence", () => {
       "effort:*",
       "confirm",
     ]);
-  });
-
-  it("asks a workflow's own knobs after both numbers", () => {
-    const walked = walk({}, { workflows: [knobbed] });
-    assert.deepEqual(walked.ids.slice(2, 5), ["workflow", "run-guard", "knob:depth"]);
   });
 
   it("never asks the run guard when exactly one work item is eligible", () => {
@@ -481,7 +462,7 @@ describe("the fast path", () => {
   });
 
   it("is not offered when there is nothing replayable to offer", () => {
-    const walked = walk({}, { store: { agents: {}, knobs: {}, passthrough: {} } });
+    const walked = walk({}, { store: { agents: {}, passthrough: {} } });
     assert.equal(walked.ids.includes("fast-path"), false);
   });
 
@@ -635,33 +616,6 @@ describe("the wave width", () => {
   });
 });
 
-describe("knob resolution", () => {
-  const bucketed = (depth: number): StoredRun =>
-    populatedStore({ lastWorkflowId: "knobbed", knobs: { knobbed: { depth } } });
-
-  it("uses the declared default when nothing is remembered", () => {
-    assert.equal(knobQuestion(initialState(), knobbed)?.defaultValue, 4);
-  });
-
-  it("uses a remembered value that is still in range", () => {
-    assert.equal(knobQuestion(initialState(bucketed(3)), knobbed)?.defaultValue, 3);
-  });
-
-  it("drops an out-of-range value to the default rather than clamping it", () => {
-    assert.equal(knobQuestion(initialState(bucketed(9999)), knobbed)?.defaultValue, 4);
-    assert.equal(knobQuestion(initialState(bucketed(0)), knobbed)?.defaultValue, 4);
-  });
-
-  it("says what it will accept", () => {
-    assert.equal(knobQuestion(initialState(bucketed(3)), knobbed)?.hint, "1–9  ·  enter accepts 3");
-  });
-
-  it("asks no knob question once every knob is answered", () => {
-    const answered: FlowState = { ...initialState(), knobs: { depth: 4 } };
-    assert.equal(knobQuestion(answered, knobbed), undefined);
-  });
-});
-
 describe("the remembered Work scope", () => {
   it("pre-fills the kind, wherever the run that chose it happened", () => {
     const store = populatedStore({
@@ -765,7 +719,7 @@ describe("rememberedFor", () => {
   it("gives nothing when nothing was remembered", () => {
     assert.equal(rememberedFor(undefined, sequentialReviewer, "implementer"), undefined);
     assert.equal(
-      rememberedFor({ agents: {}, knobs: {}, passthrough: {} }, sequentialReviewer, "*"),
+      rememberedFor({ agents: {}, passthrough: {} }, sequentialReviewer, "*"),
       undefined,
     );
   });
@@ -825,7 +779,6 @@ describe("one model for every agent", () => {
       "lastScope",
       "maxWorkItems",
       "agents",
-      "knobs",
     ]);
   });
 });
@@ -871,39 +824,33 @@ describe("the confirmation", () => {
   });
 });
 
-describe("the run guard bounding the loop", () => {
+describe("the run guard bounding the driver's loop", () => {
   /** A dispatch that runs no CLI and touches no git; it only counts its calls. */
-  function countingDispatch(t: TestContext): { calls: Agent[]; dispatch: Dispatch } {
-    t.mock.method(console, "log", () => undefined);
+  function countingDispatch(): { calls: Agent[]; dispatch: Dispatch } {
     const calls: Agent[] = [];
     const dispatch: Dispatch = (agent) => {
       calls.push(agent);
-      const result: RunResult & { baseSha: string } = {
-        iterations: [],
-        stdout: "",
-        commits: [{ sha: "commit-1" }],
-        branch: "feature",
-        baseSha: `sha-${calls.length}`,
-      };
-      return Promise.resolve(result);
+      return Promise.resolve({ commits: [{ sha: "commit-1" }], baseSha: `sha-${calls.length}` });
     };
     return { calls, dispatch };
   }
 
-  it("drives that many iterations and is remembered as the run guard", async (t) => {
-    const plan = walk({ "run-guard": 3 }).plan;
+  it("cuts the list the driver walks, and is remembered as the run guard", async (t) => {
+    // End to end from the answer to the loop: the number the picker collected is
+    // what `workList` truncates to, and the driver runs the body once per item —
+    // which is the whole of what replaced the workflow's own `for`.
+    t.mock.method(console, "log", () => undefined);
+    const plan = walk({ "run-guard": 2 }).plan;
     assert.ok(plan);
-    assert.equal(plan.maxWorkItems, 3);
+    assert.equal(plan.maxWorkItems, 2);
 
-    const { calls, dispatch } = countingDispatch(t);
-    await plan.workflow.run({ dispatch, knobs: plan.knobs, maxWorkItems: plan.maxWorkItems });
-    assert.equal(calls.filter((agent) => agent.id === "implementer").length, 3);
+    const { calls, dispatch } = countingDispatch();
+    const work = workList(plan.scope, plan.maxWorkItems);
+    await driveSequential({ work, repo, forItem: () => dispatch, forBranch: () => dispatch }, plan.workflow);
 
-    const stored = mergeStoredRun(undefined, runToRemember(plan));
-    assert.equal(stored.maxWorkItems, 3);
-    // Not migrated into a knob bucket: different parameters that happen to both
-    // be integers.
-    assert.deepEqual(stored.knobs, {});
+    assert.equal(work.length, 2);
+    assert.equal(calls.filter((agent) => agent.id === "implementer").length, 2);
+    assert.equal(mergeStoredRun(undefined, runToRemember(plan)).maxWorkItems, 2);
   });
 });
 

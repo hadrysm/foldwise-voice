@@ -5,19 +5,20 @@
 // launched inside Conductor, where the workspace is already an isolated
 // worktree on its own branch, so Sandcastle adds no isolation of its own). See
 // docs/adr/0001-sandcastle-in-place-not-sandboxed.md. A workflow cannot
-// contradict either one, because `DispatchOptions` omits the keys that could.
+// contradict either one, because `DispatchOptions` is a two-key allow-list that
+// names neither.
 //
 // Nothing here knows what this repository is written in. The commands that do
 // live in `.sandcastle/repo.mts`, and the runner only ever passes them through
 // — it never reads their output and never branches on their exit code.
 //
-// Split by side effect. `resolveAgents` is pure — every provider factory is an
-// object literal — so the memoisation that makes "same model for both agents"
-// reuse one provider is testable without a CLI. `validateModels` is the part
-// that spawns. `prepare` runs the second and returns the closure the first
-// feeds, which is what makes eager validation structural: `dispatch` does not
-// exist until the CLIs have been checked, so no auth failure can surface at
-// iteration 7.
+// Split by side effect. `resolveAgents`, `distinctModels`, `workList`,
+// `workspaceProblems` and `withScopeArgs` are pure — every provider factory is
+// an object literal — so the decisions they carry are testable without a CLI, a
+// login or a git repository. `prepare` is the part that spawns, and it is what
+// makes eager validation *structural*: it returns the only value a `Dispatch`
+// can be obtained from, so no auth failure, no dirty tree and no leftover branch
+// can surface at item seven.
 
 import { execSync } from "node:child_process";
 import { resolve } from "node:path";
@@ -26,9 +27,20 @@ import type { AgentProvider } from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import type { RunModel } from "./agents/models.mts";
 import type { ResolvedPlan } from "./cli/flow.mts";
-import type { Dispatch } from "./contract.mts";
+import type { Dispatch, DispatchOptions } from "./contract.mts";
+import type { RunCore } from "./drivers/core.mts";
+import { runnableDriver } from "./drivers/registry.mts";
 import { PROVIDERS, validateModel } from "./providers/registry.mts";
 import { repo } from "./repo.mts";
+import { assertGitHubAuth } from "./scope/github.mts";
+import {
+  anchorRecord,
+  runOrder,
+  truncate,
+  workRecord,
+  type WorkItem,
+  type WorkScopeSnapshot,
+} from "./scope/snapshot.mts";
 
 // Under `noSandbox()` the "sandbox" *is* the host checkout, so this is where
 // `repo.onHostReady` lands. Every command it names is idempotent by contract,
@@ -38,6 +50,19 @@ import { repo } from "./repo.mts";
 const HOOKS = {
   sandbox: { onSandboxReady: repo.onHostReady },
 };
+
+/**
+ * The prompt-arg names the runner and its drivers write. Five, and disjoint from
+ * the one key a body writes (`REVIEW_BASE`) — few enough to assert rather than
+ * leave to convention.
+ */
+export const RESERVED_PROMPT_ARGS: readonly string[] = [
+  "WORK",
+  "ANCHOR",
+  "READY",
+  "MAX_PARALLEL",
+  "WAVE",
+];
 
 /**
  * Build one provider per agent, reusing a single provider object when two
@@ -79,40 +104,200 @@ function validateModels(plan: ResolvedPlan): void {
   for (const model of distinctModels(plan)) validateModel(model);
 }
 
+// ---------------------------------------------------------------------------
+// The frozen work list
+// ---------------------------------------------------------------------------
+
 /**
- * Check every CLI this plan needs, then hand back the workflow's only way to
- * reach an agent. Throws if any check fails, so the caller never gets a
- * `dispatch` it cannot use.
+ * The ordered, truncated list this run may work, or a refusal.
+ *
+ * The picker has already refused a cycle and an empty scope, and this asks
+ * again anyway: the list is the value a driver cannot be invoked without, so
+ * where it comes from must not be the only place it is checked. Truncation is a
+ * prefix of the sort and never a filter applied before it — a prefix of a
+ * topological order always contains its own blockers.
  */
-export function prepare(plan: ResolvedPlan): Dispatch {
+export function workList(scope: WorkScopeSnapshot, maxWorkItems: number): readonly WorkItem[] {
+  const order = runOrder(scope);
+  if (!order.ok) {
+    throw new Error(
+      `These work items block each other in a cycle: ${order.cycle.map((number) => `#${number}`).join(" → ")}.`,
+    );
+  }
+  const items = truncate(order.items, maxWorkItems);
+  if (items.length === 0) {
+    throw new Error("This Work scope holds nothing to run. Resolve it again before starting.");
+  }
+  return items;
+}
+
+// ---------------------------------------------------------------------------
+// The workspace
+// ---------------------------------------------------------------------------
+
+/** The three git reads the workspace preflight is decided from. */
+export interface WorkspaceState {
+  /** `git status --porcelain`. */
+  readonly status: string;
+  /** `git branch --list sandcastle/*`. */
+  readonly branches: string;
+  /** `git worktree list --porcelain`. */
+  readonly worktrees: string;
+}
+
+const SANDCASTLE_BRANCH_PREFIX = "sandcastle/";
+const WORKTREE_BRANCH_LINE = `branch refs/heads/${SANDCASTLE_BRANCH_PREFIX}`;
+
+/**
+ * Everything about this workspace that would break a run, found before the run
+ * starts rather than at a fan-in three waves in — which is the whole of what
+ * eager validation is worth.
+ *
+ * Pure over the three command outputs, so the wording a maintainer reads is
+ * assertable without a git repository in a broken state.
+ */
+export function workspaceProblems(state: WorkspaceState): readonly string[] {
+  const problems: string[] = [];
+
+  if (state.status.trim() !== "") {
+    problems.push(
+      "the workspace has uncommitted changes, and `git merge` refuses to run over them",
+    );
+  }
+
+  const branches = state.branches
+    .split("\n")
+    .map((line) => line.replace(/^[*+]?\s*/, "").trim())
+    .filter((line) => line.startsWith(SANDCASTLE_BRANCH_PREFIX));
+  if (branches.length > 0) {
+    problems.push(`a previous run left ${branches.join(", ")} behind`);
+  }
+
+  const worktrees = state.worktrees
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(WORKTREE_BRANCH_LINE))
+    .map((line) => line.slice("branch refs/heads/".length));
+  if (worktrees.length > 0) {
+    problems.push(`a previous run left a worktree on ${worktrees.join(", ")}`);
+  }
+
+  return problems;
+}
+
+function git(command: string): string {
+  return execSync(`git ${command}`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+function assertWorkspaceIsClean(): void {
+  const problems = workspaceProblems({
+    status: git("status --porcelain"),
+    branches: git(`branch --list "${SANDCASTLE_BRANCH_PREFIX}*"`),
+    worktrees: git("worktree list --porcelain"),
+  });
+  if (problems.length > 0) {
+    throw new Error(`This workspace is not ready for a run: ${problems.join("; ")}.`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Prompt args
+// ---------------------------------------------------------------------------
+
+/**
+ * The args one dispatch is sent: what the runner wrote, plus whatever the body
+ * added.
+ *
+ * A collision **throws and never overrides**. Silently winning either way is the
+ * defect: the runner winning would drop a `REVIEW_BASE` a body depends on, and
+ * the body winning would let a workflow tell an agent it is working on something
+ * else entirely — which is work selection, through the one door that was left
+ * open.
+ */
+export function withScopeArgs(
+  reserved: Readonly<Record<string, string>>,
+  fromBody: Readonly<Record<string, string>> | undefined,
+): Record<string, string> {
+  const collisions = Object.keys(fromBody ?? {}).filter((key) =>
+    RESERVED_PROMPT_ARGS.includes(key),
+  );
+  if (collisions.length > 0) {
+    throw new Error(
+      `A workflow set the reserved prompt argument${collisions.length === 1 ? "" : "s"} ${collisions.join(", ")}. Those are written by the runner, and the scope is not a workflow's to name.`,
+    );
+  }
+  return { ...fromBody, ...reserved };
+}
+
+// ---------------------------------------------------------------------------
+// Preparing a run
+// ---------------------------------------------------------------------------
+
+/**
+ * Check everything knowable before the first dispatch, then hand back the only
+ * value a driver — and so a workflow — can reach an agent through.
+ *
+ * Pure refusals first, so a plan that cannot run never spawns a CLI to find out.
+ * Everything here throws rather than reporting, because the caller has nothing
+ * to do with a half-checked run.
+ */
+export function prepare(plan: ResolvedPlan): RunCore {
+  // Called for its refusal, not for its value: `main.mts` asks again once the
+  // core exists. A shape the picker can describe but this build cannot run has
+  // to fail here, before a CLI is spawned or a provider is built.
+  runnableDriver(plan.workflow);
+
+  const work = workList(plan.scope, plan.maxWorkItems);
+
   validateModels(plan);
+  assertGitHubAuth();
+  assertWorkspaceIsClean();
+
   const providers = resolveAgents(plan);
 
-  return async (agent, options) => {
-    const provider = providers.get(agent.id);
-    if (!provider) {
-      throw new Error(`The ${plan.workflow.label} workflow drives an unresolved agent: ${agent.id}`);
-    }
+  const dispatchWith = (reserved: Readonly<Record<string, string>>): Dispatch => {
+    return async (agent, options: DispatchOptions) => {
+      const provider = providers.get(agent.id);
+      if (!provider) {
+        throw new Error(
+          `The ${plan.workflow.label} workflow drives an unresolved agent: ${agent.id}`,
+        );
+      }
 
-    // Captured here, immediately before the run, so the SHA a workflow gets
-    // back cannot be older or newer than the dispatch it came from.
-    const baseSha = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
+      // Captured here, immediately before the run, so the SHA a workflow gets
+      // back cannot be older or newer than the dispatch it came from.
+      const baseSha = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
 
-    const result = await sandcastle.run({
-      ...options,
-      name: agent.id,
-      agent: provider,
-      sandbox: noSandbox(),
-      branchStrategy: { type: "head" },
-      // Pinned at 1: the outer loop is the workflow's `for`, and a second
-      // Sandcastle iteration would let one dispatch drain the whole backlog.
-      maxIterations: 1,
-      hooks: HOOKS,
-      // Sandcastle resolves `promptFile` against `process.cwd()`, so anchoring
-      // on the workflow's own folder is what lets that folder move.
-      promptFile: resolve(plan.workflow.dir, options.promptFile),
-    });
+      const result = await sandcastle.run({
+        promptArgs: withScopeArgs(reserved, options.promptArgs),
+        name: agent.id,
+        agent: provider,
+        sandbox: noSandbox(),
+        branchStrategy: { type: "head" },
+        // Pinned at 1: the loop over work items belongs to the driver, and a
+        // second Sandcastle iteration would let one dispatch drain the backlog.
+        maxIterations: 1,
+        hooks: HOOKS,
+        // Sandcastle resolves `promptFile` against `process.cwd()`, so anchoring
+        // on the workflow's own folder is what lets that folder move.
+        promptFile: resolve(plan.workflow.dir, options.promptFile),
+      });
 
-    return { ...result, baseSha };
+      // Narrowed to the contract's two fields on the way out. `stdout`,
+      // `resume` and `fork` stop here: a workflow that could resume its own
+      // dispatch could pick a branch strategy ADR-0001 forbids.
+      return { commits: result.commits, baseSha };
+    };
+  };
+
+  return {
+    work,
+    repo,
+    // JSON, never markdown: an item body containing a fenced block would break
+    // straight out of a markdown splice, while JSON escapes every newline and
+    // can never start a line with a fence.
+    forItem: (item) =>
+      dispatchWith({ WORK: JSON.stringify(workRecord(plan.scope, item.nodeId)) }),
+    forBranch: () => dispatchWith({ ANCHOR: JSON.stringify(anchorRecord(plan.scope)) }),
   };
 }

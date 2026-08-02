@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { validateInteger } from "../../cli/prompts.mts";
 
-// The bounds Sequential Reviewer's only knob declares.
+// The run guard's bounds, which is the widest typed number the picker asks for.
 const bounds = { min: 1, max: 50 };
 
 describe("the typed number field", () => {

@@ -1,0 +1,81 @@
+// The driver seam: what `prepare()` hands a driver, and what a driver is.
+//
+// Types only, with no runtime export at all, and that is what it is for. A
+// driver needs to name `RunCore`, `cli/flow.mts` needs to read a driver's shape,
+// and `runner.mts` is the module that spawns — so if the drivers imported the
+// core's *type* from `runner.mts`, the picker would reach Sandcastle through the
+// registry and stop being assertable. Declaring the seam in a leaf breaks that
+// chain rather than relying on every import along it staying type-only.
+//
+// The layering this expresses, from ADR-0010 as amended:
+//
+//   runner core   providers, model validation, the frozen allow-list, prompt-arg
+//                 injection, git primitives            — changes rarely
+//   driver        worktrees, concurrency, fan-in, skips, cleanup, the Planner and
+//                 Merger dispatches                    — a genuinely new shape
+//   workflow      agents, prompts, a driver choice, one body — every new idea
+//   repo config   pre-warm, copyToWorktree, MAX_PARALLEL, the item timeout
+
+import type { Dispatch, DriverId, Workflow } from "../contract.mts";
+import type { RepoConfig } from "../repo.mts";
+import type { WorkItem } from "../scope/snapshot.mts";
+
+/**
+ * Everything a driver may reach, and the only value from which a `Dispatch` can
+ * be obtained. `prepare()` is the sole producer, and it returns nothing until
+ * every preflight has passed — which is what makes eager validation structural
+ * rather than conventional: no auth failure can surface at item seven, because
+ * there was no way to dispatch item one without the checks having run.
+ */
+export interface RunCore {
+  /**
+   * The frozen, ordered, truncated list this run may work — a topological sort
+   * of the `blocked_by` edges, stable on the maintainer's authored order, cut by
+   * the run guard *after* the sort so no item's blocker was ever cut out from
+   * under it. Empty is impossible: `prepare()` refuses a run with no work.
+   */
+  readonly work: readonly WorkItem[];
+  /**
+   * This repository's shape. A driver passes these commands through and never
+   * reads their output — it may run a command whose result it discards, and
+   * never one whose exit code it branches on, git excepted.
+   */
+  readonly repo: RepoConfig;
+  /**
+   * A dispatch on the host checkout already scoped to one work item, with
+   * `{{WORK}}` written for it. `item` must be one of `work`.
+   */
+  readonly forItem: (item: WorkItem) => Dispatch;
+  /**
+   * A dispatch on the host checkout for a driver that has no work items, with
+   * `{{ANCHOR}}` written — literally `null` under a repository-wide scope.
+   */
+  readonly forBranch: () => Dispatch;
+}
+
+/** How a driver runs one workflow to completion. */
+export type Drive = (core: RunCore, workflow: Workflow) => Promise<void>;
+
+/**
+ * One execution shape. `drains` and `concurrent` are what the picker reads to
+ * decide whether the run guard and `MAX_PARALLEL` are decisions at all, which is
+ * why they live here and not on `Workflow`: a workflow that declared its own
+ * concurrency could contradict the driver that actually runs it.
+ */
+export interface Driver {
+  readonly id: DriverId;
+  /** Whether this driver works through a list of work items. */
+  readonly drains: boolean;
+  /** Whether it works more than one of them at a time. */
+  readonly concurrent: boolean;
+  /**
+   * Run a workflow, or `null` for a shape that is decided but not yet built.
+   *
+   * `wave-parallel` is `null` today: SPEC #418 settled its shape — it drains and
+   * it is concurrent, which is what makes `MAX_PARALLEL` a question the picker
+   * knows how to ask — while its worktrees, timeout, fan-in, Planner and Merger
+   * land in slices 8–10. `prepare()` refuses a plan whose driver cannot run, so
+   * this is never `null` by the time anything is dispatched.
+   */
+  readonly drive: Drive | null;
+}

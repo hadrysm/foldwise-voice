@@ -23,8 +23,13 @@
 //
 // That sharing is also why a write is a key-level upsert and why parsing keeps
 // keys it cannot interpret: those worktrees are on *different branches*, so one
-// may know a workflow, an agent or a knob that another does not. Under a
-// wholesale replace, whichever ran last would erase the other's memory.
+// may know a workflow or an agent that another does not. Under a wholesale
+// replace, whichever ran last would erase the other's memory.
+//
+// `knobs` is the first key to have gone through that retirement, and it needed
+// no special case: SPEC #418 deleted `Knob`, so this version simply stops
+// naming `knobs` and it becomes one more unrecognised top-level key, carried
+// verbatim for whichever branch still writes one.
 //
 // The module is a leaf on purpose. It imports `node:*` and the model catalog and
 // nothing else — no workflow registry, no agent catalog — which is what makes
@@ -73,13 +78,7 @@ export interface StoredScope {
 
 /**
  * The last run, as far as it can still be trusted. Agent picks key globally —
- * `IMPLEMENTER` and `REVIEWER` are single shared objects — while knobs key per
- * workflow, because two workflows declaring `maxIterations` declare two
- * different parameters that happen to share a spelling.
- *
- * `knobs` and `maxWorkItems` are deliberately *not* the same field. They are
- * different parameters that happen to both be integers, and migrating one into
- * the other on that strength alone would run a number nobody chose.
+ * `IMPLEMENTER` and `REVIEWER` are single shared objects.
  */
 export interface StoredRun {
   lastWorkflowId?: string;
@@ -89,17 +88,14 @@ export interface StoredRun {
   /** How many work items a concurrent driver runs at once. */
   maxParallel?: number;
   agents: Record<string, StoredPick>;
-  knobs: Record<string, Record<string, number>>;
   /**
    * Every *top-level* key this version does not interpret, carried through a
-   * read-modify-write untouched.
+   * read-modify-write untouched — `knobs` among them, now that `Knob` is gone.
    *
    * The same argument that makes an agent id survive, one level up. Worktrees
    * of one clone sit on different branches, so a branch that predates a field
    * would otherwise erase it on its next write, and a branch that has dropped
-   * one would erase the branch that still uses it. Passthrough also absorbs a
-   * *retired* key with no special case: when `knobs` stops being parsed, it
-   * simply becomes an unrecognised top-level key and keeps being carried.
+   * one would erase the branch that still uses it.
    */
   passthrough: Record<string, unknown>;
 }
@@ -122,7 +118,6 @@ interface RunToRemember {
   maxWorkItems?: number;
   maxParallel?: number;
   agents: readonly { agentId: string; model: { id: ModelID }; effort: RunEffort }[];
-  knobs: Readonly<Record<string, number>>;
 }
 
 function gitDir(flag: "--git-common-dir" | "--git-dir", cwd: string): string {
@@ -185,25 +180,6 @@ function parseAgents(value: unknown): Record<string, StoredPick> {
 }
 
 /**
- * One workflow's knob bucket. Integers only, and no bounds check — `min` and
- * `max` live on the `Knob` the workflow declares, which this module cannot see,
- * so an out-of-range value is rejected at the point of use instead.
- */
-function parseKnobs(value: unknown): Record<string, Record<string, number>> {
-  const knobs: Record<string, Record<string, number>> = {};
-  if (!isRecord(value)) return knobs;
-  for (const [workflowId, bucket] of Object.entries(value)) {
-    if (!isRecord(bucket)) continue;
-    const parsed: Record<string, number> = {};
-    for (const [knobId, knobValue] of Object.entries(bucket)) {
-      if (typeof knobValue === "number" && Number.isInteger(knobValue)) parsed[knobId] = knobValue;
-    }
-    knobs[workflowId] = parsed;
-  }
-  return knobs;
-}
-
-/**
  * One remembered Work scope. Only the shape is checked — a `kind` no picker
  * declares is kept for the same reason an unknown agent id is, and it is inert
  * because nothing looks it up.
@@ -234,7 +210,6 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
   "maxWorkItems",
   "maxParallel",
   "agents",
-  "knobs",
 ]);
 
 function parsePassthrough(candidate: Record<string, unknown>): Record<string, unknown> {
@@ -247,9 +222,7 @@ function parsePassthrough(candidate: Record<string, unknown>): Record<string, un
  * v1 read as v2, which is nearly free because v1's keys already are the v2
  * agent ids. `sameForBoth` is dropped rather than migrated: "one model for
  * every agent?" is a question the picker derives, not a fact worth storing.
- * Both absent v2 fields land on exactly v1's behaviour — no `lastWorkflowId`
- * means registry index 0, and no knob bucket means each knob's declared
- * default, which is the constant v1 hardcoded.
+ * An absent `lastWorkflowId` lands on exactly v1's behaviour — registry index 0.
  */
 function parseV1(candidate: Record<string, unknown>): StoredRun {
   const agents: Record<string, StoredPick> = {};
@@ -257,7 +230,7 @@ function parseV1(candidate: Record<string, unknown>): StoredRun {
     const pick = parsePick(candidate[agentId]);
     if (pick) agents[agentId] = pick;
   }
-  return { agents, knobs: {}, passthrough: {} };
+  return { agents, passthrough: {} };
 }
 
 /**
@@ -280,7 +253,6 @@ export function parseStoredRun(raw: string): StoredRun | undefined {
 
   const run: StoredRun = {
     agents: parseAgents(parsed.agents),
-    knobs: parseKnobs(parsed.knobs),
     passthrough: parsePassthrough(parsed),
   };
   // Kept even when no registry knows it — the flow falls back to index 0, and
@@ -310,9 +282,8 @@ export function readStoredRun(storePath: string = runStorePath()): StoredRun | u
 
 /**
  * Fold this run into what was already remembered, key by key. The entries this
- * run did not touch — another agent's model, another workflow's knobs, a knob
- * this workflow no longer declares, a top-level field this branch has never
- * heard of — are carried across untouched, because a one-agent, zero-knob run
+ * run did not touch — another agent's model, a top-level field this branch has
+ * never heard of — are carried across untouched, because a one-agent run
  * replacing the file wholesale would erase them.
  *
  * `origin` is the worktree doing the writing, and is the only part of the
@@ -328,10 +299,6 @@ export function mergeStoredRun(
     agents[agent.agentId] = { model: agent.model.id, effort: agent.effort };
   }
 
-  const knobs = { ...existing?.knobs };
-  const bucket = { ...existing?.knobs[run.workflow.id], ...run.knobs };
-  if (Object.keys(bucket).length) knobs[run.workflow.id] = bucket;
-
   const lastScope: StoredScope = { kind: run.scope.kind };
   if (run.scope.target !== undefined) lastScope.target = run.scope.target;
   if (origin !== undefined) lastScope.origin = origin;
@@ -344,7 +311,6 @@ export function mergeStoredRun(
     maxWorkItems: run.maxWorkItems ?? existing?.maxWorkItems,
     maxParallel: run.maxParallel ?? existing?.maxParallel,
     agents,
-    knobs,
     passthrough: { ...existing?.passthrough },
   };
 }
@@ -358,7 +324,6 @@ export function serializeStoredRun(run: StoredRun): string {
       maxWorkItems: run.maxWorkItems,
       maxParallel: run.maxParallel,
       agents: run.agents,
-      knobs: run.knobs,
       // Last, and by construction disjoint from every key above: whatever this
       // version does not interpret goes back out exactly as it came in.
       ...run.passthrough,
