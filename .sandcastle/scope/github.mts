@@ -35,8 +35,10 @@ import {
   READY_FOR_HUMAN,
   SPEC,
   type BlockerRef,
+  type HandoffState,
   type IssueComment,
   type IssueRecord,
+  type LiveIssueState,
   type WorkScope,
   type WorkScopeSnapshot,
 } from "./snapshot.mts";
@@ -885,4 +887,77 @@ export async function revalidate(
   }
 
   return { status: "ok", issue };
+}
+
+// ---------------------------------------------------------------------------
+// Live reads a run makes about itself
+// ---------------------------------------------------------------------------
+
+function toLiveState(issue: RawIssue): LiveIssueState {
+  return { number: issue.number, state: issue.state, labels: issue.labels };
+}
+
+/**
+ * One item's state at the moment it settled.
+ *
+ * This is where a **bounce** is observed, and observing it here is the point:
+ * the reviewer reopens an issue it judges incomplete, so an item whose issue is
+ * open once its loop has finished was bounced — a fact about GitHub, never the
+ * workflow's testimony about itself.
+ */
+export async function readLiveState(
+  number: number,
+  transport: GitHubTransport = ghTransport(),
+): Promise<LiveIssueState> {
+  return toLiveState(await readIssue(transport, number));
+}
+
+/**
+ * Every descendant's live state, by walking `/sub_issues` down from a parent.
+ *
+ * A second, lighter traversal than `traverse`: the handoff asks only whether
+ * each descendant is open and what it carries, so it reads one endpoint per node
+ * instead of three. Nothing is pruned on the way down, for the same reason
+ * discovery prunes nothing — an eligible slice under an unreleased parent still
+ * counts against a drained SPEC.
+ */
+async function readDescendantStates(
+  transport: GitHubTransport,
+  parent: RawIssue,
+  seen: Set<string>,
+): Promise<readonly LiveIssueState[]> {
+  const states: LiveIssueState[] = [];
+  for (const child of await readSubIssues(transport, parent)) {
+    if (seen.has(child.nodeId)) continue;
+    seen.add(child.nodeId);
+    states.push(toLiveState(child));
+    states.push(...(await readDescendantStates(transport, child, seen)));
+  }
+  return states;
+}
+
+/**
+ * The anchor and its descendants, re-read from live GitHub at the end of a run,
+ * or `null` under a repository-wide scope — which has no anchor, and so no
+ * handoff and no durable report.
+ *
+ * Live rather than frozen, and read *after* every per-item tracker correction
+ * has landed. That ordering is the whole of why the payoff needs no
+ * coordination: a run that reopened a rewound slice sees that slice open here,
+ * and the SPEC correctly goes unlabelled.
+ */
+export async function readHandoffState(
+  snapshot: WorkScopeSnapshot,
+  transport: GitHubTransport = ghTransport(),
+): Promise<HandoffState | null> {
+  const { anchorNodeId } = snapshot;
+  if (anchorNodeId === null) return null;
+  const frozen = issueByNodeId(snapshot, anchorNodeId);
+  if (!frozen) return null;
+
+  const anchor = await readIssue(transport, frozen.number);
+  return {
+    anchor: toLiveState(anchor),
+    descendants: await readDescendantStates(transport, anchor, new Set([anchor.nodeId])),
+  };
 }

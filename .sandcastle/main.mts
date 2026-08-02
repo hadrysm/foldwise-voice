@@ -33,9 +33,10 @@ async function main(): Promise<void> {
 
   printRunHeader(plan);
 
+  // No trailing `All done.` — a draining driver ends by printing its own run
+  // report, and a bare "done" printed under a report naming two skipped items
+  // and a bounce would be the run's last word contradicting its own record.
   await runnableDriver(plan.workflow)(core, plan.workflow);
-
-  console.log("\nAll done.");
 }
 
 main().catch((error: unknown) => {
