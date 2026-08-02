@@ -97,6 +97,4 @@ Report what happened rather than what you hoped for. `verified: true` on a tree 
 
 # DONE
 
-Emit the verdict block, then output the completion signal:
-
-<promise>COMPLETE</promise>
+The verdict block is the whole answer. Emit it and stop — the run reads that block and nothing else you write.

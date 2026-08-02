@@ -88,4 +88,4 @@ If in doubt between fix-in-place and reopen, reopen — an explicit bounce with 
 
 Never push and never open a pull request — commits stay on the current branch for human review.
 
-Once complete, output <promise>COMPLETE</promise>.
+There is nothing to emit when you finish. Your terminal state is the commits you made and the issue's state on GitHub — the run re-reads the item there, and an open issue is how it knows you bounced it.

@@ -48,6 +48,4 @@ Order inside `wave` carries no meaning: the items start together, and the run me
 
 # Done
 
-Emit the plan block, then output the completion signal:
-
-<promise>COMPLETE</promise>
+The plan block is the whole answer. Emit it and stop — the run reads that block and nothing else you write.

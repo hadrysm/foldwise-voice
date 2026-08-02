@@ -71,6 +71,6 @@ You are an autonomous coding agent implementing exactly one work item: the one i
 
 # Done
 
-When your work item is implemented and committed, or you are blocked on it and have left the comment, output the completion signal:
+You are done when your work item is implemented and committed, or when you are blocked on it and have left the comment.
 
-<promise>COMPLETE</promise>
+There is nothing to emit. The run reads the commits on your branch and the item's state on GitHub, and it reads nothing you write here.
