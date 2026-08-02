@@ -139,4 +139,4 @@ Fix every failure before you commit.
 
 Never push and never open a pull request — commits stay on this branch for human review.
 
-Once complete, output <promise>COMPLETE</promise>.
+There is nothing to emit when you finish. Your terminal state is the commits you left on this branch, which is all the run reads.

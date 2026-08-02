@@ -13,10 +13,10 @@
 // **Fan-in is the runner's; verification is the prompt's.** The runner may run a
 // command whose output it discards and never one whose exit code it branches on,
 // git excepted — so it *cannot* re-derive `verified` for itself. That is not a
-// preference either: `runner.mts` sets no completion signal, so
-// `<promise>COMPLETE</promise>` is inert and would carry no payload anyway, and
-// the contract's two-key allow-list denies a workflow `output`. Structured
-// output on a driver-internal consult is the only channel there is.
+// preference either: a dispatch is narrowed to its commits on the way out and a
+// completion signal carries no payload even when one is set (#430), and the
+// contract's two-key allow-list denies a workflow `output`. Structured output on
+// a driver-internal consult is the only channel there is.
 //
 // **It never closes an issue.** Upstream's CLOSE ISSUES section dies entirely:
 // the runner never closes a SPEC and the implementer already closes its own

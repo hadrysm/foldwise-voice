@@ -29,6 +29,7 @@ import {
   consultTagsAppearInPrompts,
   knownDefects,
   nothingReachesSandcastle,
+  nothingSignalsCompletion,
   promptArgNamesAreDisjoint,
   reconcileKnownDefects,
   sharedPromptsMatch,
@@ -374,6 +375,48 @@ describe("the git-mutation sweep", () => {
 
   it("reports an empty corpus as covering nothing", () => {
     assertCaught(shellBlocksLeaveGitAlone([]), "enumerated nothing");
+  });
+});
+
+describe("the completion-signal sweep", () => {
+  const prompt = (text: string): readonly Prompt[] => [{ name: "planted/prompt.md", text }];
+  const dispatches = planted(
+    "const result = await sandcastle.run({",
+    "  name: agent.id,",
+    "  maxIterations: 1,",
+    "});",
+  );
+
+  it("catches a prompt that tells the agent to announce it finished", () => {
+    const found = nothingSignalsCompletion(
+      prompt("When it is committed, output the completion signal:\n\n<promise>COMPLETE</promise>"),
+      [dispatches],
+    );
+    assertCaught(found, "<promise> block");
+  });
+
+  it("catches the other direction — a dispatch that starts configuring a signal", () => {
+    const found = nothingSignalsCompletion(prompt("Commit it, then stop."), [
+      planted(
+        "const result = await sandcastle.run({",
+        '  completionSignal: "<verdict>DONE</verdict>",',
+        "});",
+      ),
+    ]);
+    assertCaught(found, "which a dispatch cannot return");
+  });
+
+  it("passes a prompt that names its terminal state instead of emitting one", () => {
+    assertClean(
+      nothingSignalsCompletion(
+        prompt("There is nothing to emit: the run reads your commits and the issue's state."),
+        [dispatches],
+      ),
+    );
+  });
+
+  it("reports an empty corpus as covering nothing", () => {
+    assertCaught(nothingSignalsCompletion([], [dispatches]), "enumerated nothing");
   });
 });
 

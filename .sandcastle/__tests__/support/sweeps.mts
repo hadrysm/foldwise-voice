@@ -33,6 +33,7 @@ import {
   interfaceMembers,
   literals,
   literalsIn,
+  objectLiterals,
   openingText,
   propertyValue,
   walk,
@@ -666,6 +667,62 @@ export function shellBlocksLeaveGitAlone(prompts: readonly Prompt[]): readonly V
       found.push({
         where: prompt.name,
         detail: `ends a shell block on \`git ${subcommand ?? ""}\`, which does not only read — every block expands concurrently, so whatever depends on it is racing it; chain the read onto it with && instead`,
+      });
+    }
+  }
+  return found;
+}
+
+// ---------------------------------------------------------------------------
+// No prompt ends on a signal nothing reads
+// ---------------------------------------------------------------------------
+
+/** The opening tag alone, so a prompt that merely mentions the signal is caught too. */
+const PROMISE_TAG = "<promise>";
+
+/** The one key that would put a signal in a dispatch's options. */
+const COMPLETION_SIGNAL = "completionSignal";
+
+/**
+ * Nothing tells an agent to announce that it finished.
+ *
+ * `<promise>COMPLETE</promise>` is Sandcastle's default signal, so the library
+ * does detect it — and then nothing happens. `maxIterations` is pinned at 1, so
+ * the iteration ends either way, and a dispatch is narrowed to `{ commits,
+ * baseSha }` on the way out, so the match never reaches a driver at all. Its
+ * entire residue is the severity of one line in Sandcastle's own log. A marker
+ * that reads as a protocol and is not one is worse than no marker: every reader
+ * who has met this one has had to go and work out that it does nothing.
+ *
+ * Reported in **both** directions, which is what makes the decision enforceable
+ * rather than merely done. A prompt that grows the tag back is caught, and so is
+ * a module that starts setting `completionSignal` — because a signal a dispatch
+ * cannot return is inert for exactly the same reason, and whoever wants one
+ * should be arguing with this rule rather than landing beside it. The channel
+ * that does carry a payload is a consult's structured output.
+ */
+export function nothingSignalsCompletion(
+  prompts: readonly Prompt[],
+  modules: readonly Module[],
+): readonly Violation[] {
+  if (prompts.length === 0) return [coversNothing("nothingSignalsCompletion")];
+
+  const found: Violation[] = [];
+  for (const prompt of prompts) {
+    if (!prompt.text.includes(PROMISE_TAG)) continue;
+    found.push({
+      where: prompt.name,
+      detail: `shows a ${PROMISE_TAG} block; the runner pins maxIterations at 1 and narrows a dispatch to its commits, so the signal reads as a mechanism and is documentation`,
+    });
+  }
+
+  for (const module of modules) {
+    for (const object of objectLiterals(module)) {
+      const value = propertyValue(object, COMPLETION_SIGNAL);
+      if (!value) continue;
+      found.push({
+        where: at(module, value),
+        detail: `sets ${COMPLETION_SIGNAL}, which a dispatch cannot return — a driver reads commits and GitHub state, and a consult's structured output is the channel that carries a payload`,
       });
     }
   }

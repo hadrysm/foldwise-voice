@@ -15,6 +15,7 @@ import {
   consultTagsAppearInPrompts,
   describeViolations,
   knownDefects,
+  nothingSignalsCompletion,
   promptArgNamesAreDisjoint,
   reconcileKnownDefects,
   sharedPromptsMatch,
@@ -42,6 +43,14 @@ describe("every shipped prompt", () => {
     // shipped red, and both are worse than a declaration in the file itself.
     const prompts = everyPrompt();
     assertClean(reconcileKnownDefects(shellBlocksLeaveGitAlone(prompts), knownDefects(prompts)));
+  });
+
+  it("asks the agent to emit no completion signal, because nothing reads one", () => {
+    // #430's decision, held from both ends: every prompt used to close on
+    // `<promise>COMPLETE</promise>` — Sandcastle's own default signal, detected
+    // by the library and read by nothing above it — and the tag was inherited
+    // silently through four rewrites before anybody asked what consumed it.
+    assertClean(nothingSignalsCompletion(everyPrompt(), sweptModules()));
   });
 
   it("expands only prompt arguments something writes", () => {
