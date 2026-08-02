@@ -194,7 +194,7 @@ function fromGhFailure(path: string, error: unknown): ScopeError {
   const failure = error as SpawnFailure;
   return httpFailure(
     path,
-    failure.stderr === undefined ? "" : String(failure.stderr).trim(),
+    failure.stderr === undefined || failure.stderr === null ? "" : String(failure.stderr).trim(),
     failure.message ?? "gh could not be run",
   );
 }
@@ -207,6 +207,11 @@ export function ghTransport(): GitHubTransport {
       stdout = execFileSync("gh", [...ghArgs(request)], {
         encoding: "utf8",
         maxBuffer: 128 * 1024 * 1024,
+        // Captured rather than inherited. `gh` echoes `gh: Not Found (HTTP
+        // 404)` to its own stderr, and one of those is an *expected answer*
+        // here — an issue with no parent — so letting it through would print a
+        // scary line into an append-only run ledger on a perfectly healthy run.
+        stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (error) {
       throw fromGhFailure(request.path, error);
@@ -777,6 +782,10 @@ async function stillDescendsFrom(
     }
     const issue = parseIssue(parent, `issue #${current} parent`);
     if (issue.nodeId === anchorNodeId) return true;
+    // A parent in another repository cannot be on the way to this anchor, and
+    // its number would otherwise be read back against *our* repository — a
+    // different issue entirely, walked as if it were the ancestor.
+    if (issue.repository.toLowerCase() !== REPOSITORY.toLowerCase()) return false;
     current = issue.number;
   }
   return false;
