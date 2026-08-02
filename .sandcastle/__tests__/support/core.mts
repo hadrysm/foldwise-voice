@@ -179,6 +179,12 @@ export function fakeCore(
         return scoped(item);
       },
       forBranch: () => scoped(null),
+      consult: () => {
+        // The Planner and the Merger belong to a driver that runs items side by
+        // side. One reaching a core that stands in for the other two shapes
+        // would be a driver reaching for a capability it did not declare.
+        assert.fail("a driver that does not run items side by side consulted an agent");
+      },
       git: {
         branch: FAKE_WORKSPACE_BRANCH,
         headSha: () => "base-sha",

@@ -17,6 +17,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, type TestContext } from "node:test";
 import { driveWaveParallelWith } from "../../drivers/wave-parallel.mts";
+import { RESERVED_PROMPT_ARGS } from "../../runner.mts";
 import type { Revalidation } from "../../scope/github.mts";
 import { RUN_REPORT_MARKER, runOrder } from "../../scope/snapshot.mts";
 import {
@@ -41,7 +42,10 @@ import {
   reached,
   waveCore,
   waveWorkflow,
+  type Consultation,
   type ItemScript,
+  type MergerScript,
+  type PlannerScript,
   type ScriptContext,
   type WaveDispatch,
 } from "../support/wave.mts";
@@ -64,6 +68,7 @@ const CHAINED: readonly FixtureIssue[] = [
 interface DrivenRun {
   readonly repo: TempRepo;
   readonly calls: BodyCall[];
+  readonly consultations: Consultation[];
   readonly dispatches: WaveDispatch[];
   readonly writes: TrackerWrite[];
   readonly printed: string[];
@@ -85,22 +90,30 @@ interface DriveOptions {
   readonly itemTimeoutMinutes?: number;
   readonly openAtSettle?: readonly number[];
   readonly revalidations?: Readonly<Record<number, Revalidation>>;
+  readonly plans?: readonly PlannerScript[];
+  readonly verdicts?: readonly MergerScript[];
+  readonly consultFails?: Readonly<Record<string, string>>;
+  /** Supply the repository when a script has to reach it — a Merger merging by hand. */
+  readonly repo?: TempRepo;
 }
 
 async function drive(t: TestContext, options: DriveOptions = {}): Promise<DrivenRun> {
   const printed = captureNarration(t);
-  const repo = tempRepo(t);
+  const repo = options.repo ?? tempRepo(t);
   const snapshot = specSnapshot({ number: 418 }, [...(options.issues ?? INDEPENDENT)]);
   const order = runOrder(snapshot);
   assert.ok(order.ok);
 
   const calls: BodyCall[] = [];
-  const { core, dispatches } = waveCore(repo, snapshot, order.items, {
+  const { core, dispatches, consultations } = waveCore(repo, snapshot, order.items, {
     scripts: options.scripts,
     maxParallel: options.maxParallel ?? 3,
     itemTimeoutMinutes: options.itemTimeoutMinutes,
     openAtSettle: options.openAtSettle,
     revalidations: options.revalidations,
+    plans: options.plans,
+    verdicts: options.verdicts,
+    consultFails: options.consultFails,
   });
   const { tracker, writes } = fakeTracker();
 
@@ -114,6 +127,7 @@ async function drive(t: TestContext, options: DriveOptions = {}): Promise<Driven
     exitCode,
     repo,
     calls,
+    consultations,
     dispatches,
     writes,
     printed,
@@ -382,6 +396,252 @@ describe("a wave-parallel run that aborts", () => {
       run.calls.some((call) => call.item?.number === 421),
       false,
     );
+  });
+});
+
+describe("the Planner, as the driver uses it", () => {
+  it("is asked once per multi-item level and not at all at a one-item one", async (t) => {
+    // 419 and 421 are one level and 420 is a level of its own behind 419 — so
+    // wave one is a plan worth asking for and wave two is not, because a
+    // zero-item plan being invalid makes that item the only valid plan.
+    const run = await drive(t, { issues: CHAINED, maxParallel: 3 });
+
+    assert.deepEqual(
+      run.consultations.filter((consult) => consult.agentId === "planner").length,
+      1,
+    );
+  });
+
+  it("is handed the ready level and MAX_PARALLEL, and no dependency edge", async (t) => {
+    const run = await drive(t, { issues: CHAINED, maxParallel: 3 });
+    const plan = run.consultations.find((consult) => consult.agentId === "planner");
+
+    assert.ok(plan);
+    assert.equal(plan.promptFile, "plan-prompt.md");
+    assert.equal(plan.promptArgs["MAX_PARALLEL"], "3");
+    assert.deepEqual(JSON.parse(plan.promptArgs["READY"] ?? "[]"), [
+      { number: 419, title: "Issue 419", body: "" },
+      { number: 421, title: "Issue 421", body: "" },
+    ]);
+    // A level splitter has the edges already applied; one that could see them
+    // would start second-guessing an order the runner already settled.
+    assert.doesNotMatch(plan.promptArgs["READY"] ?? "", /block|depends/i);
+  });
+
+  it("runs the wave it chose, and offers what it deferred to the next one", async (t) => {
+    const run = await drive(t, {
+      maxParallel: 3,
+      plans: [() => ({ wave: [419], deferrals: [{ number: 420, reason: "both rewrite runner.mts" }] })],
+    });
+
+    // Deferring is not dropping: everything left out is offered again, so all
+    // four still run and the merge order is still run order.
+    assert.deepEqual(run.merges, [mergeOf(419), mergeOf(420), mergeOf(421), mergeOf(422)]);
+    assert.ok(
+      run.printed.some((line) => line.includes("the Planner chose #419")),
+      run.printed.join("\n"),
+    );
+  });
+
+  it("falls back to the computed wave on a plan it cannot use, with no retry and no abort", async (t) => {
+    const rejected: readonly PlannerScript[] = [
+      () => ({ wave: [999], deferrals: [] }),
+      () => ({ wave: [], deferrals: [] }),
+    ];
+    // Five independent items, so wave two is a level worth planning too.
+    const run = await drive(t, {
+      issues: [...INDEPENDENT, { number: 423 }],
+      maxParallel: 3,
+      plans: rejected,
+    });
+
+    // Wave one's plan names work that is not ready and wave two's is empty;
+    // both run the computed wave anyway, and the run finishes.
+    assert.deepEqual(run.merges, [
+      mergeOf(419),
+      mergeOf(420),
+      mergeOf(421),
+      mergeOf(422),
+      mergeOf(423),
+    ]);
+    assert.doesNotMatch(run.report, /aborted/);
+    assert.equal(run.exitCode, undefined);
+    // Exactly one consult per wave. A semantic retry would show up here as two,
+    // and it is kept impossible by the schema not knowing the ready set.
+    assert.equal(run.consultations.filter((consult) => consult.agentId === "planner").length, 2);
+  });
+
+  it("says out loud that it fell back, which is the only way that failure is visible", async (t) => {
+    // The Planner's failure mode was designed to be invisible: a silent
+    // fallback, a prompt that never mentions it, and seven outcomes that are all
+    // per-item. Without this line every wave could quietly become the computed
+    // wave and the ledger would look perfect.
+    const run = await drive(t, {
+      maxParallel: 3,
+      plans: [() => ({ wave: [419, 420, 421, 422], deferrals: [] })],
+    });
+
+    const line = run.printed.find((printed) => printed.includes("the plan was rejected"));
+    assert.ok(line, run.printed.join("\n"));
+    assert.match(line, /wave 1/);
+    assert.match(line, /at most 3/);
+    assert.match(line, /#419, #420, #421/);
+  });
+
+  it("falls back the same way when the Planner never answers at all", async (t) => {
+    const run = await drive(t, {
+      maxParallel: 3,
+      consultFails: { planner: "the provider hung up" },
+    });
+
+    assert.deepEqual(run.merges, [mergeOf(419), mergeOf(420), mergeOf(421), mergeOf(422)]);
+    assert.ok(
+      run.printed.some((line) => line.includes("the Planner did not answer")),
+      run.printed.join("\n"),
+    );
+    assert.equal(run.exitCode, undefined);
+  });
+
+  it("refuses a plan whose shape is wrong before it ever reaches the runner", async (t) => {
+    const run = await drive(t, {
+      maxParallel: 3,
+      plans: [() => ({ wave: ["419"], deferrals: [] })],
+    });
+
+    assert.deepEqual(run.merges, [mergeOf(419), mergeOf(420), mergeOf(421), mergeOf(422)]);
+    assert.ok(
+      run.printed.some((line) => line.includes("the Planner did not answer")),
+      run.printed.join("\n"),
+    );
+  });
+});
+
+describe("what a driver may write into a prompt", () => {
+  it("writes only names the runner reserved, so a body can never collide with one", async (t) => {
+    const contest: ItemScript = ({ item, commit }) =>
+      commit(CONTESTED_FILE, `rewritten by #${item.number}`);
+    // A run that reaches both agents: a multi-item level plans, and a wave with
+    // a conflict in it dispatches the Merger.
+    const run = await drive(t, { maxParallel: 3, scripts: { 419: contest, 420: contest } });
+
+    assert.ok(run.consultations.length > 1);
+    for (const consult of run.consultations) {
+      for (const name of Object.keys(consult.promptArgs)) {
+        assert.ok(RESERVED_PROMPT_ARGS.includes(name), `${consult.agentId} wrote ${name}`);
+      }
+    }
+  });
+});
+
+describe("the Merger, as the driver uses it", () => {
+  it("is dispatched once per settled wave and skipped when one branch merged alone", async (t) => {
+    const run = await drive(t, { maxParallel: 3 });
+    const merges = run.consultations.filter((consult) => consult.agentId === "merger");
+
+    // Wave one merged three branches, which nothing has ever built together.
+    // Wave two merged one, and its tree is identical to a tree that item's own
+    // implement→review loop already gated.
+    assert.equal(merges.length, 1);
+    assert.equal(merges[0]?.promptFile, "merge-prompt.md");
+  });
+
+  it("is handed the base it started from, what merged and what conflicted", async (t) => {
+    const contest: ItemScript = ({ item, commit }) =>
+      commit(CONTESTED_FILE, `rewritten by #${item.number}`);
+    const run = await drive(t, { maxParallel: 3, scripts: { 419: contest, 420: contest } });
+
+    const wave = JSON.parse(
+      run.consultations.find((consult) => consult.agentId === "merger")?.promptArgs["WAVE"] ?? "null",
+    );
+    assert.equal(wave.branch, WORKSPACE_BRANCH);
+    assert.deepEqual(
+      wave.merged.map((item: { number: number }) => item.number),
+      [419, 421],
+    );
+    assert.deepEqual(wave.unmerged, [
+      { number: 420, branch: branchOf(420), paths: [CONTESTED_FILE] },
+    ]);
+    // The precondition the prompt states: each failed merge is already rewound,
+    // so the tree the Merger stands on holds exactly the merged items.
+    assert.ok(wave.merged.every((item: { commit: string }) => item.commit.length > 0));
+  });
+
+  it("records what git says it merged, not what its verdict claimed", async (t) => {
+    const repo = tempRepo(t);
+    const contest: ItemScript = ({ item, commit }) =>
+      commit(CONTESTED_FILE, `rewritten by #${item.number}`);
+
+    const run = await drive(t, {
+      repo,
+      maxParallel: 3,
+      scripts: { 419: contest, 420: contest },
+      verdicts: [
+        (wave) => {
+          // What a Merger does to a rewound branch: finish the merge by hand.
+          for (const item of wave.unmerged) {
+            repo.git(["merge", "--no-ff", "--no-edit", "-X", "ours", item.branch]);
+          }
+          return { verified: true, unresolved: [], notes: "reconciled #420 by hand" };
+        },
+      ],
+    });
+
+    // #420's branch conflicted, and after the Merger it is on the workspace
+    // branch — so it merged, and the run says so.
+    assert.match(run.report, /completed {2}4/);
+    assert.doesNotMatch(run.report, /conflict rewound/);
+    assert.equal(run.repo.branchExists(branchOf(420)), false);
+  });
+
+  it("carries on when a conflict is what it could not resolve", async (t) => {
+    const contest: ItemScript = ({ item, commit }) =>
+      commit(CONTESTED_FILE, `rewritten by #${item.number}`);
+
+    const run = await drive(t, {
+      issues: CHAINED,
+      maxParallel: 3,
+      scripts: { 419: contest, 421: contest },
+      verdicts: [() => ({ verified: false, unresolved: [421], notes: "genuinely contradictory" })],
+    });
+
+    // A conflict belongs to exactly one branch: #421 is the cost, #419 merged,
+    // and #420 — which is blocked by #419 — still runs.
+    assert.doesNotMatch(run.report, /aborted/);
+    assert.equal(run.exitCode, undefined);
+    assert.deepEqual(run.merges, [mergeOf(419), mergeOf(420)]);
+    assert.match(run.report, /#421 conflict rewound/);
+  });
+
+  it("aborts when a tree that merged cleanly does not hold together", async (t) => {
+    const run = await drive(t, {
+      maxParallel: 3,
+      verdicts: [() => ({ verified: false, unresolved: [], notes: "#419 renamed what #420 calls" })],
+    });
+
+    // A broken tree belongs to no branch — every item merged and every item's
+    // own loop passed — so there is nobody to leave out and nothing to rewind.
+    assert.match(run.report, /aborted/);
+    assert.match(run.report, /#419 renamed what #420 calls/);
+    assert.equal(run.exitCode, 1);
+    // Nothing is ever auto-cleaned on an abort, however cleanly it merged.
+    assert.ok(run.repo.branchExists(branchOf(419)));
+    assert.ok(worktreeExists(run.repo.root, branchOf(419)));
+    assert.equal(
+      run.calls.some((call) => call.item?.number === 422),
+      false,
+    );
+  });
+
+  it("aborts when the Merger never answers, rather than building on an unverified tree", async (t) => {
+    const run = await drive(t, {
+      maxParallel: 3,
+      consultFails: { merger: "the provider hung up" },
+    });
+
+    // Unlike a rejected plan there is no safe fallback: wave two would be cut
+    // from a tree nothing ever verified, and every later item inherits that.
+    assert.match(run.report, /never verified/);
+    assert.equal(run.exitCode, 1);
   });
 });
 

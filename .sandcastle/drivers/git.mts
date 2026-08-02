@@ -36,8 +36,8 @@ export interface GitStep {
 
 /**
  * What one item's fan-in came to. `conflict-rewound` carries the paths git
- * could not reconcile, which is what the Merger is handed in slice 9 — the
- * runner detects a conflict and rewinds, and never tries to resolve one.
+ * could not reconcile, which is what the Merger is handed — the runner detects a
+ * conflict and rewinds, and never tries to resolve one.
  */
 export type MergeAttempt =
   | { readonly kind: "merged"; readonly sha: string }
@@ -60,6 +60,17 @@ export interface WaveGit {
    * commits are the only per-item boundary in an otherwise flat diff.
    */
   readonly merge: (branch: string) => MergeAttempt;
+  /**
+   * `git merge-base --is-ancestor <branch> HEAD` — has this branch reached the
+   * workspace branch?
+   *
+   * Asked after the Merger has run, and asked of git rather than of the Merger:
+   * a branch the Merger merged by hand is merged whatever its verdict said, and
+   * a branch it claims to have merged but did not is not. The driver observes;
+   * an agent's account of its own work is a report to print, never a fact to
+   * record.
+   */
+  readonly isMerged: (branch: string) => boolean;
   readonly removeWorktree: (path: string) => GitStep;
   readonly deleteBranch: (branch: string) => GitStep;
 }
@@ -133,6 +144,8 @@ export function waveGit(repoRoot: string): WaveGit {
         return { kind: "conflict-rewound", paths };
       }
     },
+
+    isMerged: (branch) => attempt("merge-base", "--is-ancestor", branch, "HEAD").ok,
 
     removeWorktree: (path) => attempt("worktree", "remove", path),
     deleteBranch: (branch) => attempt("branch", "-d", branch),

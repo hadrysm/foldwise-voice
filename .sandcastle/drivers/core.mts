@@ -16,7 +16,7 @@
 //   workflow      agents, prompts, a driver choice, one body — every new idea
 //   repo config   pre-warm, copyToWorktree, MAX_PARALLEL, the item timeout
 
-import type { Dispatch, DriverId, Workflow } from "../contract.mts";
+import type { Agent, Dispatch, DriverId, Workflow } from "../contract.mts";
 import type { RepoConfig } from "../repo.mts";
 import type { Revalidation } from "../scope/github.mts";
 import type {
@@ -25,6 +25,7 @@ import type {
   WorkItem,
   WorkScopeSnapshot,
 } from "../scope/snapshot.mts";
+import type { Validator } from "./schema.mts";
 
 /**
  * The tracker reads a driver makes *while it runs*, as opposed to the frozen
@@ -86,6 +87,40 @@ export interface ItemWorktree {
 }
 
 /**
+ * What a driver asks one of its own agents, on the host.
+ *
+ * Deliberately not a `DispatchOptions`. `promptArgs` is **required**, because a
+ * driver-internal prompt is nothing but its arguments; and `tag`/`schema` have
+ * no counterpart on the contract at all — `WorktreeRunOptions` has no `output`,
+ * and a workflow that could ask for structured output could branch on what a
+ * model said.
+ */
+export interface ConsultOptions<T> {
+  /** A bare filename, resolved against the workflow's own folder. */
+  readonly promptFile: string;
+  readonly promptArgs: Readonly<Record<string, string>>;
+  /** The XML tag the prompt emits its one block in. */
+  readonly tag: string;
+  readonly schema: Validator<T>;
+}
+
+/**
+ * Ask a driver-internal agent for a structured answer.
+ *
+ * **This is why the two layers need different dispatch types.** The Planner and
+ * the Merger are not `Dispatch` calls: they are made by the driver, through the
+ * runner core, on the host — which is what lets them use `output`, and what
+ * keeps a workflow from ever reaching one. A workflow declares which agents a
+ * run resolves; it never decides when one of these two speaks.
+ *
+ * The runner fixes `maxRetries` at 1 for every consult rather than exposing it:
+ * a *shape* retry resumes the agent's own session and costs one round trip,
+ * while a *semantic* retry is the thing `planner.mts` exists to keep impossible.
+ * One knob fewer is one fewer way to blur them.
+ */
+export type Consult = <T>(agent: Agent, options: ConsultOptions<T>) => Promise<T>;
+
+/**
  * Everything a driver may reach, and the only value from which a `Dispatch` can
  * be obtained. `prepare()` is the sole producer, and it returns nothing until
  * every preflight has passed — which is what makes eager validation structural
@@ -137,6 +172,11 @@ export interface RunCore {
    */
   readonly forBranch: () => Dispatch;
   /**
+   * A driver's own agents, on the host, answering in a shape the runner can
+   * read. Two callers, both in this folder: the Planner and the Merger.
+   */
+  readonly consult: Consult;
+  /**
    * Cut `branch` as a worktree of its own and hand back a dispatch that runs
    * inside it, with `{{WORK}}` written for `item`.
    *
@@ -172,11 +212,10 @@ export interface Driver {
   /**
    * Run a workflow, or `null` for a shape that is decided but not yet built.
    *
-   * `wave-parallel` is `null` today: SPEC #418 settled its shape — it drains and
-   * it is concurrent, which is what makes `MAX_PARALLEL` a question the picker
-   * knows how to ask — while its worktrees, timeout, fan-in, Planner and Merger
-   * land in slices 8–10. `prepare()` refuses a plan whose driver cannot run, so
-   * this is never `null` by the time anything is dispatched.
+   * Nullable because `drains` and `concurrent` are what the picker reads, and a
+   * shape can be settled — and therefore describable — a slice before it can
+   * run. All three are built today. `prepare()` refuses a plan whose driver
+   * cannot run, so this is never `null` by the time anything is dispatched.
    */
   readonly drive: Drive | null;
 }
