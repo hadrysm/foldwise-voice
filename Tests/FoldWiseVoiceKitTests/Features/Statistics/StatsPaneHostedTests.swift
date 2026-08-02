@@ -176,6 +176,20 @@ final class StatsPaneHostedTests: XCTestCase {
         XCTAssertEqual(rows, [1, 1])
     }
 
+    /// The column assertions below only hold once seven days of the month have
+    /// elapsed, so they are only meaningful while the hosted pane runs on a
+    /// pinned clock. On the real clock they would fail every first week of a
+    /// month and heal themselves on the seventh — this keeps that from
+    /// silently coming back.
+    func testHostedFullSettingsDrawsTheCalendarOnThePinnedClock() throws {
+        let (_, window) = hostFullSettings(width: 880, height: 640)
+        defer { window.orderOut(nil) }
+
+        let calendar = try node(identifier: "stats.calendar", in: window)
+
+        XCTAssertEqual(calendar.label, "July 2026 activity calendar")
+    }
+
     func testHostedCalendarRemainsSevenColumnsAtRequiredWindowSizes() throws {
         let columnCounts = try [(880.0, 640.0), (980.0, 720.0)].map { width, height in
             let (_, window) = hostFullSettings(width: width, height: height)
@@ -708,9 +722,7 @@ final class StatsPaneHostedTests: XCTestCase {
         environment: StatsEnvironmentAdaptations? = nil
     ) -> StatsPane {
         let calendar = utcCalendar()
-        let now = calendar.date(from: DateComponents(
-            year: 2026, month: 7, day: 22, hour: 12
-        )) ?? .distantPast
+        let now = fixedNow
         _ = model.paneProjections.stats(in: .init(
             now: now,
             calendar: calendar,
@@ -741,12 +753,29 @@ final class StatsPaneHostedTests: XCTestCase {
     ) -> (NSHostingView<SettingsView>, NSWindow) {
         let model = model ?? SettingsModel()
         model.pane = .stats
+        let calendar = utcCalendar()
+        let now = fixedNow
         _ = model.paneProjections.stats(in: .init(
-            now: Date(),
-            calendar: .autoupdatingCurrent,
-            locale: .autoupdatingCurrent
+            now: now,
+            calendar: calendar,
+            locale: Locale(identifier: "en_US")
         ))
-        let hosting = host(SettingsView(model: model), width: width, height: height)
+        // Pinned for the same reason `fixedStatsPane` pins: on the real clock
+        // the calendar only fills all seven columns once seven days of the
+        // month have elapsed, so these layout assertions would fail every
+        // first week of a month.
+        let hosting = host(
+            SettingsView(
+                model: model,
+                statsClock: StatsClock(
+                    now: { now },
+                    calendar: { calendar },
+                    locale: Locale(identifier: "en_US")
+                )
+            ),
+            width: width,
+            height: height
+        )
         let window = hostInWindow(hosting)
         render(hosting)
         return (hosting, window)
@@ -1056,6 +1085,14 @@ final class StatsPaneHostedTests: XCTestCase {
 
     private var up: KeyInput {
         KeyInput(code: 126, characters: "\u{F700}")
+    }
+
+    /// Late enough in the month that every weekday column has a real day in
+    /// it, which is what the calendar layout assertions measure.
+    private var fixedNow: Date {
+        utcCalendar().date(from: DateComponents(
+            year: 2026, month: 7, day: 22, hour: 12
+        )) ?? .distantPast
     }
 
     private func utcCalendar() -> Calendar {
