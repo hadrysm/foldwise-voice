@@ -53,10 +53,7 @@ struct HistoryPane: View {
                 PaneProjectionLoading(paneName: "History")
             } else {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Saved locally on this Mac. Audio is never retained.")
-                        .font(Theme.body)
-                        .foregroundStyle(Theme.textSecondary)
-                        .accessibilityIdentifier("history.assurance")
+                    paneHeader
                     preferences
                     if !interface.saveHistory, interface.hasEntries {
                         savingOffNotice
@@ -101,6 +98,27 @@ struct HistoryPane: View {
         }
         .onChange(of: environmentLocale) { _, _ in
             refreshProjection()
+        }
+    }
+
+    /// Clear all rides the assurance line, directly under the pane title. The
+    /// list below it loads one section at a time as the reader scrolls, so an
+    /// action placed after the list is pushed down by every load and never
+    /// reached; a page-level action has to sit above the list to stay reachable.
+    private var paneHeader: some View {
+        HStack(spacing: 12) {
+            Text("Saved locally on this Mac. Audio is never retained.")
+                .font(Theme.body)
+                .foregroundStyle(Theme.textSecondary)
+                .accessibilityIdentifier("history.assurance")
+            Spacer(minLength: 8)
+            if projection.hasSourceEntries {
+                Button("Clear all history…", role: .destructive) {
+                    confirmingClearAll = true
+                }
+                .buttonStyle(EmberButtonStyle(kind: .destructive))
+                .accessibilityIdentifier("history.clear-all")
+            }
         }
     }
 
@@ -229,14 +247,6 @@ struct HistoryPane: View {
                         interface.performHistoryCommand(entry, command)
                     }
                 )
-            }
-            HStack {
-                Button("Clear all history…", role: .destructive) {
-                    confirmingClearAll = true
-                }
-                .buttonStyle(EmberButtonStyle(kind: .destructive))
-                .accessibilityIdentifier("history.clear-all")
-                Spacer()
             }
         }
     }

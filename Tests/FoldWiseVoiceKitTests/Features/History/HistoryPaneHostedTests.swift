@@ -121,6 +121,50 @@ final class HistoryPaneHostedTests: XCTestCase {
         try waitForIdentifier("history.empty.no-results", in: window)
     }
 
+    /// The list loads one day-section at a time as the user scrolls, so a
+    /// Clear all button placed after the collection is pushed down forever and
+    /// never reached. It belongs on the pane header, above every filter and row.
+    func testHostedHistoryKeepsClearAllOnTheHeaderAboveTheLazyCollection() throws {
+        let model = SettingsModel()
+        model.historyEntries = entries(dayCount: 12)
+        let window = host(model)
+        defer { window.orderOut(nil) }
+
+        let clearAll = try XCTUnwrap(node("history.clear-all", in: window).frame)
+        let assurance = try XCTUnwrap(node("history.assurance", in: window).frame)
+        let utility = try XCTUnwrap(node("history.utility", in: window).frame)
+        let collection = try XCTUnwrap(node("history.collection", in: window).frame)
+
+        XCTAssertLessThanOrEqual(
+            clearAll.maxY,
+            collection.minY,
+            "Clear all history must render above the lazily loaded list, "
+                + "not below it: clear all \(clearAll), collection \(collection)"
+        )
+        XCTAssertLessThanOrEqual(
+            clearAll.maxY,
+            utility.minY,
+            "Clear all history is a page-level action and belongs above the "
+                + "search and filter row: clear all \(clearAll), utility \(utility)"
+        )
+        XCTAssertEqual(
+            clearAll.midY,
+            assurance.midY,
+            accuracy: 16,
+            "Clear all history shares the assurance line: "
+                + "clear all \(clearAll), assurance \(assurance)"
+        )
+    }
+
+    /// No saved sessions, nothing to clear — the header action stays absent
+    /// rather than offering a destructive command that would do nothing.
+    func testHostedHistoryOmitsClearAllWhenNothingIsSaved() throws {
+        let window = host(SettingsModel())
+        defer { window.orderOut(nil) }
+
+        XCTAssertFalse(try identifiers(in: window).contains("history.clear-all"))
+    }
+
     private func host(_ model: SettingsModel) -> NSWindow {
         _ = model.paneProjections.history(
             search: "",
@@ -268,10 +312,18 @@ final class HistoryPaneHostedTests: XCTestCase {
         return value
     }
 
-    private func entry() -> HistoryEntry {
+    private func entries(dayCount: Int) -> [HistoryEntry] {
+        (0 ..< dayCount).map { day in
+            entry(createdAt: Date(timeIntervalSince1970: 1_783_499_700 - Double(day) * 86400))
+        }
+    }
+
+    private func entry(
+        createdAt: Date = Date(timeIntervalSince1970: 1_783_499_700)
+    ) -> HistoryEntry {
         HistoryEntry(
             id: UUID(),
-            createdAt: Date(timeIntervalSince1970: 1_783_499_700),
+            createdAt: createdAt,
             text: "Displayed words",
             rawText: "raw words",
             isPolished: true,
