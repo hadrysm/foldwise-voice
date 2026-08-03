@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.2](https://github.com/hadrysm/foldwise-voice/compare/v0.20.1...v0.20.2) (2026-08-03)
+
+
+### Maintenance
+
+* remove .conductor/settings.toml ([#458](https://github.com/hadrysm/foldwise-voice/issues/458)) ([09f6bcf](https://github.com/hadrysm/foldwise-voice/commit/09f6bcf1f1134cf368a096b17b0a294487e260e3))
+
 ## [0.20.1](https://github.com/hadrysm/foldwise-voice/compare/v0.20.0...v0.20.1) (2026-08-02)
 
 
