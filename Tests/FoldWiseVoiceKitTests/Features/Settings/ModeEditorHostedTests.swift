@@ -6,6 +6,9 @@ import XCTest
 
 @MainActor
 final class ModeEditorHostedTests: XCTestCase {
+    /// Inside the rendered Move up control's leading edge, outside its centred label.
+    private let moveUpLeadingEdge = NSPoint(x: 563, y: 198)
+
     private struct RenderedSelectionCues {
         let leadingAccent: Int
         let iconAccent: Int
@@ -169,6 +172,28 @@ final class ModeEditorHostedTests: XCTestCase {
         window.orderOut(nil)
 
         XCTAssertEqual(moved, .down)
+    }
+
+    func testHostedModesPaneMoveUpLeadingEdgeRoutesAction() throws {
+        let model = SettingsModel()
+        model.pane = .modes
+        let first = mode(name: "Email")
+        let second = mode(name: "Casual")
+        let secondID = try XCTUnwrap(second.id)
+        model.modes = [first, second]
+        model.modeSelection = ModePresentationFactory.projection(
+            modes: model.modes,
+            selection: .mode(secondID)
+        )
+        var moved: ModeMoveDirection?
+        model.onMoveMode = { _, direction in moved = direction }
+        let hosting = hostSettings(model)
+        let window = hostInKeyWindow(hosting)
+        defer { window.orderOut(nil) }
+
+        click(at: moveUpLeadingEdge, in: window)
+
+        XCTAssertEqual(moved, .up)
     }
 
     func testHostedModeDetailChromePreservesEveryInteractionState() throws {

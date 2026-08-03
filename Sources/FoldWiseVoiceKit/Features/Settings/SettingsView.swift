@@ -2341,15 +2341,17 @@ private struct ModeDetailActions: View {
         Button {
             onAction(action)
         } label: {
-            if let symbolName {
-                Label(title, systemImage: symbolName)
-            } else {
-                Text(title)
+            ZStack {
+                if let symbolName {
+                    Label(title, systemImage: symbolName)
+                } else {
+                    Text(title)
+                }
             }
+            .frame(width: width, height: 28)
+            .contentShape(Rectangle())
         }
         .font(Theme.ui(10.5, .semibold))
-        .frame(width: width, height: 28)
-        .contentShape(Rectangle())
         .buttonStyle(EmberPlainButtonStyle())
         .focusEffectDisabled()
         .focused($focusedControl, equals: control)
