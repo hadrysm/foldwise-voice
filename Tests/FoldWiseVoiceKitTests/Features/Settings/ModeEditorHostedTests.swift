@@ -6,9 +6,6 @@ import XCTest
 
 @MainActor
 final class ModeEditorHostedTests: XCTestCase {
-    /// Inside the rendered Move up control's leading edge, outside its centred label.
-    private let moveUpLeadingEdge = NSPoint(x: 563, y: 198)
-
     private struct RenderedSelectionCues {
         let leadingAccent: Int
         let iconAccent: Int
@@ -191,6 +188,10 @@ final class ModeEditorHostedTests: XCTestCase {
         let window = hostInKeyWindow(hosting)
         defer { window.orderOut(nil) }
 
+        let moveUpLeadingEdge = try leadingEdgePoint(
+            for: "Move Casual up",
+            in: window
+        )
         click(at: moveUpLeadingEdge, in: window)
 
         XCTAssertEqual(moved, .up)
@@ -478,6 +479,88 @@ final class ModeEditorHostedTests: XCTestCase {
             }
             NSApp.sendEvent(event)
         }
+    }
+
+    /// Returns a point inside the rendered control, but outside its centred label.
+    private func leadingEdgePoint(
+        for accessibilityLabel: String,
+        in window: NSWindow
+    ) throws -> NSPoint {
+        window.title = "Mode detail hit-area test \(UUID().uuidString)"
+        let application = AXUIElementCreateApplication(getpid())
+        let windows = axElements(attribute: kAXWindowsAttribute, from: application)
+        let hostedWindow = try XCTUnwrap(windows.first {
+            axString(attribute: kAXTitleAttribute, from: $0) == window.title
+        })
+        let button = try XCTUnwrap(axTree(root: hostedWindow).first {
+            $0.label == accessibilityLabel
+        })
+        let windowPosition = try XCTUnwrap(
+            axPoint(attribute: kAXPositionAttribute, from: hostedWindow)
+        )
+        let windowSize = try XCTUnwrap(
+            axSize(attribute: kAXSizeAttribute, from: hostedWindow)
+        )
+        let buttonPosition = try XCTUnwrap(button.position)
+        let buttonSize = try XCTUnwrap(button.size)
+
+        return NSPoint(
+            x: buttonPosition.x - windowPosition.x + 4,
+            y: windowSize.height
+                - (buttonPosition.y - windowPosition.y)
+                - buttonSize.height / 2
+        )
+    }
+
+    private func axTree(root: AXUIElement) -> [(
+        label: String?,
+        position: CGPoint?,
+        size: CGSize?
+    )] {
+        let node = (
+            label: axString(attribute: kAXDescriptionAttribute, from: root)
+                ?? axString(attribute: kAXTitleAttribute, from: root),
+            position: axPoint(attribute: kAXPositionAttribute, from: root),
+            size: axSize(attribute: kAXSizeAttribute, from: root)
+        )
+        return [node] + axElements(attribute: kAXChildrenAttribute, from: root)
+            .flatMap(axTree(root:))
+    }
+
+    private func axElements(attribute: String, from element: AXUIElement) -> [AXUIElement] {
+        axAttribute(attribute: attribute, from: element) as? [AXUIElement] ?? []
+    }
+
+    private func axString(attribute: String, from element: AXUIElement) -> String? {
+        axAttribute(attribute: attribute, from: element) as? String
+    }
+
+    private func axPoint(attribute: String, from element: AXUIElement) -> CGPoint? {
+        guard let value = axValue(attribute: attribute, from: element),
+              AXValueGetType(value) == .cgPoint else { return nil }
+        var point = CGPoint.zero
+        return AXValueGetValue(value, .cgPoint, &point) ? point : nil
+    }
+
+    private func axSize(attribute: String, from element: AXUIElement) -> CGSize? {
+        guard let value = axValue(attribute: attribute, from: element),
+              AXValueGetType(value) == .cgSize else { return nil }
+        var size = CGSize.zero
+        return AXValueGetValue(value, .cgSize, &size) ? size : nil
+    }
+
+    private func axValue(attribute: String, from element: AXUIElement) -> AXValue? {
+        guard let value = axAttribute(attribute: attribute, from: element),
+              CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        return unsafeBitCast(value, to: AXValue.self)
+    }
+
+    private func axAttribute(attribute: String, from element: AXUIElement) -> CFTypeRef? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
+            return nil
+        }
+        return value
     }
 
     private func sendMoveDownShortcut(to window: NSWindow) {
